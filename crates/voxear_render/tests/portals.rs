@@ -599,7 +599,13 @@ fn fields(renderer: &mut Renderer) -> (World, [Entity; 3]) {
         })
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Default::default() };
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Default::default(),
+        light: Default::default(),
+    };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     // On the grass, 4 m up: the first looks back down -z at the camera, the second out over the water.
@@ -711,7 +717,13 @@ fn timing_world(renderer: &mut Renderer) -> (World, Entity) {
         })
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Default::default() };
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Default::default(),
+        light: Default::default(),
+    };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::from_position(Vec3::new(0.0, -10.0, 0.0))));
     let eye = Vec3::new(0.0, 1.0, -4.0);

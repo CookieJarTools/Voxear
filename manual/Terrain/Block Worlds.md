@@ -17,6 +17,8 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Smooth | Whether its surface runs smoothly between its blocks rather than as cubes: a [[Voxel Terrain]] |
 | Voxels | How many small cubes each cube's faces are drawn as made of, along a block's side: 0 for plain faces, 8 or 16 for a world built of small cubes (see [Faces of small cubes](#faces-of-small-cubes)) |
 | Relief | With Voxels, how many small cubes deep the deepest of them are sunk into a face, from 0 to 4 in halves |
+| Lighting | **Block Light**, lit by the light kept for each block, dark in caves and the same under every look; or **Scene**, lit as the rest of the scene is, by the GI's probes (see [[Block Light]]) |
+| Light color, Light strength | With Block Light, the colour of the light the world's blocks give and how bright it is |
 | Ground | **Flat**, or **Generated** by a world generator (see below) |
 | Ground size | How many blocks its ground reaches along X and Z |
 | Ground height | With flat ground, how many blocks high it is |
@@ -494,7 +496,7 @@ A world keeps its growing saplings in a short list, a few bytes each, saved with
 
 ## How blocks are drawn
 
-The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air or water, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth.
+The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air or water, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth, and takes the light kept for the blocks touching it: sky light and the light of blocks that give it (see [[Block Light]]).
 
 The sheets of [[Blocks#Bushy leaves|bushy leaves]] and of [[Blocks#Vines|vines]] are kept beside a chunk's faces, two words each as a face is, and drawn from either side while the chunk is within 160 blocks of the camera.
 

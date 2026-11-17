@@ -293,7 +293,15 @@ static float terrainSunShare = 1.0;
 // towards the corners the blocks round it close in. Taken with the ambient occlusion pass's, the less of the two;
 // the sun's light is its shadow's to dim.
 static float terrainOcclusion = 1.0;
+// Whether a terrain's surface is lit by the light kept for its blocks, a world of cubes' (BLOCKS_LIT): its sky light
+// and block light, each from 0 to 1, and the colour of its blocks' light, linear and as bright as it is, over how
+// much of the sky's light a face with no sky light takes (terrainShading in blocks.slang).
+static bool terrainBlockLit = false;
+static float2 terrainBlockLight = float2(1.0, 0.0);
+static float4 terrainGlow = 0.0;
 #endif
+
+
 
 // Foliage, lit as leaves are: light wrapped round past the side facing
 // away from the sun, so a canopy does not go black on its far side; light
@@ -1256,6 +1264,10 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     // then leaves out here.
     BakedInstance baked;
     bool hasBaked = bakedInstance(input.instance, baked);
+#ifdef TERRAIN_SHADING
+    // A face lit by its blocks' light carries that where a lightmap's place would be: it has no bake of its own.
+    hasBaked = hasBaked && !terrainBlockLit;
+#endif
     bool ownLightmap = hasBaked && frame->bake.source != GI_REALTIME && lightmapped(baked);
 
     Surface s;
@@ -1278,6 +1290,25 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         shadow *= terrainSunShare;
     }
 #endif
+    // Lit by the light kept for blocks: a block's face by its corners', and anything else near blocks by the light
+    // round the camera, a little out from its surface, so a cave is dark for what stands in it too. The sun then
+    // falls as that sky light lets it in: past its shadows in their place.
+    float2 blockLit = float2(1.0, 0.0);
+    float4 blockGlow = 0.0;
+    bool blockLitHere = false;
+#ifdef TERRAIN_SHADING
+    blockLitHere = terrainBlockLit;
+    blockLit = terrainBlockLight;
+    blockGlow = terrainGlow;
+#endif
+    if (!blockLitHere)
+    {
+        blockLitHere = blockLightAround(input.worldPosition + s.normal * 0.3, blockLit, blockGlow);
+    }
+    if (blockLitHere)
+    {
+        shadow *= blockSunShare(blockLit.x, sunShadowsReach(frame, input.worldPosition));
+    }
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
@@ -1338,6 +1369,20 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     float3 bakedLight;
     bool bakeLit = hasBaked && frame->bake.source != GI_REALTIME && bakedIrradiance(baked, input.lightmapUv, s.normal, bakedLight);
     float3 ambient = bakeLit ? bakedAmbient(frame, baked, bakedLight, lightAt, s) : ambientLight(frame, lightAt, s, sunLight, atmosphere);
+#ifdef TERRAIN_SHADING
+    // A block's face takes the sky's light alone, never the GI's probes', so it is the same under any lighting and
+    // steady as the lighting changes.
+    if (terrainBlockLit)
+    {
+        float up = s.normal.y * 0.5 + 0.5;
+        ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight) : gradientAmbient(frame, up);
+    }
+#endif
+    // Lit by the light kept for blocks: as much of it as its sky light lets in, and its blocks' light over it.
+    if (blockLitHere)
+    {
+        ambient = ambient * blockSkyShare(blockLit.x, blockGlow.w) + blockGlow.rgb * blockGlowShare(blockLit.y);
+    }
     ambient *= skyUnder;
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
@@ -1351,6 +1396,13 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     // the share that came from the surroundings. Over all of it, its screen-space guesses about what blocks a
     // curved mirror lay grey smudges across a chrome ball that moved with the camera.
     float specularOcclusion = lerp(occlusion.specular, 1.0, found);
+    // What it reflects of its surroundings, lit by the light kept for blocks, is as dark as its sky light leaves it,
+    // with its blocks' light over it; what its ray found is as it found it.
+    if (blockLitHere)
+    {
+        float3 round = reflected * blockSkyShare(blockLit.x, blockGlow.w) + blockGlow.rgb * blockGlowShare(blockLit.y);
+        reflected = lerp(round, reflected, found);
+    }
     color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
 
     color += emission;

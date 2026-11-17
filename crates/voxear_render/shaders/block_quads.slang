@@ -69,7 +69,23 @@ struct BlockPoint
     float3 back;
     // Its chunk's slot in its world's pool: where its place is kept, and its fades (blockRingHidden in blocks.slang).
     uint slot;
+    // Its corner's sky light and block light, each from 0 to 1, in a world lit by the light kept for its blocks
+    // (blockCornerLight); open sky in any other.
+    float2 lit;
 };
+
+// The light of corner `corner` of the quad at `index` in the world's pool, in a world lit by the light kept for its
+// blocks (BLOCKS_LIT): its sky light and its block light, each from 0 to 1. Open sky in any other world. A loose
+// quad, a block of parts' and water's are their block's light at every corner.
+float2 blockCornerLight(BlockWorld world, uint index, uint corner)
+{
+    if ((world.flags & BLOCKS_LIT) == 0)
+    {
+        return float2(1.0, 0.0);
+    }
+    uint lit = (world.light[index] >> (corner * 8)) & 0xFF;
+    return float2(float(lit >> 4), float(lit & 15)) / 15.0;
+}
 
 // What a loose quad is, where a face says which way it faces (voxear_terrain::blocks::mesh::TUFT and VINE).
 static const uint BLOCK_TUFT = 6;
@@ -206,6 +222,7 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint taken, float3 eye)
     b.part = 0;
     b.posedBy = 0.0;
     b.back = 0.0;
+    b.lit = float2(1.0, 0.0);
     return b;
 }
 
@@ -244,6 +261,7 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     b.part = 0;
     b.posedBy = 0.0;
     b.back = 0.0;
+    b.lit = float2(1.0, 0.0);
     return b;
 }
 
@@ -296,7 +314,9 @@ BlockPoint cubeCorner(BlockWorld world, uint index, uint taken, bool loose)
     // A face of a box of a block of parts, two quads' words, and the second of them, which draws nothing.
     if (facing == BLOCK_VINE && (first & BLOCK_PART_HEAD) != 0)
     {
-        return partPoint(world, quad, world.quads[blockRun() + index + 1], taken);
+        BlockPoint part = partPoint(world, quad, world.quads[blockRun() + index + 1], taken);
+        part.lit = blockCornerLight(world, blockRun() + index, 0);
+        return part;
     }
     if (facing == BLOCK_VINE && (first & BLOCK_PART_TAIL) != 0)
     {
@@ -308,10 +328,25 @@ BlockPoint cubeCorner(BlockWorld world, uint index, uint taken, bool loose)
         // A lamp's shadow is kept from frame to frame, so its sheets are as its lamp sees them, wherever the camera is.
         bool lamp = push.list >= LIST_LOCAL_SHADOW && push.list < LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
         float3 eye = lamp ? push.frame->localShadows.casters[push.list - LIST_LOCAL_SHADOW].xyz : push.frame->cameraPosition;
-        return loosePoint(world, quad, taken, eye);
+        BlockPoint sheet = loosePoint(world, quad, taken, eye);
+        sheet.lit = blockCornerLight(world, blockRun() + index, 0);
+        return sheet;
     }
     uint4 shades = (uint4(quad.y) >> uint4(8, 10, 12, 14)) & 3;
     bool flip = shades.x + shades.z < shades.y + shades.w;
+    float2 lights[4] = { float2(1.0, 0.0), float2(1.0, 0.0), float2(1.0, 0.0), float2(1.0, 0.0) };
+    if ((world.flags & BLOCKS_LIT) != 0)
+    {
+        // Lit by its blocks' light, split along the diagonal between the corners lighter by their shading and light
+        // together.
+        float4 bright;
+        for (uint c = 0; c < 4; c++)
+        {
+            lights[c] = blockCornerLight(world, blockRun() + index, c);
+            bright[c] = (float(shades[c]) + 1.0) * (0.1 + max(lights[c].x, lights[c].y));
+        }
+        flip = bright.x + bright.z < bright.y + bright.w;
+    }
     uint corner = flip ? (taken + 1) & 3 : taken;
     uint3 axes = BLOCK_AXES[facing];
     bool out = (facing & 1) == 0;
@@ -328,6 +363,7 @@ BlockPoint cubeCorner(BlockWorld world, uint index, uint taken, bool loose)
     b.normal = blockAxis(axes.x) * (out ? 1.0 : -1.0);
     b.surface = quad.y & 0xFF;
     b.shade = float(shades[corner]) / 3.0;
+    b.lit = lights[corner];
     // Only the world's own blocks sway: a far ring's are too large to.
     b.sways = chunk.w == 0 && ((swaying >> corner) & 1) != 0;
     b.corner = chunk.xyz * 32 + int3(p);
@@ -533,6 +569,7 @@ BlockPoint partPoint(BlockWorld world, uint2 head, uint2 tail, uint vertex)
     b.part = 1 | (FACES[facing] << 1);
     b.posedBy = placed - rest;
     b.back = placedBefore - placed;
+    b.lit = float2(1.0, 0.0);
     return b;
 }
 

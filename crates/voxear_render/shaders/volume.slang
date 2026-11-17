@@ -85,6 +85,19 @@ float heightFogThrough(float density, float falloff, float3 ray)
 // the camera or, under a bake, its light probes' grid; otherwise 1.
 float fogOpenness(Frame* frame, float3 point)
 {
+    // Among blocks lit by the light kept for them, as much as their sky light lets in at the camera and at the point:
+    // mist in a cave is dark.
+    float2 litCamera;
+    float2 litPoint;
+    float4 glow;
+    bool keptAtCamera = blockLightAround(frame->cameraPosition, litCamera, glow);
+    bool keptAtPoint = blockLightAround(point, litPoint, glow);
+    if (keptAtCamera || keptAtPoint)
+    {
+        float atCamera = keptAtCamera ? blockSkyShare(litCamera.x, glow.w) : 1.0;
+        float atPoint = keptAtPoint ? blockSkyShare(litPoint.x, glow.w) : 1.0;
+        return saturate((atCamera + atPoint) * 0.5);
+    }
     // The open sky's light as the probes count it, from the atmosphere or the gradient.
     float3 sky = frame->lighting.sky == SKY_ATMOSPHERE ? atmosphereAmbient(frame, 0.5, sunThroughAtmosphere(frame))
         : gradientAmbient(frame, 0.5);

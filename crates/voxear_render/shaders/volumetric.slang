@@ -106,9 +106,18 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
 
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    // Among blocks lit by the light kept for them, as much of the sky's light and the sun as their sky light lets in,
+    // and their blocks' light: mist in a cave is dark, and warm round a torch.
+    float2 blockLit;
+    float4 blockGlow;
+    bool amongBlocks = blockLightAround(position, blockLit, blockGlow);
     float3 light = sunLight * sunShadowHard(frame, position, float3(0.0)) * sunCookieAt(frame, position)
         * glassSun(frame, position, float3(0.0))
         * miePhase(g, dot(-frame->sunDirection, -toCamera));
+    if (amongBlocks)
+    {
+        light *= blockSunShare(blockLit.x, sunShadowsReach(frame, position));
+    }
     uint cluster = clusterAt(frame, uv * float2(frame->viewport), depth);
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);
     uint clusterLights = buffers()->clusters[clusterBase];
@@ -126,6 +135,10 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     if (probeVolumeLight(frame, position, float3(0.0), baked))
     {
         around = baked + (frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0 ? around : 0.0);
+    }
+    if (amongBlocks)
+    {
+        around = sky * blockSkyShare(blockLit.x, blockGlow.w) + blockGlow.rgb * blockGlowShare(blockLit.y);
     }
     light += around / (4.0 * PI);
     float4 current = float4(frame->post.fogColor * light * density, density);

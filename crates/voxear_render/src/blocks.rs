@@ -23,6 +23,7 @@ use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, KeptBatch, MemoryLocatio
 use voxear_terrain::coord_hash::CoordSet;
 use voxear_terrain::blocks::{
     fell::LooseBlocks,
+    light::{self, LightMap},
     BlockWorld, ChunkMeshes, RingFades,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
@@ -58,6 +59,34 @@ pub struct BlockLook {
     /// Its blocks of parts' motions, as `BlockFaces::motion` counts them
     /// from 1 (see `voxear_terrain::blocks::file::BlockFile::motions`).
     pub motions: Arc<[GpuBlockMotion]>,
+    /// How its faces take the light from all round them.
+    pub light: BlockLight,
+}
+
+/// How a world of cubes' faces take the light from all round them (see
+/// `voxear_terrain::blocks::file::BlockLighting`): with `kept`, by the
+/// light kept for each block (`voxear_terrain::blocks::light`), the sky's
+/// light from all round as much as a face's sky light lets in and `glow`,
+/// linear and as bright as it is, as much as its block light; the sun's as
+/// its shadows say, and past them as its sky light does. Else as the rest
+/// of the scene is lit: by the GI's probes, and the sky's light darkened
+/// by ambient occlusion.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockLight {
+    pub kept: bool,
+    pub glow: Vec3,
+}
+
+impl BlockLight {
+    /// How bright block light is at most, times as bright as usual.
+    pub const BRIGHTEST: f32 = 8.0;
+}
+
+impl Default for BlockLight {
+    /// As the scene is lit, which is all a world drawn smooth has.
+    fn default() -> Self {
+        Self { kept: false, glow: Vec3::new(1.0, 0.48, 0.15) }
+    }
 }
 
 /// A key of a block's motion as the shaders read it (`BlockMotionKey` in
@@ -303,6 +332,14 @@ pub struct GpuBlockWorld {
     /// it, in metres: from where they begin to fade, over how far (see
     /// [`BlockTints::cover`]).
     pub cover: [f32; 2],
+    /// Lit by the light kept for its blocks (`BLOCKS_LIT`): the colour of
+    /// the light its blocks give, linear and as bright as it is, and over
+    /// it how much of the sky's light the darkest face takes; and each
+    /// quad's corners' light, a word a quad (see
+    /// `voxear_terrain::blocks::mesh::ChunkMesh::light`).
+    pub glow: [f32; 4],
+    pub light: u64,
+    pub light_pad: [u32; 2],
 }
 
 // The shaders' RING_FADE_SECONDS (common.slang) is the streamer's.
@@ -316,6 +353,19 @@ pub const BLOCKS_SMOOTH: u32 = 1;
 /// that came loose (`voxear_terrain::blocks::fell::LooseBlocks`).
 pub const BLOCKS_TURNED: u32 = 2;
 
+/// A world of blocks' flag for its faces being lit by the light kept for
+/// its blocks (see [`BlockLight`]).
+pub const BLOCKS_LIT: u32 = 4;
+
+/// How much of the sky's light from all round a face with no sky light at
+/// all takes, lit by the light kept for its blocks: a cave is dark, but
+/// not black.
+pub const DARKEST_SKY: f32 = 0.012;
+
+/// The light word of a quad of a chunk made with none: open sky at every
+/// corner, and no block light.
+const OPEN_SKY_WORD: u32 = 0xF0F0_F0F0;
+
 /// Where a view's block buffer keeps its surfaces, after its worlds.
 const SURFACES_AT: usize = MAX_BLOCK_WORLDS * size_of::<GpuBlockWorld>();
 
@@ -324,8 +374,48 @@ const SURFACES_AT: usize = MAX_BLOCK_WORLDS * size_of::<GpuBlockWorld>();
 const PARTS_AT: usize = SURFACES_AT + MAX_BLOCK_WORLDS * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>();
 const PARTS_EACH: usize = MAX_MOTIONS * size_of::<GpuBlockMotion>() + MAX_MOVING * size_of::<GpuMovingBlock>();
 
+/// How many blocks along x, y and z the light round the camera a view's
+/// shaders read is (see [`GpuLightVolume`]), and how many it moves by at a
+/// time as the camera goes.
+pub const LIGHT_VOLUME: [i32; 3] = [96, 48, 96];
+const LIGHT_VOLUME_STEP: i32 = 8;
+const LIGHT_VOLUME_BLOCKS: usize = (LIGHT_VOLUME[0] * LIGHT_VOLUME[1] * LIGHT_VOLUME[2]) as usize;
+
+/// Where a view's block buffer keeps the light round its camera: its
+/// header, then its blocks' light, a byte each.
+const LIGHT_VOLUME_AT: usize = PARTS_AT + MAX_BLOCK_WORLDS * PARTS_EACH;
+pub(crate) const LIGHT_BYTES_AT: usize = LIGHT_VOLUME_AT + size_of::<GpuLightVolume>();
+
 /// How large a view's block buffer is.
-pub const FRAME_SIZE: u64 = (PARTS_AT + MAX_BLOCK_WORLDS * PARTS_EACH) as u64;
+pub const FRAME_SIZE: u64 = (LIGHT_BYTES_AT + LIGHT_VOLUME_BLOCKS) as u64;
+
+// The shaders read worlds, and the light round the camera, laid out on whole sixteen bytes.
+const _: () = assert!(size_of::<GpuBlockWorld>() % 16 == 0 && LIGHT_VOLUME_AT % 16 == 0);
+
+/// Where a view's light round its camera starts, and its blocks' light, in
+/// its block buffer at `address`.
+pub(crate) fn light_volume_addresses(address: u64) -> [u64; 2] {
+    [address + LIGHT_VOLUME_AT as u64, address + LIGHT_BYTES_AT as u64]
+}
+
+/// The light kept for the blocks round the camera as the shaders read it
+/// (`BlockLightVolume` in `shaders/common.slang`): of the world of cubes
+/// lit by it that the camera is in, from its block `origin`, whose lowest
+/// corner is at `corner` in the view's space, blocks `block_size` a side,
+/// [`LIGHT_VOLUME`] blocks along x, y and z, a byte each after it (see
+/// `voxear_terrain::blocks::light::volume`); `found` 0 for none. Things
+/// that are not blocks, the mist among them, are lit by it: dark in caves,
+/// and warm by blocks that give light, `glow` (linear, and over it how much
+/// of the sky's light the darkest takes).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuLightVolume {
+    pub origin: [i32; 3],
+    pub found: u32,
+    pub corner: [f32; 3],
+    pub block_size: f32,
+    pub glow: [f32; 4],
+}
 
 /// One chunk in a pool: the faces it was made from, its slot, where its
 /// quads start, the box its faces lie in, and its whole cube, in metres
@@ -345,20 +435,31 @@ struct Held {
 /// out from its pictures last, as leaves are, which the sun's shadows draw
 /// apart (see [`record_shadows`]); and how many are cut out in each. Drawn
 /// smooth, its corners' words as they are, `cut` empty.
-fn arranged(mesh: &ChunkMesh, slot: u32, cut: &[bool]) -> (Vec<[u32; 2]>, [u32; FACINGS]) {
+/// And each quad's corners' light, in the same order, open sky for a chunk
+/// made with none.
+fn arranged(mesh: &ChunkMesh, slot: u32, cut: &[bool]) -> (Vec<[u32; 2]>, Vec<u32>, [u32; FACINGS]) {
     let mut quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
+    let mut light = match mesh.light.len() == mesh.quads.len() {
+        true => mesh.light.clone(),
+        false => vec![OPEN_SKY_WORD; mesh.quads.len()],
+    };
     let mut counts = [0; FACINGS];
     if !cut.iter().any(|&cut| cut) {
-        return (quads, counts);
+        return (quads, light, counts);
     }
     // As the shaders read a quad's surface: the last where it has more than the world.
     let is_cut = |quad: &[u32; 2]| cut[usize::from(quad[1] as u8).min(cut.len() - 1)];
     for (facing, count) in counts.iter_mut().enumerate() {
-        let run = &mut quads[mesh.buckets[facing] as usize..mesh.buckets[facing + 1] as usize];
-        run.sort_by_key(is_cut);
-        *count = run.iter().filter(|quad| is_cut(quad)).count() as u32;
+        let range = mesh.buckets[facing] as usize..mesh.buckets[facing + 1] as usize;
+        let mut run: Vec<([u32; 2], u32)> =
+            quads[range.clone()].iter().copied().zip(light[range.clone()].iter().copied()).collect();
+        run.sort_by_key(|(quad, _)| is_cut(quad));
+        *count = run.iter().filter(|(quad, _)| is_cut(quad)).count() as u32;
+        for ((quad, lit), at) in run.into_iter().zip(range) {
+            (quads[at], light[at]) = (quad, lit);
+        }
     }
-    (quads, counts)
+    (quads, light, counts)
 }
 
 /// The box chunk `mesh`'s faces lie in, in its blocks from its corner: its
@@ -923,12 +1024,21 @@ struct Pool {
     /// How its world's rings fade into each other, as its chunks' fades
     /// were last brought up by.
     faded: Arc<RingFades>,
+    /// The light round the camera as last taken: from the world's blocks
+    /// and light, from which block, and each block's.
+    volume: Option<(Arc<voxear_terrain::blocks::BlockMap>, Arc<LightMap>, [i32; 3], Arc<[u8]>)>,
 }
 
 impl Pool {
+    /// Its quads, then their light, a word each, as many as it has room for.
     fn create(gpu: &Gpu, capacity: u64) -> Result<Buffer> {
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        gpu.create_buffer("block quads", QUADS_AT + capacity * 8, usage, MemoryLocation::GpuOnly)
+        gpu.create_buffer("block quads", QUADS_AT + capacity * 12, usage, MemoryLocation::GpuOnly)
+    }
+
+    /// Where its quads' light starts.
+    fn light_at(&self) -> u64 {
+        QUADS_AT + self.capacity * 8
     }
 
     fn new(gpu: &Gpu, block_size: f32, smooth: bool) -> Result<Self> {
@@ -958,6 +1068,7 @@ impl Pool {
             proxied: None,
             placed: None,
             shown: None,
+            volume: None,
         })
     }
 
@@ -1028,8 +1139,9 @@ impl Pool {
                     self.space.alloc(count).expect("room after growing")
                 }
             };
-            let (quads, cut) = arranged(mesh, slot, &self.cut);
+            let (quads, light, cut) = arranged(mesh, slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
+            stage(bytemuck::cast_slice(&light), self.light_at() + first * 4);
             // The world's own blocks drawn past where they are made, at level -1, drawn as its own are.
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0].max(0)]), u64::from(slot) * 16);
             stage(bytemuck::cast_slice(&fade_times(&world.fades, key)), FADES_AT + u64::from(slot) * 8);
@@ -1095,9 +1207,10 @@ impl Pool {
         }
         for (key, held) in &mut self.held {
             held.first = self.space.alloc(held.mesh.quads.len() as u64).expect("room in a larger pool");
-            let quads;
-            (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
+            let (quads, light);
+            (quads, light, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
+            stage(bytemuck::cast_slice(&light), QUADS_AT + capacity * 8 + held.first * 4);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0].max(0)]), u64::from(held.slot) * 16);
             stage(bytemuck::cast_slice(&fade_times(&self.faded, *key)), FADES_AT + u64::from(held.slot) * 8);
         }
@@ -1113,10 +1226,12 @@ impl Pool {
             return;
         }
         self.cut = cut;
+        let light_at = self.light_at();
         for held in self.held.values_mut() {
-            let quads;
-            (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
+            let (quads, light);
+            (quads, light, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
+            stage(bytemuck::cast_slice(&light), light_at + held.first * 4);
         }
         self.draws = None;
     }
@@ -1194,8 +1309,10 @@ pub(crate) struct DrawnBlocks {
     pub lit_by: Option<Entity>,
     pub block_size: f32,
     pub smooth: bool,
-    /// Where its pool's chunks' places start, and its quads.
+    /// Where its pool's chunks' places start, and its quads; and where its
+    /// quads' light starts.
     pub address: u64,
+    pub light: u64,
     pub chunks: Arc<[ChunkDraw]>,
     /// Its chunks in groups of neighbours, as `chunks` holds them in order.
     pub groups: Arc<[ChunkGroup]>,
@@ -1228,6 +1345,9 @@ pub(crate) struct DrawnBlocks {
     pub covered: [u32; 8],
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
+    /// Lit by the light kept for its blocks, that light round the camera:
+    /// from which block, and each block's (see [`GpuLightVolume`]).
+    pub volume: Option<([i32; 3], Arc<[u8]>)>,
     /// The index buffer a world of cubes is drawn with (see [`quad_indices`]).
     pub indices: vk::Buffer,
 }
@@ -1476,15 +1596,13 @@ impl BlockWorlds {
             if any_hidden && crate::scene::hidden(world, entity) {
                 continue;
             }
-            let look = world
-                .get::<BlockLook>(entity)
-                .cloned()
-                .unwrap_or_else(|| BlockLook {
-                    material: assets.default_material,
-                    surfaces: Arc::from([]),
-                    voxels: BlockVoxels::default(),
-                    motions: Arc::from([]),
-                });
+            let look = world.get::<BlockLook>(entity).cloned().unwrap_or_else(|| BlockLook {
+                material: assets.default_material,
+                surfaces: Arc::from([]),
+                voxels: BlockVoxels::default(),
+                motions: Arc::from([]),
+                light: BlockLight::default(),
+            });
             let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
             if self.resident.get(&entity).is_some_and(changed) {
                 let pool = self.resident.remove(&entity).expect("held");
@@ -1669,6 +1787,26 @@ impl BlockWorlds {
                     pool.placed = None;
                 }
             }
+            // Lit by its blocks' light, that light round the camera, taken again as the camera goes a few blocks on
+            // or the blocks change.
+            let lit = look.light.kept && !blocks.smooth && turn.is_none();
+            let volume = camera.filter(|_| lit).map(|camera| {
+                let at = ((camera - corner) / blocks.block_size).floor().as_ivec3().to_array();
+                let origin =
+                    [0, 1, 2].map(|i| (at[i] - LIGHT_VOLUME[i] / 2).div_euclid(LIGHT_VOLUME_STEP) * LIGHT_VOLUME_STEP);
+                let kept = pool.volume.as_ref().filter(|(map, light, from, _)| {
+                    Arc::ptr_eq(map, &blocks.blocks) && Arc::ptr_eq(light, &blocks.light) && *from == origin
+                });
+                match kept {
+                    Some((.., bytes)) => (origin, bytes.clone()),
+                    None => {
+                        let bytes: Arc<[u8]> =
+                            light::volume(&blocks.blocks, &blocks.faces, &blocks.light, origin, LIGHT_VOLUME).into();
+                        pool.volume = Some((blocks.blocks.clone(), blocks.light.clone(), origin, bytes.clone()));
+                        (origin, bytes)
+                    }
+                }
+            });
             let placing = voxear_core::profile_marker!("Ray Places").scope();
             let placed = pool
                 .placed
@@ -1695,6 +1833,7 @@ impl BlockWorlds {
                 block_size: blocks.block_size,
                 smooth: blocks.smooth,
                 address: pool.buffer.address,
+                light: pool.buffer.address + pool.light_at(),
                 chunks,
                 groups,
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
@@ -1717,6 +1856,7 @@ impl BlockWorlds {
                 cover: world.get::<BlockTints>(entity).map_or([0.0; 2], |tints| tints.cover),
                 covered: world.get::<BlockTints>(entity).map_or([0; 8], |tints| tints.covered),
                 id: None,
+                volume,
                 indices,
             };
             if whole && let Some(old) = self.leaving.remove(&entity) {
@@ -2030,6 +2170,32 @@ pub(crate) fn gather(
     lamps: &crate::shadow_cache::Lamps,
     sun_pages: &[(usize, [[f32; 4]; 6])],
 ) -> Option<ViewBlocks> {
+    // The light round the camera of the world lit by its blocks' light it is in, or the first: or none.
+    let camera_at = Vec3::from(extracted.frame.camera_position) + offset;
+    let inside = |blocks: &&DrawnBlocks| {
+        blocks.volume.as_ref().is_some_and(|(origin, _)| {
+            let at = ((camera_at - blocks.corner) / blocks.block_size).floor().as_ivec3().to_array();
+            (0..3).all(|i| (origin[i]..origin[i] + LIGHT_VOLUME[i]).contains(&at[i]))
+        })
+    };
+    let around = drawn.iter().take(MAX_BLOCK_WORLDS).find(inside);
+    let volume = around.and_then(|blocks| Some((blocks, blocks.volume.as_ref()?)));
+    let header = volume.map_or(GpuLightVolume::default(), |(blocks, (origin, _))| {
+        let glow = blocks.look.light.glow;
+        let origin_at = blocks.corner - offset
+            + Vec3::new(origin[0] as f32, origin[1] as f32, origin[2] as f32) * blocks.block_size;
+        GpuLightVolume {
+            origin: *origin,
+            found: 1,
+            corner: origin_at.into(),
+            block_size: blocks.block_size,
+            glow: [glow.x, glow.y, glow.z, DARKEST_SKY],
+        }
+    });
+    buffer.write(LIGHT_VOLUME_AT as u64, std::slice::from_ref(&header));
+    if let Some((_, (_, bytes))) = volume {
+        buffer.write(LIGHT_BYTES_AT as u64, &bytes[..]);
+    }
     if drawn.is_empty() {
         return None;
     }
@@ -2073,6 +2239,9 @@ pub(crate) fn gather(
         }
         // A look pack the player wears says how every world's faces are cut into small cubes.
         let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
+        // Lit by the light kept for its blocks, a world of cubes that says so.
+        let lit = blocks.look.light.kept && !blocks.smooth;
+        let glow = blocks.look.light.glow;
         // Its rings fading into each other, a world of cubes without end seen from where it is looked at from.
         let fades = &blocks.fades;
         let fading = rings && !blocks.smooth && blocks.turn.is_none() && fades.reach > 0.0;
@@ -2087,7 +2256,9 @@ pub(crate) fn gather(
             surface_count: looks.len() as u32,
             material: blocks.look.material.0,
             anchor: anchors.get(&blocks.lit_by.unwrap_or(blocks.entity)).copied().unwrap_or(0),
-            flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 } | if blocks.turn.is_some() { BLOCKS_TURNED } else { 0 },
+            flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 }
+                | if blocks.turn.is_some() { BLOCKS_TURNED } else { 0 }
+                | if lit { BLOCKS_LIT } else { 0 },
             voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
             sea_top: blocks.sea_top.unwrap_or(crate::sea::ANY_WATER),
@@ -2109,6 +2280,9 @@ pub(crate) fn gather(
                 false => [0.0; 4],
             },
             cover: blocks.cover,
+            glow: [glow.x, glow.y, glow.z, DARKEST_SKY],
+            light: blocks.light,
+            light_pad: [0; 2],
         });
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
@@ -2695,14 +2869,19 @@ mod tests {
         let quad = |x: u32, surface: u8| pack([x, 0, 0], [1, 1], 0, surface, [3; 4]);
         let mut mesh = ChunkMesh { quads: vec![quad(0, 1), quad(1, 0), quad(2, 2), quad(3, 1)], ..Default::default() };
         mesh.buckets = [0, 3, 4, 4, 4, 4, 4, 4, 4];
+        // Each quad's light, by the place it came in: it goes where its quad goes.
+        mesh.light = vec![10, 11, 12, 13];
         let cut: Arc<[bool]> = Arc::from([false, true, false]);
-        let (quads, counts) = arranged(&mesh, 5, &cut);
+        let (quads, light, counts) = arranged(&mesh, 5, &cut);
         let surfaces: Vec<u8> = quads.iter().map(|quad| quad[1] as u8).collect();
         assert_eq!(surfaces, [0, 2, 1, 1], "the solid first in the first facing, in the order they came");
+        assert_eq!(light, [11, 12, 10, 13], "each quad's light with it");
         assert_eq!(counts, [1, 1, 0, 0, 0, 0]);
         assert!(quads.iter().all(|quad| quad[1] >> 16 == 5), "each with its slot");
-        // A world with nothing cut out keeps its quads as they came.
-        assert_eq!(arranged(&mesh, 0, &Arc::from([false; 3])).1, [0; FACINGS]);
+        // A world with nothing cut out keeps its quads as they came; one made with no light is open sky.
+        assert_eq!(arranged(&mesh, 0, &Arc::from([false; 3])).2, [0; FACINGS]);
+        let unlit = ChunkMesh { light: Vec::new(), ..mesh.clone() };
+        assert_eq!(arranged(&unlit, 0, &cut).1, [OPEN_SKY_WORD; 4]);
         // Drawn from the pool's 100th quad: the cut runs are the last of each facing.
         let draw = ChunkDraw {
             key: [0; 4],

@@ -1171,10 +1171,14 @@ often and how large, and how the sea is drawn.
 viewer, and gives the renderer three things. `WeatherPlaces` is each storm as a `WeatherPlace`: its middle in the
 world, its reach and eye, how rough it makes the sea, and the `WeatherAmounts` it adds at its middle, which
 `storms::amounts(kind, strength, celsius, humidity)` makes from the open air's temperature there
-(`heat::open_air`: the climate and the time of day, with no shelter or sources). `Weather::set_here` is what the
-storms add where the viewer stands, by the temperature there; `Weather::now` is then the more of the level's own
-weather and that, so rain, snow, fog, wind, wet ground and lightning follow the viewer into and out of a storm
-with nothing else changed. `RoughSea` is the sea: its look, swell height, heading, the storms' clock as its time,
+(`heat::open_air`: the climate and the time of day, with no shelter or sources). Over the last 3 km before 9 km
+past its reach a place is drawn fainter, to nothing where it is no longer looked for: its cloud spreads kilometres
+past its reach, and one that came into the list whole filled in a patch of sky as the viewer walked the last few
+metres. `Weather::set_here` is what the storms add where the viewer stands, by the temperature there;
+`Weather::now` is then the more of the level's own weather and that, so rain, snow, fog, wind, wet ground,
+lightning and the light follow the viewer into and out of a storm. The clouds' cover, thickness and density are
+the level's own weather (`Weather::everywhere`) alone: the storm's cloud is drawn where it lies, and taking what it
+adds where the viewer stands reshaped every cloud in the sky as the player walked. `RoughSea` is the sea: its look, swell height, heading, the storms' clock as its time,
 and the nearest whirlpools.
 
 The frame carries all of it as one `GpuSea` (`Sea` in the shaders): up to eight places with their skies and
@@ -3808,7 +3812,14 @@ Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by wh
 blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
 way they face. The corners' shade dims the light from all round, the less of it and the ambient occlusion pass's,
-and leaves the sun to its shadow. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
+and leaves the sun to its shadow. A world of cubes keeps light for each block (`blocks::light`): sky light from open
+sky and block light from blocks that give it, 0 to 15 each, flooded a step less a block, worked out exactly for a
+box from the blocks within 15 of it and the columns' tops, never saved. The streamer lights a column from the nine
+round it as its faces are made; an edit solves a box round itself again and draws again the chunks whose light
+changed. Each quad has a third word beside its two, its corners' light (the mean of the open blocks touching each
+corner), kept in its own region of the pool, and greedy merging keys on it. With `BlockLighting::Blocks`, the
+default, `blocks.slang` and `shading.slang` light a face by it in place of the GI's probes: the sky's light by sky
+light, the world's glow colour by block light, the sun past its shadows by sky light. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
 and each sun cascade only their faces turned towards the sun. A world's faces can be drawn as made of small cubes
 (`BlockVoxels` on its `BlockLook`, `voxels` and `relief` in its file): `blockCubes` walks the camera's ray across a

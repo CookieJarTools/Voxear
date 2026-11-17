@@ -11,6 +11,14 @@
 //! are kept by the way they face, so a chunk's faces turned away from the
 //! camera are never drawn.
 //!
+//! A world whose light is kept (see `light`) gives each quad a third word
+//! beside them ([`ChunkMesh::light`]): each corner's light, a byte each,
+//! its sky light over its block light, the mean of the blocks before the
+//! face that touch that corner and let light in, as smooth light is. Faces
+//! are merged only where their corners' light is the same too. A loose
+//! quad, a block of parts' and water's take their own block's light at
+//! every corner.
+//!
 //! Beside them, the same faces merged by surface alone, as triangles, for
 //! collision and for the GI's rays, which need no shading.
 //!
@@ -75,6 +83,7 @@
 //! where its falls land (`ChunkMesh::falls`), for the splash at each foot.
 
 use super::flow::Water;
+use super::light::{LightAt, Passes, passes};
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
@@ -200,6 +209,10 @@ pub struct ChunkMesh {
     /// falling water stand in it and over it, as far as 255. Nothing draws
     /// them; the splash at a fall's foot is thrown up from them.
     pub falls: Vec<[u8; 4]>,
+    /// Each quad's corners' light, a word a quad beside its two, a byte a
+    /// corner in the order its corners' shading has them (see
+    /// [`light_word`]): empty for a chunk made with no light.
+    pub light: Vec<u32>,
 }
 
 impl ChunkMesh {
@@ -303,6 +316,17 @@ fn block_number([x, y, z]: [i32; 3]) -> u32 {
     h ^ (h >> 15)
 }
 
+/// A quad's corners' light as its third word, a byte a corner from its
+/// first: each `light::Light`, its sky light over its block light.
+pub fn light_word(corners: [u8; 4]) -> u32 {
+    u32::from_le_bytes(corners)
+}
+
+/// A quad's corners' light from its third word, as [`light_word`] keeps it.
+pub fn corner_lights(word: u32) -> [u8; 4] {
+    word.to_le_bytes()
+}
+
 /// A quad as two words.
 pub fn pack(at: [u32; 3], size: [u32; 2], facing: usize, surface: u8, shade: [u8; 4]) -> [u32; 2] {
     let first = at[0] | at[1] << 5 | at[2] << 10 | (size[0] - 1) << 15 | (size[1] - 1) << 20 | (facing as u32) << 25;
@@ -344,6 +368,19 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
 /// the chunk columns `made` picks, by place along x and z, are made: past
 /// the others the world goes on, so its water shows no face towards them.
 pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
+    mesh_lit(map, key, faces, made, None)
+}
+
+/// Chunk `key`'s faces in `map`, as [`mesh_made`] makes them, each quad
+/// with its corners' light from `light` where it is given (see
+/// [`ChunkMesh::light`]).
+pub fn mesh_lit(
+    map: &BlockMap,
+    key: [i32; 3],
+    faces: &[BlockFaces],
+    made: &dyn Fn([i32; 2]) -> bool,
+    light: Option<&dyn LightAt>,
+) -> ChunkMesh {
     let Some(chunk) = map.chunk(key) else { return ChunkMesh::default() };
     if chunk.is_air() || map.buried(key, faces) {
         return ChunkMesh::default();
@@ -370,6 +407,42 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     }
     let block =
         |p: [i32; 3]| padded[((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize];
+    // Each padded block's light, and whether light gets into it, where the world's light is kept.
+    let lights = light.map(|light| light.padded(key));
+    let lets_in: Vec<bool> = match lights {
+        Some(_) => {
+            let into =
+                (0..faces.len().max(1)).map(|id| passes(faces, id as BlockId) != Passes::Stops).collect::<Vec<_>>();
+            padded.iter().map(|&id| into.get(usize::from(id)).copied().unwrap_or(true)).collect()
+        }
+        None => Vec::new(),
+    };
+    let padded_at = |p: [i32; 3]| ((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize;
+    // A face's corners' light: each the mean of the blocks before the face touching that corner that light gets
+    // into, a corner's block only where light gets round to it past one of the two beside it.
+    let corner_light = |beyond: [i32; 3], u: usize, v: usize| -> u32 {
+        let Some(lights) = &lights else { return 0 };
+        let corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)].map(|(su, sv)| {
+            let at = |du: i32, dv: i32| {
+                let mut q = beyond;
+                (q[u], q[v]) = (q[u] + du, q[v] + dv);
+                padded_at(q)
+            };
+            let (own, one, two, corner) = (at(0, 0), at(su, 0), at(0, sv), at(su, sv));
+            let open = |at: usize| lets_in[at];
+            let taken =
+                [(own, true), (one, open(one)), (two, open(two)), (corner, open(corner) && (open(one) || open(two)))];
+            let (mut sky, mut glow, mut count) = (0u32, 0u32, 0u32);
+            for (at, _) in taken.iter().filter(|(_, take)| *take) {
+                sky += u32::from(super::light::sky_of(lights[*at]));
+                glow += u32::from(super::light::glow_of(lights[*at]));
+                count += 1;
+            }
+            let mean = |sum: u32| ((sum + count / 2) / count) as u8;
+            super::light::light_of(mean(sky), mean(glow))
+        });
+        light_word(corners)
+    };
     // A block of parts closes no corner in: a slab beside a face leaves it as light.
     let solid = |p: [i32; 3]| is_ground(faces, block(p)) && !is_part(faces, block(p));
     let hidden_by = |p: [i32; 3]| hides(faces, block(p));
@@ -386,15 +459,18 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     let kind = |id: BlockId| faces.get(usize::from(id)).copied().unwrap_or_default();
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
-    let mut shaded = vec![0u32; side * side];
+    // Each face of the layer's key to merge by: its surface, shading and what keeps it apart, and over those its
+    // corners' light.
+    let mut shaded = vec![0u64; side * side];
     // Which surface each face of the layer shows, for its triangles.
-    let mut plain = vec![0u32; side * side];
+    let mut plain = vec![0u64; side * side];
     // What each face of the layer keeps where its size would be: which faces round it it joins, for the blocks
     // that join, and what creeps over it, for a face drawn with its look's twin.
     let mut joined = vec![0u32; side * side];
     // The quads more over faces of the layer that more than one block creeps over, or one from an edge and a
     // corner apart from it: drawn after the layer's own.
     let mut layered: Vec<[u32; 2]> = Vec::new();
+    let mut layered_light: Vec<u32> = Vec::new();
     for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
         mesh.buckets[facing] = mesh.quads.len() as u32;
         let step = if out { 1 } else { -1 };
@@ -431,6 +507,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         let (one, two, corner) = (at(su, 0), at(0, sv), at(su, sv));
                         if one == 1 && two == 1 { 0 } else { 3 - one - two - corner }
                     });
+                    let lit = corner_light(beyond, u, v);
                     let mut key = pack([0; 3], [1, 1], 0, look, shade)[1];
                     if any_sway && sways(faces, id) {
                         // Its corners that only air, water and other swaying blocks meet at are free to move.
@@ -516,14 +593,16 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                             (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
                             let [place, second] = pack(at, [1, 1], facing, look | MIXED_LOOK, shade);
                             layered.extend(ways[1..].iter().map(|&way| [place | mixed(way), second]));
+                            layered_light.extend(ways[1..].iter().map(|_| lit));
                         }
                     }
-                    shaded[j * side + i] = key + 1;
-                    plain[j * side + i] = u32::from(look) + 1;
+                    shaded[j * side + i] = (u64::from(key) | u64::from(lit) << 32) + 1;
+                    plain[j * side + i] = u64::from(look) + 1;
                 }
             }
             // Merged by surface and shading, to draw.
-            for (i, j, w, h, key) in merge(&mut shaded, side) {
+            for (i, j, w, h, keyed) in merge(&mut shaded, side) {
+                let (key, lit) = (keyed as u32, (keyed >> 32) as u32);
                 let mut at = [0u32; 3];
                 (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
                 let (look, shade) = (key as u8, std::array::from_fn(|c| ((key >> (8 + 2 * c)) & 3) as u8));
@@ -532,8 +611,15 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                 // block creeps over what does: a block wide and high, its size is nothing there. Any other face
                 // keeps nothing.
                 mesh.quads.push([first | joined[j * side + i] | ((key >> 16) & 15) << 28, second]);
+                if lights.is_some() {
+                    mesh.light.push(lit);
+                }
             }
             mesh.quads.append(&mut layered);
+            if lights.is_some() {
+                mesh.light.append(&mut layered_light);
+            }
+            layered_light.clear();
             // Merged by surface alone, as triangles: the GI's rays take each one's colour from its surface.
             for (i, j, w, h, look) in merge(&mut plain, side) {
                 let mut corner = [0.0f32; 3];
@@ -644,12 +730,35 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         let beside = |d: i32| (-1..=1).any(|dy| (-1..=1).any(|dz| holds([key[0] + d, key[1] + dy, key[2] + dz])));
         let falls = (-1..=1).any(beside);
         let fill = fills(map, key);
-        mesh.quads.extend(water_quads((&block, &fill), faces, |at, beyond| open(beyond) && made(at), falls));
+        let lit = |p: [i32; 3]| lights.as_ref().map_or(0, |lights| lights[padded_at(p)]);
+        mesh.quads.extend(water_quads((&block, &fill), faces, |at, beyond| open(beyond) && made(at), falls, &lit));
         if holds(key) {
             mesh.falls = water_falls(map, key, faces);
         }
     }
     mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
+    // A loose quad, a block of parts' and water's: their own block's light at every corner, a block of parts' pair
+    // of words both their first's.
+    if let Some(lights) = &lights {
+        let own = |word: u32| {
+            let at = [word & 31, word >> 5 & 31, word >> 10 & 31].map(|v| v as i32);
+            light_word([lights[padded_at(at)]; 4])
+        };
+        let (parts, words) = mesh.parts();
+        let quads = &mesh.quads[mesh.light.len()..];
+        let first = mesh.light.len() as u32;
+        let rest: Vec<u32> = quads
+            .iter()
+            .enumerate()
+            .map(|(n, quad)| {
+                let at = first + n as u32;
+                let in_parts = (parts..parts + words).contains(&at);
+                let head = if in_parts && (at - parts) % 2 == 1 { mesh.quads[at as usize - 1][0] } else { quad[0] };
+                own(head)
+            })
+            .collect();
+        mesh.light.extend(rest);
+    }
     mesh
 }
 
@@ -1100,15 +1209,17 @@ fn water_falls(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> Vec<[u8; 
 /// blocks it has fallen at its top, and one, in place of how far its lower
 /// corners are raised; and a still top beside where a fall lands keeps the
 /// sides it lands on, in place of how far its upper corners are lowered.
+/// Blocks of water whose `lit` light differs are never merged.
 pub(super) fn water_quads(
     (block, fill): (&dyn Fn([i32; 3]) -> BlockId, &dyn Fn([i32; 3]) -> Fill),
     faces: &[BlockFaces],
     meets: impl Fn([i32; 3], BlockId) -> bool,
     falls: bool,
+    lit: &dyn Fn([i32; 3]) -> u8,
 ) -> Vec<[u32; 2]> {
     let side = CHUNK as usize;
     let mut quads = Vec::new();
-    let mut mask = vec![0u32; side * side];
+    let mut mask = vec![0u64; side * side];
     let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| super::flow::water_height(fill(p)));
     let falling = |p: [i32; 3]| is_water(faces, block(p)) && Water::of(fill(p)) == Water::Falling;
     // How many blocks of falling water stand over `p`, as far as FALLEN_MOST: a fall running on past the chunk's
@@ -1180,10 +1291,11 @@ pub(super) fn water_quads(
                         _ => (rise, drop),
                     };
                     let shaped = u32::from(rise) << 12 | u32::from(drop) << 8 | (up.unwrap_or(7) as u32) << 16;
-                    mask[j * side + i] = (look | shaped | across << 19) + 1;
+                    mask[j * side + i] = (u64::from(look | shaped | across << 19) | u64::from(lit(p)) << 32) + 1;
                 }
             }
             for (i, j, w, h, key) in merge(&mut mask, side) {
+                let key = key as u32;
                 let mut at = [0u32; 3];
                 (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
                 let [first, _] = pack(at, [w as u32, h as u32], facing, key as u8, [0; 4]);
@@ -1197,7 +1309,7 @@ pub(super) fn water_quads(
 /// The rectangles of equal values in a `side` by `side` mask, row after
 /// row, each as wide and then as tall as it goes: where each starts, its
 /// width and height, and its value less one. The mask is left empty.
-fn merge(mask: &mut [u32], side: usize) -> Vec<(usize, usize, usize, usize, u32)> {
+fn merge(mask: &mut [u64], side: usize) -> Vec<(usize, usize, usize, usize, u64)> {
     let mut found = Vec::new();
     for j in 0..side {
         let mut i = 0;
@@ -1907,6 +2019,63 @@ mod tests {
             area[usize::from(surface)] += way.length() / 2.0;
         }
         assert_eq!(area, [0.0, 512.0, 64.0, 512.0, 512.0, 64.0, 512.0], "the slab's faces whole");
+    }
+
+    #[test]
+    fn a_lit_face_takes_each_corners_light_from_the_blocks_before_it_and_merges_only_with_faces_lit_alike() {
+        use crate::blocks::light::{LightMap, glow_of, sky_of};
+        let mut map = BlockMap::default();
+        // A floor over the chunk, a roof 2 blocks over it from x 8 to 15 the whole way along z, and a lamp on it.
+        for z in 0..32 {
+            for x in 0..32 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        for z in -16..48 {
+            for x in 8..16 {
+                map.set([x, 3, z], 1);
+            }
+        }
+        map.set([24, 1, 16], 2);
+        let lamp = BlockFaces { light: 14, ..BlockFaces::new(2, 2, 2) };
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), lamp];
+        let light = LightMap::of(&map, &faces);
+        let lit = mesh_lit(&map, [0, 0, 0], &faces, &|_| true, Some(&light));
+        let plain = mesh_chunk(&map, [0, 0, 0], &faces);
+        assert_eq!(lit.light.len(), lit.quads.len(), "a word of light for every quad");
+        assert!(plain.light.is_empty(), "none made with no light");
+        // The same faces either way, in more quads where their light differs.
+        let area = |mesh: &ChunkMesh| mesh.quads.iter().map(|&q| unpack(q).1.iter().product::<u32>()).sum::<u32>();
+        assert_eq!(area(&lit), area(&plain));
+        assert!(lit.quads.len() > plain.quads.len());
+        // The floor's top, by the block each quad starts at, with its corners' light.
+        let tops: Vec<_> = (lit.buckets[2]..lit.buckets[3])
+            .map(|i| (unpack(lit.quads[i as usize]), corner_lights(lit.light[i as usize])))
+            .filter(|(quad, _)| quad.0[1] == 0)
+            .collect();
+        let at = |x: u32, z: u32| {
+            // A top's first side runs along z and its second along x.
+            let covers = |q: &([u32; 3], [u32; 2], usize, u8, [u8; 4])| {
+                (q.0[0]..q.0[0] + q.1[1]).contains(&x) && (q.0[2]..q.0[2] + q.1[0]).contains(&z)
+            };
+            tops.iter().find(|(quad, _)| covers(quad)).map(|(_, light)| *light).expect("a top there")
+        };
+        assert_eq!(at(2, 2), [0xF0; 4], "open sky, far from the lamp");
+        let under = at(11, 16);
+        assert!(under.iter().all(|&corner| sky_of(corner) < 14), "in the roof's shade: {under:x?}");
+        let open = at(4, 16);
+        assert!(open.iter().all(|&corner| sky_of(corner) == 15), "out from under it: {open:x?}");
+        let by_lamp = at(23, 16);
+        assert!(by_lamp.iter().all(|&corner| glow_of(corner) >= 11), "by the lamp: {by_lamp:x?}");
+        assert!(
+            by_lamp.iter().any(|&corner| glow_of(corner) == 13),
+            "brightest at the corners it touches: {by_lamp:x?}"
+        );
+        // A quad merges faces only where their light is the same: every quad's corners within the roof's shade alike.
+        for (quad, corners) in &tops {
+            let shaded = corners.iter().filter(|&&corner| sky_of(corner) < 15).count();
+            assert!(shaded == 0 || quad.1[0] * quad.1[1] <= 32, "a long quad of shade is a row: {quad:?} {corners:x?}");
+        }
     }
 
     #[test]

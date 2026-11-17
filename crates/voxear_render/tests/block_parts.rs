@@ -137,7 +137,13 @@ fn scene(renderer: &mut Renderer, file: &BlockFile, blocks: BlockMap) -> (World,
     let motions: Vec<GpuBlockMotion> =
         file.motions().iter().map(|(motion, swing)| GpuBlockMotion::of(motion.as_ref(), *swing)).collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: motions.into() };
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: motions.into(),
+        light: Default::default(),
+    };
     let mut world = World::new();
     let entity = world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     world.spawn((Camera::default(), Transform::new(EYE, Quat::from_rotation_y(std::f32::consts::PI), Vec3::ONE)));

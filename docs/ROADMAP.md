@@ -2907,6 +2907,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     245 s, with 922 CPU-seconds of work where it took 1,595; the settled picture the same. Flying, more of the
     world is made and drawn, so frames cost more while it comes in. Tests: a tile made from a column's answers is
     the tile made alone; what is kept lately.
+  - ~~**Block light:**~~ done: a world of cubes keeps light for each block, sky light and block light from 0 to 15
+    (`blocks::light`): the sky's straight down through air, water and glass and a step less a block from there,
+    shaded by leaves and blocks of parts, and the light of blocks that give it (a block's new **Light**, `light` in
+    its file, `Block.Light`), worked out exactly for a box from the blocks within 15 of it, never saved. The
+    streamer lights each column from the nine round it as its faces are made, and an edit floods its light again
+    round itself, drawing again the chunks whose light changed. Each quad has a third word, its corners' light, the
+    mean of the open blocks at each corner, and greedy merging keys on it. A Block World's new **Lighting**, Block
+    Light by default (Scene for the GI path), with **Light color** and **Light strength**, lights its faces by it in
+    place of the GI's probes: the sky's light by sky light, the sun past its shadows by it, caves dark and lamps
+    warm, the same under every look. A window of light round the camera lights the fog, models and plants among the
+    blocks, and block water too. `blocks.get` gives a block's light. On a copy of a block game's world: about 8 ms
+    to light a column against 35 ms to mesh it, 8 ms for an edit, 50 KB a column, under 0.1 ms a frame on the GPU.
+    Tests: light down a shaft and round a torch, flooded again as worked out whole; corners' light and merging;
+    a sealed room dark, lit by a lamp, sky-lit as the scene is; the same picture with GI on and off.
   - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
     solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
     each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that
@@ -3569,6 +3583,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   chunks; a second editor taking the link once the first has closed. Not done: terrain and plant brushes, the
   generator graph and the Model window by call rather than by file; pointer and key input; events pushed to
   tools.
+
+## Shader packs (planned)
+
+Programs that replace how a game is lit and finished, chosen by whoever plays, as look and texture packs are: a
+pack's own full-screen passes over the engine's buffers first, then its lighting of block faces, leaves and water
+with their sky light and block light, its sky and final pass, and its shadows. The plan, the stages, what every
+program reads, how it fits the frame graph, live reload, builds and costs: [SHADER_PACKS.md](SHADER_PACKS.md).
+Nothing built yet.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

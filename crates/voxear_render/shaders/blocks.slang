@@ -197,7 +197,9 @@ VertexOut blockVertex(uint vertexId : SV_VertexID, uint runStart : SV_StartInsta
     // Bounced light is read where the block stands, and a moving part's pictures where it rests.
     o.moved = swayed + b.posedBy;
     o.hidden = 0.0;
-    o.lightmapUv = 0.0;
+    // A world lit by the light kept for its blocks carries each corner's sky light and block light in place of a
+    // lightmap's place, for terrainShading.
+    o.lightmapUv = (world.flags & BLOCKS_LIT) != 0 ? b.lit : 0.0;
     return o;
 }
 
@@ -770,6 +772,10 @@ bool terrainShading(
     // its shadow's to dim, so a sunlit floor stays sunlit up to the wall beside it.
     bool loose = !smooth && ((input.lod >> 8) & 3) != 0;
     terrainOcclusion = smooth || loose ? 1.0 : lerp(0.35, 1.0, saturate(input.uv.x));
+    // Lit by the light kept for its blocks: its sky light and block light, smooth across it from its corners.
+    terrainBlockLit = !smooth && (world.flags & BLOCKS_LIT) != 0;
+    terrainBlockLight = saturate(input.lightmapUv);
+    terrainGlow = world.glow;
     if (world.surfaceCount == 0)
     {
         return false;

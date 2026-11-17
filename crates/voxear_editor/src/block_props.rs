@@ -34,7 +34,7 @@ use voxear_terrain::{
         block::BlockDef,
         chunk::{AIR, BlockId},
         edits::{self, BlockEdits, Resize},
-        file::{BlockCover, BlockFile, BlockKind, MAX_LOOKS},
+        file::{BlockCover, BlockFile, BlockKind, BlockLighting, MAX_LOOKS},
         vox::VoxFile,
     },
     generate::WorldGen,
@@ -496,6 +496,12 @@ pub enum BlockField {
     /// block's side, and how many deep they sink.
     Voxels,
     Relief,
+    /// How its faces take the light from all round them, and the colour
+    /// and strength of the light its blocks give (see
+    /// `voxear_terrain::blocks::file::BlockLighting`).
+    Lighting,
+    GlowColor,
+    Glow,
     /// How many blocks its ground reaches along x and z, and how many up.
     GroundSize,
     GroundHeight,
@@ -626,6 +632,11 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                 if file.voxels > 0 {
                     fields.push(F::Relief);
                 }
+                // Lit by its blocks' light, or as the scene is; a smooth surface is lit as the scene is.
+                fields.push(F::Lighting);
+                if file.lighting.is_blocks() {
+                    fields.extend([F::GlowColor, F::Glow]);
+                }
             }
             fields.push(F::Ground);
             // A generator whose graph has a Volume makes the overhangs and caves itself.
@@ -687,6 +698,9 @@ pub fn label(field: BlockField) -> &'static str {
         F::Smooth => "Smooth",
         F::Voxels => "Voxels",
         F::Relief => "Relief",
+        F::Lighting => "Lighting",
+        F::GlowColor => "Light color",
+        F::Glow => "Light strength",
         F::GroundSize => "Ground size",
         F::GroundHeight => "Ground height",
         F::Shadows => "Cast shadows",
@@ -770,10 +784,14 @@ pub fn unit(field: BlockField) -> Option<&'static str> {
     }
 }
 
+/// How a world of cubes may be lit, each with the name its menu shows.
+const LIGHTINGS: [(BlockLighting, &str); 2] = [(BlockLighting::Blocks, "Block Light"), (BlockLighting::Scene, "Scene")];
+
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(field: BlockField) -> Option<[f32; 2]> {
     match field {
         F::Caves | F::Ramps => Some([0.0, 1.0]),
+        F::Glow => Some([0.0, 4.0]),
         F::Plains | F::Rolling | F::Steps | F::Canyons | F::Spires | F::Peaks | F::Basins => Some([0.0, 4.0]),
         _ => None,
     }
@@ -943,6 +961,13 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Smooth => Value::Toggle(file()?.smooth),
         F::Voxels => Value::Number(file()?.voxels as f32),
         F::Relief => Value::Number(file()?.relief),
+        F::Lighting => {
+            let lighting = file()?.lighting;
+            let at = LIGHTINGS.iter().position(|(kind, _)| *kind == lighting).unwrap_or_default();
+            Value::Choice(at, LIGHTINGS.iter().map(|(_, name)| name.to_string()).collect())
+        }
+        F::GlowColor => Value::Color(file()?.glow_color),
+        F::Glow => Value::Number(file()?.glow),
         F::GroundSize => Value::Vector(file()?.ground.size.map(|v| v as f32).to_vec()),
         F::GroundHeight => Value::Number(file()?.ground.height as f32),
         F::Shadows => Value::Toggle(world.get::<BlockWorld>(entity)?.cast_shadows),
@@ -1098,6 +1123,12 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Relief, v) => {
             let deepest = voxear_terrain::blocks::file::DEEPEST_RELIEF;
             file.relief = number(v).map_or(file.relief, |deep| (deep * 2.0).round().clamp(0.0, deepest * 2.0) / 2.0);
+        }
+        (F::Lighting, Value::Choice(at, _)) => file.lighting = LIGHTINGS[(*at).min(LIGHTINGS.len() - 1)].0,
+        (F::GlowColor, Value::Color(color)) => file.glow_color = color.map(|c| c.clamp(0.0, 1.0)),
+        (F::Glow, v) => {
+            let brightest = voxear_render::BlockLight::BRIGHTEST;
+            file.glow = number(v).map_or(file.glow, |glow| glow.clamp(0.0, brightest));
         }
         (F::GroundSize, Value::Vector(v)) if v.len() >= 2 => {
             file.ground.size = [v[0], v[1]].map(|n| n.round().clamp(0.0, 4096.0) as u32);
@@ -1440,7 +1471,11 @@ fn restyle(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fil
             let surfaces: Vec<_> =
                 look.surfaces.iter().map(|surface| voxear_render::SurfaceLook { size, ..*surface }).collect();
             let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };
-            game.engine.world.insert(entity, BlockLook { surfaces: surfaces.into(), voxels, ..look });
+            let light = voxear_render::BlockLight {
+                kept: file.lighting.is_blocks() && !file.smooth,
+                glow: voxear_core::math::Vec3::from(voxear_engine::linear(file.glow_color)) * file.glow,
+            };
+            game.engine.world.insert(entity, BlockLook { surfaces: surfaces.into(), voxels, light, ..look });
         }
         return;
     };

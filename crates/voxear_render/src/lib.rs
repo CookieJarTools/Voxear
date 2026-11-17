@@ -176,7 +176,7 @@ pub use particles::{
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
-pub use blocks::{BlockCounts, BlockLook, BlockTints, BlockVoxels, GpuBlockMotion, GpuMotionKey, GpuMovingBlock, MAX_MOTIONS, MAX_MOVING};
+pub use blocks::{BlockCounts, BlockLight, BlockLook, BlockTints, BlockVoxels, GpuBlockMotion, GpuMotionKey, GpuMovingBlock, MAX_MOTIONS, MAX_MOVING};
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -3640,6 +3640,8 @@ impl View {
                 lightmap_uvs: assets.lightmap_uvs.address,
                 baked_instances,
                 bake_job: bake.map_or(0, |(bake, _)| bake.jobs),
+                block_light: blocks::light_volume_addresses(buffers.blocks.address)[0],
+                block_light_bytes: blocks::light_volume_addresses(buffers.blocks.address)[1],
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

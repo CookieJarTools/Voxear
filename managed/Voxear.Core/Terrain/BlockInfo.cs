@@ -44,6 +44,7 @@ internal sealed class BlockInfo
 		Usable = json.TryGetProperty("usable", out var usable) && usable.GetBoolean();
 		Chops = json.TryGetProperty("chops", out var chops) ? chops.GetInt32() : 0;
 		Fells = json.TryGetProperty("fells", out var fells) && fells.GetBoolean();
+		Light = json.TryGetProperty("light", out var light) ? light.GetInt32() : 0;
 		IsSapling = json.TryGetProperty("grows", out var grows) && grows.ValueKind == JsonValueKind.String;
 		covered = json.TryGetProperty("covered", out var under) && under.ValueKind == JsonValueKind.String ? under.GetString() : null;
 		foreach (var drop in json.GetProperty("drops").EnumerateArray())
@@ -66,6 +67,8 @@ internal sealed class BlockInfo
 	public int Chops { get; init; }
 
 	public bool Fells { get; init; }
+
+	public int Light { get; init; }
 
 	public bool IsSapling { get; init; }
 

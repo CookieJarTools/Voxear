@@ -1747,6 +1747,13 @@ struct BlockWorld
     // How far from the camera its grass takes the colour of the plants on it, in metres: from where they begin to
     // fade, over how far (blockCover in blocks.slang).
     float2 cover;
+    // Lit by the light kept for its blocks (BLOCKS_LIT, blockCornerLight in block_quads.slang): the colour of the
+    // light its blocks give, linear and as bright as it is, and over it how much of the sky's light a face with no
+    // sky light takes; and each quad's corners' light, a word a quad, a byte a corner, its sky light over its block
+    // light (voxear_terrain::blocks::mesh::ChunkMesh::light).
+    float4 glow;
+    uint* light;
+    uint2 lightPad;
 };
 
 // How long a coarse column takes to fade into the finer ones over it, in seconds (voxear_terrain::blocks::
@@ -1795,8 +1802,26 @@ struct MovingBlock
 };
 
 // A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).
+// The light kept for the blocks round the camera (src/blocks.rs, GpuLightVolume): of the world of cubes lit by it that
+// the camera is in, from its block `origin`, whose lowest corner is at `corner`, blocks `blockSize` a side,
+// BLOCK_LIGHT_VOLUME blocks along x, y and z, a byte each in blockLightBytes, along x, then z, then up, its sky
+// light over its block light, a block that stops light BLOCK_LIGHT_SOLID; `found` 0 for none. And the colour of its
+// blocks' light, linear and as bright as it is, over how much of the sky's light a face with no sky light takes.
+struct BlockLightVolume
+{
+    int3 origin;
+    uint found;
+    float3 corner;
+    float blockSize;
+    float4 glow;
+};
+
+static const int3 BLOCK_LIGHT_VOLUME = int3(96, 48, 96);
+static const uint BLOCK_LIGHT_SOLID = 0x0F;
+
 static const uint BLOCKS_SMOOTH = 1;
 static const uint BLOCKS_TURNED = 2;
+static const uint BLOCKS_LIT = 4;
 
 // A vertex of a terrain's dug ground (src/dug.rs): where it is, in metres from the terrain's corner, then the way the
 // ground faces there in two 12-bit numbers folded onto an octahedron, and the surface digging laid there (0 for the
@@ -1995,6 +2020,10 @@ struct Buffers
     // This frame's instances' baked light (lightmaps.slang), and a lightmap bake's work (light_bake.slang).
     BakedInstance* bakedInstances;
     BakeJob* bakeJob;
+    // The light kept for the blocks round the camera, and its blocks' light, a byte each (blockLightAround in
+    // shading.slang).
+    BlockLightVolume* blockLight;
+    uint* blockLightBytes;
 };
 
 struct Push
@@ -2017,6 +2046,76 @@ struct Push
 Buffers* buffers()
 {
     return push.buffers;
+}
+
+// How much of the sky's light from all round something lit by the light kept for blocks takes, by its sky light `sky`
+// from 0 to 1, the darkest `darkest` of it: little in the dark, all of it under open sky, each step less of it the
+// deeper in it is.
+float blockSkyShare(float sky, float darkest)
+{
+    return lerp(darkest, 1.0, sky * sky);
+}
+
+// How much of its blocks' light it takes, by its block light from 0 to 1: falling off as the light of a lamp does,
+// block by block from where it is given.
+float blockGlowShare(float glow)
+{
+    return glow * glow;
+}
+
+// How much of the sun it takes, by its sky light `sky` from 0 to 1, where `shadowed` says the sun's shadows reach it:
+// within them, all where any of the sky reaches it, as they say the rest, so no sun leaks into a cave through what
+// the shadows miss; past them, as much as it is open to the sky, in place of the shadows.
+float blockSunShare(float sky, bool shadowed)
+{
+    float steps = sky * 15.0;
+    return shadowed ? saturate((steps - 1.0) / 4.0) : smoothstep(9.0, 14.5, steps);
+}
+
+// The sky light and block light at `position`, each from 0 to 1, in the light kept for the blocks round the camera
+// (BlockLightVolume): read between the eight blocks round it that let light in, so it runs smoothly from block to
+// block and never takes the dark inside a wall; and the colour of its blocks' light. False where no light is kept
+// there; open sky past the blocks kept, and none deep in a wall.
+bool blockLightAround(float3 position, out float2 lit, out float4 glow)
+{
+    lit = float2(1.0, 0.0);
+    glow = 0.0;
+    BlockLightVolume* volume = buffers()->blockLight;
+    if (volume == nullptr || volume->found == 0)
+    {
+        return false;
+    }
+    float3 at = (position - volume->corner) / volume->blockSize - 0.5;
+    int3 low = int3(floor(at));
+    if (any(low < int3(-1)) || any(low >= BLOCK_LIGHT_VOLUME))
+    {
+        return false;
+    }
+    float3 f = at - float3(low);
+    float2 sum = 0.0;
+    float weight = 0.0;
+    for (uint corner = 0; corner < 8; corner++)
+    {
+        int3 step = int3(corner & 1, (corner >> 1) & 1, corner >> 2);
+        int3 cell = low + step;
+        uint light = 0xF0;
+        if (all(cell >= int3(0)) && all(cell < BLOCK_LIGHT_VOLUME))
+        {
+            uint index = (uint(cell.y) * uint(BLOCK_LIGHT_VOLUME.z) + uint(cell.z)) * uint(BLOCK_LIGHT_VOLUME.x) + uint(cell.x);
+            light = (buffers()->blockLightBytes[index >> 2] >> ((index & 3) * 8)) & 0xFF;
+        }
+        if (light == BLOCK_LIGHT_SOLID)
+        {
+            continue;
+        }
+        float3 share = lerp(1.0 - f, f, float3(step));
+        float w = share.x * share.y * share.z;
+        sum += w * float2(float(light >> 4), float(light & 15)) / 15.0;
+        weight += w;
+    }
+    glow = volume->glow;
+    lit = weight > 1e-4 ? sum / weight : float2(0.0, 0.0);
+    return true;
 }
 
 // Whether a lamp's shadow list, or the two-sided one beside it, holds anything this frame.

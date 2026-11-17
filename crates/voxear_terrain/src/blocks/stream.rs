@@ -49,8 +49,9 @@ use super::{
         BlockGenerate, column_chunks_asking,
         far::{self, FarTile, far_chunks, far_tile, far_tile_from},
     },
+    light::{ChunkLight, LightAt, heights, light_column},
     mesh::ChunkMesh,
-    mesh_any, mesh_made,
+    mesh_lit,
 };
 use crate::generate::WorldGen;
 
@@ -202,9 +203,15 @@ enum Finished {
         meshes: Vec<([i32; 3], ChunkMesh)>,
         built: u64,
     },
-    /// A near column's chunks' faces, and the chunks round it they were made
-    /// from.
-    Meshed { number: u64, at: [i32; 2], meshes: Vec<([i32; 3], ChunkMesh)>, from: BlockMap },
+    /// A near column's chunks' faces and light, a world of cubes', and the
+    /// chunks round it they were made from.
+    Meshed {
+        number: u64,
+        at: [i32; 2],
+        meshes: Vec<([i32; 3], ChunkMesh)>,
+        light: Vec<([i32; 3], ChunkLight)>,
+        from: BlockMap,
+    },
     /// A smooth coarse column's chunks' faces, made from its blocks and
     /// those of the columns round it.
     Joined { number: u64, level: u32, at: [i32; 2], meshes: Vec<([i32; 3], ChunkMesh)> },
@@ -721,13 +728,21 @@ impl BlockStreamer {
                     self.coarse.insert((level, at), meshes);
                     changed = true;
                 }
-                Finished::Meshed { at, meshes, from, .. } => {
+                Finished::Meshed { at, meshes, light, from, .. } => {
                     self.meshing.remove(&at);
                     // Blocks changed round it since are made into faces again, next.
                     let now = round_chunks(at, &columns, &world.blocks);
                     if !shown.contains(at) || self.drawn.contains(&at) || !same_chunks(&now, &from) {
                         self.again = true;
                         continue;
+                    }
+                    // Its light as its faces were made with it, in place of any a change flooded into it before.
+                    if !world.smooth {
+                        let kept = Arc::make_mut(&mut world.light);
+                        kept.forget_columns(&[at]);
+                        for (key, chunk) in light {
+                            kept.put(key, chunk);
+                        }
                     }
                     let kept = Arc::make_mut(&mut world.meshes);
                     for (key, mesh) in meshes {
@@ -806,6 +821,9 @@ impl BlockStreamer {
         for at in &gone {
             self.near.remove(at);
             self.drawn.remove(at);
+        }
+        if !gone.is_empty() && world.light.size().0 > 0 {
+            Arc::make_mut(&mut world.light).forget_columns(&gone);
         }
         world.columns = Some(Arc::new(self.near.iter().copied().collect()));
         let undrawn = |key: &[i32; 3]| gone.contains(&[key[0], key[2]]) || hidden.contains(&[key[0], key[2]]);
@@ -1028,11 +1046,22 @@ impl BlockStreamer {
                     if latest.load(Ordering::Acquire) == number {
                         let keys = from.chunks().map(|(key, _)| *key).filter(|key| [key[0], key[2]] == at);
                         let keys: Vec<[i32; 3]> = keys.collect();
+                        // A world of cubes' light, worked out from the columns round it, as its faces are made.
+                        let (light, lit) = match (making.file.smooth, heights(&from)) {
+                            (false, Some(heights)) => {
+                                let (light, lit) = light_column(&from, &making.faces, at, heights);
+                                (light, Some(lit))
+                            }
+                            _ => (Vec::new(), None),
+                        };
                         let meshes = keys
                             .into_iter()
-                            .map(|key| (key, mesh_any(&from, key, &making.faces, making.file.smooth)))
+                            .map(|key| {
+                                let lit = lit.as_ref().map(|lit| lit as &dyn LightAt);
+                                (key, mesh_lit(&from, key, &making.faces, making.file.smooth, &|_| true, lit))
+                            })
                             .collect();
-                        let _ = send.send(Finished::Meshed { number, at, meshes, from });
+                        let _ = send.send(Finished::Meshed { number, at, meshes, light, from });
                     }
                     making_now.fetch_sub(1, Ordering::AcqRel);
                 });
@@ -1090,10 +1119,16 @@ impl BlockStreamer {
                             alone.put_chunk(*key, chunk.clone());
                         }
                         let far = if any_part { super::far_faces(&making.faces) } else { making.faces.to_vec() };
+                        // Its light from its own blocks alone, the columns beside it taken to be open sky.
+                        let lit = match (making.file.smooth, heights(&alone)) {
+                            (false, Some(heights)) => Some(light_column(&alone, &far, at, heights).1),
+                            _ => None,
+                        };
                         chunks
                             .iter()
                             .map(|(key, _)| {
-                                let mesh = mesh_made(&alone, *key, &far, making.file.smooth, &|c| c == at);
+                                let light = lit.as_ref().map(|lit| lit as &dyn LightAt);
+                                let mesh = mesh_lit(&alone, *key, &far, making.file.smooth, &|c| c == at, light);
                                 (*key, mesh)
                             })
                             .collect()
@@ -1377,6 +1412,7 @@ mod tests {
             chunk::{AIR, BlockId},
             file::{BlockKind, Ground},
             mesh::{FACINGS, unpack, water_shape},
+            mesh_any,
             smooth::{POINT_FROM, POINT_STEPS},
         },
         generate::{Landmass, Preset, WorldGen},

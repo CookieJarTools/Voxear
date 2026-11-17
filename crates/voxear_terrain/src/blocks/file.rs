@@ -85,6 +85,50 @@ pub struct BlockFile {
     /// How many small cubes deep the deepest of them are sunk into a face.
     #[serde(skip_serializing_if = "is_usual_relief")]
     pub relief: f32,
+    /// How its faces take the light from all round them: by the light kept
+    /// for each block, or as the rest of the scene is (see
+    /// [`BlockLighting`]). A world drawn smooth is lit as the scene is.
+    #[serde(skip_serializing_if = "BlockLighting::is_blocks")]
+    pub lighting: BlockLighting,
+    /// The colour of the light blocks give (see `block::BlockDef::light`),
+    /// sRGB, and how bright it is, 1 as usual, with block light.
+    #[serde(skip_serializing_if = "is_usual_glow")]
+    pub glow_color: [f32; 3],
+    #[serde(skip_serializing_if = "is_one")]
+    pub glow: f32,
+}
+
+/// How a world of cubes' faces take the light from all round them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockLighting {
+    /// By the light kept for each block (see `light`): the sky's light as
+    /// much as its sky light, and its blocks' light as much as its block
+    /// light. Steady under any lighting, and dark in caves, at no cost a
+    /// frame.
+    #[default]
+    Blocks,
+    /// As the rest of the scene is: by the GI's probes where GI is on, and
+    /// the sky's light darkened by ambient occlusion.
+    Scene,
+}
+
+impl BlockLighting {
+    pub fn is_blocks(&self) -> bool {
+        *self == Self::Blocks
+    }
+}
+
+/// The colour of the light blocks give unless a world says: a torch's warm
+/// light, sRGB.
+pub const USUAL_GLOW: [f32; 3] = [1.0, 0.72, 0.42];
+
+fn is_usual_glow(color: &[f32; 3]) -> bool {
+    *color == USUAL_GLOW
+}
+
+fn is_one(value: &f32) -> bool {
+    *value == 1.0
 }
 
 /// The most small cubes a face is cut into along a block's side, and how
@@ -180,6 +224,10 @@ pub struct BlockKind {
     /// own boxes, whether it is used. Never written.
     #[serde(skip)]
     pub part: PartLook,
+    /// How much light it gives, from 0 to 15, as its block says (see
+    /// `block::BlockDef::light`). Never written.
+    #[serde(skip)]
+    pub light: u8,
 }
 
 /// Over a look's number, the look it is with another block's picture over
@@ -300,6 +348,7 @@ impl Default for BlockKind {
             slab: false,
             tint: super::block::BlockTint::None,
             part: PartLook::default(),
+            light: 0,
         }
     }
 }
@@ -416,6 +465,9 @@ impl Default for BlockFile {
             smooth: false,
             voxels: 0,
             relief: USUAL_RELIEF,
+            lighting: BlockLighting::Blocks,
+            glow_color: USUAL_GLOW,
+            glow: 1.0,
         }
     }
 }
@@ -632,7 +684,8 @@ impl BlockFile {
             let overlap = if kind.water || !shape.is_cube() { 0 } else { kind.overlap };
             let drawn = BlockFaces::new(top, sides, bottom);
             let shown = BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn };
-            let joined = BlockFaces { connects, mixes, overlap, ..shown };
+            let light = if kind.removed { 0 } else { kind.light.min(15) };
+            let joined = BlockFaces { connects, mixes, overlap, light, ..shown };
             faces.push(self.part_faces(kind, shape, &mut motions, joined));
         }
         // What a block shows as while it is covered: another of its world's blocks, drawn in the same shape, and
@@ -841,6 +894,24 @@ mod tests {
         assert_eq!(toml::from_str::<BlockFile>(&written).unwrap(), file);
         let deep = BlockFile { voxels: 16, relief: 3.5, ..BlockFile::default() };
         assert_eq!(toml::from_str::<BlockFile>(&toml::to_string(&deep).unwrap()).unwrap(), deep);
+    }
+
+    #[test]
+    fn a_world_is_lit_by_its_blocks_light_unless_it_says_and_writes_only_what_is_not_as_usual() {
+        let plain = toml::to_string(&BlockFile::default()).unwrap();
+        assert!(!plain.contains("lighting") && !plain.contains("glow"), "{plain}");
+        assert_eq!(BlockFile::default().lighting, BlockLighting::Blocks);
+        let scene = BlockFile { lighting: BlockLighting::Scene, ..BlockFile::default() };
+        let written = toml::to_string(&scene).unwrap();
+        assert!(written.contains("lighting = \"scene\"") && !written.contains("glow"), "{written}");
+        assert_eq!(toml::from_str::<BlockFile>(&written).unwrap(), scene);
+        let blue = BlockFile { glow_color: [0.4, 0.6, 1.0], glow: 2.0, ..BlockFile::default() };
+        assert_eq!(toml::from_str::<BlockFile>(&toml::to_string(&blue).unwrap()).unwrap(), blue);
+        // A kind's light is its block's, never written; its faces carry it.
+        let mut file = BlockFile::default();
+        file.blocks[2].light = 12;
+        assert!(!toml::to_string(&file).unwrap().contains("light ="), "a kind's light is its block's");
+        assert_eq!(file.faces().1[3].light, 12);
     }
 
     #[test]

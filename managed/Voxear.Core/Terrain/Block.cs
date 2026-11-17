@@ -60,6 +60,12 @@ public readonly struct Block : IEquatable<Block>, IAsset<Block>
 	/// <summary>For a log: whether cutting it through brings down the tree it holds up.</summary>
 	public bool Fells => Info?.Fells ?? false;
 
+	/// <summary>
+	/// How much light it gives, from 0 for none to 15: a torch 14, lava 15. Its light floods out through the blocks
+	/// round it that let light pass, a step less each block, and lights the worlds of blocks lit by Block Light.
+	/// </summary>
+	public int Light => Info?.Light ?? 0;
+
 	/// <summary>Whether it is a sapling: it grows into a tree where it has room and light.</summary>
 	public bool IsSapling => Info?.IsSapling ?? false;
 

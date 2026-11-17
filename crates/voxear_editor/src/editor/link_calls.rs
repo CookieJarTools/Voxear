@@ -1548,7 +1548,7 @@ impl Editor {
     }
 
     fn blocks_get(&self, args: &Json) -> Called {
-        use voxear_terrain::blocks::{BlockWorld, chunk::AIR};
+        use voxear_terrain::blocks::{BlockWorld, chunk::AIR, light};
         let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
         let given = args.get("obj").is_some_and(|obj| !obj.is_null());
         for (entity, corner, size) in self.block_worlds(args)? {
@@ -1566,11 +1566,16 @@ impl Editor {
             // And what it is drawn as, where that is another block: grass under a block shows as dirt.
             let shown = blocks.shown(cell);
             let shows = if shown == block { Json::Null } else { json!(named(shown)) };
-            let answer =
-                json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": named(block), "shows": shows });
+            // Its light, a world of cubes': its sky light and its block light, each from 0 to 15.
+            let light = (!blocks.smooth).then(|| blocks.light.get(cell));
+            let (sky, glow) = (light.map(light::sky_of), light.map(light::glow_of));
+            let answer = json!({
+                "obj": obj_ref(&self.game, entity), "cell": cell, "block": named(block), "shows": shows,
+                "sky_light": sky, "block_light": glow,
+            });
             return done(answer);
         }
-        done(json!({ "obj": null, "cell": null, "block": null, "shows": null }))
+        done(json!({ "obj": null, "cell": null, "block": null, "shows": null, "sky_light": null, "block_light": null }))
     }
 
     fn blocks_set(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {

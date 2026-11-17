@@ -2769,6 +2769,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the biome's shore) and 6 m from rivers and lakes; a structure's new **By water** lets reeds and mangroves down.
     Tests: a cave cut open is a few large hollows (GPU render, and from inside); trees off the beach and river, and
     down to them by water.
+  - ~~**Nothing over a cave's opening:**~~ done: trees stood where the generator's height put them, and caves,
+    ravines and overhangs cut the ground away under them after, so trunks hung over the opening. Now a structure's
+    place is read through the Volume as its chunk makes it: a tree needs ground three blocks down its trunk, a
+    building and each town house under their middle and corners, else the place is left bare, near, far and on the
+    map alike. Tests: no trunk over air on hills opened by caves and on cliffs cut by overhangs, before 41 of 413
+    and 59 of 179; the map's and far view's trees are the chunks'.
   - ~~**Biomes, slabs and tints far off:**~~ done: an endless world's ground kept its block list only to its own
     top, under, base and sea blocks, so its biomes' blocks and slabs were lost; it keeps every block its ground is
     laid with now. Slabs are laid at every level, the far tiles too, and the far view takes a second, coarser

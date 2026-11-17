@@ -437,6 +437,126 @@ mod tests {
     }
 
     #[test]
+    fn trees_stand_on_the_ground_caves_and_overhangs_leave_never_over_an_opening_near_or_far() {
+        use crate::{
+            blocks::{
+                plant::PlantDef,
+                structure::{GroundFit, PlacedStructure, StructureBlocks, WorldStructures, build_over},
+            },
+            generate::{
+                OwnVoxels,
+                structures::{Placement, SiteOn},
+            },
+        };
+        use std::collections::HashMap;
+        // Rolling hills hollowed by caves of the generator's Volume that reach up to the ground, read where the world
+        // lies in its world; and steep hills pushed in and out by the world's own overhangs, read from its corner.
+        let hills = Preset::RollingHills.world();
+        let mut graph = hills.graph().clone();
+        assert!(graph.add_voxels(OwnVoxels { overhangs: 6.0, caves: 1.0, roof: 0.0 }, true));
+        let opened = hills.with_graph(graph);
+        // A tree's foot is read as its chunk reads it: a column's rows asked about apart are those a grid gives it.
+        let volume = opened.volume().unwrap();
+        let place = |axis: usize, v: i32| [700.0, -300.0][axis] + v as f32 + 0.5;
+        let columns: Vec<[i32; 2]> = (0..81).map(|k| [k % 9 - 3, k / 9 + 6]).collect();
+        let heights: Vec<f32> = columns.iter().map(|&[x, z]| opened.height_at(place(0, x), place(1, z))).collect();
+        let grid = volume.carried_grid([-3, 6], [9, 9], place, &heights);
+        let (scattered, heights): (Vec<[i32; 2]>, Vec<f32>) =
+            columns.iter().copied().zip(heights).rev().step_by(2).unzip();
+        let apart = volume.carried_columns(&scattered, place, &heights);
+        assert!(grid.rows().len() > 1, "{} rows", grid.rows().len());
+        for (k, &[x, z]) in scattered.iter().enumerate() {
+            let at = ((z - 6) * 9 + x + 3) as usize;
+            let rows = |carried: &crate::generate::Carried, at: usize| -> Vec<u32> {
+                carried.rows().iter().map(|row| row[at].to_bits()).collect()
+            };
+            assert_eq!(rows(&apart, k), rows(&grid, at), "column ({x}, {z})");
+        }
+        // A close wood over them, of wood 4 and leaves 5.
+        let trees = PlacedStructure {
+            placement: Placement {
+                spacing: 6.0,
+                separation: 3.0,
+                chance: 0.9,
+                slope: 60.0,
+                on: SiteOn::Land,
+                ..Placement::default()
+            },
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Plant {
+                plant: PlantDef::default(),
+                wood: 4,
+                leaves: 5,
+                vine: 0,
+                logs: Vec::new(),
+            },
+            biomes: Vec::new(),
+        };
+        let built = std::sync::Arc::new(WorldStructures { list: vec![trees], ..WorldStructures::default() });
+        let (side, steep) = (128, cliffs());
+        for (world, overhangs, caves) in [(&opened, 0.0, 0.0), (&steep, 16.0, 1.0)] {
+            let generate = BlockGenerate {
+                position: [700.0, -300.0],
+                bottom: -40,
+                overhangs,
+                caves,
+                built: Some(built.clone()),
+                ..BlockGenerate::default()
+            };
+            let mut file = BlockFile {
+                block_size: 1.0,
+                ground: Ground { size: [side as u32; 2], ..Ground::default() },
+                generate: Some(generate.clone()),
+                ..BlockFile::default()
+            };
+            file.blocks.push(BlockKind::colored("Wood", [0.4, 0.3, 0.2]));
+            file.blocks.push(BlockKind::colored("Leaves", [0.2, 0.5, 0.2]));
+            let map = file.make_ground(Some(world));
+            let top = |x: i32, z: i32| {
+                let height = world.height_at(700.0 + x as f32 + 0.5, -300.0 + z as f32 + 0.5);
+                (height - 0.5).ceil() as i32 - 1
+            };
+            // Each trunk: wood three blocks or more up a column, from about the generator's ground; and under its
+            // lowest block, its roots' or its own, ground.
+            let (mut trunks, mut openings, mut hanging) = (0, 0, Vec::new());
+            for z in 0..side {
+                for x in 0..side {
+                    let ground = top(x, z);
+                    openings += usize::from(map.get([x, ground, z]) == AIR);
+                    for y in ground - 3..=ground + 2 {
+                        let foot = map.get([x, y, z]) == 4 && map.get([x, y - 1, z]) != 4;
+                        if !foot || !(y..y + 3).all(|y| map.get([x, y, z]) == 4) {
+                            continue;
+                        }
+                        trunks += 1;
+                        if [AIR, 5].contains(&map.get([x, y - 1, z])) {
+                            hanging.push([x, y, z]);
+                        }
+                    }
+                }
+            }
+            let caved = if caves > 0.0 { "the world's own caves" } else { "the generator's caves" };
+            assert!(trunks > 50 && openings > 20, "{caved}: {trunks} trunks, {openings} openings in the ground");
+            let first = &hanging[..hanging.len().min(12)];
+            assert!(hanging.is_empty(), "{caved}: {} of {trunks} trunks hang over air: {first:?}", hanging.len());
+            // What the map and the far view build from stands the same trees as the chunks: none over an opening.
+            let mut far: HashMap<[i32; 3], BlockId> = HashMap::new();
+            with_ground(&generate, world, 1.0, |source| {
+                let mut set = |at: [i32; 3], block: BlockId| {
+                    far.insert(at, block);
+                };
+                let at = (1.0, generate.position, generate.lowest_open(), false);
+                build_over(&mut set, &built, source, None, at, ([0, 0], [side / 32, side / 32]), file.ground.under);
+            });
+            let woody = |block: BlockId| block == 4 || block == 5;
+            for (&at, &block) in far.iter().filter(|(_, block)| woody(**block)) {
+                assert_eq!(map.get(at), block, "{caved}: the map's {block} at {at:?}");
+            }
+        }
+    }
+
+    #[test]
     fn where_biomes_keep_to_regions_each_column_is_its_regions_biome() {
         use crate::generate::{BiomeBlocks, BiomeDef, Biomes, Regions, WorldBiomes};
         let (mut file, world) = generated(0.0, 0.0);

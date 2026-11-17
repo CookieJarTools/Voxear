@@ -136,7 +136,10 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         graph.add_voxels(own, false);
     }
     crate::generate::land::add_land_volume(&mut graph, biomes, &shaped);
-    let world = Arc::new(world.with_graph(graph));
+    let world = world.with_graph(graph);
+    // The world's own overhangs and caves are read from its corner: by its chunks, and by what asks of the ground
+    // under what is built on it.
+    let world = Arc::new(if voxels || landed { world } else { world.with_volume_at_corner() });
     if moved.len() >= MOVED_KEPT {
         moved.remove(0);
     }

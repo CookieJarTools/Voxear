@@ -1305,7 +1305,9 @@ Done:
     above 0.5 °C; frozen from the start where it is that cold as the level loads. Part frozen, floes a block or a
     few across; frozen hard, ice all over, cracked along some blocks' edges and white under snow
     (`blockIceLit`), still in any storm, and bearing weight: slabs of ice with box colliders under the cells
-    round the viewer and every character.
+    round the viewer and every character. Out to the far view: past the lying grid, 1 km across, the far ice's
+    512 m cells keep the sea frozen where the air over it says, the lying grid's ice blended into them over its
+    last two cells, so a frozen sea no longer ends at a straight line half a kilometre out.
   - **Over the network:** the server sends its storms' bytes (`Message::Storms`) to each player as they join,
     whenever its made storms or whirlpools change and every five seconds for the clock; a client takes them in,
     its clock moved on by half the round trip.
@@ -1333,7 +1335,9 @@ Done:
     snow by height in a cell; a roof keeping the rain off what is under it and the yard beside it wet; a storm
     wetting only the ground under it, which dries after; a frozen sea still in a storm and bearing a crate, and a
     warm one open; the swell in two metres of water calmer than in deep water and never down to the floor; a
-    rolling grid keeping its cells; the grids' layout for the shaders; the server's storms reaching a player as
+    rolling grid keeping its cells; the grids' layout for the shaders; a sea under freezing air frozen kilometres
+    out, and the lying grid's ice blending into the far ice's with no step; a GPU picture of a frozen sea going on
+    frozen past the lying grid; the server's storms reaching a player as
     they join, as they change and with its clock, and a player joining later; the weather's sounds made without a
     seam, as loud as the weather, muffled under a roof, thunder after lightning, and silent at **Sounds** 0; a C# system turning
     the sounds down and reading what a storm left on the ground; GPU pictures of breakers running in to a beach,

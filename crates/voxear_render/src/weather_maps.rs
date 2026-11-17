@@ -15,6 +15,10 @@
 //! - **Sea floor:** how deep a world of blocks' sea is near the viewer, so
 //!   its swell calms in the shallows and breaks on the shore
 //!   (`seaSunk` in `shaders/water.slang`, and [`crate::sea::SeaSampler`]).
+//! - **Far ice:** how much of the sea is frozen over far off, in cells
+//!   hundreds of metres across, out to the far view: past the lying grid a
+//!   frozen sea goes on frozen, the lying grid's ice blended into it over
+//!   its last cells, so no line shows where the lying grid ends.
 //!
 //! Each is in the world's space, its corner moved as the world's middle
 //! moves. Without one the frame goes by the level's weather alone, as
@@ -28,10 +32,15 @@ use voxear_core::math::{Vec2, Vec3};
 pub const LYING_SIDE: usize = 32;
 pub const COVER_SIDE: usize = 96;
 pub const FLOOR_SIDE: usize = 64;
+pub const ICE_SIDE: usize = 32;
 /// How wide a cell of each is, in metres.
 pub const LYING_CELL: f32 = 32.0;
 pub const COVER_CELL: f32 = 0.5;
 pub const FLOOR_CELL: f32 = 4.0;
+pub const ICE_CELL: f32 = 512.0;
+/// Over how many of its last cells the lying grid's ice is blended into the
+/// far ice's.
+pub const ICE_BLEND_CELLS: f32 = 2.0;
 /// The deepest a sea floor's grid tells of, in metres: deeper is as deep.
 pub const FLOOR_REACH: f32 = 16.0;
 /// A cell with nothing over it.
@@ -40,10 +49,12 @@ pub const OPEN: f32 = -1.0e30;
 pub const LAPSE: f32 = 0.0065;
 
 /// The words the shaders read before the grids: each grid's side (0 for
-/// none), cell, corner along x and z, and where its cells start.
-const HEADER: usize = 16;
+/// none), cell, corner along x and z, and where its cells start (see
+/// [`WeatherMaps::words`]).
+pub const HEADER: usize = 20;
 /// Every word of the frame's maps, at the most.
-pub const WORDS: usize = HEADER + LYING_SIDE * LYING_SIDE * 3 + COVER_SIDE * COVER_SIDE + FLOOR_SIDE * FLOOR_SIDE;
+pub const WORDS: usize =
+    HEADER + LYING_SIDE * LYING_SIDE * 3 + COVER_SIDE * COVER_SIDE + FLOOR_SIDE * FLOOR_SIDE + ICE_SIDE * ICE_SIDE;
 
 /// What the weather has left lying in a cell: each amount from 0 to 1.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -143,6 +154,21 @@ impl<T: Copy> Grid<T> {
         let (low, high) = (along(a, b), along(c, d));
         Some(low + (high - low) * part.y)
     }
+
+    /// As [`Grid::blended`], and past the grid's edge as at its edge.
+    pub fn blended_on(&self, x: f32, z: f32, value: impl Fn(T) -> f32) -> f32 {
+        let last = (self.side as f32 * self.cell).max(0.0) * (1.0 - 1e-6);
+        let (x, z) = ((x - self.corner.x).clamp(0.0, last), (z - self.corner.y).clamp(0.0, last));
+        self.blended(self.corner.x + x, self.corner.y + z, value).unwrap_or(0.0)
+    }
+
+    /// How far inside the grid `x`, `z` is, from 0 at its edge and beyond to
+    /// 1 `cells` cells in.
+    pub fn inside(&self, x: f32, z: f32, cells: f32) -> f32 {
+        let at = (Vec2::new(x, z) - self.corner) / self.cell.max(1e-6);
+        let side = self.side as f32;
+        (at.x.min(at.y).min(side - at.x).min(side - at.y) / cells.max(1e-6)).clamp(0.0, 1.0)
+    }
 }
 
 /// The weather's grids this frame, a resource.
@@ -151,6 +177,8 @@ pub struct WeatherMaps {
     pub lying: Option<Grid<Lying>>,
     pub cover: Option<Grid<f32>>,
     pub floor: Option<Grid<f32>>,
+    /// How much of the sea is frozen over far off, past the lying grid.
+    pub ice: Option<Grid<f32>>,
 }
 
 impl WeatherMaps {
@@ -165,9 +193,19 @@ impl WeatherMaps {
     }
 
     /// How much of the sea is frozen over at `x`, `z`, from 0 to 1, blended
-    /// between cells: none outside the lying grid.
+    /// between cells: the lying grid's, and past it the far ice's, into
+    /// which the lying grid's is blended over its last
+    /// [`ICE_BLEND_CELLS`] cells. None outside the lying grid where there is
+    /// no far ice.
     pub fn ice_at(&self, x: f32, z: f32) -> f32 {
-        self.lying.as_ref().and_then(|lying| lying.blended(x, z, |cell| cell.ice)).unwrap_or(0.0)
+        let near = self.lying.as_ref().and_then(|lying| lying.blended(x, z, |cell| cell.ice));
+        let Some(far) = self.ice.as_ref().map(|ice| ice.blended_on(x, z, |ice| ice)) else {
+            return near.unwrap_or(0.0);
+        };
+        match (near, self.lying.as_ref()) {
+            (Some(near), Some(lying)) => far + (near - far) * lying.inside(x, z, ICE_BLEND_CELLS),
+            _ => far,
+        }
     }
 
     /// How high the highest thing over `x`, `z` is that stops rain, in the
@@ -190,14 +228,17 @@ impl WeatherMaps {
     }
 
     /// The grids as the shaders read them (`weatherMaps` in
-    /// `shaders/common.slang`).
+    /// `shaders/common.slang`): the lying, cover and sea floor grids' sides,
+    /// cells and corners four words each, where each grid's cells start,
+    /// and the far ice's four words after those; then the cells.
     pub fn words(&self) -> Vec<u32> {
         let mut words = vec![0u32; HEADER];
         let mut head = |slot: usize, side: usize, cell: f32, corner: Vec2, start: usize| {
-            words[slot * 4] = side as u32;
-            words[slot * 4 + 1] = cell.to_bits();
-            words[slot * 4 + 2] = corner.x.to_bits();
-            words[slot * 4 + 3] = corner.y.to_bits();
+            let at = if slot < 3 { slot * 4 } else { 16 };
+            words[at] = side as u32;
+            words[at + 1] = cell.to_bits();
+            words[at + 2] = corner.x.to_bits();
+            words[at + 3] = corner.y.to_bits();
             words[12 + slot] = start as u32;
         };
         let mut start = HEADER;
@@ -207,6 +248,7 @@ impl WeatherMaps {
             self.cover.as_ref().filter(|grid| grid.side <= COVER_SIDE && grid.cells.len() >= grid.side * grid.side);
         let floor =
             self.floor.as_ref().filter(|grid| grid.side <= FLOOR_SIDE && grid.cells.len() >= grid.side * grid.side);
+        let ice = self.ice.as_ref().filter(|grid| grid.side <= ICE_SIDE && grid.cells.len() >= grid.side * grid.side);
         if let Some(grid) = lying {
             head(0, grid.side, grid.cell, grid.corner, start);
             start += grid.side * grid.side * 3;
@@ -217,6 +259,10 @@ impl WeatherMaps {
         }
         if let Some(grid) = floor {
             head(2, grid.side, grid.cell, grid.corner, start);
+            start += grid.side * grid.side;
+        }
+        if let Some(grid) = ice {
+            head(3, grid.side, grid.cell, grid.corner, start);
         }
         let unit = |amount: f32| (amount.clamp(0.0, 1.0) * 255.0).round() as u32;
         if let Some(grid) = lying {
@@ -232,6 +278,9 @@ impl WeatherMaps {
             words.extend(
                 grid.cells.iter().take(grid.side * grid.side).map(|depth| depth.clamp(0.0, FLOOR_REACH).to_bits()),
             );
+        }
+        if let Some(grid) = ice {
+            words.extend(grid.cells.iter().take(grid.side * grid.side).map(|ice| ice.clamp(0.0, 1.0).to_bits()));
         }
         words
     }
@@ -294,14 +343,44 @@ mod tests {
             ..Lying::default()
         });
         let floor = grid(Vec2::new(-3.0, 4.0), 4.0, 3, |_, _| 40.0);
-        let words = WeatherMaps { lying: Some(lying), cover: None, floor: Some(floor) }.words();
-        assert_eq!(words.len(), HEADER + 2 * 2 * 3 + 9);
+        let ice = grid(Vec2::new(-512.0, 0.0), 512.0, 2, |i, _| i as f32);
+        let words = WeatherMaps { lying: Some(lying), cover: None, floor: Some(floor), ice: Some(ice) }.words();
+        assert_eq!(words.len(), HEADER + 2 * 2 * 3 + 9 + 4);
         assert_eq!(&words[..4], &[2, 32f32.to_bits(), 1f32.to_bits(), 2f32.to_bits()]);
         assert_eq!(words[4], 0, "no cover");
         assert_eq!((words[12], words[14]), (HEADER as u32, HEADER as u32 + 12));
+        // The far ice's after where the others start, its cells after theirs.
+        assert_eq!(&words[16..20], &[2, 512f32.to_bits(), (-512f32).to_bits(), 0f32.to_bits()]);
+        assert_eq!(words[15], HEADER as u32 + 21);
         assert_eq!(words[HEADER], 255 | 128 << 24);
         assert_eq!((f32::from_bits(words[HEADER + 1]), f32::from_bits(words[HEADER + 2])), (-3.0, 12.0));
         assert_eq!(f32::from_bits(words[HEADER + 12]), FLOOR_REACH, "kept within the reach");
+        assert_eq!(
+            words[HEADER + 21..].iter().map(|&word| f32::from_bits(word)).collect::<Vec<_>>(),
+            [0.0, 1.0, 0.0, 1.0]
+        );
         assert!(WORDS >= words.len());
+    }
+
+    #[test]
+    fn a_frozen_sea_goes_on_frozen_past_the_lying_grid_into_the_far_ice_with_no_line_where_it_ends() {
+        // The lying grid 256 m across round the middle, its sea frozen.
+        let lying = grid(Vec2::new(-128.0, -128.0), 32.0, 8, |_, _| Lying { ice: 1.0, ..Lying::default() });
+        let near = WeatherMaps { lying: Some(lying.clone()), ..WeatherMaps::default() };
+        assert_eq!(near.ice_at(0.0, 0.0), 1.0);
+        assert_eq!(near.ice_at(140.0, 0.0), 0.0, "with no far ice, none past the lying grid");
+        // The far ice frozen all over: the sea goes on frozen past the lying grid, and past the far ice's own edge.
+        let frozen = grid(Vec2::new(-1024.0, -1024.0), 512.0, 4, |_, _| 1.0);
+        let maps = WeatherMaps { lying: Some(lying.clone()), ice: Some(frozen), ..WeatherMaps::default() };
+        for (x, z) in [(0.0, 0.0), (120.0, 0.0), (140.0, 0.0), (-130.0, 200.0), (5000.0, 3000.0)] {
+            assert_eq!(maps.ice_at(x, z), 1.0, "at {x}, {z}");
+        }
+        // The far ice open water: across the lying grid's edge westwards, from its frozen sea to the open water a
+        // step at a time, with no line where the lying grid ends.
+        let open = grid(Vec2::new(-1024.0, -1024.0), 512.0, 4, |_, _| 0.0);
+        let maps = WeatherMaps { lying: Some(lying), ice: Some(open), ..WeatherMaps::default() };
+        let steps: Vec<f32> = (0..=300).map(|x| maps.ice_at(-x as f32, 0.0)).collect();
+        assert_eq!((steps[0], steps[140]), (1.0, 0.0));
+        assert!(steps.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 0.05), "{steps:?}");
     }
 }

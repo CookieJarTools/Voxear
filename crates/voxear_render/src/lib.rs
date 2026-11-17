@@ -3660,9 +3660,10 @@ impl View {
         buffers.mists.write(0, &mists);
         buffers.mist_points.write(0, &mist_points);
         // The weather's grids, none through a Portal: what lies on the far side is the level's weather alone.
+        let none = || vec![0u32; weather_maps::HEADER];
         let maps = match portal {
-            Some(_) => vec![0u32; 16],
-            None => world.resource::<weather_maps::WeatherMaps>().map_or_else(|| vec![0u32; 16], |maps| maps.words()),
+            Some(_) => none(),
+            None => world.resource::<weather_maps::WeatherMaps>().map_or_else(none, |maps| maps.words()),
         };
         buffers.weather_maps.write(0, &maps);
 

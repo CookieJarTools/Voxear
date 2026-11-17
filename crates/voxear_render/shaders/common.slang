@@ -2034,15 +2034,20 @@ static const float WEATHER_LAPSE = 0.0065;
 static const float WEATHER_OPEN = -1.0e30;
 static const float WEATHER_FLOOR_REACH = 16.0;
 
-// Grid `slot`'s side (0 for none), how wide a cell is, its corner along x and z, and where its cells start.
+// The words before the grids' cells (weather_maps::HEADER).
+static const uint WEATHER_HEADER = 20;
+
+// Grid `slot`'s side (0 for none), how wide a cell is, its corner along x and z, and where its cells start: the lying
+// grid 0, cover 1, the sea floor 2 and the far ice 3, whose four words follow where the others' cells start.
 bool weatherGrid(uint slot, out uint side, out float cell, out float2 corner, out uint start)
 {
     uint* maps = buffers()->weatherMaps;
-    side = maps[slot * 4];
-    cell = asfloat(maps[slot * 4 + 1]);
-    corner = float2(asfloat(maps[slot * 4 + 2]), asfloat(maps[slot * 4 + 3]));
+    uint head = slot < 3 ? slot * 4 : 16;
+    side = maps[head];
+    cell = asfloat(maps[head + 1]);
+    corner = float2(asfloat(maps[head + 2]), asfloat(maps[head + 3]));
     start = maps[12 + slot];
-    return side > 0;
+    return side > 0 && start >= WEATHER_HEADER;
 }
 
 // How much snow lies at `height` in a lying cell (Lying::snow_at): the cell's own, more of what fell where it is

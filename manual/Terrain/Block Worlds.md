@@ -341,7 +341,7 @@ The depth is read from the blocks every few metres over the 250 metres round the
 
 ### Frozen seas
 
-Where the air over the sea is two degrees below freezing or colder (see [[Temperature]]), the sea freezes over, in a few minutes, and thaws again in a few once the air is above freezing. A sea that is that cold when the level loads is frozen from the start. Where it is part frozen it lies in floes, a block or a few across, more of them the colder it has been; frozen hard, it is ice all over, white where snow lies on it.
+Where the air over the sea is two degrees below freezing or colder (see [[Temperature]]), the sea freezes over, in a few minutes, and thaws again in a few once the air is above freezing. A sea that is that cold when the level loads is frozen from the start, out to the far view. Where it is part frozen it lies in floes, a block or a few across, more of them the colder it has been; frozen hard, it is ice all over, white where snow lies on it.
 
 Frozen sea holds still in any storm, and it bears weight: players, characters and anything that falls on it stand on it, and slide, for it grips as little as ice does. It is still water under the ice, and no block changes. `Storms.At(position).Ground.Frozen` tells how much of the sea there is frozen.
 

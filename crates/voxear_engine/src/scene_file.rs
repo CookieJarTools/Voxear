@@ -1522,6 +1522,10 @@ pub struct ModelData {
     /// as a part worn on a body.
     #[serde(default, skip_serializing_if = "is_false")]
     pub follow_parent: bool,
+    /// For a box model, a picture, by GUID or project path, its pixels are
+    /// drawn from in place of the sheet inside its file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
     /// The parts this Obj changes from the model, each by its node.
     #[serde(default, rename = "part", skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PartData>,
@@ -1558,6 +1562,7 @@ impl Default for ModelData {
             tint2: white(),
             tint3: white(),
             follow_parent: false,
+            sheet: None,
             parts: Vec::new(),
         }
     }

@@ -4,11 +4,11 @@
 //! renderer, which the game lends scripts while they run (see
 //! [`set_model`]).
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use voxear_assets::AssetKind;
 use voxear_ecs::{Entity, World};
 use voxear_render::{ModelRenderer, Pose, Renderer, TINTS};
-use voxear_scripting::ComponentKind;
+use voxear_scripting::{ComponentKind, ModelChange};
 
 use crate::{
     animation::AnimatorState,
@@ -29,6 +29,14 @@ const FOLLOWS: i32 = 6;
 // when it has none.
 const MODEL: i32 = 0;
 const SET_MODEL: i32 = 1;
+// A part's name, the material it draws with in place of its own and a new one, by the part's place among those drawn
+// in the number's higher bytes, all of them for EVERY_PART; and a box model's sheet, and a new one.
+const PART_NAME: i32 = 2;
+const PART_MATERIAL: i32 = 3;
+const SET_PART_MATERIAL: i32 = 4;
+const SHEET: i32 = 5;
+const SET_SHEET: i32 = 6;
+const EVERY_PART: usize = 0xFF_FFFF;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::ModelRenderer, values);
@@ -119,17 +127,114 @@ fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<Str
     if !world.is_alive(entity) {
         return None;
     }
-    match what {
+    // The part in the number's higher bytes, read unsigned: every part's is past what an i32 holds as positive.
+    let (part, value) = (((what as u32) >> 8) as usize, what & 0xff);
+    let given = Some(text).filter(|text| !text.is_empty());
+    let changed = |done: Result<()>, what: &str| match done {
+        Ok(()) => Some(String::new()),
+        Err(error) => {
+            tracing::error!("an Obj could not draw {what}: {error:#}");
+            None
+        }
+    };
+    match value {
         MODEL => Some(world.get::<ModelSource>(entity)?.0.model.clone()),
-        SET_MODEL => match voxear_scripting::set_model(world, entity, text)? {
-            Ok(()) => Some(String::new()),
-            Err(error) => {
-                tracing::error!("an Obj could not draw {text}: {error:#}");
-                None
-            }
-        },
+        SET_MODEL => changed(voxear_scripting::set_model(world, entity, text)?, text),
+        PART_NAME => voxear_scripting::model_part_name(world, entity, part),
+        PART_MATERIAL => {
+            let node = world.get::<ModelRenderer>(entity)?.parts.get(part)?.node;
+            let source = world.get::<ModelSource>(entity)?;
+            Some(source.0.part(node).and_then(|part| part.material.clone()).unwrap_or_default())
+        }
+        SET_PART_MATERIAL => {
+            let part = (part != EVERY_PART).then_some(part);
+            let change = ModelChange::Material { part, material: given };
+            changed(voxear_scripting::change_model(world, entity, change)?, given.unwrap_or("its own material"))
+        }
+        SHEET => Some(world.get::<ModelSource>(entity)?.0.sheet.clone().unwrap_or_default()),
+        SET_SHEET => {
+            let change = ModelChange::Sheet(given);
+            changed(voxear_scripting::change_model(world, entity, change)?, given.unwrap_or("its own sheet"))
+        }
         _ => None,
     }
+}
+
+/// An asset a script names, by GUID or project path, as its GUID: one of
+/// `kind`, or an error saying it is not.
+fn named(content: &Content, reference: &str, kind: AssetKind, called: &str) -> Result<String> {
+    let guid = content.parse(reference)?.guid().with_context(|| format!("{reference} is not an asset"))?;
+    ensure!(content.db().get(guid).map(|entry| entry.kind) == Some(kind), "{reference} is not {called}");
+    Ok(guid.to_string())
+}
+
+/// Changes how `entity` draws its model, as a script asks: a part's
+/// material, or every part's, or a box model's sheet. What cannot be read
+/// changes nothing.
+pub fn change_model(
+    world: &mut World,
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    change: ModelChange<'_>,
+) -> Result<()> {
+    let mut data = world.get::<ModelSource>(entity).context("it draws no model")?.0.clone();
+    match change {
+        ModelChange::Material { part, material } => {
+            let material = material.map(|named_as| named(content, named_as, AssetKind::Material, "a material"));
+            let material = material.transpose()?;
+            let drawn = world.get::<ModelRenderer>(entity).context("its model is not drawn here")?;
+            let nodes: Vec<u32> = match part {
+                Some(part) => vec![drawn.parts.get(part).with_context(|| format!("it draws no part {part}"))?.node],
+                None => drawn.parts.iter().map(|part| part.node).collect(),
+            };
+            if nodes.is_empty() {
+                bail!("its model is not drawn here");
+            }
+            for node in nodes {
+                data.part_mut(node).material = material.clone();
+            }
+            data.tidy_parts();
+        }
+        ModelChange::Sheet(picture) => {
+            data.sheet =
+                picture.map(|named_as| named(content, named_as, AssetKind::Texture, "a picture")).transpose()?;
+        }
+    }
+    redraw(world, content, renderer, entity, data)
+}
+
+/// Has `entity` draw its model as `data` now says, its parts made again
+/// with their materials and sheet, and keeps `data` as its scene will
+/// write it. Its tints, LOD bias and pose stay. Without a renderer `data`
+/// is kept alone.
+pub fn redraw(
+    world: &mut World,
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    data: ModelData,
+) -> Result<()> {
+    if let Some(renderer) = renderer
+        && world.has::<ModelRenderer>(entity)
+    {
+        let guid = content.parse(&data.model)?.guid().with_context(|| format!("{} is not a model", data.model))?;
+        let nodes = content.model(renderer, guid)?.to_vec();
+        let parts = crate::prefab::model_parts(content, renderer, &nodes, &data)?;
+        let masked = parts.iter().any(|part| renderer.tint_masked(part.material));
+        if let Some(drawn) = world.get_mut::<ModelRenderer>(entity) {
+            (drawn.parts, drawn.masked) = (parts.into(), masked);
+        }
+    }
+    world.insert(entity, ModelSource(data));
+    Ok(())
+}
+
+/// The name the model gives one of the parts `entity` draws.
+pub fn part_name(world: &World, content: &Content, entity: Entity, part: usize) -> Option<String> {
+    let node = world.get::<ModelRenderer>(entity)?.parts.get(part)?.node;
+    let guid = content.parse(&world.get::<ModelSource>(entity)?.0.model).ok()?.guid()?;
+    content.loaded_model(guid)?.get(node as usize).map(|node| node.name.clone())
 }
 
 /// Takes an Obj's Model Renderer away, and how it was posed.

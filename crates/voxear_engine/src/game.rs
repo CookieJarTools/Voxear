@@ -1541,6 +1541,19 @@ impl ScriptServices for GameServices<'_> {
         crate::model_renderers::set_model(world, self.content, self.renderer.as_deref_mut(), entity, reference)
     }
 
+    fn change_model(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        change: voxear_scripting::ModelChange<'_>,
+    ) -> Result<()> {
+        crate::model_renderers::change_model(world, self.content, self.renderer.as_deref_mut(), entity, change)
+    }
+
+    fn model_part_name(&mut self, world: &World, entity: Entity, part: usize) -> Option<String> {
+        crate::model_renderers::part_name(world, self.content, entity, part)
+    }
+
     fn spawn_prefab(
         &mut self,
         world: &mut World,

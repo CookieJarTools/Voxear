@@ -1207,6 +1207,14 @@ impl Renderer {
         gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
     }
 
+    /// Uploads a model's textures and materials alone, as a box model's look
+    /// with another sheet (see [`BoxModel::look`]), and gives back its
+    /// materials.
+    pub fn upload_look(&mut self, model: &PreparedModel) -> Result<Vec<MaterialHandle>> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        gltf_import::upload_look(&self.gpu, &mut self.bindless, assets, model)
+    }
+
     /// Puts a model prepared again, as after its import settings changed,
     /// behind the mesh and material handles `old` was given, so whatever
     /// draws it shows the change from the next frame. Fails, changing

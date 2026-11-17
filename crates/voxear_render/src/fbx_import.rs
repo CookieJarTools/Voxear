@@ -63,6 +63,7 @@ pub(crate) fn prepare(path: &str, read: &mut ReadFile, settings: &ModelImport) -
         model: PreparedModel {
             animation: None,
             roles: Vec::new(),
+            source: None,
             path: path.to_string(),
             meshes: Vec::new(),
             textures: Vec::new(),

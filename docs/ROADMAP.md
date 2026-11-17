@@ -2218,8 +2218,18 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   dimension and links the two Portals, walks through and stands on its rock under its dark, and walking away lets it
   go; a thrown body keeps its speed; a camera following looks through the Gate from the level, then goes into the
   caves; bodies and characters moved between dimensions keep moving; GPU pictures through a Portal into another
-  dimension and back out, each matching a camera standing there. Manual: Dimensions. To come: dungeons in a
-  dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
+  dimension and back out, each matching a camera standing there. Manual: Dimensions. Dungeons in a dimension each
+  (`place = "own_dimension"`, the default; `in_the_land` as before): the land holds only the gate, a grand stair and a
+  landing with a Portal in it; inside, a world of rock with the dungeon planned on flat rock under a sinkhole, as
+  deep as its floors go, a hall with two fires round the Portal back out, its own dimension for each site, dark but
+  for its fires, or started from the dungeon's `dimension` file. Only the nearest Portal into such a dimension
+  within the project's Dimension distance (24 m) is open, so one at most is loaded besides the level's. Changes saved
+  in a dungeon that was under the land are left out as an old world loads. The template's dungeon moved to the
+  current settings. Tests: the gate alone in the land; six floors in rock, every space reached, the Portal's place
+  clear; a walker comes close, the dungeon's dimension loads and it walks through and stands by the way out in the
+  dark; the nearest of two Portals open, never two dimensions loaded; old changes in a former dungeon dropped and
+  others kept; GPU pictures of the gate showing the hall through it, the hall and a room two floors down lit by its
+  fire. To come: the editor's dimension view, the script API (dungeon stages and growth among it), saves per
   dimension and the server making ground round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
@@ -3679,7 +3689,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     a shut door in a wall and one that opens none stopping at it; agents jumping a trench by both ways of moving.
   - [ ] areas from a project list, picked per block and by Nav Area boxes; Nav Links; climbing vines, ropes and
     ladders; walkers two blocks wide
-  - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
+  - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
+    `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
+    its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
+    (`editor/nav_view.rs`). `navigation.status`, `navigation.path`, `navigation.nearest`, `navigation.agents`
+    and `nav_agent.set_destination`, through `nav_agent::{find_way, nearest_place}`, which scripts' `Navigation`
+    uses too; `vox mcp` reaches them as it reaches every call. Tests: a tool finding a way over a Block World,
+    reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
+    ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
+  - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
   - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
@@ -3805,6 +3823,9 @@ The launcher, the equivalent of Unity Hub, lives in its own repository. It cover
 - updating itself
 - the project list
 - the new-project flow with templates and default setups
+- **release lists:** the official engine releases with nothing to set up, nightlies when turned on, and custom engine
+  releases, such as a fork's, listed beside them with their own key and their name on each version; a project
+  pinned to a fork's version installs from the fork. The old single release setting moves over as custom releases.
 
 It relies on the engine contract described under "Versions, installs and the launcher" in
 [ARCHITECTURE.md](ARCHITECTURE.md).

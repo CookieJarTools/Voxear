@@ -320,6 +320,13 @@ const FIXED: &[Setting] = &[
     ),
     Setting::new(
         ("Graphics", "Portals"),
+        "portals.dimension_distance",
+        "Dimension distance",
+        number(2.0, 1000.0, "m"),
+        "How near a camera comes to a Portal into another dimension, as a dungeon's gate, before that dimension loads. Only the nearest such Portal is open at a time, so one dimension at most is loaded besides the level's.",
+    ),
+    Setting::new(
+        ("Graphics", "Portals"),
         "portals.draw_distance",
         "Draw distance",
         number(0.0, 100_000.0, "m"),

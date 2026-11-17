@@ -27,7 +27,11 @@ const TILE: i32 = 16;
 
 impl<'a> Land<'a> {
     pub(crate) fn new(ground: &'a Ground<'a>) -> Self {
-        let sea = (ground.world.sea_level() / ground.size - 0.5).ceil() as i32 - 1;
+        // Flat rock has no sea.
+        let sea = match ground.flat {
+            Some(_) => i32::MIN / 4,
+            None => (ground.world.sea_level() / ground.size - 0.5).ceil() as i32 - 1,
+        };
         Self { ground, tiles: Default::default(), wet: Default::default(), sea }
     }
 
@@ -97,7 +101,10 @@ impl<'a> Land<'a> {
         let column = [cell[0] * STEP, cell[1] * STEP];
         let x = ground.position[0] + (column[0] as f32 + 0.5) * ground.size;
         let z = ground.position[1] + (column[1] as f32 + 0.5) * ground.size;
-        let river = ground.world.water(&[x], &[z]).map(|(water, _)| water[0] / ground.size);
+        let river = match ground.flat {
+            Some(_) => None,
+            None => ground.world.water(&[x], &[z]).map(|(water, _)| water[0] / ground.size),
+        };
         let level = match river {
             Some(level) if level > top as f32 + 0.5 => Some(level),
             _ if top <= self.sea => Some(self.sea as f32 + 1.0),

@@ -180,9 +180,29 @@ pub struct PortalExit {
 struct PortalExits {
     exits: Vec<PortalExit>,
     made_for: HashMap<Entity, u32>,
-    /// Portals near enough to show their far side that lead into a
-    /// dimension's file and are not linked to it yet.
+    /// The one Portal into a dimension loaded for it (a [`PortalInto`] or a
+    /// dungeon's gate) that is open now: the nearest within the project's
+    /// dimension distance, while it is not linked to its dimension yet.
     unlinked: Vec<Entity>,
+    /// That Portal, linked or not.
+    active: Option<Entity>,
+}
+
+/// How much further than the dimension distance the Portal open into a
+/// dimension stays open, in metres, so a camera at the edge does not load
+/// and let go its dimension over and over.
+const DIMENSION_KEPT_PAST: f32 = 6.0;
+
+/// The one Portal into a dimension loaded for it that is open now, if any
+/// (see [`find_exits`]).
+pub fn active_into(world: &World) -> Option<Entity> {
+    world.resource::<PortalExits>()?.active
+}
+
+/// Whether a Portal leads into a dimension loaded for it, only while it is
+/// the nearest such Portal: one into a dimension's file, or a dungeon's gate.
+fn leads_into_loaded(world: &World, portal: Entity) -> bool {
+    world.has::<PortalInto>(portal) || world.has::<crate::dungeons::DungeonGate>(portal)
 }
 
 /// The Portals near enough to show their far sides that lead into a
@@ -191,6 +211,14 @@ pub fn link_wanted(world: &World) -> Vec<(Entity, DimensionLink)> {
     let Some(exits) = world.resource::<PortalExits>() else { return Vec::new() };
     let link = |entity: &Entity| Some((*entity, world.get::<PortalInto>(*entity)?.0.clone()));
     exits.unlinked.iter().filter_map(link).collect()
+}
+
+/// The Portals in dungeons' gates near enough to show their far sides whose
+/// dungeons' dimensions are not made yet.
+pub fn gates_wanted(world: &World) -> Vec<(Entity, crate::dungeons::DungeonGate)> {
+    let Some(exits) = world.resource::<PortalExits>() else { return Vec::new() };
+    let gate = |entity: &Entity| Some((*entity, *world.get::<crate::dungeons::DungeonGate>(*entity)?));
+    exits.unlinked.iter().filter_map(gate).collect()
 }
 
 /// The far sides the world is made round this tick (see [`find_exits`]).
@@ -238,12 +266,36 @@ pub(crate) fn find_exits(world: &mut World) {
     );
     let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
     let switched = Switched::of(world);
+    // Of the Portals into dimensions loaded for them, the nearest a place of its own dimension within the dimension
+    // distance is open, and no other: one such dimension at most is loaded at a time.
+    let mut nearest: Option<(Entity, f32)> = None;
+    for (entity, portal, transform, placed) in world
+        .query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(entity, portal, ..)| portal.open && switched.is_active(*entity) && leads_into_loaded(world, *entity))
+    {
+        let pose = PortalPose::of(transform, placed);
+        let here = voxear_scene::dimension_of(world, entity);
+        let distance = near
+            .iter()
+            .filter(|(_, dimension)| *dimension == here)
+            .map(|(from, _)| voxear_render::portals::away(&pose, portal.size, *from))
+            .fold(f32::MAX, f32::min);
+        let open = quality.dimension_distance + if was.active == Some(entity) { DIMENSION_KEPT_PAST } else { 0.0 };
+        if distance <= open && nearest.is_none_or(|(_, best)| distance < best) {
+            nearest = Some((entity, distance));
+        }
+    }
+    let active = nearest.map(|(entity, _)| entity);
     let mut unlinked = Vec::new();
     let exits: Vec<PortalExit> = world
         .query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .filter(|(entity, portal, ..)| portal.open && switched.is_active(*entity))
+        // A Portal into a dimension loaded for it has its far side made only while it is the one open.
+        .filter(|(entity, ..)| !leads_into_loaded(world, *entity) || active == Some(*entity))
         .filter_map(|(entity, portal, transform, placed)| {
             let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to));
             let pose = PortalPose::of(transform, placed);
@@ -263,7 +315,7 @@ pub(crate) fn find_exits(world: &mut World) {
             near.iter().any(within).then_some(())?;
             // One that leads into a dimension not made yet waits for it.
             let Some(to) = to else {
-                if world.has::<PortalInto>(entity) {
+                if leads_into_loaded(world, entity) {
                     unlinked.push(entity);
                 }
                 return None;
@@ -273,10 +325,10 @@ pub(crate) fn find_exits(world: &mut World) {
             Some(PortalExit { portal: entity, at, distance: quality.far_side_distance, dimension })
         })
         .collect();
-    if exits.is_empty() && was.made_for.is_empty() && unlinked.is_empty() {
+    if exits.is_empty() && was.made_for.is_empty() && unlinked.is_empty() && active.is_none() {
         return;
     }
-    world.insert_resource(PortalExits { exits, made_for: was.made_for, unlinked });
+    world.insert_resource(PortalExits { exits, made_for: was.made_for, unlinked, active });
 }
 
 /// Where Portals are seen from: where the world is, each camera switched on

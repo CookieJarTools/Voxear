@@ -105,14 +105,19 @@ pub fn retarget(source: &Skeleton, clip: &Clip, target: &Skeleton) -> Clip {
     for frame in 0..clip.frames {
         let posed = clip.frame(frame);
         poses.extend(rest.iter().enumerate().map(|(bone, at_rest)| {
-            let Some(pose) = from[bone].and_then(|source| posed.get(source)) else { return *at_rest };
+            let Some((source, pose)) = from[bone].and_then(|source| Some((source, posed.get(source)?))) else {
+                return *at_rest;
+            };
             let travels = Some(bone) == hips || Some(bone) == root;
             let translation = match (travels, alike[bone]) {
                 (true, _) => pose.translation * scale,
                 (false, true) => pose.translation,
                 (false, false) => at_rest.translation,
             };
-            BonePose { translation, rotation: pose.rotation, scale: at_rest.scale }
+            // Grown or shrunk from its own size as the clip grows it from the clip's, as a squash keyed in it.
+            let was = source_rest[source].scale;
+            let grown = Vec3::select(was.abs().cmpgt(Vec3::splat(1e-6)), pose.scale / was, Vec3::ONE);
+            BonePose { translation, rotation: pose.rotation, scale: at_rest.scale * grown }
         }));
     }
     Clip { name: clip.name.clone(), frames: clip.frames, poses }
@@ -293,6 +298,21 @@ mod tests {
         assert!((pose[1].translation.y - 0.72).abs() < 1e-5, "hips scaled too: {}", pose[1].translation);
         assert_eq!(pose[2].rotation, Quat::from_rotation_x(0.5), "the thigh turns as the clip turns it");
         assert_eq!(pose[3].translation, Vec3::NEG_Y * 0.4, "the shin keeps the body's own length");
+    }
+
+    #[test]
+    fn a_clips_scale_keys_play_on_another_body_of_the_same_rig() {
+        let source = legged(1.0, 0.5);
+        let mut target = legged(0.8, 0.4);
+        target.bones[3].rest.scale = Vec3::splat(2.0);
+        let mut frame = source.rest();
+        frame[2].scale = Vec3::new(1.0, 0.5, 1.0);
+        frame[3].scale = Vec3::splat(1.5);
+        let clip = Clip { name: "Squash".into(), frames: 1, poses: frame };
+        let pose = retarget(&source, &clip, &target).frame(0).to_vec();
+        assert_eq!(pose[2].scale, Vec3::new(1.0, 0.5, 1.0), "squashed as the clip squashes it");
+        assert_eq!(pose[3].scale, Vec3::splat(3.0), "grown from its own size as the clip grows it from the clip's");
+        assert_eq!(pose[1].scale, Vec3::ONE, "a bone the clip leaves as made stays so");
     }
 
     #[test]

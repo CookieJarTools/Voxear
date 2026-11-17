@@ -26,14 +26,15 @@ Press Play. The creature walks to somewhere nearby, stands a while, and goes som
 
 ## How a Block Mob finds its way
 
-- It walks a block at a time, forwards, back or sideways, never through a corner.
-- It climbs a step **one block** high. Anything higher is a wall, and it goes round.
+- It walks straight from corner to corner of its way, across open ground at any angle, never through the corner of a wall or over the edge of a ledge it would fall from.
+- It climbs a step **one block** high, and up slabs and stairs. Anything higher is a wall, and it goes round.
 - It drops down up to **three blocks**.
 - It needs as many clear blocks over the ground as its Character Controller is high.
-- It wades water one block deep and goes round deeper water. If it ends up in deep water anyway, it swims.
-- It looks for a new way about once a second, so it follows something that moves and notices blocks that were placed or dug.
+- It wades water one block deep, but would rather not, and goes round deeper water. If it ends up in deep water anyway, it swims.
+- It finds its way in the background, so a field full of mobs costs the frame little. A long way, across many chunks, is worked out a few chunks at a time as it walks.
+- It looks for a new way when blocks along its way are placed or dug, when what it follows moves, and about once a second.
 
-A place it cannot reach is not an error. It stands, and looks again.
+A place it cannot reach is not an error. It goes as near as it can, and looks again. In a world without end, it cannot find a way through ground that has not been made yet: it goes as far as the made ground lets it.
 
 ## Telling a Block Mob where to go from a script
 

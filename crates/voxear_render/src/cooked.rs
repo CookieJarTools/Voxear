@@ -34,7 +34,7 @@ use crate::{
 /// bends and flutters in the wind, for a plant that is a box model. 14:
 /// meshes' lightmap UVs in the payload. 15: whether each material is
 /// two-sided.
-pub const COOKED_VERSION: u32 = 15;
+pub const COOKED_VERSION: u32 = 16;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -252,7 +252,8 @@ impl CookedModel {
             w.u32(u32::from(desc.pixels));
             w.f32s(&[desc.wind_bend, desc.wind_flutter]);
             w.u32(u32::from(desc.two_sided));
-            for texture in [material.base_color, material.metallic_roughness, material.normal, material.emissive] {
+            let maps = [material.base_color, material.metallic_roughness, material.normal, material.emissive];
+            for texture in maps.into_iter().chain([material.tint_mask]) {
                 w.option(texture.map(|t| t as u32));
             }
             w.str(&material.name);
@@ -380,8 +381,9 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));
         let (base_color, metallic_roughness, normal, emissive) = (texture()?, texture()?, texture()?, texture()?);
+        let tint_mask = texture()?;
         let name = r.str()?;
-        materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
+        materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive, tint_mask });
     }
     let mut nodes = Vec::new();
     for _ in 0..r.u32()? {

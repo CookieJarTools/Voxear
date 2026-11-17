@@ -188,6 +188,12 @@ pub trait ScriptServices {
         None
     }
 
+    /// Has an Obj draw the model a GUID or project path names, in place of
+    /// the one it draws, giving it a Model Renderer when it has none.
+    fn set_model(&mut self, _world: &mut World, _entity: Entity, reference: &str) -> Result<()> {
+        anyhow::bail!("{reference}: there are no models to load here")
+    }
+
     /// What a save calls an Obj, so that a later run finds it again: the
     /// GUID of the scene it was loaded from and its path there, as
     /// `guid:3/2`. An Obj a script made from a prefab is `spawned:` and its
@@ -702,6 +708,12 @@ pub fn ui_panel_document(world: &mut World, entity: Entity) -> Option<u32> {
 /// [`ui_panel_document`] gives a UI Panel's.
 pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
     with_services(|services| services.ui_screen_document(world, entity)).flatten()
+}
+
+/// Has an Obj draw another model through the lent services (see
+/// [`ScriptServices::set_model`]); none outside them.
+pub fn set_model(world: &mut World, entity: Entity, reference: &str) -> Option<Result<()>> {
+    with_services(|services| services.set_model(world, entity, reference))
 }
 
 /// A data asset as JSON for `Definition.Load` (see

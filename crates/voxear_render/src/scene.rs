@@ -1027,6 +1027,7 @@ pub fn extract(
         );
         let lod = MeshRenderer { lod_bias: drawn.lod_bias, ..MeshRenderer::new(MeshHandle(0), MaterialHandle(0)) };
         let (flags, lod_bias, lod_screen) = lod.lod_bits();
+        let tints = drawn.gpu_tints();
         for (index, part) in drawn.parts.iter().enumerate() {
             entities.push(Owner { entity, plant: None, part: Some(index as u32), far_side: false });
             let model = obj * part.transform;
@@ -1041,6 +1042,7 @@ pub fn extract(
                 lod_bias,
                 lod_screen,
                 fade: [0.0; 4],
+                tints,
                 ..GpuInstance::default()
             });
         }

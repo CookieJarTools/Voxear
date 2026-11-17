@@ -55,8 +55,8 @@ Pick **Open Map** from the project's input actions (see [[Reading Input]]). Pres
 
 | To | Do |
 | --- | --- |
-| Turn and tilt the map | Drag |
-| Move over the ground | Drag with the middle button |
+| Move over the ground | Drag, or drag with the middle button |
+| Turn and tilt the map | Drag with the right button |
 | Zoom | Turn the wheel |
 
 Zooming keeps the map the size it is on the screen and shows more or less ground. The player's arrow stays at the ground's edge, towards where they are, once the map is moved off them. With **Pointer Control** off the pointer does none of this, and a script steers the map (see [Steering a map](#steering-a-map)).

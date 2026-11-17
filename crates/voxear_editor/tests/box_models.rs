@@ -142,7 +142,7 @@ fn a_new_box_model_is_made_shown_in_the_inspector_and_followed_as_its_file_chang
 
     // An Obj drawing it gets its one part, skinned, and its bone.
     let guid = editor.game.content.db().guid_of(path).unwrap();
-    let data = voxear_engine::scene_file::ModelData { model: path.to_string(), lod_bias: 0.0, parts: Vec::new() };
+    let data = voxear_engine::scene_file::ModelData::of(path);
     let drawn = voxear_engine::prefab::model_renderer(&mut editor.game.content, &mut renderer, &data).unwrap();
     assert_eq!((drawn.parts.len(), drawn.parts[0].skin), (1, Some(0)));
     let mesh = drawn.parts[0].mesh;

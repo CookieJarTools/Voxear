@@ -4169,6 +4169,7 @@ dependencies = [
  "voxear_ecs",
  "voxear_input",
  "voxear_localization",
+ "voxear_nav",
  "voxear_net",
  "voxear_packages",
  "voxear_physics",
@@ -4212,6 +4213,14 @@ dependencies = [
  "tracing",
  "ureq",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "voxear_nav"
+version = "0.1.1"
+dependencies = [
+ "voxear_core",
+ "voxear_terrain",
 ]
 
 [[package]]

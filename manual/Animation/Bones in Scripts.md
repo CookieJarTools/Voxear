@@ -25,8 +25,10 @@ A bone that isn't there, as from `Find` with a name the model doesn't have, is `
 | `Name` | Its name in the model |
 | `Parent` | The bone it hangs from; `Bone.None` for a root |
 | `LocalPosition`, `LocalRotation` | Where it is and how it is turned, in its parent bone's space |
+| `LocalScale` | How large it is, each way, in its parent bone's space: 1 as the model was made |
 | `Position`, `Rotation` | Where it is and how it is turned in the world |
-| `RestPosition`, `RestRotation` | Where it is and how it is turned in its parent's space at rest, as the model was made |
+| `RestPosition`, `RestRotation`, `RestScale` | Where it is, how it is turned and how large it is in its parent's space at rest, as the model was made |
+| `Hidden` | Whether it, and every bone under it, is left undrawn |
 
 ## Bending bones after animation
 
@@ -50,6 +52,32 @@ public sealed class LookAt : Behaviour
 A system does the same in `[UpdateIn(Stage.Pose)]`, after every behaviour's `PoseUpdate`.
 
 What a script sets stays until animation poses the model again. A model with an Animator or a Motion Matcher is posed again next frame, so set its bones every frame; one without keeps what was set.
+
+## Sizing and hiding bones
+
+`LocalScale` makes a bone and everything under it larger or smaller: 2 is twice the size, and a different size each way squashes or stretches it, as a jump lands or a slime wobbles. Set it in `PoseUpdate`, as a turn is, since animation poses it again each frame:
+
+```csharp
+protected override void PoseUpdate()
+{
+	var body = Obj.Skeleton.Find("Body");
+	var squash = 1f - 0.2f * landing;
+	body.LocalScale = new Vector3(1f / MathF.Sqrt(squash), squash, 1f / MathF.Sqrt(squash));
+}
+```
+
+`Hidden` leaves a bone, and every bone under it, out of the picture: the skin bound to them is drawn nowhere, and casts no shadow. It stays hidden whatever animation does, until it is shown again, so set it once:
+
+```csharp
+// The ears the player picked, and no others.
+foreach (var ear in skeleton.Bones.Where(bone => bone.Name.StartsWith("Ear")))
+{
+	var shown = ear.Name == $"Ear{chosen}";
+	ear.Hidden = !shown;
+}
+```
+
+A hidden bone stays where it is posed, so a [[Bone Attachments|Bone Attachment]] on it keeps its place; switch the attached Obj off to hide it too. Skin bound to a hidden bone and to one that is not, as a mesh made in a modelling program has at its joints, is drawn in towards the hidden bone. A box model's boxes each go whole with their bone. Putting another model with other bones on the Obj shows every bone again.
 
 ## A humanoid's bones by what they are
 

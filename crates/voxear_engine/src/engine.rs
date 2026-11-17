@@ -99,6 +99,7 @@ impl Engine {
         crate::animation::bones::register();
         crate::animation::pose_ops::register();
         crate::mesh_boxes::register();
+        crate::model_renderers::register();
         crate::obj_hierarchy::register();
         crate::guns::register();
         crate::net::register();
@@ -663,7 +664,9 @@ impl Engine {
             // Posed after Update, so LateUpdate sees this frame's bones.
             profile_scope!("Animation");
             // What was hidden last frame shows, unless hidden again as the pose stage and the attachments pose it.
-            // What walks by itself takes its step first, for what animates it to see.
+            // What walks by itself takes its step first, for what animates it to see, on places kept up with
+            // this frame's blocks.
+            crate::navigation::update(&mut self.world);
             crate::block_mob::walk_block_mobs(&mut self.world, self.time.delta);
             crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);
@@ -675,6 +678,8 @@ impl Engine {
             self.run_phase(Phase::PoseUpdate);
             self.run_script_systems(SCRIPT_POSE);
             self.flush();
+            // Worn parts, posed by the skeletons they follow as those now stand, before what is attached to them.
+            crate::animation::follow_skeletons(&mut self.world);
             crate::animation::attach_to_bones(&mut self.world);
             // What animation walked through a Portal goes through too.
             if !self.edit_mode {

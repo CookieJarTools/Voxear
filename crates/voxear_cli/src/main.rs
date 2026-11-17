@@ -398,6 +398,14 @@ enum Commands {
         /// Show the stats overlay (F1 in a window).
         #[arg(long)]
         stats: bool,
+        /// Draw the game's own UI over the picture, as a player sees it: Screen UIs, and the menus and screens
+        /// scripts open, such as a title menu or a character's creation.
+        #[arg(long)]
+        ui: bool,
+        /// How large the game's UI is drawn with --ui, as a display's scale is: 2 for a screen of twice the
+        /// pixels.
+        #[arg(long, value_name = "SCALE", default_value_t = 1.0)]
+        ui_scale: f32,
         /// Also save every this many frames as a sequence, numbered beside --out (frame_0060.png, ...), for
         /// watching what changes over time, such as the eye adapting.
         #[arg(long, value_name = "FRAMES")]
@@ -589,6 +597,8 @@ fn main() -> Result<()> {
             bundles,
             overlays,
             stats,
+            ui,
+            ui_scale,
             no_meshlet_culling,
             no_shadow_cache,
             sun_shadows,
@@ -662,6 +672,7 @@ fn main() -> Result<()> {
                 delta,
                 options,
                 stats,
+                ui: ui.then_some(ui_scale.clamp(0.25, 8.0)),
                 mesh_shaders,
                 software_rays,
                 camera,
@@ -795,6 +806,8 @@ struct Shot {
     options: ViewOptions,
     /// Draw the stats overlay over the image.
     stats: bool,
+    /// Draw the game's own UI over the image, at this scale.
+    ui: Option<f32>,
     /// Cull meshlets with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
     /// The Obj whose camera to look through, by name.
@@ -1046,6 +1059,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         delta,
         options,
         stats,
+        ui,
         mesh_shaders,
         software_rays,
         camera,
@@ -1142,6 +1156,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         // UI Panels in the world, with nothing pointing at them.
         let view = [0.0, 0.0, width as f32, height as f32];
         game.show_panels(&mut renderer, (view, looking_through), None, delta)?;
+        // The game's own UI over the whole picture, under the stats, as a window draws it.
+        if let Some(scale) = ui {
+            game.ui.draw(&mut renderer, delta, [0, 0, width, height], scale)?;
+        }
         if stats {
             // Refreshed every frame, since a render is over too soon to wait.
             overlay.update(delta, &renderer);
@@ -1320,8 +1338,7 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
     RendererSettings {
         renderdoc,
         capture_folder: Some(project.root.join(".voxear").join("Captures")),
-        hot_reload: false,
-        software_rays: false,
+        ..RendererSettings::default()
     }
 }
 

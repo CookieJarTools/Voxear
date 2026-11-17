@@ -1,5 +1,6 @@
 //! A script reads a model's bones and bends one in `Stage.Pose`: names,
-//! parents and places, and a turned shoulder carrying its elbow round.
+//! parents and places, a turned shoulder carrying its elbow round, a
+//! shoulder made larger and an elbow hidden.
 //! Builds a copy of Hello with one more script; skips itself without .NET
 //! and the managed build.
 
@@ -30,6 +31,10 @@ public sealed class Bender : SystemBase
 		var at = elbow.Position;
 		static float Shown(float value) => MathF.Round(value, 2) + 0f;
 		Log.Info($"elbow at {Shown(at.X):0.00} {Shown(at.Y):0.00} {Shown(at.Z):0.00}, {elbow.RestPosition.X:0.00} at rest");
+		shoulder.LocalScale = new Vector3(2f, 2f, 2f);
+		elbow.Hidden = true;
+		var grown = elbow.Position;
+		Log.Info($"grown: {Shown(grown.Z):0.00} {shoulder.LocalScale.X:0.0} {shoulder.RestScale.X:0.0} {elbow.Hidden} {shoulder.Hidden}");
 	}
 }
 "#;
@@ -68,6 +73,8 @@ fn a_script_reads_a_models_bones_and_turning_one_carries_the_next_round() {
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
     assert!(lines.iter().any(|l| l == "bones: 2 Elbow Shoulder 1 False False"), "{lines:#?}");
     assert!(lines.iter().any(|l| l == "elbow at 0.00 1.00 -0.30, 0.30 at rest"), "{lines:#?}");
+    // The shoulder twice as large carries the elbow twice as far; the elbow hidden, the shoulder not.
+    assert!(lines.iter().any(|l| l == "grown: -0.60 2.0 1.0 True False"), "{lines:#?}");
 }
 
 /// A copy of Hello, inside the repository, where its scripts find the

@@ -656,6 +656,8 @@ pub enum ComponentKind {
     /// The level's baked lighting, which no one Obj has: its lightmaps, its
     /// light probes' light at a point, and a bake under way.
     BakedLighting = 32,
+    /// The model an Obj draws whole, and the colours it is tinted.
+    ModelRenderer = 33,
 }
 
 /// The most kinds `kind_value` answers.

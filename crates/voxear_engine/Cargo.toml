@@ -15,6 +15,7 @@ voxear_core.workspace = true
 voxear_ecs.workspace = true
 voxear_scene.workspace = true
 voxear_terrain.workspace = true
+voxear_nav.workspace = true
 voxear_rhi.workspace = true
 voxear_render.workspace = true
 voxear_ui.workspace = true

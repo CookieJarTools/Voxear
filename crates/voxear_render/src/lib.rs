@@ -70,6 +70,7 @@ mod erosion;
 pub use erosion::MOST_STEPS as MOST_EROSION_STEPS;
 mod tracks;
 mod payload;
+mod pipeline_cache;
 mod pipelines;
 pub mod portals;
 mod post;
@@ -85,6 +86,7 @@ mod lamp_vsm;
 mod shadow_cache;
 mod shadows;
 mod sound_rays;
+mod splash;
 mod texture_codec;
 mod ui_pass;
 mod ui_panels;
@@ -132,7 +134,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
-pub use skinning::{HiddenBones, Pose};
+pub use skinning::{BonesOff, HiddenBones, Pose};
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
@@ -162,7 +164,7 @@ pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plant
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
-pub use model_renderer::{ModelPart, ModelRenderer};
+pub use model_renderer::{ModelPart, ModelRenderer, NO_TINT, TINTS, TintSlot};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use effects::{
     BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, longest_life as particles_longest_life, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
@@ -311,7 +313,7 @@ impl RenderStats {
 }
 
 /// Options fixed when the renderer is created.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RendererSettings {
     /// Load RenderDoc (when installed) so frames can be captured.
     pub renderdoc: bool,
@@ -322,6 +324,22 @@ pub struct RendererSettings {
     /// Trace the GI's rays in a compute shader even where the GPU has ray
     /// tracing, as GPUs without it do: for testing that path.
     pub software_rays: bool,
+    /// Show a splash in the window while the renderer gets ready, until its
+    /// first frame: the engine's name, and how far making the pipelines has
+    /// got (see [`Renderer::show_splash`]). On unless `VOXEAR_SPLASH=0`.
+    pub splash: bool,
+}
+
+impl Default for RendererSettings {
+    fn default() -> Self {
+        Self {
+            renderdoc: false,
+            capture_folder: None,
+            hot_reload: false,
+            software_rays: false,
+            splash: std::env::var("VOXEAR_SPLASH").map_or(true, |set| set != "0"),
+        }
+    }
 }
 
 fn attach_renderdoc(settings: &RendererSettings) -> Option<RenderDoc> {
@@ -651,6 +669,10 @@ pub struct Renderer {
     bake_recorded: usize,
     /// The level's bake's lightmaps, on the GPU.
     baked_textures: lightmaps::BakedTextures,
+    /// Where the pipelines made are kept for the next start.
+    pipeline_cache: Option<pipeline_cache::PipelineCacheFile>,
+    /// What the window shows until the first frame.
+    splash: Option<splash::Splash>,
 }
 
 impl Renderer {
@@ -702,9 +724,24 @@ impl Renderer {
         Ok(renderer)
     }
 
-    fn build(gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, settings: &RendererSettings) -> Result<Self> {
+    fn build(mut gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, settings: &RendererSettings) -> Result<Self> {
         let hot_reload = settings.hot_reload;
-        let frames = Frames::new(&gpu)?;
+        let shaders = ShaderSet::embedded();
+        // The pipelines an earlier start made with these shaders, so they need not be compiled again.
+        let mut pipeline_cache = pipeline_cache::PipelineCacheFile::open(&mut gpu, &shaders);
+        let mut frames = Frames::new(&gpu)?;
+        let mut splash = match &target {
+            Target::Window(_) if settings.splash => Some(splash::Splash::new()),
+            _ => None,
+        };
+        let mut show = |gpu: &Gpu, frames: &mut Frames, status: &str, count: Option<(usize, usize)>| {
+            if let (Some(splash), Target::Window(swapchain)) = (&mut splash, &target)
+                && let Err(error) = splash.show((gpu, frames, swapchain), status, count)
+            {
+                tracing::warn!("could not show the splash: {error:#}");
+            }
+        };
+        show(&gpu, &mut frames, "Starting", None);
         let mut bindless = Bindless::new(&gpu)?;
         let graph = RenderGraph::new(&gpu, FRAMES_IN_FLIGHT)?;
         // Without ray tracing, the GI's rays walk hierarchies of the meshes' triangles in a compute shader.
@@ -717,8 +754,13 @@ impl Renderer {
             Target::Offscreen { image, encoding, .. } => (image.desc.format, *encoding),
         };
         let output_format = if encoding.is_hdr() { display::DISPLAY_FORMAT } else { window_format };
-        let shaders = ShaderSet::embedded();
-        let pipelines = Pipelines::new(&gpu, &bindless, (output_format, window_format), &shaders)?;
+        let formats = (output_format, window_format);
+        let mut progress = |done, total| show(&gpu, &mut frames, "Preparing shaders", Some((done, total)));
+        let pipelines = Pipelines::new_showing(&gpu, &bindless, formats, &shaders, &mut progress)?;
+        if let Some(cache) = &mut pipeline_cache {
+            cache.save(&gpu);
+        }
+        show(&gpu, &mut frames, "Opening", None);
         let first = View::new(&gpu, 0)?;
         let ui_buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_ui_buffers(&gpu, slot)).collect::<Result<_>>()?;
         let main =
@@ -769,7 +811,23 @@ impl Renderer {
             bake_pace_set: false,
             bake_recorded: 0,
             baked_textures: Default::default(),
+            pipeline_cache,
+            splash,
         })
+    }
+
+    /// Shows `status` on the window's splash, as what opens a project does
+    /// while it loads, until the first frame is drawn. Does nothing once a
+    /// frame has been, or with no splash.
+    pub fn show_splash(&mut self, status: &str) {
+        let (Some(splash), Some(Output { target: Target::Window(swapchain), .. })) =
+            (&mut self.splash, self.outputs.first())
+        else {
+            return;
+        };
+        if let Err(error) = splash.show((&self.gpu, &mut self.frames, swapchain), status, None) {
+            tracing::warn!("could not show the splash: {error:#}");
+        }
     }
 
     pub fn gpu(&self) -> &GpuInfo {
@@ -1356,6 +1414,12 @@ impl Renderer {
 
     /// A mesh's box in its own space, min and max corners, for picking. The
     /// box of its bounding sphere for a mesh uploaded cooked.
+    /// Whether a material has a tint mask, so an Obj's second and third
+    /// tints show on it.
+    pub fn tint_masked(&self, material: MaterialHandle) -> bool {
+        self.assets.as_ref().is_some_and(|assets| assets.tint_masked(material))
+    }
+
     pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
         self.assets.as_ref()?.mesh_bounds(mesh)
     }
@@ -1627,6 +1691,9 @@ impl Renderer {
 
     /// Draws the world's cameras, lights and mesh renderers, into each output.
     pub fn render(&mut self, world: &World, time: f32) -> Result<()> {
+        if let Some(splash) = self.splash.take() {
+            splash.retire(&mut self.frames);
+        }
         self.reload_shaders();
         self.finish_custom_shaders();
         self.wear_shader_pack(world);
@@ -2150,6 +2217,13 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         self.gpu.wait_idle();
+        // With what was made since it started, as a project's own shaders' pipelines.
+        if let Some(cache) = &mut self.pipeline_cache {
+            cache.save(&self.gpu);
+        }
+        if let Some(splash) = self.splash.take() {
+            splash.retire(&mut self.frames);
+        }
         let gpu = &self.gpu;
         if let Some(baking) = self.baking.take() {
             baking.cancel(gpu);

@@ -1209,15 +1209,16 @@ pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &Mod
     let nodes = content.model(renderer, guid)?.to_vec();
     let parts = model_parts(content, renderer, &nodes, data)?;
     let animation = content.model_animation(guid);
-    Ok(ModelRenderer { lod_bias: data.lod_bias, animation, ..ModelRenderer::new(parts) })
+    let masked = parts.iter().any(|part| renderer.tint_masked(part.material));
+    Ok(ModelRenderer { lod_bias: data.lod_bias, animation, tints: data.tints(), masked, ..ModelRenderer::new(parts) })
 }
 
 /// A Model Renderer with no parts to draw but the model's skeleton and
 /// clips, read without the GPU: `None` for a model without any.
-fn animated(content: &mut Content, data: &ModelData) -> Option<ModelRenderer> {
+pub(crate) fn animated(content: &mut Content, data: &ModelData) -> Option<ModelRenderer> {
     let guid = content.parse(&data.model).ok()?.guid()?;
     let animation = content.clip_file(guid)?;
-    Some(ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) })
+    Some(ModelRenderer { animation: Some(animation), tints: data.tints(), ..ModelRenderer::new(Vec::new()) })
 }
 
 /// A loaded model's parts as a Model Renderer draws them, as `data`

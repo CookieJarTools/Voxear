@@ -11,6 +11,8 @@ A **Bone Attachment** keeps its Obj on a bone of its parent's model as the model
 
 It moves after the bones are posed and before `LateUpdate`, so a script there sees it where the bone is this frame.
 
+A model worn on a body, as a coat, a helmet or hair made on the body's rig, does not need one: tick **Follow parent** on its Model Renderer and it is posed bone by bone by the body's skeleton (see [[Tints and Parts#A character made of parts]]).
+
 ## A first-person camera on the body
 
 A [[First-Person View]] does all of this for you. To do it yourself instead:

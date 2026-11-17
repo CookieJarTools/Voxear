@@ -14,7 +14,9 @@ mod path;
 pub mod plants;
 mod switches;
 
-pub use dimensions::{CurrentDimension, DimensionId, Dimensioned, InDimension, dimension_of, set_dimension};
+pub use dimensions::{
+    CurrentDimension, DimensionId, Dimensioned, InDimension, dimension_of, put_in_dimension, set_dimension,
+};
 pub use hierarchy::{Parent, WorldTransform, propagate_transforms, world_matrix};
 pub use layers::{LAYER_COUNT, Layer, Layers};
 pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};

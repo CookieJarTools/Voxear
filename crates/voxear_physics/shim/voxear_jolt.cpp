@@ -499,6 +499,27 @@ void vx_body_set_velocity(VxWorld *world, uint32_t body, const float linear[3], 
 		Vec3(angular[0], angular[1], angular[2]));
 }
 
+// Puts a body on another layer, as it goes into another dimension, keeping
+// its speed and spin.
+void vx_body_set_layer(VxWorld *world, uint32_t body, uint32_t layer) {
+	BodyInterface &bodies = world->system.GetBodyInterface();
+	bool moving = bodies.GetMotionType(id_of(body)) != EMotionType::Static;
+	bodies.SetObjectLayer(id_of(body), object_layer(layer, moving));
+}
+
+// Puts a character on another layer, its body inside it too.
+void vx_character_set_layer(VxWorld *world, uint32_t character, uint32_t layer) {
+	if (character == 0 || character > world->characters.size() || world->characters[character - 1].inner == nullptr) {
+		return;
+	}
+	Character &held = world->characters[character - 1];
+	held.layer = layer;
+	BodyID inner = held.inner->GetInnerBodyID();
+	if (!inner.IsInvalid()) {
+		world->system.GetBodyInterface().SetObjectLayer(inner, object_layer(layer, true));
+	}
+}
+
 // A push: 0 a force over the step, 1 an impulse at once, 2 a torque, 3 an
 // angular impulse; `at` puts a force or impulse at a point in the world.
 void vx_body_push(VxWorld *world, uint32_t body, uint32_t kind, const float amount[3], const float *at) {

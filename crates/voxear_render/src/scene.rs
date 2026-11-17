@@ -594,6 +594,21 @@ impl Default for Sky {
     }
 }
 
+/// The sky, sun, post-processing and weather of a dimension the game is not
+/// seen from, which a view through a Portal into it is drawn with.
+#[derive(Clone, Copy, Debug)]
+pub struct DimensionLook {
+    pub sky: Sky,
+    pub sun: Option<crate::looks::SunLook>,
+    pub post: Option<PostProcess>,
+    pub weather: crate::weather::Weather,
+}
+
+/// Each dimension's look but the one the game is seen from, whose look is
+/// the world's own resources: a resource the engine keeps.
+#[derive(Clone, Debug, Default)]
+pub struct DimensionLooks(pub std::collections::HashMap<voxear_scene::DimensionId, DimensionLook>);
+
 /// `frame_index` picks TAA's sub-pixel camera offset. `sphere` gives a
 /// mesh's bounding sphere, which LOD Groups measure their size from.
 pub fn extract(
@@ -627,8 +642,16 @@ pub fn extract(
     let dimensioned = std::sync::Arc::new(voxear_scene::Dimensioned::of(world));
     let dimension = match through {
         Some(through) => through.dimension,
-        None => filming.map_or(voxear_scene::DimensionId::LEVEL, |entity| dimensioned.of_obj(entity)),
+        // Carried through a Portal, a camera sees the dimension that Portal is in.
+        None => filming.map_or(voxear_scene::DimensionId::LEVEL, |entity| match world.get::<crate::portals::ViewCarry>(entity) {
+            Some(carry) => carry.1,
+            None => dimensioned.of_obj(entity),
+        }),
     };
+    // A dimension the game is not seen from has its own sky, sun, post-processing and weather, kept aside.
+    let elsewhere = (dimension != voxear_scene::CurrentDimension::of(world))
+        .then(|| world.resource::<DimensionLooks>().and_then(|looks| looks.0.get(&dimension)))
+        .flatten();
     let switched = switched.only_in(dimension, dimensioned.clone());
     let on = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
     // A view through a Portal looks from the far side, in a space of its own (see `portals::Through`): everything
@@ -639,11 +662,17 @@ pub fn extract(
     let seen_from = position + offset;
 
     // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
-    let weathered = world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
+    let weathered = match elsewhere {
+        Some(look) => look.weather,
+        None => world.resource::<crate::weather::Weather>().copied().unwrap_or_default(),
+    };
     let weather = weathered.now();
     // A look pack the player wears is laid over the level's lighting first: the engine has worked that out.
     let worn = world.resource::<crate::looks::WornLook>().copied();
-    let own_sky = worn.map(|worn| worn.sky).or_else(|| world.resource::<Sky>().copied()).unwrap_or_default();
+    let own_sky = match elsewhere {
+        Some(look) => look.sky,
+        None => worn.map(|worn| worn.sky).or_else(|| world.resource::<Sky>().copied()).unwrap_or_default(),
+    };
     let mut sky = weather.sky(own_sky);
     // The clouds themselves are as the level's own weather makes them. A storm's are drawn where it lies (see
     // `WeatherPlaces`): what it adds where the viewer stands filled in, thickened and reshaped every cloud in the sky,
@@ -665,7 +694,10 @@ pub fn extract(
     let unjittered = projection * view;
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
-    let own_post = worn.map(|worn| worn.post).or_else(|| world.resource::<PostProcess>().copied());
+    let own_post = match elsewhere {
+        Some(look) => look.post,
+        None => worn.map(|worn| worn.post).or_else(|| world.resource::<PostProcess>().copied()),
+    };
     // What scripts set is laid over the level's, before post volumes.
     let own_post = match world.resource::<crate::post::ScriptPost>() {
         Some(script) => Some(script.over(own_post.unwrap_or_default())),
@@ -682,7 +714,9 @@ pub fn extract(
             let falls = |place: &crate::weather::WeatherPlace| {
                 place.amounts.rain > 0.0 || place.amounts.snow > 0.0 || place.amounts.dust > 0.0
             };
-            let curtains = world.resource::<crate::weather::WeatherPlaces>().is_some_and(|places| places.0.iter().any(falls));
+            // Storms are the dimension seen from's: another's has none.
+            let places = world.resource::<crate::weather::WeatherPlaces>().filter(|_| elsewhere.is_none());
+            let curtains = places.is_some_and(|places| places.0.iter().any(falls));
             if curtains && !(fog.enabled && fog.density > 0.0) {
                 fog = crate::post::Fog { enabled: true, density: 1e-7, ..fog };
             }
@@ -804,9 +838,10 @@ pub fn extract(
     let mut sun_found = false;
     let mut canopy_cookie = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
-    let sun_look = match worn {
-        Some(worn) => worn.sun,
-        None => world.resource::<crate::looks::SunLook>().copied(),
+    let sun_look = match (elsewhere, worn) {
+        (Some(look), _) => look.sun,
+        (None, Some(worn)) => worn.sun,
+        (None, None) => world.resource::<crate::looks::SunLook>().copied(),
     };
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
     // Baked lights first, then Mixed, then Realtime, so the shaders tell them apart by where they are in the list;
@@ -935,7 +970,7 @@ pub fn extract(
         frame.wind = zone.gpu(rotation);
     }
     // Weather over parts of the level, and the sea under it.
-    let places = world.resource::<crate::weather::WeatherPlaces>();
+    let places = world.resource::<crate::weather::WeatherPlaces>().filter(|_| elsewhere.is_none());
     let places = places.map_or(&[][..], |places| &places.0[..]);
     let sea = world.resource::<crate::sea::RoughSea>();
     if sea.is_some() || !places.is_empty() {

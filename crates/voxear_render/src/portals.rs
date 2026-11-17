@@ -109,9 +109,10 @@ pub struct CameraFollows(pub Entity);
 impl Component for CameraFollows {}
 
 /// On a camera's Obj, set each frame by the engine: its view is carried
-/// through a Portal, so it looks from where this takes its Obj.
+/// through a Portal, so it looks from where this takes its Obj, into the
+/// dimension the Portal it looks out of is in.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ViewCarry(pub Carry);
+pub struct ViewCarry(pub Carry, pub voxear_scene::DimensionId);
 
 impl Component for ViewCarry {}
 
@@ -122,6 +123,15 @@ impl ViewCarry {
         match world.get::<ViewCarry>(camera) {
             Some(carry) => (carry.0.point(position), carry.0.turn(rotation)),
             None => (position, rotation),
+        }
+    }
+
+    /// The dimension a camera sees: the one a Portal carries its view into,
+    /// else its own.
+    pub fn dimension(world: &World, camera: Entity) -> voxear_scene::DimensionId {
+        match world.get::<ViewCarry>(camera) {
+            Some(carry) => carry.1,
+            None => voxear_scene::dimension_of(world, camera),
         }
     }
 }

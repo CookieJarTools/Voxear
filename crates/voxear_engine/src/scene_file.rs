@@ -2873,7 +2873,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
     let portal = world.get::<voxear_render::Portal>(entity);
-    obj.portal = portal.map(|portal| crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e)));
+    obj.portal = portal.map(|portal| crate::portals::PortalData {
+        into: world.get::<crate::portals::PortalInto>(entity).map(|into| into.0.clone()),
+        ..crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e))
+    });
     let follows = world.get::<voxear_render::CameraFollows>(entity).and_then(|follows| file_path(world, ids, follows.0));
     obj.camera_follows = follows.map(|path| crate::lod_groups::FileRef::new(&path));
     obj.collider2d = world.get::<Collider2D>(entity).copied();

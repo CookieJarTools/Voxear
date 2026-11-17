@@ -525,6 +525,17 @@ impl PhysicsWorld {
         unsafe { ffi::vx_body_set_velocity(self.world, body.0, linear.as_ptr(), angular.as_ptr()) };
     }
 
+    /// Puts a body on another layer, its dimension's times 32 plus its own
+    /// (see [`BodyDesc::layer`]), keeping how fast it goes.
+    pub fn set_body_layer(&mut self, body: BodyId, layer: u16) {
+        unsafe { ffi::vx_body_set_layer(self.world, body.0, u32::from(layer % (32 * DIMENSIONS))) };
+    }
+
+    /// Puts a character on another layer, keeping how it moves.
+    pub fn set_character_layer(&mut self, character: CharacterId, layer: u16) {
+        unsafe { ffi::vx_character_set_layer(self.world, character.0, u32::from(layer % (32 * DIMENSIONS))) };
+    }
+
     pub fn push(&mut self, body: BodyId, push: Push) {
         let (kind, amount, at) = match push {
             Push::Force(amount, at) => (0, amount, at),

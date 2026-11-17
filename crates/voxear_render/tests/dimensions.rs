@@ -193,3 +193,133 @@ fn a_camera_sees_only_the_world_and_lights_of_the_dimension_it_is_in() {
     let shaded = shaded.count();
     assert!(shaded * 200 < all, "the picture is as it was before: {shaded} of {all} pixels differ");
 }
+
+/// The opening's rectangle in the picture, `inset` pixels in from its edges,
+/// as the camera sees the Portal on `portal`.
+fn opening(world: &World, camera: Entity, portal: Entity, inset: i32) -> [u32; 4] {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let at = *world.get::<Transform>(camera).unwrap();
+    let pose = voxear_render::PortalPose::of_obj(world, portal).unwrap();
+    let size = world.get::<voxear_render::Portal>(portal).unwrap().size;
+    let view = Mat4::from_rotation_translation(at.rotation, at.position).inverse();
+    let lens = Camera::default();
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let projection = vulkan::perspective_infinite_reverse(lens.fov_y_degrees.to_radians(), aspect, lens.near);
+    let [x0, y0, x1, y1] = voxear_render::portals::rect_in_view(pose.corners(size), projection * view).expect("in view");
+    let px = |x: f32| ((x * 0.5 + 0.5) * WIDTH as f32) as i32;
+    let py = |y: f32| ((y * 0.5 + 0.5) * HEIGHT as f32) as i32;
+    let clamp = |v: i32, most: u32| v.clamp(0, most as i32) as u32;
+    [clamp(px(x0) + inset, WIDTH), clamp(py(y0) + inset, HEIGHT), clamp(px(x1) - inset, WIDTH), clamp(py(y1) - inset, HEIGHT)]
+}
+
+/// How many pixels of a rectangle differ between two pictures by more than
+/// `by` in any channel, and how many it holds.
+fn differing(a: &[u8], b: &[u8], [x0, y0, x1, y1]: [u32; 4], by: u8) -> (usize, usize) {
+    let (mut differ, mut all) = (0, 0);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let at = ((y * WIDTH + x) * 4) as usize;
+            all += 1;
+            differ += usize::from((0..3).any(|c| a[at + c].abs_diff(b[at + c]) > by));
+        }
+    }
+    (differ, all)
+}
+
+/// The level's sky, a plain blue gradient, and the other dimension's, the
+/// air lit by a low sun of its own, reddening.
+fn skies() -> (Sky, Sky) {
+    let level = Sky { ambient: 0.3, ..Sky::default() };
+    let other = Sky { mode: voxear_render::SkyMode::Atmosphere, ambient: 0.3, haze: 3.0, ..Sky::default() };
+    (level, other)
+}
+
+/// Makes `dimension` the one the world is seen from, as the engine does
+/// when the camera goes into it: the world's sky becomes its own, and the
+/// other's is kept for views through Portals into it.
+fn seen_from(world: &mut World, dimension: DimensionId) {
+    let (level, other) = skies();
+    let (own, elsewhere, kept) = match dimension.is_level() {
+        true => (level, OTHER, other),
+        false => (other, DimensionId::LEVEL, level),
+    };
+    world.insert_resource(own);
+    world.insert_resource(voxear_scene::CurrentDimension(dimension));
+    let look = voxear_render::DimensionLook { sky: kept, sun: None, post: world.resource::<PostProcess>().copied(), weather: Default::default() };
+    world.insert_resource(voxear_render::DimensionLooks([(elsewhere, look)].into_iter().collect()));
+}
+
+#[test]
+fn a_portal_into_another_dimension_shows_its_ground_under_its_own_sky_and_back() {
+    use voxear_render::{Carry, Portal, PortalPose, portals::PortalQuality};
+    let Some(mut renderer) = renderer() else { return };
+    let (mut world, camera, _) = worlds(&mut renderer);
+    // The level's lamp is no part of this.
+    let lamps: Vec<Entity> = world.query_ref::<(Entity, &Light)>().into_iter().filter(|(_, light)| light.kind == voxear_render::LightKind::Point).map(|(entity, _)| entity).collect();
+    lamps.into_iter().for_each(|lamp| drop(world.despawn(lamp)));
+    // A Gate on the green field facing -z, and the Way Back on the red one, 8 m higher, facing +z.
+    let size = voxear_core::math::Vec2::new(3.0, 4.0);
+    let half_turn = Quat::from_rotation_y(std::f32::consts::PI);
+    let gate = world.spawn((Portal::default(), Transform::new(Vec3::new(32.0, 4.0, 30.0), half_turn, Vec3::ONE)));
+    let back = world.spawn((Portal::default(), Transform::new(Vec3::new(32.0, 12.0, 20.0), Quat::IDENTITY, Vec3::ONE), InDimension(OTHER)));
+    *world.get_mut::<Portal>(gate).unwrap() = Portal::to(size, back);
+    *world.get_mut::<Portal>(back).unwrap() = Portal::to(size, gate);
+    world.insert_resource(PortalQuality { shadow_distance: 1000.0, ..PortalQuality::default() });
+    let looking = |eye: Vec3, target: Vec3| {
+        let way = (target - eye).normalize();
+        Quat::from_rotation_y(way.x.atan2(way.z)) * Quat::from_rotation_x(-way.y.asin())
+    };
+    let eye = Vec3::new(32.5, 5.6, 24.0);
+    *world.get_mut::<Transform>(camera).unwrap() = Transform::new(eye, looking(eye, Vec3::new(32.0, 6.5, 30.0)), Vec3::ONE);
+    seen_from(&mut world, DimensionId::LEVEL);
+
+    // From the level, through the Gate; and from where going through takes the camera, in the other dimension.
+    let check = |renderer: &mut Renderer, world: &mut World, near: Entity, far: Entity, name: &str| {
+        let here = world.get::<InDimension>(camera).copied();
+        let through = frames(renderer, world, 4);
+        keep_image(&format!("dimensions through from {name}.png"), &through);
+        let rect = opening(world, camera, near, 6);
+        let carry = Carry::between(&PortalPose::of_obj(world, near).unwrap(), &PortalPose::of_obj(world, far).unwrap());
+        let at = *world.get::<Transform>(camera).unwrap();
+        let there = voxear_scene::dimension_of(world, far);
+        *world.get_mut::<Transform>(camera).unwrap() = Transform::new(carry.point(at.position), carry.turn(at.rotation), Vec3::ONE);
+        voxear_scene::set_dimension(world, camera, there);
+        seen_from(world, there);
+        // The far Portal leading nowhere, which shows nothing, as the camera looks out past it.
+        world.get_mut::<Portal>(far).unwrap().to = None;
+        let standing = frames(renderer, world, 4);
+        keep_image(&format!("dimensions standing past {name}.png"), &standing);
+        // Back as it was.
+        world.get_mut::<Portal>(far).unwrap().to = Some(near);
+        *world.get_mut::<Transform>(camera).unwrap() = at;
+        match here {
+            Some(own) => drop(world.insert(camera, own)),
+            None => drop(world.remove::<InDimension>(camera)),
+        }
+        seen_from(world, here.map_or(DimensionId::LEVEL, |own| own.0));
+        let (differ, all) = differing(&through, &standing, rect, 12);
+        assert!(all > 4000, "{name}: {all} pixels in the opening");
+        assert!(differ * 50 < all, "{name}: {differ} of {all} pixels in the opening differ from standing there");
+        (through, rect)
+    };
+    let (into, rect) = check(&mut renderer, &mut world, gate, back, "the gate");
+    let (green, red) = counts(&into);
+    assert!(green > 1000 && red > 1000, "the green field round the Gate and the red field through it: {green}, {red}");
+    // The other's sky in the top of the opening is its own, reddened air, not the level's blue over the Gate.
+    let pixel = |pixels: &[u8], x: u32, y: u32| {
+        let at = ((y * WIDTH + x) * 4) as usize;
+        [pixels[at] as i32, pixels[at + 1] as i32, pixels[at + 2] as i32]
+    };
+    let inside = pixel(&into, (rect[0] + rect[2]) / 2, rect[1] + 2);
+    let outside = pixel(&into, rect[2] + 30, rect[1] + 2);
+    assert!(inside != outside, "the sky through the opening is not the level's: {inside:?} and {outside:?}");
+
+    // And from the other dimension, looking back out of the Way Back at the level.
+    world.insert(camera, InDimension(OTHER));
+    seen_from(&mut world, OTHER);
+    let eye = Vec3::new(32.5, 13.6, 26.0);
+    *world.get_mut::<Transform>(camera).unwrap() = Transform::new(eye, looking(eye, Vec3::new(32.0, 14.5, 20.0)), Vec3::ONE);
+    let (out, _) = check(&mut renderer, &mut world, back, gate, "the way back");
+    let (green, red) = counts(&out);
+    assert!(green > 1000 && red > 1000, "the red field round the Way Back and the green field through it: {green}, {red}");
+}

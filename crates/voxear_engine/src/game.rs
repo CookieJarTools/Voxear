@@ -502,8 +502,64 @@ impl Game {
                 voxear_scene::place_at_level(world, root, file.as_dvec3());
             }
         }
-        dimensions::record_made(world, id, Some(asset), key, roots);
+        dimensions::record_made(world, id, (Some(asset), key), objs);
         Ok(id)
+    }
+
+    /// Links each Portal near enough to show its far side that leads into a
+    /// dimension's file, making that dimension first; and lets go each
+    /// dimension made so once nothing has needed it for its `keep_loaded`
+    /// seconds: no camera in it, and no Portal near enough to it to show
+    /// it. While the game plays.
+    fn link_dimensions(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        use crate::dimensions::{self, Dimensions};
+        if self.engine.is_edit_mode() {
+            return;
+        }
+        for (portal, link) in crate::portals::link_wanted(&self.engine.world) {
+            let asset = self.content.parse(&link.dimension).ok().and_then(|parsed| parsed.guid());
+            let made = asset.map(|asset| {
+                let fresh = self.engine.world.resource::<Dimensions>().and_then(|made| made.find(asset, 0)).is_none();
+                let made = self.make_dimension(asset, 0, renderer.as_deref_mut());
+                if let (true, Ok(id)) = (fresh, &made) {
+                    dimensions::made_on_demand(&mut self.engine.world, *id);
+                }
+                made
+            });
+            let id = match made {
+                Some(Ok(id)) => id,
+                Some(Err(error)) => {
+                    tracing::warn!("a Portal leads into {} and it could not be made: {error:#}", link.dimension);
+                    self.engine.world.remove::<crate::portals::PortalInto>(portal);
+                    continue;
+                }
+                None => {
+                    tracing::warn!("a Portal leads into {}, which is no dimension of the project", link.dimension);
+                    self.engine.world.remove::<crate::portals::PortalInto>(portal);
+                    continue;
+                }
+            };
+            let world = &mut self.engine.world;
+            let path = link.portal.path().ok();
+            let far = path.and_then(|path| world.resource::<Dimensions>()?.obj_at(id, &path));
+            let Some(far) = far.filter(|far| world.has::<voxear_render::Portal>(*far)) else {
+                tracing::warn!("a Portal leads into Obj {:?} of {}, which is no Portal", link.portal, link.dimension);
+                world.remove::<crate::portals::PortalInto>(portal);
+                continue;
+            };
+            if let Some(near) = world.get_mut::<voxear_render::Portal>(portal) {
+                near.to = Some(far);
+            }
+            // The far one, leading nowhere, leads back.
+            if let Some(back) = world.get_mut::<voxear_render::Portal>(far).filter(|back| back.to.is_none()) {
+                back.to = Some(portal);
+            }
+        }
+        let needed: Vec<dimensions::DimensionId> =
+            crate::portals::exits(&self.engine.world).iter().map(|exit| exit.dimension).collect();
+        for id in dimensions::idle_ones(&mut self.engine.world, delta, &needed) {
+            self.let_go_dimension(id);
+        }
     }
 
     /// Lets a dimension go, destroying its Objs at the end of the frame:
@@ -1038,6 +1094,8 @@ impl Game {
         {
             profile_scope!("Portals");
             crate::portals::find_exits(&mut self.engine.world);
+            // A Portal into a dimension not made yet makes it once near enough, and its far side is found next tick.
+            self.link_dimensions(delta, renderer.as_deref_mut());
         }
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::block_tints::update(&mut self.engine.world, &mut self.content);

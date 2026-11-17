@@ -243,6 +243,9 @@ pub struct Frame {
     /// The view is one through a Portal: it draws over what the view it is
     /// seen in has drawn, and reads that view's sky tables.
     pub through: bool,
+    /// It works out its own sky tables: a camera's own view, or one through
+    /// a Portal into another dimension than the view it is seen in.
+    pub own_sky: bool,
     /// Something casting a shadow has a two-sided material, so the shadows'
     /// two-sided lists are drawn.
     pub two_sided_casters: bool,
@@ -590,7 +593,7 @@ pub fn record(
     // Drawn as depth first, then shaded over it, for what reads the depth before shading.
     let through = frame.through;
     let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || through;
-    if let Some(atmosphere) = frame.atmosphere.filter(|_| !frame.through) {
+    if let Some(atmosphere) = frame.atmosphere.filter(|_| frame.own_sky) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
     // Where the Dry Areas shaped as meshes are, which the opaque passes read to light what is in them as dry; and the

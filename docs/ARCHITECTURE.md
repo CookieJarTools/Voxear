@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine; Portals between them, dungeons in their own, the editor, scripts, saves and networking planned)*
+### Dimensions *(in the engine, with Portals between them; dungeons in their own, the editor, scripts, saves and networking planned)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -510,6 +510,21 @@ dimension to another.
   that dimension, and the far sides of Portals that lead into it (`PortalExit::dimension`); a world with neither is
   left as it is, its streamer kept. `blocks::streamed`, `terrain::streamed` and the far haze are the current
   dimension's, and `blocks::made_round` asks of one dimension's worlds. Grown plants, block tints and terrains follow.
+- **Portals between dimensions.** A Portal leads into another dimension when its `to` is a Portal there; going
+  through puts the Obj in the far Portal's dimension (`put_in_dimension`, which gives an Obj under another an
+  `InDimension` of its own where its parent's differs), and physics moves its body or character to the new layer in
+  place (`PhysicsWorld::set_body_layer`, `set_character_layer`), keeping its speed. Only a Portal of an Obj's own
+  dimension takes it. A camera whose subject is across a Portal in the subject's dimension looks from the dimension
+  that Portal leads into (`ViewCarry`'s second field, `ViewCarry::dimension`); one whose subject is in another
+  dimension with no Portal between them goes into the subject's. A view through a Portal draws the far Portal's
+  dimension, with that dimension's sky, sun, post-processing and weather (`DimensionLooks`, which the engine keeps of
+  every dimension but the current one, from their `Surroundings`) and no storms; where it is another dimension than
+  the view it is seen in, it works out sky tables and sky light of its own (`PortalPass::dimension`,
+  `Frame::own_sky`) in place of reading that view's. In a file a Portal names one in a dimension's file with
+  `into = { dimension, portal }` (`DimensionLink`, kept on the Obj as `PortalInto`); `find_exits` notes such Portals
+  near enough to show their far side, and `Game::link_dimensions` makes the dimension (`make_dimension`, marked on
+  demand), links the two (the far one leading back where it led nowhere), and lets a dimension made so go once nothing
+  has needed it for its `keep_loaded` seconds: not current, and no far side being made into it.
 - **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
   in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
   each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes

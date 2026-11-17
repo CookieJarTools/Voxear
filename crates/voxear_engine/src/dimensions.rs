@@ -251,6 +251,16 @@ impl Surroundings {
     pub fn post(&self) -> Option<PostProcess> {
         self.post
     }
+
+    /// As a view through a Portal into the dimension draws it.
+    fn look(&self) -> voxear_render::DimensionLook {
+        voxear_render::DimensionLook {
+            sky: self.sky.unwrap_or_default(),
+            sun: self.sun,
+            post: self.post,
+            weather: self.weather.unwrap_or_default(),
+        }
+    }
 }
 
 /// A dimension the game has made.
@@ -264,6 +274,14 @@ pub struct Made {
     pub settings: DimensionSettings,
     /// The Objs its file placed, its roots.
     pub roots: Vec<Entity>,
+    /// Every Obj its file placed, by its path in the file, for what in
+    /// another file names one, as a Portal leading into it does.
+    pub objs: Vec<(crate::prefab::ObjPath, Entity)>,
+    /// Made because something came near that leads into it, and let go
+    /// once nothing has for its `keep_loaded` seconds.
+    pub on_demand: bool,
+    /// How long nothing has needed it, in seconds.
+    idle: f32,
     /// Its sky, sun, post-processing and weather, while it is not current.
     kept: Surroundings,
 }
@@ -297,6 +315,11 @@ impl Dimensions {
     /// The dimension made from `asset` as `key`, if there is one.
     pub fn find(&self, asset: AssetGuid, key: u64) -> Option<DimensionId> {
         self.made.iter().find(|made| made.asset == Some(asset) && made.key == key).map(|made| made.id)
+    }
+
+    /// The Obj a dimension's file placed at `path`.
+    pub fn obj_at(&self, id: DimensionId, path: &crate::prefab::ObjPath) -> Option<Entity> {
+        self.get(id)?.objs.iter().find(|(at, _)| at == path).map(|(_, entity)| *entity)
     }
 
     /// Whether `id` is the level's or one made.
@@ -335,7 +358,8 @@ pub fn current(world: &World) -> DimensionId {
 pub struct ViewerDimension(pub DimensionId);
 
 /// The dimension the game is seen from: the editor's Scene view's while it
-/// has one, or else that of the game's first camera switched on.
+/// has one, or else that of the game's first camera switched on, or the one
+/// a Portal it looks through is in.
 pub fn seen_from(world: &World) -> DimensionId {
     if world.resource::<crate::terrain::TerrainViewer>().is_some() {
         return world.resource::<ViewerDimension>().map_or(DimensionId::LEVEL, |viewer| viewer.0);
@@ -347,7 +371,7 @@ pub fn seen_from(world: &World) -> DimensionId {
         .into_iter()
         .filter(|(entity, _)| voxear_scene::is_on(world, *entity, Switch::Camera))
         .min_by_key(|(entity, _)| entity.index())
-        .map_or(DimensionId::LEVEL, |(entity, _)| dimension_of(world, entity))
+        .map_or(DimensionId::LEVEL, |(entity, _)| voxear_render::ViewCarry::dimension(world, entity))
 }
 
 /// Makes a dimension of `settings` with nothing in it yet, for code to fill:
@@ -374,7 +398,9 @@ pub fn make_empty(
             }
         });
         let kept = if settings.weather() { kept } else { kept.cleared() };
-        dimensions.made.push(Made { id, asset: None, key: 0, settings, roots: Vec::new(), kept });
+        let roots = Vec::new();
+        let made = Made { id, asset: None, key: 0, settings, roots, objs: Vec::new(), on_demand: false, idle: 0.0, kept };
+        dimensions.made.push(made);
         id
     });
     world.insert_resource(dimensions);
@@ -383,14 +409,46 @@ pub fn make_empty(
 
 /// Notes the Objs a dimension's file placed, and which asset and key it was
 /// made from, once they are spawned.
-pub fn record_made(world: &mut World, id: DimensionId, asset: Option<AssetGuid>, key: u64, roots: Vec<Entity>) {
-    if let Some(made) =
-        world.resource_mut::<Dimensions>().and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id))
-    {
-        made.asset = asset;
-        made.key = key;
-        made.roots = roots;
+pub fn record_made(
+    world: &mut World,
+    id: DimensionId,
+    (asset, key): (Option<AssetGuid>, u64),
+    objs: Vec<(crate::prefab::ObjPath, Entity)>,
+) {
+    let roots: Vec<Entity> =
+        objs.iter().map(|(_, entity)| *entity).filter(|&entity| !world.has::<Parent>(entity)).collect();
+    let dimensions = world.resource_mut::<Dimensions>();
+    if let Some(made) = dimensions.and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id)) {
+        (made.asset, made.key, made.roots, made.objs) = (asset, key, roots, objs);
     }
+}
+
+/// Marks a dimension as made on demand: let go once nothing has needed it
+/// for its `keep_loaded` seconds (see [`idle_ones`]).
+pub fn made_on_demand(world: &mut World, id: DimensionId) {
+    let dimensions = world.resource_mut::<Dimensions>();
+    if let Some(made) = dimensions.and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id)) {
+        made.on_demand = true;
+    }
+}
+
+/// Moves on how long each dimension made on demand has gone unneeded by
+/// `delta` seconds, `needed` those something needs now, and returns those
+/// unneeded for longer than they are kept, to let go.
+pub fn idle_ones(world: &mut World, delta: f32, needed: &[DimensionId]) -> Vec<DimensionId> {
+    let Some(dimensions) = world.resource_mut::<Dimensions>() else { return Vec::new() };
+    let current = dimensions.current;
+    let mut idle = Vec::new();
+    for made in dimensions.made.iter_mut().filter(|made| made.on_demand) {
+        match made.id == current || needed.contains(&made.id) {
+            true => made.idle = 0.0,
+            false => made.idle += delta.max(0.0),
+        }
+        if made.idle > made.settings.keep_loaded() {
+            idle.push(made.id);
+        }
+    }
+    idle
 }
 
 /// Puts a root Obj, and everything under it, in `dimension`: where it is
@@ -456,6 +514,9 @@ pub fn let_go(world: &mut World, id: DimensionId) -> Option<Vec<Entity>> {
     }
     dimensions.made.remove(at);
     let doomed = letting_go(world, id);
+    if let Some(looks) = world.resource_mut::<voxear_render::DimensionLooks>() {
+        looks.0.remove(&id);
+    }
     if !dimensions.made.is_empty() {
         world.insert_resource(dimensions);
     }
@@ -476,6 +537,7 @@ pub fn update(world: &mut World, level: Option<&str>) -> Vec<Entity> {
             doomed.extend(letting_go(world, id));
         }
         world.remove_resource::<voxear_scene::CurrentDimension>();
+        world.remove_resource::<voxear_render::DimensionLooks>();
         return doomed;
     }
     let now = seen_from(world);
@@ -496,6 +558,15 @@ pub fn update(world: &mut World, level: Option<&str>) -> Vec<Entity> {
         coming.put(world);
         dimensions.current = now;
     }
+    // Every other dimension's look, for a view through a Portal into one.
+    let mut looks = voxear_render::DimensionLooks::default();
+    if !dimensions.current.is_level() {
+        looks.0.insert(DimensionId::LEVEL, dimensions.level.look());
+    }
+    for made in dimensions.made.iter().filter(|made| made.id != dimensions.current) {
+        looks.0.insert(made.id, made.kept.look());
+    }
+    world.insert_resource(looks);
     world.insert_resource(voxear_scene::CurrentDimension(dimensions.current));
     world.insert_resource(dimensions);
     Vec::new()

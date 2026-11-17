@@ -184,8 +184,8 @@ pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
-    Camera, CloudKind, Clouds, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, RenderFeatures, Sky, SkyBody, SkyMode,
-    ViewOptions,
+    Camera, CloudKind, Clouds, DimensionLook, DimensionLooks, Light, LightKind, MAX_TRANSITIONS, MeshRenderer,
+    RenderFeatures, Sky, SkyBody, SkyMode, ViewOptions,
     picture_sky_light, temperature_color,
 };
 pub use portals::{
@@ -2323,6 +2323,9 @@ struct PortalPass {
     atmosphere: Option<atmosphere::Tables>,
     sky_light: u64,
     cloud_drift: [f64; 2],
+    /// The dimension that view sees: one into another works out a sky of
+    /// its own in place of reading that view's.
+    dimension: voxear_scene::DimensionId,
     /// The sun casts shadows on its side, and its worlds of blocks' water is drawn.
     shadows: bool,
     water: bool,
@@ -2357,6 +2360,7 @@ struct Sees {
     atmosphere: Option<atmosphere::Tables>,
     sky_light: u64,
     cloud_drift: [f64; 2],
+    dimension: voxear_scene::DimensionId,
     /// How many Portals deep it is itself: 0 for a camera's own view.
     level: u32,
     /// Its water's waves and caustics, for the views through its Portals to share.
@@ -3578,10 +3582,12 @@ impl View {
         let current = (frame_data.lighting.sky == SKY_ATMOSPHERE).then_some(frame_data.lighting.atmosphere);
         let kept = self.atmosphere_tables.as_ref().map(bytemuck::bytes_of);
         let fresh = kept != current.as_ref().map(bytemuck::bytes_of);
-        // A view through a Portal reads the sky tables of the view it is seen in.
+        // A view through a Portal reads the sky tables of the view it is seen in, but for one into another dimension,
+        // whose sky is its own.
+        let own_sky = portal.is_none_or(|pass| pass.dimension != extracted.dimension);
         let atmosphere = match (current, portal) {
-            (Some(_), Some(pass)) => pass.atmosphere,
-            (Some(_), None) => {
+            (Some(_), Some(pass)) if !own_sky => pass.atmosphere,
+            (Some(_), _) => {
                 self.atmosphere_tables = current;
                 Some(atmosphere::Tables::new(fg, gpu, bindless, fresh)?)
             }
@@ -3698,8 +3704,8 @@ impl View {
                 tracks: self.tracks.address,
                 // Only under the atmosphere, which works it out.
                 sky_light: match (atmosphere, portal) {
-                    (Some(_), Some(pass)) => pass.sky_light,
-                    (Some(_), None) => buffers.sky_light.address,
+                    (Some(_), Some(pass)) if !own_sky => pass.sky_light,
+                    (Some(_), _) => buffers.sky_light.address,
                     (None, _) => 0,
                 },
                 material_properties: assets.material_properties.address,
@@ -3861,11 +3867,12 @@ impl View {
                 options: self.options,
                 atmosphere,
                 sky_light: match (atmosphere, portal) {
-                    (Some(_), Some(pass)) => pass.sky_light,
-                    (Some(_), None) => buffers.sky_light.address,
+                    (Some(_), Some(pass)) if !own_sky => pass.sky_light,
+                    (Some(_), _) => buffers.sky_light.address,
                     (None, _) => 0,
                 },
                 cloud_drift: self.cloud_drift,
+                dimension: extracted.dimension,
                 level,
                 waves: water.as_ref().map(water::Water::shared_waves),
             }
@@ -4009,6 +4016,7 @@ impl View {
             traced_reflections,
             portal_openings: openings.len() as u32,
             through: portal.is_some(),
+            own_sky,
             two_sided_casters,
             probe_job,
             sound_job,
@@ -4204,6 +4212,7 @@ fn draw_portals(
             atmosphere: sees.atmosphere,
             sky_light: sees.sky_light,
             cloud_drift: sees.cloud_drift,
+            dimension: sees.dimension,
             shadows: seen.distance < quality.shadow_distance,
             water: quality.water,
             rect: seen.rect,

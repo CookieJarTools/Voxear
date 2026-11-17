@@ -2177,8 +2177,16 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   two worlds without end at one place, each made round its own dimension, a walker moved into the other standing on
   its ground under its dark and rays meeting only its blocks; letting a dimension go; bodies of two dimensions at
   one place never meeting; a GPU picture from one place in each dimension showing only its own field and lamp, and
-  the first again with nothing of the other's shadows. To come: Portals between dimensions, seen through; dungeons
-  in a dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
+  the first again with nothing of the other's shadows. Portals between dimensions: a Portal's `into` names one in a
+  `.dimension` file, which is made as a camera comes near and let go once unneeded for its Keep Loaded seconds; its
+  far side is drawn with that dimension's ground, sky, sun and weather, working out sky tables of its own; going
+  through puts the Obj and what is under it in the far dimension, its body or character still moving as it was; a
+  camera following looks through the opening, then goes after its subject. Tests: a walker coming near makes the
+  dimension and links the two Portals, walks through and stands on its rock under its dark, and walking away lets it
+  go; a thrown body keeps its speed; a camera following looks through the Gate from the level, then goes into the
+  caves; bodies and characters moved between dimensions keep moving; GPU pictures through a Portal into another
+  dimension and back out, each matching a camera standing there. Manual: Dimensions. To come: dungeons in a
+  dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
   dimension and the server making ground round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.

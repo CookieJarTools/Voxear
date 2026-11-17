@@ -229,3 +229,172 @@ fn letting_a_dimension_go_takes_its_objs_and_puts_back_the_levels_sky() {
     assert_eq!(game.engine.world.resource::<Sky>().map(|sky| sky.haze), Some(2.0));
     assert!(!game.let_go_dimension(caves), "gone already");
 }
+
+/// A flat field of blocks 64 a side and `height` high, a block a metre.
+fn field(height: u32) -> String {
+    let mut file = BlockFile { block_size: 1.0, ..BlockFile::default() };
+    file.ground.height = height;
+    file.to_text()
+}
+
+/// A level of a field 4 high with a Gate in its middle facing -z, which
+/// leads into the Way Back of a dimension of caves whose rock is 12 high,
+/// facing +z: walking +z through the Gate, one comes out of the Way Back
+/// still walking +z, 8 m higher. The caves are kept a second once unneeded.
+fn gates() -> (tempfile::TempDir, Game) {
+    let dir = tempfile::tempdir().unwrap();
+    let level = "format = 1\n\n[[obj]]\nid = 1\nname = \"Field\"\n[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n\n\
+                 [[obj]]\nid = 2\nname = \"Gate\"\nposition = [32.0, 4.0, 20.0]\nrotation = [0.0, 180.0, 0.0]\n\
+                 [obj.portal]\nsize = [3.0, 4.0]\ninto = { dimension = \"Dimensions/Caves.dimension\", portal = 2 }\n";
+    let caves = "format = 1\n\n[dimension]\nkind = \"caves\"\nkeep_loaded = 1.0\n\n\
+                 [[obj]]\nid = 1\nname = \"Rock\"\n[obj.block_world]\ndata = \"Blocks/Rock.blockworld\"\n\n\
+                 [[obj]]\nid = 2\nname = \"Way Back\"\nposition = [32.0, 12.0, 32.0]\n[obj.portal]\nsize = [3.0, 4.0]\n";
+    write(
+        dir.path(),
+        &[
+            ("voxear.toml", "[project]\nname = \"Gates\"\nstart_level = \"Levels/Main.level\"\n".into()),
+            ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".into()),
+            ("Scenes/Field.scene", level.into()),
+            ("Dimensions/Caves.dimension", caves.into()),
+            ("Blocks/Field.blockworld", field(4)),
+            ("Blocks/Rock.blockworld", field(12)),
+        ],
+    );
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    (dir, game)
+}
+
+/// The Obj named `name`.
+fn named(game: &Game, name: &str) -> Entity {
+    let world = &game.engine.world;
+    let found = world.query_ref::<(Entity, &voxear_scene::Name)>().into_iter();
+    found.into_iter().find(|(_, own)| own.0 == name).map(|(entity, _)| entity).unwrap_or_else(|| panic!("no {name}"))
+}
+
+/// A walker on the field 10 m in front of the Gate, walking at it at
+/// `speed`, its eye under it.
+fn walker_at_the_gate(game: &mut Game, speed: f32) -> (Entity, Entity) {
+    let world = &mut game.engine.world;
+    let walker = world.spawn((CharacterController::default(), Transform::from_position(Vec3::new(32.0, 4.1, 10.0))));
+    let eye = world.spawn((Camera::default(), Parent(walker), Transform::from_position(Vec3::new(0.0, 1.6, 0.0))));
+    game.engine.schedule.add_system("Update", "walk", move |world| {
+        let Some(mut physics) = world.remove_resource::<PhysicsScene>() else { return };
+        let ahead = world.get::<Transform>(walker).map_or(Vec3::Z, |transform| transform.rotation * Vec3::Z);
+        physics.move_character(world, walker, ahead * speed - Vec3::Y * 2.0, FRAME);
+        world.insert_resource(physics);
+    });
+    (walker, eye)
+}
+
+#[test]
+fn a_portal_into_a_dimension_makes_it_as_a_walker_comes_near_and_takes_the_walker_into_it() {
+    let (_dir, mut game) = gates();
+    let (walker, _) = walker_at_the_gate(&mut game, 3.0);
+    let (gate, field) = (named(&game, "Gate"), named(&game, "Field"));
+    assert!(game.engine.world.resource::<dimensions::Dimensions>().is_none(), "no caves before anyone comes near");
+    for _ in 0..3 {
+        game.tick(FRAME, None);
+    }
+    // Near enough to see through the Gate: the caves are made, and the Gate and their Way Back lead to each other.
+    let back = named(&game, "Way Back");
+    let caves = dimensions::dimension_of(&game.engine.world, back);
+    assert_ne!(caves, DimensionId::LEVEL);
+    let to = |portal: Entity| game.engine.world.get::<voxear_render::Portal>(portal).unwrap().to;
+    assert_eq!((to(gate), to(back)), (Some(back), Some(gate)));
+    let far = *game.engine.world.get::<voxear_render::PortalFar>(gate).unwrap();
+    assert!(far.ready, "the caves' ground is all made at once, so the Gate is open: {far:?}");
+
+    // It walks through and stands on the caves' rock, in the caves, under their dark.
+    let mut passed = Vec::new();
+    for _ in 0..300 {
+        game.tick(FRAME, None);
+        let events = game.engine.world.resource::<voxear_engine::portals::PortalEvents>();
+        passed.extend(events.map(|events| events.passed.clone()).unwrap_or_default());
+    }
+    assert_eq!(passed.len(), 1, "{passed:?}");
+    assert_eq!((passed[0].from, passed[0].to), (gate, back));
+    let stood = at(&game, walker);
+    assert!(stood.z > 33.0 && (stood.y - 12.0).abs() < 0.1, "on the rock past the Way Back: {stood:?}");
+    assert_eq!(dimensions::dimension_of(&game.engine.world, walker), caves);
+    assert_eq!(dimensions::current(&game.engine.world), caves, "its eye went with it");
+    assert_eq!(game.engine.world.resource::<Sky>().map(|sky| sky.ambient), Some(0.0));
+    let state = game.engine.physics().unwrap().character_state(walker).unwrap();
+    assert!(matches!(state.ground, voxear_physics::Ground::Ground), "standing: {:?}", state.ground);
+
+    // Taken back to the level far from the Gate, nothing needs the caves, and a second on they are let go.
+    game.engine.world.get_mut::<Transform>(walker).unwrap().position = Vec3::new(32.0, 4.1, 400.0);
+    assert!(dimensions::move_obj(&mut game.engine.world, walker, DimensionId::LEVEL));
+    for _ in 0..40 {
+        game.tick(FRAME, None);
+    }
+    assert!(game.engine.world.is_alive(back), "kept a second");
+    for _ in 0..60 {
+        game.tick(FRAME, None);
+    }
+    assert!(!game.engine.world.is_alive(back), "let go once unneeded for longer than they are kept");
+    assert!(game.engine.world.is_alive(field) && game.engine.world.is_alive(gate));
+    assert!(game.engine.world.resource::<dimensions::Dimensions>().is_none());
+}
+
+#[test]
+fn a_body_thrown_through_a_portal_into_a_dimension_keeps_its_speed() {
+    use voxear_engine::physics::{Collider, Rigidbody};
+    let (_dir, mut game) = gates();
+    // An eye to come near with, standing still.
+    let world = &mut game.engine.world;
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(32.0, 6.0, 4.0))));
+    let ball = world.spawn((Transform::from_position(Vec3::new(32.0, 6.0, 12.0)),));
+    world.insert(ball, Collider { size: [0.3, 0.3, 0.3], ..Collider::default() });
+    world.insert(ball, Rigidbody { gravity: false, ..Rigidbody::default() });
+    for _ in 0..3 {
+        game.tick(FRAME, None);
+    }
+    let body = game.engine.physics().unwrap().body(ball).unwrap();
+    game.engine.world.resource_mut::<PhysicsScene>().unwrap().world_mut().set_velocity(body, Vec3::Z * 6.0, Vec3::ZERO);
+    for _ in 0..120 {
+        game.tick(FRAME, None);
+    }
+    let caves = dimensions::dimension_of(&game.engine.world, named(&game, "Way Back"));
+    assert_eq!(dimensions::dimension_of(&game.engine.world, ball), caves, "it went into the caves");
+    let place = at(&game, ball);
+    // Two seconds at 6 m/s from 8 m short of the Gate: 4 m past the Way Back.
+    assert!((place.z - 36.0).abs() < 0.2 && (place.y - 14.0).abs() < 0.1, "past the Way Back, 2 m over its sill: {place:?}");
+    let physics = game.engine.physics().unwrap();
+    let body = physics.body(ball).unwrap();
+    let (moving, _) = physics.world().velocity(body);
+    assert!(moving.distance(Vec3::Z * 6.0) < 0.05, "as fast as it was thrown, the same way: {moving:?}");
+}
+
+#[test]
+fn a_camera_following_a_walker_into_a_dimension_looks_through_the_gate_then_goes_after_it() {
+    let (_dir, mut game) = gates();
+    let (walker, eye) = walker_at_the_gate(&mut game, 3.0);
+    game.engine.world.remove::<Camera>(eye);
+    // A camera 4 m behind and 2 m over the walker, set there after it moves, as an orbit camera's script does.
+    let camera = game.engine.world.spawn((Camera::default(), voxear_render::CameraFollows(walker), Transform::default()));
+    game.engine.schedule.add_system("PostUpdate", "follow", move |world| {
+        let Some(&subject) = world.get::<Transform>(walker) else { return };
+        if let Some(transform) = world.get_mut::<Transform>(camera) {
+            transform.position = subject.position + subject.rotation * Vec3::new(0.0, 2.0, -4.0);
+            transform.rotation = subject.rotation;
+        }
+    });
+    // Each frame: the walker's dimension, the dimension the camera sees, and whether a Portal carries its view.
+    let mut seen = Vec::new();
+    for _ in 0..360 {
+        game.tick(FRAME, None);
+        let world = &game.engine.world;
+        let carried = world.get::<voxear_render::ViewCarry>(camera).map(|carry| carry.1);
+        seen.push((dimensions::dimension_of(world, walker), dimensions::current(world), carried));
+    }
+    let caves = dimensions::dimension_of(&game.engine.world, named(&game, "Way Back"));
+    let level = DimensionId::LEVEL;
+    assert_eq!(seen.first().unwrap(), &(level, level, None));
+    assert_eq!(seen.last().unwrap(), &(caves, caves, None), "the camera ends in the caves after the walker");
+    // Between, the walker is in the caves while the camera, still behind the Gate, looks through it from the level.
+    let looked_through = seen.iter().filter(|frame| **frame == (caves, level, Some(level))).count();
+    assert!(looked_through > 3, "looked through the Gate for {looked_through} frames: {seen:?}");
+    // And at no frame does the camera see the caves from the level's side or the level from theirs.
+    assert!(seen.iter().all(|(_, current, carried)| carried.is_none_or(|carried| carried == *current)));
+}

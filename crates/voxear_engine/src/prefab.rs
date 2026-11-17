@@ -904,6 +904,9 @@ impl Template {
             }
             if let Some(portal) = &obj.portal {
                 world.insert(entity, portal.bind(&lookup));
+                if let Some(into) = &portal.into {
+                    world.insert(entity, crate::portals::PortalInto(into.clone()));
+                }
             }
             let follows = obj.camera_follows.as_ref().and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path));
             if let Some(follows) = follows {

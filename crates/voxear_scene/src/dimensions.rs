@@ -45,8 +45,9 @@ impl CurrentDimension {
     }
 }
 
-/// On a root Obj: the dimension it, and everything under it, is in. An Obj
-/// under another takes its root's; one under none is in the level's.
+/// On an Obj, most often a root: the dimension it, and everything under it,
+/// is in. An Obj without one takes its parent's; a root without one is in
+/// the level's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InDimension(pub DimensionId);
 impl Component for InDimension {}
@@ -75,6 +76,18 @@ pub fn set_dimension(world: &mut World, root: Entity, dimension: DimensionId) {
     match dimension.is_level() {
         true => drop(world.remove::<InDimension>(root)),
         false => drop(world.insert(root, InDimension(dimension))),
+    }
+}
+
+/// Puts an Obj, and everything under it, in a dimension, as going through a
+/// Portal into it does: a root as [`set_dimension`] puts it; an Obj under
+/// another with an [`InDimension`] of its own, where that is not already its
+/// parent's.
+pub fn put_in_dimension(world: &mut World, obj: Entity, dimension: DimensionId) {
+    match world.get::<Parent>(obj).map(|parent| parent.0) {
+        None => set_dimension(world, obj, dimension),
+        Some(parent) if dimension_of(world, parent) == dimension => drop(world.remove::<InDimension>(obj)),
+        Some(_) => drop(world.insert(obj, InDimension(dimension))),
     }
 }
 
@@ -149,6 +162,12 @@ mod tests {
         for obj in [level, root, child, grandchild, own] {
             assert_eq!(found.of_obj(obj), dimension_of(&world, obj), "{obj:?}");
         }
+        // A child put in another dimension takes its own with it, and back in its parent's, its parent's again.
+        put_in_dimension(&mut world, child, DimensionId(4));
+        assert_eq!(dimension_of(&world, grandchild), DimensionId(4));
+        assert_eq!(Dimensioned::of(&world).of_obj(grandchild), DimensionId(4));
+        put_in_dimension(&mut world, child, DimensionId(3));
+        assert!(!world.has::<InDimension>(child));
         set_dimension(&mut world, root, DimensionId::LEVEL);
         assert_eq!(dimension_of(&world, grandchild), DimensionId::LEVEL);
         assert!(Dimensioned::of(&world).elsewhere().all(|(obj, _)| obj == own));

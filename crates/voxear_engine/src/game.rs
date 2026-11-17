@@ -1537,6 +1537,10 @@ impl ScriptServices for GameServices<'_> {
         Ok(self.content.prefab(self.renderer.as_deref_mut(), reference)?.0)
     }
 
+    fn set_model(&mut self, world: &mut World, entity: Entity, reference: &str) -> Result<()> {
+        crate::model_renderers::set_model(world, self.content, self.renderer.as_deref_mut(), entity, reference)
+    }
+
     fn spawn_prefab(
         &mut self,
         world: &mut World,

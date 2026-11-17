@@ -159,6 +159,11 @@ pub struct MaterialDesc {
     /// `voxear_physics::scene::Acoustic`; 0 to guess from its look: metal
     /// where it is metallic, glass for glass, and otherwise generic.
     pub acoustic: u32,
+    /// Which of an Obj's tints fall where on it, read as its base colour is:
+    /// its red, green and blue how much of the first, second and third tint
+    /// a pixel takes, and black none, so that pixel keeps its own colour.
+    /// `None` lays the first tint over all of it (see `ModelRenderer::tints`).
+    pub tint_mask: Option<TextureId>,
 }
 
 impl Default for MaterialDesc {
@@ -194,6 +199,7 @@ impl Default for MaterialDesc {
             displacement: 0.0,
             detail: 6.0,
             acoustic: 0,
+            tint_mask: None,
         }
     }
 }
@@ -1133,7 +1139,7 @@ impl Assets {
             detail: desc.detail.clamp(1.0, 64.0),
             ground_blend: desc.ground_blend.clamp(0.0, 10.0),
             acoustic: desc.acoustic,
-            _pad: 0,
+            tint_mask: desc.tint_mask.map_or(0, |mask| mask.0 + 1),
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {

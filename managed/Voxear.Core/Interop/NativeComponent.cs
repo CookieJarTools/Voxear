@@ -35,6 +35,7 @@ internal static unsafe class NativeComponent
 	public const int Lightmap = 30;
 	public const int LightProbeGroup = 31;
 	public const int BakedLighting = 32;
+	public const int ModelRenderer = 33;
 
 	/// <summary>The value every kind reads as 1 when the Obj has one.</summary>
 	public const int Has = 0;

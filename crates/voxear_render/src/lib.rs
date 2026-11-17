@@ -161,7 +161,7 @@ pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plant
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
-pub use model_renderer::{ModelPart, ModelRenderer};
+pub use model_renderer::{ModelPart, ModelRenderer, NO_TINT, TINTS};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use effects::{
     BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, longest_life as particles_longest_life, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,

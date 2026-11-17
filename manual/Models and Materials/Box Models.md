@@ -391,6 +391,10 @@ rotation = [[0.0, 0.0, 0.0], [0.0, 0.0, -120.0]]
 | `scale` | For each key, how large the bone is. Left out when every key leaves it at 1 |
 | `ease` | For each key, how the bone goes on to the next: `linear`, `smooth` or `step`. Left out when every key is `linear` |
 
+## Colours for each Obj
+
+Every Obj drawing a box model can tint it a colour of its own, which multiplies its pixels and its cubes alike and keeps them sharp, near and far. Build a part grey, and one model does for every skin, hair or dye colour. See [[Tints and Parts]].
+
 ## Bones and animation
 
 A box model's bones are a skeleton like any animated model's, and every box moves whole with its bone. So what works on a model's bones works here: [[Bone Attachments]] for things held or worn, scripts that read and turn bones (see [[Bones in Scripts]]), and an [[Animator]] playing the model's own clips.

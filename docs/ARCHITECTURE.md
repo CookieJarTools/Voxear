@@ -5091,6 +5091,10 @@ through a small contract.
 - Releases are published with a **release manifest**: version, channel (stable, beta or nightly), downloads per
   platform, sizes, SHA-256 hashes and a signature.
 - Several versions install side by side. `vox` finds its own files through its install folder (`VOXEAR_HOME`).
+- The launcher lists the official releases, and beside them any **custom engine releases** a user adds, such as a
+  fork's: a manifest of the same shape, published the same way, signed with the fork's own key. An install and a
+  project's pin are a version, so a fork's builds are best given versions of their own with build metadata
+  (`0.2.0+lumen`); a project pinned to one installs from the list that publishes it.
 
 **Projects pin a version.**
 - `voxear.toml` records the engine version a project uses.

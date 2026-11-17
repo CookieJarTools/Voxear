@@ -3800,6 +3800,9 @@ The launcher, the equivalent of Unity Hub, lives in its own repository. It cover
 - updating itself
 - the project list
 - the new-project flow with templates and default setups
+- **release lists:** the official engine releases with nothing to set up, nightlies when turned on, and custom engine
+  releases, such as a fork's, listed beside them with their own key and their name on each version; a project
+  pinned to a fork's version installs from the fork. The old single release setting moves over as custom releases.
 
 It relies on the engine contract described under "Versions, installs and the launcher" in
 [ARCHITECTURE.md](ARCHITECTURE.md).

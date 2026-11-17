@@ -2882,6 +2882,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     60 fps spent their time on. Flying at 30 m/s over a copy of a block game's world, frames slower than 60 fps
     went from 285 and 337 in 1,800 to 47 and 156, the 95th in 100 from 28–42 ms to 13–20 ms, with other work on the
     machine. Tests: physics' own, the engine's endless world, mobs and blocks, the renderer's blocks.
+  - ~~**Block light:**~~ done: a world of cubes keeps light for each block, sky light and block light from 0 to 15
+    (`blocks::light`): the sky's straight down through air, water and glass and a step less a block from there,
+    shaded by leaves and blocks of parts, and the light of blocks that give it (a block's new **Light**, `light` in
+    its file, `Block.Light`), worked out exactly for a box from the blocks within 15 of it, never saved. The
+    streamer lights each column from the nine round it as its faces are made, and an edit floods its light again
+    round itself, drawing again the chunks whose light changed. Each quad has a third word, its corners' light, the
+    mean of the open blocks at each corner, and greedy merging keys on it. A Block World's new **Lighting**, Block
+    Light by default (Scene for the GI path), with **Light color** and **Light strength**, lights its faces by it in
+    place of the GI's probes: the sky's light by sky light, the sun past its shadows by it, caves dark and lamps
+    warm, the same under every look. A window of light round the camera lights the fog, models and plants among the
+    blocks, and block water too. `blocks.get` gives a block's light. On a copy of a block game's world: about 8 ms
+    to light a column against 35 ms to mesh it, 8 ms for an edit, 50 KB a column, under 0.1 ms a frame on the GPU.
+    Tests: light down a shaft and round a torch, flooded again as worked out whole; corners' light and merging;
+    a sealed room dark, lit by a lamp, sky-lit as the scene is; the same picture with GI on and off.
   - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
     solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
     each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that

@@ -273,3 +273,54 @@ fn a_dungeon_in_rock_goes_as_deep_as_it_is_asked_and_its_portal_stands_clear_by_
     assert_eq!(again.layout, built.layout);
     assert_eq!(again.arrival, built.arrival);
 }
+
+#[test]
+fn a_dungeon_in_rock_grown_a_floor_keeps_the_floors_above_its_last_as_they_were() {
+    let dungeon = Dungeon { place: DungeonPlace::OwnDimension, ..temple() };
+    let world = Preset::RollingHills.world();
+    let turn = |block: BlockId, _: u8| block;
+    for seed in [7, 21, 1234] {
+        let before = in_rock(&dungeon, &world, 1.0, (seed, 3), 30, &turn).expect("planned on rock");
+        let after = in_rock(&dungeon, &world, 1.0, (seed, 4), 30, &turn).expect("planned on rock a floor deeper");
+        assert_eq!(after.layout.floors, before.layout.floors + 1, "seed {seed}");
+        // Every space of the floors it had the same, but the boss's arena at the end of its last, now its way down,
+        // which stands where the arena stood.
+        let last = before.layout.floors - 1;
+        let is_end = |space: &Space| space.floor == last && space.progress >= 1.0 && space.main;
+        let kept = |layout: &DungeonLayout| -> Vec<Space> {
+            let spaces = layout.spaces.iter().filter(|space| space.floor <= last && space.height >= 0);
+            spaces.filter(|space| !is_end(space)).cloned().collect()
+        };
+        assert_eq!(kept(&after.layout), kept(&before.layout), "seed {seed}: the floors it had");
+        let end = |layout: &DungeonLayout| -> Vec<(SpaceKind, [i32; 2])> {
+            let ends = layout.spaces.iter().filter(|space| is_end(space) && space.height >= 0);
+            ends.map(|space| (space.kind, [space.at[0], space.at[2]])).collect()
+        };
+        let (was, now) = (end(&before.layout), end(&after.layout));
+        assert_eq!(was.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(), [SpaceKind::Arena], "seed {seed}");
+        assert_eq!(now.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(), [SpaceKind::Descent], "seed {seed}");
+        assert_eq!(was[0].1, now[0].1, "seed {seed}: the way down where the arena was");
+        let live = after.layout.spaces.iter().filter(|space| space.height >= 0);
+        assert_eq!(live.filter(|space| space.kind == SpaceKind::Arena).count(), 1, "seed {seed}: one boss");
+        assert!(all_reached(&after.layout), "seed {seed}: every space reached from the landing");
+        assert_eq!(after.arrival, before.arrival, "seed {seed}: the Portal back out where it stood");
+        // And what is inside them the same, so what was changed in them still fits: their walls but where the way
+        // into the new way down runs.
+        for space in kept(&before.layout) {
+            let (low, high) = (space.low(), space.high());
+            for z in low[1] + 1..high[1] {
+                for x in low[0] + 1..high[0] {
+                    for y in space.bottom() + 1..space.top() {
+                        let at = [x, y, z];
+                        assert_eq!(
+                            after.blocks.get(at),
+                            before.blocks.get(at),
+                            "seed {seed}: {:?} at {at:?}",
+                            space.kind
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

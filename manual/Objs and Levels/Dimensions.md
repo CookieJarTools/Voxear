@@ -74,9 +74,60 @@ The game is seen from the dimension its camera is in. Its sky, sun, post-process
 
 Once nothing has needed a dimension for its **Keep loaded** seconds, the game lets it go: no camera is in it, and the open Portal does not lead into it. Coming close again loads it again.
 
+## Dimensions from scripts
+
+A field of type `Ref<Dimension>` holds a `.dimension`, picked in the Inspector from the project's dimensions. The easy way needs little more:
+
+```csharp
+public Ref<Dimension> Caves;
+
+private async void EnterCaves()
+{
+	// Made first if it is not, then the player moved there, standing on its ground.
+	await player.MoveTo(Caves.Load(), new Vector3(0f, 12f, 0f));
+}
+```
+
+- **Where things are.** `Dimension.Current` is the dimension the game is seen from. `obj.Dimension` is the one an Obj is in. `DimensionInstance.Level` is the level's own.
+- **Moving.** `obj.MoveTo(dimension, position)` moves an Obj, everything under it and its speed. It makes the dimension first where it is not made. Await it to carry on once the ground round the Obj is made.
+- **Hearing it.** `Dimension.Left` and `Dimension.Entered` are raised as the game comes to be seen from another dimension, through a Portal or moved there. `Portal.Passed` tells each passage's `FromDimension` and `ToDimension`.
+- **Making things.** An Obj a script makes at the top of the hierarchy, with `Instantiate` or `Portal.Create`, is made in `Dimension.Current`. One made under a parent is in its parent's.
+- **Portals.** `Portal.CreatePair(firstDimension, …, secondDimension, …, size)` makes two Portals that lead to each other, each in its own dimension.
+- **Asking.** `Blocks`, `Physics`, `Water`, `Biomes`, `Weather` and the rest ask `Dimension.Current`, so a game played in one dimension at a time needs nothing more.
+
+The full way is for a script that works in a dimension nobody is in, as a server's mobs or a town's simulation do:
+
+| Call | What it does |
+| --- | --- |
+| `Dimensions.Make(dimension, key)` | Makes the dimension a `.dimension` makes as `key`, 0 where there is only one, or gives the one made already. Await it |
+| `Dimensions.Made` | Every dimension made now, the level's first |
+| `instance.KeepLoaded` | Whether it stays until let go. One a script makes stays; one a Portal made goes once nothing needs it |
+| `instance.LetGo()` | Lets it go. Its Objs are destroyed, but persistent ones go to the level's |
+| `instance.WhenReady(position)` | Waits until its ground is made round a place |
+| `instance.Blocks`, `.Physics` | The same calls as `Blocks` and `Physics`, asked of that dimension alone |
+| `instance.Weather`, `.Sky`, `.Clock` | Its weather now, whether it has a sky, and its time of day |
+| `using (instance.Use())` | Every call in the scope asks that dimension, as if the game were seen from there |
+
+```csharp
+// The town's forge keeps burning while the player is down a dungeon.
+var town = DimensionInstance.Level;
+if (town.Blocks.At(forge) == 0)
+{
+	town.Blocks.Set(forge, fire);
+}
+```
+
+## What is kept
+
+What players change in a dimension is kept apart from the level's changes and from every other dimension's:
+
+- **Let go and made again.** A dimension that is let go keeps its changed blocks, the plants taken from it and its saplings in memory. They are there again when it is made again, for as long as the level stays loaded.
+- **Saved.** A save of the scene keeps each changed dimension's changes. A dimension that was never changed writes nothing, and is made again from its file or its dungeon's seed. One dimension with a few blocks changed takes about a hundred bytes, put back in well under a millisecond. Kept so small, a save can go over the network to players who join.
+- **Where Objs are.** A save also keeps which dimension each Obj is in, and where, for any Obj it can find again. Loaded, the Obj goes back there: a player saved in a dungeon wakes in it.
+
+See [[Saving the Game]] for saving the scene.
+
 ## Not done yet
 
-- Changes to a dimension's blocks are not kept once it is let go, and saves do not keep them.
 - The editor does not show or edit a dimension yet. Write its file by hand, or copy a scene's Objs into it.
-- Scripts cannot load a dimension or move an Obj into one yet, except by sending it through a Portal.
 - A networked game sends no dimensions to the players who join.

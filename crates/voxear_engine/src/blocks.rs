@@ -950,6 +950,88 @@ pub fn blocks_numbered_since(world: &World, entity: voxear_ecs::Entity) -> Vec<(
     since.filter_map(|at| Some((at as BlockId, asset.drawn.guid(at as BlockId)?.to_string()))).collect()
 }
 
+/// Whether the world of blocks on `entity` is made without end, round where
+/// it is seen from.
+fn is_endless(world: &World, entity: voxear_ecs::Entity) -> bool {
+    let asset = world.get::<BlockWorldAsset>(entity);
+    asset.is_some_and(|asset| asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some()))
+}
+
+/// For a world of blocks without end, all its changes from its ground: those
+/// of the chunks made now and those kept for chunks not made (its asset's
+/// `pending`), as the editor saves them. None for any other world.
+pub fn endless_changes(world: &World, entity: voxear_ecs::Entity) -> Option<BlockEdits> {
+    if !is_endless(world, entity) {
+        return None;
+    }
+    let asset = world.get::<BlockWorldAsset>(entity)?;
+    let blocks = world.get::<BlockWorld>(entity)?;
+    Some(voxear_terrain::blocks::stream::all_changes(&asset.base, &blocks.blocks, &asset.pending))
+}
+
+/// For a world of blocks without end, makes `edits` all its changes from its
+/// ground: the chunks made now become their ground with those changes, and
+/// the rest are kept for when their chunks are made. False for any other
+/// world.
+pub fn put_endless_changes(world: &mut World, entity: voxear_ecs::Entity, edits: &BlockEdits) -> bool {
+    use voxear_terrain::blocks::chunk::CHUNK;
+    if !is_endless(world, entity) {
+        return false;
+    }
+    let (Some(asset), Some(mut now)) =
+        (world.get::<BlockWorldAsset>(entity).cloned(), world.get::<BlockWorld>(entity).cloned())
+    else {
+        return false;
+    };
+    let near = now.columns.clone().unwrap_or_default();
+    let is_near = |key: &[i32; 3]| near.contains(&[key[0], key[2]]);
+    let (mut wanted, mut pending) = (BlockEdits::default(), BlockEdits::default());
+    for (key, change) in &edits.chunks {
+        match is_near(key) {
+            true => drop(wanted.chunks.insert(*key, change.clone())),
+            false => drop(pending.chunks.insert(*key, change.clone())),
+        }
+    }
+    // Each chunk made now that is changed, or is to be, as its ground with the changes wanted.
+    let changed_now = BlockEdits::between(&asset.base, &now.blocks);
+    let mut touched: Vec<[i32; 3]> = changed_now.chunks.keys().chain(wanted.chunks.keys()).copied().collect();
+    touched.sort_unstable();
+    touched.dedup();
+    let mut target = BlockMap::default();
+    for key in &touched {
+        if let Some(chunk) = asset.base.chunk(*key) {
+            target.put_shared(*key, chunk.clone());
+        }
+    }
+    wanted.apply(&mut target);
+    let side = CHUNK as i32;
+    let mut cells = Vec::new();
+    for key in touched {
+        for z in 0..side {
+            for y in 0..side {
+                for x in 0..side {
+                    let at = [key[0] * side + x, key[1] * side + y, key[2] * side + z];
+                    let (block, fill) = (target.get(at), target.fill(at));
+                    if now.blocks.get(at) != block || now.blocks.fill(at) != fill {
+                        cells.push((at, block, fill));
+                    }
+                }
+            }
+        }
+    }
+    now.set_cells(cells);
+    now.set_links(&edits.links);
+    // Kept as built from here, so a save after holds what changed.
+    if !world.has::<voxear_terrain::blocks::BuiltBlocks>(entity) {
+        world.insert(entity, voxear_terrain::blocks::BuiltBlocks(asset.base.clone()));
+    }
+    world.insert(entity, now);
+    if let Some(asset) = world.get_mut::<BlockWorldAsset>(entity) {
+        asset.pending = Arc::new(pending);
+    }
+    true
+}
+
 /// Whether `block` is the number of a block in the world of blocks on
 /// `entity`: any number in a world that is no asset's.
 pub fn block_listed(world: &World, entity: voxear_ecs::Entity, block: BlockId) -> bool {

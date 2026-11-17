@@ -637,6 +637,9 @@ fn lay_floors(
         let (score, mut chosen) = best?;
         // A space that may be left out, and needs the whole floor far deeper than the rest of it does, is.
         drop_deep(&mut chosen, land, cover, score);
+        if grows(dungeon) {
+            as_way_down(&mut chosen, sizes, floor);
+        }
         origin = chosen
             .spaces
             .iter()
@@ -646,6 +649,41 @@ fn lay_floors(
         laid.push(chosen);
     }
     Some(laid)
+}
+
+/// Whether a dungeon grows floor by floor: one in a dimension of its own,
+/// whose floors above its last are kept as they are when it grows.
+fn grows(dungeon: &Dungeon) -> bool {
+    dungeon.place == super::DungeonPlace::OwnDimension
+}
+
+/// Whether a node is the way down at the end of its floor.
+fn ends_floor(node: &Node, at: usize) -> bool {
+    node.kind == SpaceKind::Descent && at != 0 && node.progress >= 1.0
+}
+
+/// Makes the way down at the end of a floor laid as an arena (see
+/// `place_floor`) the way down it is: where it was laid, the size of a way
+/// down, its floor the next floor's upper level.
+fn as_way_down(floor: &mut Floor, sizes: &Sizes, number: u32) {
+    let levels = levels(sizes, number);
+    let under = levels_under(sizes, number);
+    for (at, node) in floor.nodes.iter().enumerate() {
+        if !ends_floor(node, at) {
+            continue;
+        }
+        let Some(space) = floor.spaces.get_mut(at).filter(|space| space.height >= 0) else { continue };
+        let (half, height, below) = shape(SpaceKind::Descent, sizes);
+        // Its own half is along its floor's way, as the arena's was.
+        let half = if space.half[0] >= space.half[1] { half } else { [half[1], half[0]] };
+        (space.half, space.height, space.below) = (half, height, below);
+        (space.at[1], space.upper) = (under, levels[node.level as usize]);
+    }
+}
+
+/// The upper level of the floor under floor `number`.
+fn levels_under(sizes: &Sizes, number: u32) -> i32 {
+    levels(sizes, number + 1)[0]
 }
 
 /// A floor's nodes put in place, from `origin`, along `dir` and across
@@ -670,10 +708,16 @@ fn place_floor(
         let (a, s) = (node.place[0] * sizes.unit[0], node.place[1] * sizes.unit[1]);
         let x = origin[0] + dir[0] * a + side[0] * s + if at == 0 { 0.0 } else { jitter(1) };
         let z = origin[1] + dir[1] * a + side[1] * s + if at == 0 { 0.0 } else { jitter(2) };
-        let (half, height, below) = shape(node.kind, sizes);
+        // In rock, a floor's way down is laid as the boss's arena would be, then made the way down once the floor
+        // is laid (`as_way_down`): so the floor is laid the same whether it is the last or one is grown under it.
+        let laid_as = match grows(dungeon) && ends_floor(node, at) {
+            true => SpaceKind::Arena,
+            false => node.kind,
+        };
+        let (half, height, below) = shape(laid_as, sizes);
         let level = levels[node.level as usize];
         // A gorge's top is the upper level, its floor the lower; a shaft's top the floor over's lower level.
-        let (floor_level, upper) = match node.kind {
+        let (floor_level, upper) = match laid_as {
             SpaceKind::Gorge => (levels[1], levels[0]),
             SpaceKind::Descent if at == 0 && floor > 0 => {
                 let over = self::levels(sizes, floor - 1);

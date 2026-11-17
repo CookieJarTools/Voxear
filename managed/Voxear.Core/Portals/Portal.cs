@@ -172,6 +172,24 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 		return (a, b);
 	}
 
+	/// <summary>
+	/// Two new Portals that lead to each other, each in a dimension of its own: the first at
+	/// <paramref name="first"/> in <paramref name="firstDimension"/>'s coordinates, the second in the other's. What
+	/// goes into either comes out of the other in its dimension. Both dimensions must be made; await
+	/// Dimensions.Make first for one that may not be.
+	/// <code>
+	/// var caves = await Dimensions.Make(cavesAsset);
+	/// var (way, back) = Portal.CreatePair(DimensionInstance.Level, mineMouth, facingIn, caves, landing, facingOut, new Vector2(3f, 4f));
+	/// </code>
+	/// </summary>
+	public static (Portal First, Portal Second) CreatePair(DimensionInstance firstDimension, Vector3 first, Quaternion firstRotation, DimensionInstance secondDimension, Vector3 second, Quaternion secondRotation, Vector2 size)
+	{
+		var (a, b) = CreatePair(first, firstRotation, second, secondRotation, size);
+		NativeDimensions.Move(a.Obj, firstDimension.Handle, first);
+		NativeDimensions.Move(b.Obj, secondDimension.Handle, second);
+		return (a, b);
+	}
+
 	/// <summary>Gives both Objs a Portal, unless they have one, each leading to the other.</summary>
 	public static void Link(Obj first, Obj second)
 	{
@@ -251,6 +269,7 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 		}
 		var turn = Value(3);
 		var (from, to) = (Value(4), Value(5));
+		var dimensions = Value(7);
 		return new PortalPassage(
 			NativeComponent.ObjOf(Value(0)),
 			new Portal(NativeComponent.ObjOf(Value(1))),
@@ -258,7 +277,8 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 			new Quaternion(turn.X, turn.Y, turn.Z, turn.W),
 			new Vector3(from.X, from.Y, from.Z),
 			new Vector3(to.X, to.Y, to.Z),
-			Value(6).X != 0f);
+			Value(6).X != 0f,
+			(new DimensionInstance(BitConverter.SingleToUInt32Bits(dimensions.X)), new DimensionInstance(BitConverter.SingleToUInt32Bits(dimensions.Y))));
 	}
 
 	private float Number(int what)

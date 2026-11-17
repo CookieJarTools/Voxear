@@ -252,6 +252,10 @@ impl Surroundings {
         self.sky.as_ref()
     }
 
+    pub fn weather(&self) -> Option<Weather> {
+        self.weather
+    }
+
     pub fn post(&self) -> Option<PostProcess> {
         self.post
     }
@@ -288,6 +292,31 @@ pub struct Made {
     idle: f32,
     /// Its sky, sun, post-processing and weather, while it is not current.
     kept: Surroundings,
+    /// Told apart from every dimension made before it with its number:
+    /// what a script holds of it is its number and this (see
+    /// [`Dimensions::handle`]).
+    serial: u16,
+    /// The dungeon it holds, for a dungeon's own dimension.
+    pub dungeon: Option<crate::dungeons::DungeonGate>,
+}
+
+impl Made {
+    /// What it is called in a save: its asset and key, and for a dungeon's,
+    /// where the dungeon is.
+    pub fn name(&self) -> DimensionName {
+        DimensionName { asset: self.asset, key: self.key }
+    }
+}
+
+/// Which dimension a save means: the `.dimension` it is made from, none for
+/// one made by code (a dungeon's), and its key among that asset's. A dungeon's
+/// key is its site's (`DungeonGate::key`), the same each time it is made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DimensionName {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<AssetGuid>,
+    #[serde(default)]
+    pub key: u64,
 }
 
 /// Every dimension the game has made besides the level's, and which one the
@@ -300,6 +329,8 @@ pub struct Dimensions {
     level: Surroundings,
     /// The level they were made in: a change of level lets them all go.
     made_in: Option<String>,
+    /// How many have been made, for each one's serial.
+    serials: u16,
 }
 
 impl Dimensions {
@@ -359,6 +390,44 @@ impl Dimensions {
     fn next_id(&self) -> Option<DimensionId> {
         (1..DimensionId::MOST).map(DimensionId).find(|id| self.get(*id).is_none())
     }
+
+    /// What a script holds of a dimension: its number, and above it its
+    /// serial, so a dimension made later with the same number is not taken
+    /// for it. 0 is the level's; none for one not made.
+    pub fn handle(&self, id: DimensionId) -> Option<u32> {
+        match id.is_level() {
+            true => Some(0),
+            false => self.get(id).map(|made| u32::from(id.0) | (u32::from(made.serial) << 16)),
+        }
+    }
+
+    /// The dimension a script's handle names, while it is still made.
+    pub fn from_handle(&self, handle: u32) -> Option<DimensionId> {
+        let id = DimensionId((handle & 0xffff) as u16);
+        (self.handle(id) == Some(handle)).then_some(id)
+    }
+
+    /// The dimension a save's name means, if it is made.
+    pub fn named(&self, name: DimensionName) -> Option<DimensionId> {
+        self.made.iter().find(|made| made.name() == name).map(|made| made.id)
+    }
+}
+
+/// A script's handle of a dimension (see [`Dimensions::handle`]): 0, the
+/// level's, in a world with no other.
+pub fn handle_of(world: &World, id: DimensionId) -> Option<u32> {
+    match world.resource::<Dimensions>() {
+        Some(dimensions) => dimensions.handle(id),
+        None => id.is_level().then_some(0),
+    }
+}
+
+/// The dimension a script's handle names, while it is made.
+pub fn from_handle(world: &World, handle: u32) -> Option<DimensionId> {
+    match world.resource::<Dimensions>() {
+        Some(dimensions) => dimensions.from_handle(handle),
+        None => (handle == 0).then_some(DimensionId::LEVEL),
+    }
 }
 
 /// The dimension a world's things are made round and its sound heard from:
@@ -413,7 +482,10 @@ pub fn make_empty(
         });
         let kept = if settings.weather() { kept } else { kept.cleared() };
         let roots = Vec::new();
-        let made = Made { id, asset: None, key: 0, settings, roots, objs: Vec::new(), on_demand: false, idle: 0.0, kept };
+        dimensions.serials = dimensions.serials.wrapping_add(1);
+        let serial = dimensions.serials;
+        let (asset, key, objs, on_demand, idle) = (None, 0, Vec::new(), false, 0.0);
+        let made = Made { id, asset, key, settings, roots, objs, on_demand, idle, kept, serial, dungeon: None };
         dimensions.made.push(made);
         id
     });
@@ -449,9 +521,24 @@ pub fn note_key(world: &mut World, id: DimensionId, key: u64) {
 /// Marks a dimension as made on demand: let go once nothing has needed it
 /// for its `keep_loaded` seconds (see [`idle_ones`]).
 pub fn made_on_demand(world: &mut World, id: DimensionId) {
+    set_on_demand(world, id, true);
+}
+
+/// Whether a dimension is let go once nothing has needed it for its
+/// `keep_loaded` seconds, or kept until it is let go by name, as a script
+/// keeps one it made.
+pub fn set_on_demand(world: &mut World, id: DimensionId, on_demand: bool) {
     let dimensions = world.resource_mut::<Dimensions>();
     if let Some(made) = dimensions.and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id)) {
-        made.on_demand = true;
+        (made.on_demand, made.idle) = (on_demand, 0.0);
+    }
+}
+
+/// Notes which dungeon a dimension holds.
+pub fn note_dungeon(world: &mut World, id: DimensionId, gate: crate::dungeons::DungeonGate) {
+    let dimensions = world.resource_mut::<Dimensions>();
+    if let Some(made) = dimensions.and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id)) {
+        made.dungeon = Some(gate);
     }
 }
 

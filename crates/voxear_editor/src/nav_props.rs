@@ -324,3 +324,103 @@ pub fn area_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
         parts.push(Part::NavArea);
     }
 }
+
+/// A value the Nav Link component shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NavLinkField {
+    End,
+    Kind,
+    BothWays,
+    Cost,
+}
+
+use voxear_engine::navigation::{NavLink, NavLinkKind};
+
+const LINK_FIELDS: [NavLinkField; 4] =
+    [NavLinkField::End, NavLinkField::Kind, NavLinkField::BothWays, NavLinkField::Cost];
+
+pub fn link_props() -> Vec<Prop> {
+    LINK_FIELDS.into_iter().map(Prop::NavLink).collect()
+}
+
+pub fn link_label(field: NavLinkField) -> String {
+    match field {
+        NavLinkField::End => "End",
+        NavLinkField::Kind => "Kind",
+        NavLinkField::BothWays => "Both Ways",
+        NavLinkField::Cost => "Cost",
+    }
+    .into()
+}
+
+pub fn link_tooltip(field: NavLinkField) -> &'static str {
+    match field {
+        NavLinkField::End => {
+            "Where the link leads, from its Obj, in the Obj's own space, so it moves and turns with it: the top of a \
+             ladder, the far side of a gap. Things finding their way go from the place nearest the Obj to the place \
+             nearest this. Default: 0, 0, 2."
+        }
+        NavLinkField::Kind => {
+            "How what walks it crosses it: Walk straight along it, Jump over it in a leap, Climb it slowly as a \
+             ladder, or Teleport from one end to the other at once. Default: Climb."
+        }
+        NavLinkField::BothWays => {
+            "Whether it is taken back the other way too, or only from its Obj to its end. Default: on."
+        }
+        NavLinkField::Cost => {
+            "What taking it costs more than walking as far, in metres of plain ground: more keeps things off it \
+             where there is another way. Default: 1."
+        }
+    }
+}
+
+pub fn link_key(field: NavLinkField) -> &'static str {
+    match field {
+        NavLinkField::End => "end",
+        NavLinkField::Kind => "kind",
+        NavLinkField::BothWays => "both_ways",
+        NavLinkField::Cost => "cost",
+    }
+}
+
+pub fn link_get(game: &Game, entity: Entity, field: NavLinkField) -> Option<Value> {
+    let link = game.engine.world.get::<NavLink>(entity)?;
+    Some(match field {
+        NavLinkField::End => Value::Vector(link.end.to_vec()),
+        NavLinkField::Kind => Value::Choice(
+            NavLinkKind::ALL.iter().position(|kept| *kept == link.kind).unwrap_or(0),
+            NavLinkKind::ALL.iter().map(|kind| kind.name().to_string()).collect(),
+        ),
+        NavLinkField::BothWays => Value::Toggle(link.both_ways),
+        NavLinkField::Cost => Value::Number(link.cost),
+    })
+}
+
+pub fn link_set(game: &mut Game, entity: Entity, field: NavLinkField, value: Value) -> bool {
+    let Some(link) = game.engine.world.get_mut::<NavLink>(entity) else { return false };
+    match (field, value) {
+        (NavLinkField::End, Value::Vector(end)) if end.len() == 3 => {
+            link.end = [0, 1, 2].map(|axis| end[axis].clamp(-10_000.0, 10_000.0));
+        }
+        (NavLinkField::Kind, Value::Choice(at, _)) => link.kind = NavLinkKind::ALL.get(at).copied().unwrap_or_default(),
+        (NavLinkField::BothWays, Value::Toggle(on)) => link.both_ways = on,
+        (NavLinkField::Cost, Value::Number(cost)) => link.cost = cost.clamp(0.0, 10_000.0),
+        _ => return false,
+    }
+    true
+}
+
+pub fn link_add(world: &mut World, entity: Entity) {
+    world.insert(entity, NavLink::default());
+}
+
+pub fn link_remove(world: &mut World, entity: Entity) {
+    world.remove::<NavLink>(entity);
+}
+
+/// Adds the Nav Link part where `entity` has the component.
+pub fn link_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
+    if world.has::<NavLink>(entity) {
+        parts.push(Part::NavLink);
+    }
+}

@@ -4439,7 +4439,9 @@ engine's glue is `voxear_engine::navigation`.
 
 ### Planned
 
-- **Moving in block worlds**: climbing; Nav Links; wider walkers. (Jumps, swimming and doors are done, and areas:
+- **Moving in block worlds**: climbing without links; wider walkers. (Nav Links are done: `navigation::NavLink`,
+  given to each search as `voxear_nav::Link`, one step each in both the coarse and the place-by-place search,
+  crossed by agents along their line or arc. Jumps, swimming and doors are done, and areas:
   a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
   to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
 - **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level

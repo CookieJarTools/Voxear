@@ -100,12 +100,14 @@ struct HotBlocks {
     chunks: HashMap<[i32; 3], (Arc<Chunk>, Arc<[(u32, BlockId)]>)>,
 }
 
-/// The level's first Climate, which holds its clock.
+/// The level's first Climate, which holds its clock: the first in the
+/// level's dimension, or failing that the first anywhere.
 pub fn climate(world: &World) -> Option<Climate> {
     let mut found: Vec<(Entity, Climate)> =
         world.query_ref::<(Entity, &Climate)>().without::<Destroying>().into_iter().map(|(e, c)| (e, *c)).collect();
     found.sort_by_key(|(entity, _)| entity.to_bits());
-    found.first().map(|(_, climate)| *climate)
+    let in_level = found.iter().find(|(entity, _)| voxear_scene::dimension_of(world, *entity).is_level());
+    in_level.or(found.first()).map(|(_, climate)| *climate)
 }
 
 /// Where the day is, from -1 in the small hours, at five, to 1 in the

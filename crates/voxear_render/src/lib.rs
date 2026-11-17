@@ -1287,6 +1287,14 @@ impl Renderer {
         gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
     }
 
+    /// Uploads a model's textures and materials alone, as a box model's look
+    /// with another sheet (see [`BoxModel::look`]), and gives back its
+    /// materials.
+    pub fn upload_look(&mut self, model: &PreparedModel) -> Result<Vec<MaterialHandle>> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        gltf_import::upload_look(&self.gpu, &mut self.bindless, assets, model)
+    }
+
     /// Puts a model prepared again, as after its import settings changed,
     /// behind the mesh and material handles `old` was given, so whatever
     /// draws it shows the change from the next frame. Fails, changing
@@ -2352,6 +2360,9 @@ struct View {
     vsm: vsm::VirtualShadows,
     /// The lamps' virtual shadow pages it keeps (see `lamp_vsm`).
     lamp_pages: lamp_vsm::LampPages,
+    /// The dimension it saw last frame: what it keeps of that one's shadows,
+    /// sky and bounced light is let go once it sees another.
+    dimension: voxear_scene::DimensionId,
 }
 
 /// A view through a Portal, kept by the view it is seen in for as long as
@@ -2550,6 +2561,7 @@ impl View {
             fsr3_retired: Default::default(),
             vsm: vsm::VirtualShadows::default(),
             lamp_pages: lamp_vsm::LampPages::default(),
+            dimension: voxear_scene::DimensionId::LEVEL,
         })
     }
 
@@ -2973,6 +2985,19 @@ impl View {
             &|mesh| assets.mesh_sphere(mesh),
             through.as_ref(),
         );
+        // Seeing another dimension, what it kept of the last one's shadows, sky and bounced light goes: they are
+        // another world's, which the shadows would otherwise go on showing for a while as their pages come again a
+        // few at a time. The picture's own history stays, as a camera walking through a Portal sees no cut.
+        if extracted.dimension != self.dimension {
+            self.dimension = extracted.dimension;
+            self.vsm = vsm::VirtualShadows::default();
+            self.lamp_pages = lamp_vsm::LampPages::default();
+            self.shadow_cache.forget();
+            self.atmosphere_tables = None;
+            self.cloud_history = None;
+            self.ddgi_history = None;
+            self.ddgi_lit_by = None;
+        }
         // What a view through a Portal goes without: what reads the screen, bounced light, and the sea.
         if portal.is_some() {
             let post = &mut extracted.post;
@@ -3003,10 +3028,15 @@ impl View {
         if extracted.ocean.is_some_and(|(_, level, _)| camera.y < level) {
             extracted.post.fog.enabled = false;
         }
+        // The terrains and worlds of blocks of the dimension the view sees, of all drawn this frame.
+        let (seen_terrains, seen_blocks) = (
+            terrain::in_dimension(&setup.terrains, extracted.dimension),
+            blocks::in_dimension(&setup.blocks, extracted.dimension),
+        );
         // Each terrain's meshes for rays, among the Objs the GI traces and the sea floor is drawn from.
         if portal.is_none() {
-            terrain::add_proxies(&setup.terrains, &mut extracted);
-            blocks::add_proxies(&setup.blocks, &mut extracted);
+            terrain::add_proxies(&seen_terrains, &mut extracted);
+            blocks::add_proxies(&seen_blocks, &mut extracted);
         }
         if features.vegetation {
             // The plants round the camera where the world has it, moved into the view's own space.
@@ -3088,8 +3118,8 @@ impl View {
         let virtual_sun = extracted.has_sun && portal.is_none() && extracted.sun_shadows == SunShadows::Virtual;
         if caching || virtual_sun || virtual_lamps {
             self.shadow_cache.mark_still(&mut extracted, opaque_count, assets);
-            self.shadow_cache.note_blocks(&setup.blocks);
-            self.shadow_cache.note_terrains(&setup.terrains);
+            self.shadow_cache.note_blocks(&seen_blocks);
+            self.shadow_cache.note_terrains(&seen_terrains);
         } else {
             self.shadow_cache.forget();
         }
@@ -3244,7 +3274,7 @@ impl View {
         // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
         let tracks_id = fg.import_buffer(&self.tracks);
         let no_terrains: &[terrain::Drawn] = &[];
-        let terrains = if portal.is_some() { no_terrains } else { &setup.terrains };
+        let terrains = if portal.is_some() { no_terrains } else { &seen_terrains };
         // Each level of the sun's virtual shadow maps with pages drawn this frame, and the planes round them.
         let sun_pages: Vec<(usize, [[f32; 4]; 6])> = virtual_shadows
             .as_ref()
@@ -3266,7 +3296,7 @@ impl View {
         .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         let mut view_blocks = blocks::gather(
-            &setup.blocks,
+            &seen_blocks,
             &extracted,
             &buffers.blocks,
             (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows && cascades, portal.is_none()),
@@ -3829,20 +3859,26 @@ impl View {
             Some(_) => Default::default(),
             None => {
                 let now = particles::time_of(world, setup.time);
-                particles::gather(world, camera, now, &extracted.water_bodies, drawing)
+                particles::gather(
+                    world,
+                    (camera, &|entity| extracted.sees(entity)),
+                    now,
+                    &extracted.water_bodies,
+                    drawing,
+                )
             }
         };
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = match portal {
             Some(_) => Default::default(),
-            None => smoke::gather(world, camera, setup.time),
+            None => smoke::gather(world, (camera, &|entity| extracted.sees(entity)), setup.time),
         };
         buffers.smokes.write(0, &smokes);
         buffers.smoke_cells.write(0, &smoke_cells);
         buffers.smoke_holes.write(0, &smoke_holes);
         let (mists, mist_points) = match portal {
             Some(_) => Default::default(),
-            None => mist::gather(world, camera, setup.time),
+            None => mist::gather(world, (camera, &|entity| extracted.sees(entity)), setup.time),
         };
         buffers.mists.write(0, &mists);
         buffers.mist_points.write(0, &mist_points);
@@ -3871,7 +3907,13 @@ impl View {
         };
         let unjittered = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.unjittered_view_proj);
         let jittered = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.view_proj);
-        let sight = portals::in_sight(world, (camera, offset), unjittered, most, through.map(|through| through.out_of));
+        let sight = portals::in_sight(
+            world,
+            (camera, offset),
+            unjittered,
+            most,
+            (through.map(|through| through.out_of), extracted.dimension),
+        );
         let openings: Vec<portals::GpuPortalQuad> = sight
             .openings
             .iter()

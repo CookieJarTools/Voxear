@@ -101,6 +101,13 @@ fn fall(world: &mut World, layers: &mut [Option<Entity>; LAYERS], what: Fall, am
         if let Some(transform) = layer.and_then(|entity| world.get_mut::<Transform>(entity)) {
             transform.position = over;
         }
+        // It falls in the dimension it is seen in.
+        if let Some(entity) = *layer {
+            let seen = crate::dimensions::seen_from(world);
+            if voxear_scene::dimension_of(world, entity) != seen {
+                voxear_scene::set_dimension(world, entity, seen);
+            }
+        }
     }
 }
 

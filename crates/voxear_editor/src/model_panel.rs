@@ -31,8 +31,8 @@ use std::{
 
 use voxear_core::math::Vec3;
 use voxear_engine::animation::{MobMotion, MobPoser, MotionInput};
-use voxear_render::{BoxHit, BoxKey, BoxModel, BoxSkin, Face, Renderer, TintSlot, on_step};
-use voxear_ui::{ColorPicker, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
+use voxear_render::{BoxHit, BoxKey, BoxModel, BoxSkin, Face, Renderer, Sheet, TintSlot, on_step};
+use voxear_ui::{ColorPicker, DragSource, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
 
 use crate::{
     box_part_inspector::BoxPartEdit,
@@ -214,6 +214,11 @@ pub enum ModelEvent {
     Save(String, BoxModel),
     /// Show this bone or box in the Inspector, or with none the model itself.
     Inspect(Option<Picked>),
+    /// Write the sheet of the model at this path beside it as a picture.
+    SaveSheet(String, Sheet),
+    /// Something was dropped on the sheet: a picture, when it is one, to
+    /// paint the sheet from.
+    DropOnSheet(DragSource),
 }
 
 /// A row of the tree: its number, the row it is in, its name and its icon.
@@ -326,6 +331,7 @@ pub struct ModelPanel {
     symmetry: NodeId,
     on_layer: NodeId,
     lay_out: NodeId,
+    save_sheet: NodeId,
     /// Watching it move: how fast, and the buttons that have it attack and flinch.
     motion_bar: NodeId,
     paces: NodeId,
@@ -431,6 +437,8 @@ impl ModelPanel {
         let on_layer = button(ui, paint_bar, "Layer", tip);
         let tip = "Gives every unfolded box room of its own on the sheet, with its pixels";
         let lay_out = button(ui, paint_bar, "Lay Out", tip);
+        let tip = "Writes the sheet beside the model as a picture, to paint in another program; drop a picture on the sheet to bring it back";
+        let save_sheet = button(ui, paint_bar, "Save Sheet", tip);
         ui.set_visible(paint_bar, false);
 
         let motion_bar = group(ui);
@@ -488,6 +496,7 @@ impl ModelPanel {
             symmetry,
             on_layer,
             lay_out,
+            save_sheet,
             motion_bar,
             paces,
             attack,
@@ -1076,7 +1085,7 @@ impl ModelPanel {
             (self.playing, self.played_at, self.pose_stale) = (false, None, true);
             // Sculpting has the colour and Symmetry that painting has, and its own tools.
             ui.set_visible(self.paint_bar, painting || sculpting);
-            for only_painting in [self.tools, self.on_layer, self.lay_out] {
+            for only_painting in [self.tools, self.on_layer, self.lay_out, self.save_sheet] {
                 ui.set_visible(only_painting, painting);
             }
             ui.set_visible(self.carves, sculpting);
@@ -1108,6 +1117,14 @@ impl ModelPanel {
             && model.lay_out()
         {
             self.change(model, None);
+        }
+        if ui.clicked(self.save_sheet)
+            && let Some(open) = self.open.as_ref()
+        {
+            self.pending.push(ModelEvent::SaveSheet(open.path.clone(), open.model.sheet.clone()));
+        }
+        if let Some(source) = ui.dropped_onto(self.sheet.frame_node()) {
+            self.pending.push(ModelEvent::DropOnSheet(source));
         }
         if ui.clicked(self.swatch) {
             let open = !ui.is_visible(self.picker_frame);
@@ -1168,6 +1185,15 @@ impl ModelPanel {
                 self.tint_shown = Some((self.color, shown));
             }
         }
+    }
+
+    /// Paints the open model's sheet from a picture, one step to undo. A
+    /// picture of another size makes the sheet that size, the boxes' faces
+    /// where they were on it.
+    pub fn take_sheet(&mut self, sheet: Sheet) {
+        let Some(mut model) = self.open.as_ref().map(|open| open.model.clone()) else { return };
+        model.sheet = sheet;
+        self.change(model, None);
     }
 
     /// How fast the model is shown moving, while it is watched.

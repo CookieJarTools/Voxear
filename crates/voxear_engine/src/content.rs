@@ -550,6 +550,9 @@ pub struct Content {
     picture_sizes: HashMap<(AssetGuid, bool), [u32; 2]>,
     /// Pictures for UI, their colours multiplied by their alpha, with their sizes.
     ui_pictures: HashMap<AssetGuid, (TextureId, [u32; 2])>,
+    /// Box models' looks drawn with another picture for their sheet, by the
+    /// model and the picture.
+    box_sheets: HashMap<(AssetGuid, AssetGuid), MaterialHandle>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
     /// The project's custom shaders, read when the assets are scanned.
@@ -735,6 +738,7 @@ impl Content {
             pictures: HashMap::new(),
             picture_sizes: HashMap::new(),
             ui_pictures: HashMap::new(),
+            box_sheets: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
@@ -870,6 +874,7 @@ impl Content {
     pub fn forget(&mut self, path: &str) {
         let Some(guid) = self.db.guid_of(path) else { return };
         self.texts.remove(&guid);
+        self.box_sheets.retain(|&(model, picture), _| model != guid && picture != guid);
         self.prefabs.files.remove(&guid);
         if let Some(&id) = self.prefabs.ids.get(&guid)
             && let Some(template) = self.prefabs.templates.get_mut(id.0 as usize)
@@ -2004,6 +2009,7 @@ impl Content {
         }
         ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
         self.forget_clips(guid);
+        self.box_sheets.retain(|&(model, _), _| model != guid);
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
         // Its colliders take the new triangles, under new keys, so their bodies are made again.
         self.triangles.retain(|reference, _| !matches!(reference, AssetRef::Asset { guid: of, .. } if *of == guid));
@@ -2202,6 +2208,67 @@ impl Content {
         let texture = renderer.add_texture(&TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb: true })?;
         self.ui_pictures.insert(guid, (texture, [width, height]));
         Ok((texture, [width, height]))
+    }
+
+    /// A box model's material drawn with another picture for its sheet,
+    /// made on first use: the picture is the size of the model's sheet and
+    /// laid out as it is, its colours take the tints the model gives them,
+    /// and the model's cubes keep their palette.
+    pub fn box_sheet(
+        &mut self,
+        renderer: &mut Renderer,
+        model: AssetGuid,
+        picture: AssetGuid,
+    ) -> Result<MaterialHandle> {
+        if let Some(&found) = self.box_sheets.get(&(model, picture)) {
+            return Ok(found);
+        }
+        let entry = self.db.get(model).with_context(|| format!("no asset with GUID {model}"))?;
+        let path = entry.path.clone();
+        ensure!(voxear_render::is_box_model(&path), "{path} is not a box model, so it has no sheet");
+        let text = match self.cooked.contains(&model) {
+            true => {
+                let cooked = CookedModel::from_bytes(&path, &self.read(&path)?)?;
+                cooked.box_source().with_context(|| format!("{path} was built without its box model"))?.to_string()
+            }
+            false => self.read_text(&path)?,
+        };
+        let mut boxes = voxear_render::BoxModel::parse(&text).with_context(|| format!("reading {path}"))?;
+        let (sheet, named) = self.sheet_picture(picture)?;
+        let [width, height] = [boxes.sheet.width, boxes.sheet.height];
+        ensure!(
+            [sheet.width, sheet.height] == [width, height],
+            "{named} is {} × {} pixels, but {path}'s sheet is {width} × {height}",
+            sheet.width,
+            sheet.height
+        );
+        boxes.sheet = sheet;
+        let materials = renderer.upload_look(&boxes.look(&path))?;
+        let material = *materials.first().with_context(|| format!("{path} has no material"))?;
+        self.box_sheets.insert((model, picture), material);
+        Ok(material)
+    }
+
+    /// A picture's pixels as they are, for a box model's sheet, and its
+    /// path: as a build cooked it, which keeps them as they are where its
+    /// compression is off.
+    fn sheet_picture(&mut self, guid: AssetGuid) -> Result<(voxear_render::Sheet, String)> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
+        let path = entry.path.clone();
+        let bytes = self.read(&path)?;
+        let sheet = match CookedPicture::is_cooked(&bytes) {
+            true => {
+                let cooked = CookedPicture::from_bytes(&bytes, &path)?;
+                let rgba = cooked.rgba().with_context(|| {
+                    format!("{path} was built compressed; turn Compress in builds off for a box model's sheet")
+                })?;
+                let (width, height) = cooked.size();
+                voxear_render::Sheet::from_rgba(width, height, rgba.to_vec())?
+            }
+            false => voxear_render::Sheet::from_picture(&bytes).with_context(|| format!("reading {path}"))?,
+        };
+        Ok((sheet, path))
     }
 
     /// A picture asset as a light's cookie, in its colours as they look.

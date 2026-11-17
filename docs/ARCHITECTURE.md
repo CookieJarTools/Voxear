@@ -466,6 +466,56 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
+### Dimensions *(in the engine; Portals between them, dungeons in their own, the editor, scripts, saves and networking planned)*
+
+A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
+at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
+streamed round in another. It stays one ECS world, so references between Objs hold as a player goes from one
+dimension to another.
+
+- **Which dimension an Obj is in** (`voxear_scene::dimensions`): its root's `InDimension(DimensionId)`, or with none
+  the level's own, `DimensionId::LEVEL`, so every Obj made before dimensions is in the level's and nothing is written
+  for it. `dimension_of` walks up to the root; `Dimensioned::of` works every Obj's out once for a system that asks of
+  many, and keeps nothing where every Obj is in the level's. `Switched::in_dimension` and `only_in` count the Objs of
+  every other dimension as switched off, so whatever already skips what is off skips them too.
+- **The `.dimension` asset** (`AssetKind::Dimension`, `voxear_engine::dimensions`): a scene's Objs, lighting, `[sky]`
+  and `[post]`, under a `[dimension]` table of its settings (`DimensionSettings`): a `kind` (Overworld, Dungeon,
+  Caves) that sets good values for the rest, `sky` (none is enclosed: dark all round, no sun, clear), `weather`,
+  `clock` (the level's, its own first Climate's, or none), `keep_loaded` and `instances` (one, or one for each place
+  that opens it). `Game::make_dimension(asset, key)` spawns its Objs (`scene_file::spawn_objs`, which leaves the
+  world's sky alone), puts their roots in a new `DimensionId` and keeps its surroundings; the same asset and key give
+  the same dimension. `Game::let_go_dimension` destroys every root in it but persistent ones, which go back to the
+  level's. A change of level lets every dimension go.
+- **The current dimension** is the one the game is seen from (`dimensions::seen_from`: the editor Scene view's
+  `ViewerDimension`, else the first game camera's). The world's `Sky`, `SunLook`, lighting, post-processing and
+  `Weather` resources are always the current dimension's: `dimensions::update`, at the top of `Game::tick`, keeps the
+  others aside (`Surroundings`) and swaps them in as the camera moves between dimensions, and sets
+  `voxear_scene::CurrentDimension` for what is worked out once a frame for every view.
+- **Drawing.** `scene::extract` takes the view's dimension from its camera, or for a view through a Portal from the
+  far Portal (`Through::dimension`), and counts every other dimension's Objs as switched off: instances, lights, the
+  sun (the first Directional Light of the view's dimension), seas, post volumes, water bodies, particles, smoke and
+  mist. `ExtractedFrame::dimension` and `sees` carry it on. Each drawn world of blocks and terrain notes its
+  dimension (`DrawnBlocks::dimension`, `terrain::Drawn::dimension`), and each view keeps only its own
+  (`blocks::in_dimension`, `terrain::in_dimension`), for drawing, shadows and the GI's rays; the other worlds' pools
+  stay on the GPU. Foliage of another dimension is not drawn but keeps what it built. Reflection probes and world UI
+  panels are the current dimension's. A view that comes to see another dimension starts its sun's and lamps'
+  virtual shadow pages, its kept shadows, sky tables, clouds and bounced light again, where their pages would
+  otherwise come back a few a frame showing the last dimension's shadows; its picture's history stays, so walking
+  through a Portal is no cut.
+- **Physics.** One Jolt world: a body's layer given to the shim is its dimension times 32 plus its own layer
+  (`voxear_physics::DIMENSIONS`, 1024 of them in Jolt's 16-bit object layers), and two dimensions never collide
+  (`LayerPairs`). Rays and overlaps ask in one dimension (`PhysicsWorld::ask_in`, the query flags' high 16 bits),
+  which the game sets to the current one each tick. An Obj moved to another dimension has its body made again there.
+- **Streaming.** Each world without end is made round the places in its own dimension: the viewer where it is in
+  that dimension, and the far sides of Portals that lead into it (`PortalExit::dimension`); a world with neither is
+  left as it is, its streamer kept. `blocks::streamed`, `terrain::streamed` and the far haze are the current
+  dimension's, and `blocks::made_round` asks of one dimension's worlds. Grown plants, block tints and terrains follow.
+- **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
+  in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
+  each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes
+  and scripts' block calls ask the current dimension's worlds; a block mob walks its own dimension's, and a dropped
+  item falls onto its own's.
+
 ### Prefabs *(implemented: nesting, variants, overrides, Instantiate; inspector editing planned)*
 
 A **Prefab** is a `.prefab` file: Objs written exactly as in a scene, with one root.
@@ -3274,7 +3324,8 @@ and never waits for.)*
 ## Physics (Jolt)
 
 Rigid bodies, colliders (including convex and mesh), joints and a character controller. Queries cover raycasts,
-shape casts and overlaps, and are callable from jobs. Collision and trigger events arrive as ECS events and as
+shape casts and overlaps, and are callable from jobs. Bodies of two dimensions never collide, and queries ask in one
+(see [Dimensions](#dimensions)). Collision and trigger events arrive as ECS events and as
 `OnCollision`/`OnTrigger` behaviour callbacks. Jolt runs on the engine's job system. The physics step runs in the
 `FixedUpdate` stage and is replaceable like any system.
 

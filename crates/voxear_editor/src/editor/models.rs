@@ -5,7 +5,7 @@
 //! is written to the model's file, and whatever draws the model in the
 //! level shows it as it now is.
 
-use voxear_render::{BoxModel, Renderer};
+use voxear_render::{BoxModel, Renderer, Sheet};
 
 use super::{Command, Editor};
 use crate::{
@@ -139,6 +139,17 @@ impl Editor {
             match event {
                 ModelEvent::Save(path, model) => self.save_box_model(&path, &model, renderer),
                 ModelEvent::Inspect(part) => self.inspect_model(part),
+                ModelEvent::SaveSheet(path, sheet) => match self.save_box_sheet(&path, &sheet, renderer) {
+                    Ok(saved) => self.notify(&format!("Saved the sheet as {saved}")),
+                    Err(error) => self.notify(&format!("Could not save the sheet: {error:#}")),
+                },
+                ModelEvent::DropOnSheet(source) => {
+                    let Some(path) = self.dragged_asset(&source) else { continue };
+                    match self.read_sheet_picture(&path) {
+                        Ok(sheet) => self.model.take_sheet(sheet),
+                        Err(error) => self.notify(&format!("Could not paint the sheet from {path}: {error:#}")),
+                    }
+                }
             }
         }
         self.show_model_in_inspector();
@@ -257,6 +268,39 @@ impl Editor {
         }
         self.files_seen();
         true
+    }
+
+    /// Writes a box model's sheet beside it as a picture, `Model Sheet.png`
+    /// for `Model.boxmodel`, in place of one written before, and gives back
+    /// its path.
+    pub(super) fn save_box_sheet(
+        &mut self,
+        path: &str,
+        sheet: &Sheet,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<String> {
+        let stem =
+            std::path::Path::new(path).file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+        let saved = match path.rsplit_once('/') {
+            Some((folder, _)) => format!("{folder}/{stem} Sheet.png"),
+            None => format!("{stem} Sheet.png"),
+        };
+        std::fs::write(self.game.project.root.join(&saved), sheet.to_png()?)?;
+        self.files_seen();
+        self.project_event(
+            crate::project_view::ProjectEvent::Changed { select: Some(saved.clone()), rename: false },
+            renderer,
+        );
+        Ok(saved)
+    }
+
+    /// A picture of the project, by its path, as a box model's sheet, pixel
+    /// for pixel.
+    pub(super) fn read_sheet_picture(&self, path: &str) -> anyhow::Result<Sheet> {
+        let kind =
+            self.game.content.db().guid_of(path).and_then(|guid| self.game.content.db().get(guid)).map(|e| e.kind);
+        anyhow::ensure!(kind == Some(voxear_assets::AssetKind::Texture), "{path} is not a picture");
+        Sheet::from_picture(&std::fs::read(self.game.project.root.join(path))?)
     }
 
     /// Saves a box model, and has whatever draws it in the level, and its

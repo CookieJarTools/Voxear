@@ -394,7 +394,8 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Biome
         | AssetKind::Structure
         | AssetKind::Plant
-        | AssetKind::VoxModel => true,
+        | AssetKind::VoxModel
+        | AssetKind::Dimension => true,
         AssetKind::Texture
         | AssetKind::Material
         | AssetKind::Ui
@@ -636,6 +637,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
     match kind {
         AssetKind::Level
         | AssetKind::Scene
+        | AssetKind::Dimension
         | AssetKind::Prefab
         | AssetKind::Material
         | AssetKind::AssetTable

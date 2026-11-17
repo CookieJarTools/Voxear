@@ -13,6 +13,7 @@ pub mod dungeons;
 mod content;
 pub mod content_build;
 pub mod debug_texts;
+pub mod dimensions;
 pub mod field_checks;
 pub mod first_person;
 mod dev_console;

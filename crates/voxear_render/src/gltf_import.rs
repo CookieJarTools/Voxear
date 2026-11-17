@@ -83,6 +83,9 @@ pub struct PreparedModel {
     pub(crate) animation: Option<ModelAnimation>,
     /// What part of a body each bone moves (see [`ImportedModel::roles`]).
     pub(crate) roles: Vec<crate::BoneRole>,
+    /// A box model's own file, kept so it can be drawn with another sheet
+    /// wherever it is read from, as cooked into a build.
+    pub(crate) source: Option<String>,
 }
 
 pub(crate) struct PreparedTexture {
@@ -232,6 +235,11 @@ pub struct PartPlace<'a> {
 impl PreparedModel {
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// A box model's own file, as it was read.
+    pub fn box_source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 
     /// Its skeleton, skins and clips, for a model made to animate.
@@ -411,6 +419,7 @@ fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result
             nodes: Vec::new(),
             animation: None,
             roles: Vec::new(),
+            source: None,
         },
         meshes: HashMap::new(),
         textures: HashMap::new(),
@@ -540,6 +549,18 @@ fn add_materials(
     textures: &[TextureId],
 ) -> Result<Vec<MaterialHandle>> {
     materials.iter().map(|material| assets.add_material(gpu, &material_desc(material, textures))).collect()
+}
+
+/// Uploads a model's textures and materials alone, as a box model's look
+/// drawn with another sheet: its materials, in its order.
+pub fn upload_look(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    model: &PreparedModel,
+) -> Result<Vec<MaterialHandle>> {
+    let textures = upload_textures(gpu, bindless, assets, model)?;
+    add_materials(gpu, assets, &model.materials, &textures)
 }
 
 /// A material's values, with its textures as uploaded.

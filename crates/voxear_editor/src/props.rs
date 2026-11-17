@@ -830,6 +830,8 @@ pub enum Prop {
     ModelTint2,
     ModelTint3,
     ModelFollow,
+    /// A box model's picture in place of the sheet inside its file.
+    ModelSheet,
     ModelLodBias,
     ModelParts,
     FoliageFade,
@@ -1284,6 +1286,7 @@ impl Prop {
             | Prop::ModelTint2
             | Prop::ModelTint3
             | Prop::ModelFollow
+            | Prop::ModelSheet
             | Prop::ModelLodBias
             | Prop::ModelParts => Part::Model,
             Prop::Sound
@@ -1696,6 +1699,7 @@ impl Prop {
             Prop::ModelTint2 => "tint2",
             Prop::ModelTint3 => "tint3",
             Prop::ModelFollow => "follow_parent",
+            Prop::ModelSheet => "sheet",
             Prop::ModelLodBias => "lod_bias",
             Prop::ModelParts => "parts",
             Prop::FoliageFade => "fade_distance",
@@ -2439,6 +2443,10 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if world.get::<ModelRenderer>(entity).is_some_and(|drawn| drawn.masked) {
                 props.extend([Prop::ModelTint2, Prop::ModelTint3]);
             }
+            // A box model's sheet, which a picture of its layout can take the place of.
+            if world.get::<ModelRenderer>(entity).is_some_and(|drawn| drawn.box_model) {
+                props.push(Prop::ModelSheet);
+            }
             props.extend([Prop::ModelFollow, Prop::ModelLodBias, Prop::ModelParts]);
             props
         }
@@ -2901,6 +2909,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ModelTint2 => "Tint 2",
         Prop::ModelTint3 => "Tint 3",
         Prop::ModelFollow => "Follow parent",
+        Prop::ModelSheet => "Sheet",
         Prop::ModelLodBias => "LOD bias",
         Prop::ModelParts => "Parts",
         Prop::FoliageFade => "Fade distance",
@@ -3599,6 +3608,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::ModelTint2 => Value::Color(model_tint(world, entity, 1)?.map(round3)),
         Prop::ModelTint3 => Value::Color(model_tint(world, entity, 2)?.map(round3)),
         Prop::ModelFollow => Value::Toggle(world.get::<ModelSource>(entity)?.0.follow_parent),
+        Prop::ModelSheet => {
+            let sheet = world.get::<ModelSource>(entity)?.0.sheet.clone();
+            Value::Asset(guid_label(game, sheet.and_then(|sheet| game.content.parse(&sheet).ok()?.guid())))
+        }
         Prop::ModelLodBias => Value::Number(world.get::<ModelRenderer>(entity)?.lod_bias),
         Prop::ModelParts => Value::Fixed(world.get::<ModelRenderer>(entity)?.parts.len().to_string()),
         Prop::LightSoftness => Value::Number(light()?.softness),
@@ -4174,6 +4187,7 @@ pub fn set(
             | Prop::Sound
             | Prop::LightCookie
             | Prop::LightProfile
+            | Prop::ModelSheet
             | Prop::UiPanelDocument
             | Prop::ScreenUiDocument
             | Prop::MapOpenAction
@@ -4302,6 +4316,26 @@ pub fn pick(
                     world.insert(entity, ModelSource(data));
                     true
                 }
+                Err(error) => {
+                    tracing::error!("{error:#}");
+                    false
+                }
+            }
+        }
+        (Prop::ModelSheet, Pick::Asset(path)) => {
+            let Some(renderer) = renderer else { return false };
+            let Some(source) = game.engine.world.get::<ModelSource>(entity).cloned() else { return false };
+            let sheet = match path {
+                Some(path) => match game.content.db().guid_of(path) {
+                    Some(guid) => Some(guid.to_string()),
+                    None => return false,
+                },
+                None => None,
+            };
+            let data = ModelData { sheet, ..source.0 };
+            let world = &mut game.engine.world;
+            match voxear_engine::model_renderers::redraw(world, &mut game.content, Some(renderer), entity, data) {
+                Ok(()) => true,
                 Err(error) => {
                     tracing::error!("{error:#}");
                     false
@@ -4761,6 +4795,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::LightCookie => return fields::assets_of(game, Some(AssetKind::Texture)),
         Prop::LightProfile => return fields::assets_of(game, Some(AssetKind::LightProfile)),
         Prop::ModelAsset => return fields::assets_of(game, Some(AssetKind::Model)),
+        Prop::ModelSheet => return fields::assets_of(game, Some(AssetKind::Texture)),
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
         // A Portal leads to another: every other Obj with one. A camera follows any Obj.
@@ -4877,7 +4912,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Mesh | Prop::DryMesh => "Mesh".into(),
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
-        Prop::LightCookie => "Texture".into(),
+        Prop::LightCookie | Prop::ModelSheet => "Texture".into(),
         Prop::LightProfile => "IES profile".into(),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => "UI Document".into(),
         Prop::MapOpenAction => "Input Action".into(),

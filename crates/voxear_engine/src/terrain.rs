@@ -143,7 +143,12 @@ pub fn stream(world: &mut World, content: &mut Content) {
     let Some(viewer) = viewer else { return };
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
+    let seen = crate::dimensions::seen_from(world);
     for (entity, asset, corner) in endless {
+        // A terrain of a dimension not seen is left as it is.
+        if voxear_scene::dimension_of(world, entity) != seen {
+            continue;
+        }
         let making = Making {
             pictures: content.terrain_pictures(&asset.file),
             worlds: content.terrain_worlds(&asset.file),
@@ -162,5 +167,12 @@ pub fn stream(world: &mut World, content: &mut Content) {
 /// it is seen from, as its layers are now: for a test, or a game waiting
 /// on its world before it starts.
 pub fn streamed(world: &World) -> bool {
-    world.resource::<Streams>().is_none_or(|streams| streams.0.values().all(Streamer::settled))
+    let seen = crate::dimensions::seen_from(world);
+    world.resource::<Streams>().is_none_or(|streams| {
+        streams
+            .0
+            .iter()
+            .filter(|(entity, _)| voxear_scene::dimension_of(world, **entity) == seen)
+            .all(|(_, s)| s.settled())
+    })
 }

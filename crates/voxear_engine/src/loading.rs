@@ -406,6 +406,7 @@ fn gather(
             let read = match entry.kind {
                 AssetKind::Level
                 | AssetKind::Scene
+                | AssetKind::Dimension
                 | AssetKind::Prefab
                 | AssetKind::Material
                 | AssetKind::Sound

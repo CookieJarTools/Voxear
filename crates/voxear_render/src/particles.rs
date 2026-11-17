@@ -679,7 +679,7 @@ const SPRAYING_STREAMS: usize = 4;
 /// nearest the camera among `bodies`.
 pub(crate) fn gather(
     world: &World,
-    camera: Vec3,
+    (camera, sees): (Vec3, &dyn Fn(Entity) -> bool),
     time: f32,
     bodies: &crate::water::WaterBodies,
     (placed, textures): (&PlacedSystems, Looks<'_>),
@@ -691,6 +691,10 @@ pub(crate) fn gather(
     let halving = world.resource::<ParticleHalfSize>().is_none_or(|halving| halving.0);
     let mut systems: Vec<(f32, GpuParticleSystem, Drawn)> = Vec::new();
     for (entity, own, transform, at, playback) in query.without::<Destroying>() {
+        // Only the systems of the dimension the view sees.
+        if !sees(entity) {
+            continue;
+        }
         let model = at.map_or_else(|| transform.matrix(), |w| w.0);
         let distance = model.w_axis.truncate().distance_squared(camera);
         // Its effect's emitters, each a system of its own in the order the effect lists them, or itself.
@@ -1317,13 +1321,21 @@ fn light_now(system: &ParticleSystem, since: f32, stopped: f32, seed: u32) -> f3
 /// The lights this frame's Particle Systems cast, the nearest `camera`
 /// first and no more than [`MAX_PARTICLE_LIGHTS`]: a point light at each
 /// emitter that has a Light, in its colour as it starts.
-pub(crate) fn lights(world: &World, camera: Vec3, time: f32) -> Vec<crate::gpu::GpuLight> {
+pub(crate) fn lights(
+    world: &World,
+    camera: Vec3,
+    time: f32,
+    sees: &dyn Fn(Entity) -> bool,
+) -> Vec<crate::gpu::GpuLight> {
     use crate::gpu::{GpuLight, LIGHT_POINT, NO_SHADOW, NO_TEXTURE};
     let query =
         world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let effects = world.resource::<ParticleEffects>();
     let mut found: Vec<(f32, GpuLight)> = Vec::new();
     for (entity, own, transform, at, playback) in query.without::<Destroying>() {
+        if !sees(entity) {
+            continue;
+        }
         let position = at.map_or(transform.position, |w| w.0.w_axis.truncate());
         let playback = playback.copied().unwrap_or(ParticlePlayback { started: 0.0, stopped: None });
         for (emitter, system) in (0u32..).zip(crate::effects::emitters(effects, own)) {
@@ -1387,7 +1399,7 @@ mod tests {
         world.spawn((fire, Transform::from_position(Vec3::new(0.0, 1.0, 9.0))));
         world.spawn((ParticleSystem { color: [1.0, 0.5, 0.0, 1.0], ..fire }, Transform::from_position(Vec3::new(0.0, 1.0, 2.0))));
         world.spawn((ParticleSystem::default(), Transform::default()));
-        let cast = lights(&world, Vec3::ZERO, 5.0);
+        let cast = lights(&world, Vec3::ZERO, 5.0, &|_| true);
         assert_eq!(cast.len(), 2);
         assert_eq!((cast[0].position, cast[0].range), ([0.0, 1.0, 2.0], LIGHT_RANGE));
         assert!(cast[0].color[1] > 0.0 && cast[0].color[2] == 0.0 && cast[0].color[0] > cast[0].color[1], "{:?}", cast[0].color);
@@ -1420,7 +1432,8 @@ mod tests {
         world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 2.0))));
         let far = world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 20.0))));
         world.insert(far, ParticlePlayback { started: 3.0, stopped: Some(5.0) });
-        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default(), (&PlacedSystems::new(), NO_TEXTURES));
+        let (systems, slots, spray, rapids) =
+            gather(&world, (Vec3::ZERO, &|_| true), 10.0, &Default::default(), (&PlacedSystems::new(), NO_TEXTURES));
         assert_eq!(spray, None, "no sea, no spray");
         assert!(rapids.is_empty(), "no Streams, none over rapids");
         assert_eq!(slots.len(), 2);
@@ -1454,7 +1467,8 @@ mod tests {
         assert_eq!(foot.len(), 1);
         assert_eq!((foot[0].at, foot[0].size, foot[0].high), (Vec3::new(16.0, 2.0, 25.5), [2.0, 1.0], 6.0));
         let none = &Default::default();
-        let (systems, slots, _, _) = gather(&world, near, 10.0, none, (&PlacedSystems::new(), NO_TEXTURES));
+        let (systems, slots, _, _) =
+            gather(&world, (near, &|_| true), 10.0, none, (&PlacedSystems::new(), NO_TEXTURES));
         // Its mist and its spray, from its foot, neither kept and stepped: both worked out from their age.
         assert_eq!((systems.len(), slots.len()), (2, 2));
         for (system, drawn) in systems.iter().zip(&slots) {
@@ -1464,7 +1478,7 @@ mod tests {
         }
         // Far from it, none.
         let far = Vec3::new(16.0, 4.0, -200.0);
-        assert!(gather(&world, far, 10.0, none, (&PlacedSystems::new(), NO_TEXTURES)).0.is_empty());
+        assert!(gather(&world, (far, &|_| true), 10.0, none, (&PlacedSystems::new(), NO_TEXTURES)).0.is_empty());
     }
 
     #[test]
@@ -1482,10 +1496,12 @@ mod tests {
             crate::water::WaterBodies { bodies: vec![body], pools: 0, streams: vec![points.len() as u32], points, dry_meshes: Vec::new() }
         };
         let world = World::new();
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level), (&PlacedSystems::new(), NO_TEXTURES));
+        let (systems, _, _, rapids) =
+            gather(&world, (Vec3::ZERO, &|_| true), 10.0, &bodies(&level), (&PlacedSystems::new(), NO_TEXTURES));
         assert!(systems.is_empty() && rapids.is_empty(), "a level stream throws up none");
         let steep = bodies(&steep);
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep, (&PlacedSystems::new(), NO_TEXTURES));
+        let (systems, _, _, rapids) =
+            gather(&world, (Vec3::ZERO, &|_| true), 10.0, &steep, (&PlacedSystems::new(), NO_TEXTURES));
         assert_eq!((systems.len(), rapids.len()), (1, 1));
         let (system, body, points, drops) = rapids[0];
         assert_eq!((system, body, points), (0, 0, steep.streams[0]), "its own system, for the Stream's body and points");

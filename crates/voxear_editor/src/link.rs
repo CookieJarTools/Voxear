@@ -696,6 +696,20 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ trashed }",
     },
     CallInfo {
+        name: "box_model.sheet_save",
+        about: "Writes a box model's sheet beside it as a picture, `Model Sheet.png` for `Model.boxmodel`, to paint in another program.",
+        args: &[arg("asset", ArgKind::Asset, "The box model.")],
+        changes: true,
+        returns: "{ picture }",
+    },
+    CallInfo {
+        name: "box_model.sheet_load",
+        about: "Paints a box model's sheet from a picture of the project, pixel for pixel, and saves the model. A picture of another size makes the sheet that size, each face where it was on it.",
+        args: &[arg("asset", ArgKind::Asset, "The box model."), arg("picture", ArgKind::Asset, "The picture.")],
+        changes: true,
+        returns: "{ asset, sheet: [width, height] }",
+    },
+    CallInfo {
         name: "play",
         about: "Starts playing, as the Play button does, and answers once the game runs or fails to start; the scripts build first when they changed.",
         args: &[],
@@ -1405,6 +1419,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::Texture => ("texture", false),
         AssetKind::Material => ("material", true),
         AssetKind::Scene => ("scene", true),
+        AssetKind::Dimension => ("dimension", true),
         AssetKind::Level => ("level", true),
         AssetKind::Prefab => ("prefab", true),
         AssetKind::Ui => ("ui", true),

@@ -122,6 +122,9 @@ pub enum AssetKind {
     /// A `.ttf` or `.otf` file: a font, which UI styles name and languages
     /// list for the letters they need.
     Font,
+    /// A `.dimension` file: a world of its own beside the level's, its Objs
+    /// written as a scene's are and its settings, which Portals lead into.
+    Dimension,
 }
 
 impl AssetKind {
@@ -166,6 +169,7 @@ impl AssetKind {
             "vox" => Self::VoxModel,
             "particles" => Self::Particles,
             "voxshade" => Self::VoxShade,
+            "dimension" => Self::Dimension,
             _ => return None,
         })
     }

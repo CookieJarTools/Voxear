@@ -232,7 +232,8 @@ fn level_offset(world: &World) -> Vec3 {
 /// Mesh collider.
 fn still_colliders(world: &World) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)> {
     let offset = level_offset(world).extend(0.0);
-    let switched = Switched::of(world);
+    // The walls sound meets are those of the dimension it is heard in.
+    let switched = Switched::in_dimension(world, crate::dimensions::current(world));
     world
         .query_ref::<(Entity, &Collider, &Transform, Option<&WorldTransform>, Option<&ColliderMesh>)>()
         .without::<Rigidbody>()

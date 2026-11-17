@@ -238,8 +238,11 @@ pub fn walk_block_mobs(world: &mut World, delta: f32) {
             search_in: SEARCH_EVERY * (entity.index() % 8) as f32 / 8.0,
             ..BlockMobState::default()
         });
-        // The world of blocks it is in: the one it can stand in, or else the first there is.
-        let walked = worlds.iter().zip(&navs).filter_map(|((_, corner, size, whole), nav)| {
+        // The world of blocks it is in: of its own dimension, the one it can stand in, or else the first there is.
+        let here = voxear_scene::dimension_of(world, entity);
+        let mine = |world_entity: &Entity| voxear_scene::dimension_of(world, *world_entity) == here;
+        let ours = worlds.iter().zip(&navs).filter(|((world_entity, ..), _)| mine(world_entity));
+        let walked = ours.filter_map(|((_, corner, size, whole), nav)| {
             let water = whole.water_depth((at - *corner).to_array(), 4.0);
             Some(Walked { corner: *corner, size: *size, nav: nav.clone()?, water })
         });

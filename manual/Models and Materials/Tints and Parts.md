@@ -84,6 +84,9 @@ A `ModelAsset` field is picked in the Inspector, from the project's models, or d
 | `LodBias` | Shifts which level of detail each part draws, as the Inspector's **LOD bias** |
 | `PartCount` | How many parts it draws |
 | `Follows` | The Obj whose skeleton poses it, as **Follow parent** does; `Obj.None` for none |
+| `Sheet` | For a box model, a picture drawn in place of its sheet; `Texture.None` for its own |
+| `SetMaterial(material)`, `SetMaterial(part, material)`, `GetMaterial(part)` | Every part's material, or one part's, in place of the model's own |
+| `PartName(part)` | The name the model gives a part it draws |
 | `IsValid` | False when the Obj has no Model Renderer, or is gone |
 | `Remove()` | Takes the Model Renderer off the Obj |
 
@@ -97,6 +100,33 @@ When the model changes:
 - A model that cannot be read, or an asset that is not a model, is written to the Console, and the Obj goes on drawing the model it had.
 
 On a server, where nothing is drawn, the Obj still takes the new model's bones and clips, so whatever animates it goes on working.
+
+## Another sheet or material
+
+A box model can be drawn with another picture in place of the sheet inside its file: a face, a pattern, a set of markings painted on its sheet's layout. Paint them on the model's own sheet, click **Save Sheet** in the Model window for each (see [[Box Models#The sheet as a picture]]), and the one model wears any of them. Pick one as the Model Renderer's **Sheet** in the Inspector, or set it from a script:
+
+```csharp
+public Texture[] Faces = [];
+...
+head.Model.Sheet = Faces[chosen];
+```
+
+The picture is as many pixels each way as the model's sheet, or the Console says so and the Obj keeps the sheet it had. The model's cubes keep their palette's colours, and each colour of the picture takes the tint the model gives that colour, so a freckled face takes the skin tint as a plain one does. `Texture.None` puts the model's own sheet back.
+
+Any model's parts can be drawn with other materials, as the Inspector does for one part (see [[Models#Putting a model in a level]]):
+
+```csharp
+public MaterialAsset Gold;
+...
+var crown = Obj.Model;
+crown.SetMaterial(Gold);              // every part
+crown.SetMaterial(2, Gold);           // the third part only
+crown.SetMaterial(MaterialAsset.None); // each part's own again
+```
+
+Parts are counted as the Model Renderer draws them, from 0 to `PartCount`, and `PartName(part)` says which is which. Both are kept when the scene is saved, a sheet as `sheet` under `[obj.model]`.
+
+In a build, a picture used as a sheet keeps its pixels as they are only with **Compress in builds** turned off in its import settings, as a picture of pixel art should be.
 
 ## A character made of parts
 

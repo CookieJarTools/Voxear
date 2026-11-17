@@ -248,6 +248,7 @@ impl Contents {
                 FileKind::Script => "code",
                 FileKind::Asset(AssetKind::Level) => "level",
                 FileKind::Asset(AssetKind::Scene) => "scene",
+                FileKind::Asset(AssetKind::Dimension) => "globe",
                 FileKind::Asset(AssetKind::Prefab) => "cube",
                 FileKind::Asset(AssetKind::Model) => "box",
                 FileKind::Asset(AssetKind::Material) => "material",

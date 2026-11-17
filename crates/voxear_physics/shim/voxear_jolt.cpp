@@ -57,20 +57,30 @@ namespace {
 // when it moves. What does not move never collides with itself, and two
 // layers collide as the project's matrix says. The broad phase keeps only
 // the still and the moving apart.
+//
+// A body's layer is also in a dimension: the layer the shim is given is the
+// dimension times 32 plus the Voxear layer. Two dimensions never collide,
+// and a query asks in one.
 constexpr ObjectLayer STILL = 0;
 constexpr ObjectLayer MOVING = 1;
 constexpr uint32_t BROAD_LAYERS = 2;
 constexpr uint32_t VOXEAR_LAYERS = 32;
+constexpr uint32_t DIMENSIONS = 1024;
 
 static ObjectLayer object_layer(uint32_t layer, bool moving) {
-	return ObjectLayer((layer % VOXEAR_LAYERS) * 2 + (moving ? 1 : 0));
+	return ObjectLayer((layer % (VOXEAR_LAYERS * DIMENSIONS)) * 2 + (moving ? 1 : 0));
 }
+
+// The Voxear layer of an object layer, and its dimension.
+static uint32_t voxear_layer(ObjectLayer layer) { return (layer >> 1) % VOXEAR_LAYERS; }
+static uint32_t dimension_of(ObjectLayer layer) { return (layer >> 1) / VOXEAR_LAYERS; }
 
 class LayerPairs final : public ObjectLayerPairFilter {
 public:
 	LayerPairs() { std::fill(std::begin(collide), std::end(collide), 0xffffffffu); }
 	bool ShouldCollide(ObjectLayer a, ObjectLayer b) const override {
-		return ((a & 1) || (b & 1)) && (collide[a >> 1] >> (b >> 1) & 1u);
+		return ((a & 1) || (b & 1)) && dimension_of(a) == dimension_of(b)
+			&& (collide[voxear_layer(a)] >> voxear_layer(b) & 1u);
 	}
 	// Bit `b` of `collide[a]` is set when layers `a` and `b` collide.
 	uint32_t collide[VOXEAR_LAYERS];
@@ -92,14 +102,17 @@ public:
 	}
 };
 
-// What a query asks after: the Voxear layers in its mask.
+// What a query asks after: the Voxear layers in its mask, in its dimension.
 class LayerMaskFilter final : public ObjectLayerFilter {
 public:
-	explicit LayerMaskFilter(uint32_t mask) : mask(mask) {}
-	bool ShouldCollide(ObjectLayer layer) const override { return mask >> (layer >> 1) & 1u; }
+	LayerMaskFilter(uint32_t mask, uint32_t dimension) : mask(mask), dimension(dimension) {}
+	bool ShouldCollide(ObjectLayer layer) const override {
+		return dimension_of(layer) == dimension && (mask >> voxear_layer(layer) & 1u);
+	}
 
 private:
 	uint32_t mask;
+	uint32_t dimension;
 };
 
 struct Contact {
@@ -543,8 +556,10 @@ private:
 	bool sensors;
 };
 
-// The query flags: 1 counts sensors (triggers) too.
+// The query flags: 1 counts sensors (triggers) too; the high 16 bits are
+// the dimension it asks in.
 constexpr uint32_t QUERY_SENSORS = 1;
+constexpr uint32_t QUERY_DIMENSION_SHIFT = 16;
 
 // The nearest body a ray meets. As in Unity, a ray that starts inside a
 // shape passes out of it without meeting it.
@@ -555,7 +570,7 @@ int vx_raycast(VxWorld *world, const float origin[3], const float direction[3], 
 	settings.SetBackFaceMode(EBackFaceMode::IgnoreBackFaces);
 	ClosestHitCollisionCollector<CastRayCollector> found;
 	QueryFilter filter(ignore, (flags & QUERY_SENSORS) != 0);
-	LayerMaskFilter layers(mask);
+	LayerMaskFilter layers(mask, flags >> QUERY_DIMENSION_SHIFT);
 	world->system.GetNarrowPhaseQuery().CastRay(ray, settings, found, {}, layers, filter);
 	if (!found.HadHit()) {
 		return 0;
@@ -596,7 +611,7 @@ int vx_overlap_sphere(VxWorld *world, const float center[3], float radius, uint3
 	CollideShapeSettings settings;
 	AllHitCollisionCollector<CollideShapeCollector> found;
 	QueryFilter filter(BodyID::cInvalidBodyID, (flags & QUERY_SENSORS) != 0);
-	LayerMaskFilter layers(mask);
+	LayerMaskFilter layers(mask, flags >> QUERY_DIMENSION_SHIFT);
 	RMat44 at = RMat44::sTranslation(RVec3(center[0], center[1], center[2]));
 	world->system.GetNarrowPhaseQuery().CollideShape(&sphere, Vec3::sOne(), at, settings, RVec3::sZero(), found, {}, layers, filter);
 	std::vector<BodyID> seen;

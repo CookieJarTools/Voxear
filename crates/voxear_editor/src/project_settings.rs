@@ -30,7 +30,11 @@ pub const CATEGORIES: &[Category] = &[
         about: "How builds pack the project's assets into bundles",
         manual: "Content and Builds/What Goes into a Build",
     },
-    Category { name: "Graphics", about: "What drawing through Portals may spend", manual: "Objs and Levels/Portals" },
+    Category {
+        name: "Graphics",
+        about: "What drawing through Portals and trails on water may spend",
+        manual: "Objs and Levels/Portals",
+    },
     Category { name: "Input", about: "The input actions the game plays with", manual: "Scripting/Reading Input" },
     Category {
         name: "Localization",
@@ -83,6 +87,11 @@ pub const HELP: &[SectionHelp] = &[
         category: "Audio",
         section: "Ray-Traced Sound",
         help: "Sound heard through the scene the GPU traces for light, blocks and terrain too. A level may set its own.",
+    },
+    SectionHelp {
+        category: "Graphics",
+        section: "Water Trails",
+        help: "Ripples and foam behind what moves on water: swimmers, boats, anything with a body. A Water Wake tunes an Obj's own.",
     },
     SectionHelp {
         category: "Network",
@@ -148,6 +157,8 @@ const RAY_QUALITY: &[(&str, &str)] = &[("Low", "low"), ("Medium", "medium"), ("H
 const COMPRESSION: &[(&str, &str)] = &[("LZ4", "lz4"), ("Zstandard", "zstd"), ("None", "none")];
 const AUTHORITY: &[(&str, &str)] = &[("Server", "server"), ("Shared", "shared")];
 const ORIGIN: &[(&str, &str)] = &[("Off", "off"), ("Endless Worlds", "endless"), ("Every Level", "always")];
+const TRAIL_QUALITY: &[(&str, &str)] = &[("Off", "off"), ("Low", "low"), ("Medium", "medium"), ("High", "high")];
+const TRAIL_LOOK: &[(&str, &str)] = &[("Match the Water", "match_water"), ("Smooth", "smooth"), ("Blocky", "blocky")];
 const WORLD_QUALITY: &[(&str, &str)] =
     &[("Low", "low"), ("Medium", "medium"), ("High", "high"), ("Ultra", "ultra"), ("Custom", "custom")];
 
@@ -254,6 +265,27 @@ const FIXED: &[Setting] = &[
     )
     .advanced(),
     // Graphics
+    Setting::new(
+        ("Graphics", "Water Trails"),
+        "water_trails.quality",
+        "Quality",
+        Kind::Choice(TRAIL_QUALITY),
+        "How finely the ripples and foam things leave on water are worked out: Low, Medium and High keep 256, 512 and 1024 texels a side of the area round the camera, finer ripples for more GPU time and memory. Off leaves no trails.",
+    ),
+    Setting::new(
+        ("Graphics", "Water Trails"),
+        "water_trails.area",
+        "Area",
+        number(16.0, 512.0, "m"),
+        "How far across the square of water round the camera trails cover. Larger keeps wakes further off, with coarser ripples at the same Quality.",
+    ),
+    Setting::new(
+        ("Graphics", "Water Trails"),
+        "water_trails.look",
+        "Look",
+        Kind::Choice(TRAIL_LOOK),
+        "Blocky stands the water in small squares a quarter of a block across, stepping up and down with the ripples, its foam a square at a time. Match the Water is blocky on worlds of blocks and smooth on the sea, Pools and Streams.",
+    ),
     Setting::new(
         ("Graphics", "Portals"),
         "portals.views",

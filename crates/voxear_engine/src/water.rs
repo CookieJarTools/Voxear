@@ -264,6 +264,26 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     Some(WaterPoint { height, normal, flow, liquid: Liquid::Water })
 }
 
+/// How the water's current runs at `at`, in metres a second: a river's or a
+/// Stream's, or a world of blocks' water running out from what feeds it;
+/// none on the sea or a Pool, whose waves only carry it round and back.
+/// What trails on the water drift along with (see `crate::water_trails`).
+pub fn current(world: &World, at: Vec3) -> Vec3 {
+    let current = crate::dimensions::current(world);
+    let here = |entity: Entity| voxear_scene::dimension_of(world, entity) == current;
+    let blocks = world.query_ref::<(Entity, &voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
+    let block_flow = blocks.into_iter().filter(|(entity, ..)| here(*entity)).find_map(|(_, blocks, local, placed)| {
+        let inside = (at - voxear_terrain::corner(local, placed)).to_array();
+        blocks.water_over(inside, OVER_BLOCK_WATER)?;
+        Some(Vec3::from(blocks.water_flow(inside, OVER_BLOCK_WATER).unwrap_or([0.0; 3])))
+    });
+    if let Some(flow) = block_flow {
+        return flow;
+    }
+    let Some(query) = world.resource::<WaterQuery>() else { return Vec3::ZERO };
+    query.streams.iter().find_map(|(points, depth, _)| stream_over(points, *depth, at)).map_or(Vec3::ZERO, |(_, flow)| flow)
+}
+
 /// How deep under water `at` is, in metres (less than nothing over it),
 /// how the water there flows, and what it is (see `sample_wet`).
 fn depth_at(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option<(f32, Vec3, Liquid)> {
@@ -279,7 +299,7 @@ fn for_scripts(world: &World, at: [f32; 3]) -> Option<[f32; 7]> {
 
 /// Where a Collider is in its Obj's space: its middle and how far it
 /// reaches each way, as a box round it.
-fn collider_box(world: &World, entity: Entity, collider: &Collider) -> (Vec3, Vec3) {
+pub(crate) fn collider_box(world: &World, entity: Entity, collider: &Collider) -> (Vec3, Vec3) {
     let middle = Vec3::from(collider.center);
     let reach = match collider.shape {
         ColliderShape::Box => Vec3::from(collider.size) * 0.5,

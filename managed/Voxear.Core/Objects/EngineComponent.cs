@@ -26,4 +26,5 @@ public enum EngineComponent
 	TrackMaker,
 	ReflectionProbe,
 	LightProbeGroup,
+	WaterWake,
 }

@@ -171,6 +171,8 @@ pub enum Part {
     VoxelTerrain,
     /// Leaves tracks in the ground where its Obj touches it.
     TrackMaker,
+    /// How its Obj stirs the water it moves through.
+    WaterWake,
     /// A Model Renderer: a whole model drawn by the Obj.
     Model,
     /// A script, by its full type name.
@@ -241,6 +243,7 @@ impl Part {
             Part::Terrain => "terrain".into(),
             Part::BlockWorld | Part::VoxelTerrain => "block_world".into(),
             Part::TrackMaker => "track_maker".into(),
+            Part::WaterWake => "water_wake".into(),
             Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
         }
@@ -254,7 +257,7 @@ impl Part {
             Part::Gun | Part::GunHolder | Part::GunPart => Some(Module::Guns),
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
-            Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
+            Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy | Part::WaterWake => Some(Module::Water),
             Part::Terrain | Part::BlockWorld | Part::VoxelTerrain | Part::TrackMaker => Some(Module::Terrain),
             Part::CaveShape | Part::CaveExit => Some(Module::Terrain),
             _ => None,
@@ -323,6 +326,7 @@ impl Part {
             Part::BlockWorld => "Block World",
             Part::VoxelTerrain => "Voxel Terrain",
             Part::TrackMaker => "Track Maker",
+            Part::WaterWake => "Water Wake",
             Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
@@ -352,6 +356,7 @@ impl Part {
             Part::Seasons => Switch::Seasons,
             Part::FoliageInteraction => Switch::FoliageInteraction,
             Part::TrackMaker => Switch::TrackMaker,
+            Part::WaterWake => Switch::WaterWake,
             Part::Foliage => Switch::Foliage,
             Part::Model => Switch::Model,
             _ => return None,
@@ -415,6 +420,7 @@ impl Part {
             Part::BlockWorld => "blocks",
             Part::VoxelTerrain => "mountain",
             Part::TrackMaker => "move",
+            Part::WaterWake => "drop",
             Part::Model => "box",
             Part::Behaviour(_) => "code",
         }
@@ -817,6 +823,11 @@ pub enum Prop {
     /// A Track Maker's: how wide its track is and how deep it presses.
     TrackWidth,
     TrackDepth,
+    /// A Water Wake's: how wide it is (0 for as its body), how hard it stirs
+    /// the water and how much foam it leaves.
+    WakeSize,
+    WakeStrength,
+    WakeFoam,
     FoliageDraw,
     /// A Foliage's colours, which its plants are tinted between, and how
     /// wide the patches are.
@@ -1273,6 +1284,7 @@ impl Prop {
             | Prop::GroundCover => Part::Seasons,
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
             Prop::TrackWidth | Prop::TrackDepth => Part::TrackMaker,
+            Prop::WakeSize | Prop::WakeStrength | Prop::WakeFoam => Part::WaterWake,
             Prop::FoliageDraw
             | Prop::FoliageFade
             | Prop::FoliageShadow
@@ -1690,6 +1702,9 @@ impl Prop {
             Prop::PushStrength => "strength",
             Prop::TrackWidth => "width",
             Prop::TrackDepth => "depth",
+            Prop::WakeSize => "size",
+            Prop::WakeStrength => "strength",
+            Prop::WakeFoam => "foam",
             Prop::FoliageDraw => "draw_distance",
             Prop::FoliageHealthy => "healthy_color",
             Prop::FoliageDry => "dry_color",
@@ -1966,6 +1981,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     }
     if world.has::<voxear_render::TrackMaker>(entity) {
         parts.push(Part::TrackMaker);
+    }
+    if world.has::<voxear_render::WaterWake>(entity) {
+        parts.push(Part::WaterWake);
     }
     if world.has::<ModelSource>(entity) {
         parts.push(Part::Model);
@@ -2429,6 +2447,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
         Part::TrackMaker => vec![Prop::TrackWidth, Prop::TrackDepth],
+        Part::WaterWake => vec![Prop::WakeSize, Prop::WakeStrength, Prop::WakeFoam],
         Part::Foliage => {
             let mut props = vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow, Prop::FoliageImpostors];
             if world.get::<Foliage>(entity).is_some_and(|f| f.impostors == Impostors::From) {
@@ -2900,6 +2919,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::PushStrength => "Strength",
         Prop::TrackWidth => "Width",
         Prop::TrackDepth => "Depth",
+        Prop::WakeSize => "Size",
+        Prop::WakeStrength => "Strength",
+        Prop::WakeFoam => "Foam",
         Prop::FoliageDraw => "Draw distance",
         Prop::FoliageHealthy => "Healthy colour",
         Prop::FoliageDry => "Dry colour",
@@ -3031,7 +3053,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
         (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
-        (Prop::TrackWidth | Prop::TrackDepth, _) => Some("m"),
+        (Prop::TrackWidth | Prop::TrackDepth | Prop::WakeSize, _) => Some("m"),
         (Prop::MapOpenSize, _) => Some("%"),
         (Prop::MapTilt | Prop::MapOpenTilt, _) => Some("°"),
         (Prop::MapSize, _) => Some("px"),
@@ -3279,6 +3301,9 @@ pub fn add(
         Part::TrackMaker => {
             world.insert(entity, voxear_render::TrackMaker::default());
         }
+        Part::WaterWake => {
+            world.insert(entity, voxear_render::WaterWake::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -3397,6 +3422,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::TrackMaker => drop(world.remove::<voxear_render::TrackMaker>(entity)),
+        Part::WaterWake => drop(world.remove::<voxear_render::WaterWake>(entity)),
         Part::Foliage => {
             world.remove::<Foliage>(entity);
             world.remove::<voxear_scene::Plants>(entity);
@@ -4093,6 +4119,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
         Prop::TrackWidth => Value::Number(world.get::<voxear_render::TrackMaker>(entity)?.width),
         Prop::TrackDepth => Value::Number(world.get::<voxear_render::TrackMaker>(entity)?.depth),
+        Prop::WakeSize => Value::Number(world.get::<voxear_render::WaterWake>(entity)?.size),
+        Prop::WakeStrength => Value::Number(world.get::<voxear_render::WaterWake>(entity)?.strength),
+        Prop::WakeFoam => Value::Number(world.get::<voxear_render::WaterWake>(entity)?.foam),
         Prop::FoliageDraw => Value::Number(world.get::<Foliage>(entity)?.draw_distance),
         Prop::FoliageHealthy => Value::Color(world.get::<Foliage>(entity)?.healthy_color.map(round3)),
         Prop::FoliageDry => Value::Color(world.get::<Foliage>(entity)?.dry_color.map(round3)),
@@ -5236,6 +5265,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::PushRadius, Value::Number(n)) => {
             with(world, entity, |push: &mut FoliageInteraction| push.radius = n.max(0.01))
+        }
+        (Prop::WakeSize, Value::Number(n)) => {
+            with(world, entity, |wake: &mut voxear_render::WaterWake| wake.size = n.clamp(0.0, 100.0))
+        }
+        (Prop::WakeStrength, Value::Number(n)) => {
+            with(world, entity, |wake: &mut voxear_render::WaterWake| wake.strength = n.clamp(0.0, 10.0))
+        }
+        (Prop::WakeFoam, Value::Number(n)) => {
+            with(world, entity, |wake: &mut voxear_render::WaterWake| wake.foam = n.clamp(0.0, 10.0))
         }
         (Prop::TrackWidth, Value::Number(n)) => {
             with(world, entity, |maker: &mut voxear_render::TrackMaker| maker.width = n.clamp(0.01, 20.0))

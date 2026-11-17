@@ -658,6 +658,9 @@ pub enum ComponentKind {
     BakedLighting = 32,
     /// The model an Obj draws whole, and the colours it is tinted.
     ModelRenderer = 33,
+    /// How an Obj stirs the water it moves through: its wake's size, how
+    /// hard it stirs and how much foam it leaves.
+    WaterWake = 34,
 }
 
 /// The most kinds `kind_value` answers.

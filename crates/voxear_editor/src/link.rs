@@ -1125,7 +1125,8 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Terrain
             | Part::BlockWorld
             | Part::VoxelTerrain
-            | Part::TrackMaker => true,
+            | Part::TrackMaker
+            | Part::WaterWake => true,
             // A Model Renderer comes with a model placed whole (`obj.create` with `model`), not from Add Component.
             Part::Model => false,
             Part::Behaviour(_) => false,

@@ -449,6 +449,19 @@ public readonly struct Obj : IEquatable<Obj>
 	}
 
 	/// <summary>
+	/// The Obj's Water Wake, which tunes or stops the trail it leaves on water. Not valid when it has none; it still
+	/// leaves one as its body does.
+	/// </summary>
+	public WaterWake WaterWake => new WaterWake(this);
+
+	/// <summary>Gives the Obj a Water Wake, stirring the water as its body would, unless it has one, and returns it.</summary>
+	public WaterWake AddWaterWake()
+	{
+		NativeComponent.Set(NativeComponent.WaterWake, this, NativeComponent.Add, Vector4.Zero);
+		return new WaterWake(this);
+	}
+
+	/// <summary>
 	/// The Obj's Reverb Probe, a box of probes baked for how long sound rings through it. Not valid when it has none.
 	/// </summary>
 	public ReverbProbe ReverbProbe => new ReverbProbe(this);

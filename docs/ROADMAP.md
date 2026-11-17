@@ -1941,6 +1941,21 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   not, throws up a burst of drops, as big as it is fast and wide, cleared once they have fallen (`water::splash`);
   one that ploughs through half in it throws up smaller ones as it goes; lava throws up blobs of molten rock.
   `Water.Splash` makes one from C#.
+- **Trails** (`water_trails.rs`, `shaders/water_trails.slang`, `voxear_engine::water_trails`): what moves on water
+  leaves a wake. A swimmer leaves ripples and a short trail of foam, and rings spread from it as it treads water; a
+  boat, or anything moving across the water, a V of waves that spreads out and fades, narrower the faster it goes,
+  with white water down its middle; rings where something goes in or comes out. A wave equation over a square round
+  each view's camera, its texels holding the world's cells modulo its size so it scrolls with nothing moved, stirred
+  by every body that cuts the surface pushing the water out of where it now is and letting it back where it was (so
+  only what moves against the water stirs it), a swimmer's strokes and a boat's pitching putting chevrons in the V;
+  carried down rivers by a grid of the current the engine keeps round the viewer. Every water surface reads it: the sea,
+  Pools, Streams and worlds of blocks' water. Blocky on worlds of blocks: the water stands in squares a quarter of a
+  block across, stepping with the ripples, its foam a square at a time. Characters and bodies with a Collider stir
+  the water with nothing set up; a **Water Wake** tunes or stops an Obj's (Size, Strength, Foam; C# `Obj.WaterWake`),
+  and gives an Obj with no body one. Project Settings ▸ Graphics ▸ Water Trails: Quality (Off, Low, Medium, High:
+  256 to 1024 texels a side), Area, Look (Match the Water, Smooth, Blocky), through `project.set` too. Tests: a
+  swimmer's ripples and foam that fade, a boat's V spreading behind it, trails on a Pool and none with Quality Off,
+  squares on a world of blocks, and what the passes cost.
 
 ## M6 — Animation (in progress)
 

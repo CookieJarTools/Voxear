@@ -75,6 +75,9 @@ pub struct PlayerSettings {
     /// The project's `[portals]` settings.
     #[serde(default)]
     pub portals: crate::project::PortalSettings,
+    /// The project's `[water_trails]` settings.
+    #[serde(default)]
+    pub water_trails: crate::project::WaterTrailSettings,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -307,6 +310,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             quality: crate::project::QualitySettings { particles: settings.particles },
             world: settings.world,
             portals: settings.portals,
+            water_trails: settings.water_trails,
             time: settings.time,
             input: crate::project::InputSettings { actions: settings.input_actions.clone() },
             modules: Some(settings.modules),

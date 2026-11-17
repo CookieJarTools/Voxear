@@ -840,6 +840,47 @@ struct Tracks
     uint pad;
 };
 
+// Trails on water (src/water_trails.rs): the bodies that stir the water this frame, the water's flow round the
+// viewer, and the square of ripples round the camera.
+static const uint MAX_TRAIL_STIRS = 32;
+static const uint TRAIL_FLOW_CELLS = 16;
+
+// A body stirring the water: its two ends' x and z last frame and this, its radius, how hard it stirs, how much foam
+// it leaves and how much it treads water; how much of it cut the surface last frame and this, how fast it rises and
+// how fast it moves across the water.
+struct TrailStir
+{
+    float4 from;
+    float4 to;
+    float4 size;
+    float4 motion;
+};
+
+struct Trails
+{
+    TrailStir stirs[MAX_TRAIL_STIRS];
+    // Two cells a row, x and z of each.
+    float4 flow[TRAIL_FLOW_CELLS * TRAIL_FLOW_CELLS / 2];
+    float2 flowCorner;
+    float flowCell;
+    uint count;
+    // The square's corner now and last frame, in texels from the world's origin.
+    int2 origin;
+    int2 lastOrigin;
+    float texel;
+    uint texels;
+    uint steps;
+    float step;
+    // The ripples for the water to read, NO_TEXTURE for none.
+    uint texture;
+    uint fresh;
+    // TRAIL_MATCH, TRAIL_SMOOTH or TRAIL_BLOCKY (water_trails.slang).
+    uint look;
+    float clock;
+    uint flowing;
+    uint3 pad;
+};
+
 // Ray-traced GI's probes; mirrors GpuDdgi in src/gpu.rs.
 static const uint DDGI_CASCADES = 3;
 static const float DDGI_CASCADE_SCALE = 2.0;
@@ -1160,6 +1201,7 @@ struct Frame
     Bake bake;
     VirtualShadows vsm;
     LampShadows lampVsm;
+    Trails trails;
 };
 
 // How much of a gradient sky's colours is its light from all round.

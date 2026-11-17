@@ -510,6 +510,8 @@ impl Editor {
         // The project's steps and gravity, as a built game starts with them.
         self.game.project.file.time.put(&mut engine);
         self.game.project.file.physics.put(&mut engine.world);
+        // And how trails on water are worked out.
+        self.game.project.file.water_trails.put(&mut engine.world);
         // The project's layers, as the copied level's Objs name theirs, and its text, in the language it is in.
         engine.world.insert_resource(self.game.project.layers());
         if let Some(localization) = self.game.engine.world.resource::<voxear_engine::localization::Localization>() {

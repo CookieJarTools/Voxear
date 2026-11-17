@@ -234,6 +234,7 @@ impl Editor {
         match table {
             "quality" => file.quality.put(world),
             "portals" => file.portals.put(world),
+            "water_trails" => file.water_trails.put(world),
             "physics" => file.physics.put(world),
             "audio" => {
                 let audio = &mut self.game.audio;

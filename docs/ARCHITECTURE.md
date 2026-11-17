@@ -3742,6 +3742,54 @@ changes smoothly along it, with nothing for the user to place.
 - **Spray** is a particle system the renderer adds for each of the nearest Streams with rapids, its drops finding
   white water along the Stream's points in the vertex shader, as the sea's finds fresh foam.
 
+### Trails *(implemented)*
+
+What moves on water leaves a wake (`water_trails.rs`, `shaders/water_trails.slang`): ripples, a V of waves behind
+what moves faster than they run, rings where something goes in or out, and foam.
+
+- **A wave simulation, not shapes laid on the water.** A wake drawn as a shape (a V of quads behind each body, or
+  rings placed where it went in) has to be told what to look like in every case and never meets what else is on the
+  water. A height field that runs by the wave equation makes all of them from one rule: each step a body pushes the
+  water out of where it now is and lets it back where it was, as much as it displaces, so moving it is a hollow ahead
+  of a hump, going in a hollow that opens and coming out one that closes. What spreads from there is a ring from a
+  still swimmer, a V behind a boat faster than the waves (its half angle the arcsine of the waves' speed over the
+  boat's, so narrower the faster it goes, as wakes are past a certain speed), and the two wakes of two boats crossing
+  each other. A body pressing the water down for as long as it moves, the first way tried, left a smooth trench behind
+  it whose sides were too gentle to see beside the water's own ripples: displacement makes ridges. A swimmer's
+  strokes, and anything fast's pitching, lift and drop what it displaces, which puts chevrons of waves inside its V. The
+  equation is the simplest that runs: no dispersion, so a ring is one ring and a V has sharp arms, which reads well
+  at the size of a voxel game's swimmers and boats. A dispersive kernel would give the true wake angle at any speed
+  at the cost of a convolution a texel; not needed for the look.
+- **Round the camera, scrolling with nothing moved.** Each view keeps a square of `TrailQuality` texels a side over
+  `WaterTrails::area` metres, its texels holding the world's cells modulo its size as the track map's do, in two
+  images it steps from one to the other: x the water's height, y how fast it rises, z its foam, w the foam's
+  freshness. A first pass a frame clears what came into the square and carries the rest along the current; then a
+  step or a few, each at most half a texel's crossing for the waves, so it stays steady. The waves die away over two
+  seconds, and within an eighth of the square of its edges in a few frames, so what reaches the edge does not come
+  back round from the far side. The shaders sample it with a repeating sampler, which the modulo layout makes exact.
+- **Stirred by bodies the engine finds.** `voxear_engine::water_trails` notes each frame every Character
+  Controller, every body with a Collider and every Obj with a Water Wake near the viewer whose height reaches across
+  the water's surface, with the water's height and flow there; the renderer takes where each is when it draws, so a
+  stir follows what is shown, and how fast it moved since its last frame. Only what moves against the water stirs it:
+  where it was is taken where the water under it has flowed to since, so a swimmer carried down a river at its own
+  speed leaves no wake. The share of a body that cuts the surface goes
+  from 0 to 1 within a few centimetres of its ends, so going in and coming out stir the water as they cross it, with
+  nothing to tell apart. A long body is a capsule along its longest side, so a hull makes a bow wave and a stern wave.
+- **The current, by a grid the engine keeps.** Trails drift down rivers with the water, so a swimmer's rings go with
+  it. The renderer cannot find a block's flow from a compute pass, and the shaders find a Stream's only by walking its
+  points, so the engine works out the current (`water::current`: blocks' and Streams' water, never the sea's waves,
+  which only carry it round and back) on a 16 cells a side grid round the viewer, a few cells a frame, the new ones
+  first. Carried along by a spline over the sixteen texels round where it came from, not linearly, which would blur
+  the ripples away over a few seconds of a river.
+- **Read by every water.** `trailAt` gives slopes, which the sea's, Pools', Streams' and blocks' shaders add to their
+  own before working out their normal, the share finer than a pixel as roughness, and foam, which each lays with its
+  own foam (the sea's froth, a Stream's streaks, the blocks' lapping lines), so a trail's foam looks as that water's
+  does. Blocky (by default on worlds of blocks) it reads the square in squares a quarter of a block across, each flat
+  and a whole number of steps high, with a lit lip or a shadow where one stands over another, and lays foam square by
+  square, from a hashed number each.
+- **Not the same on every machine, and only drawn.** Nothing floats on trails, physics never sees them, and they are
+  not sent over the network: each machine stirs its own from the bodies it shows.
+
 ## Terrain
 
 Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block

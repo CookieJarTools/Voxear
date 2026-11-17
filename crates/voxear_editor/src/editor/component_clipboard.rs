@@ -73,6 +73,7 @@ pub(super) enum Copied {
     Seasons(Box<Seasons>),
     FoliageInteraction(FoliageInteraction),
     TrackMaker(voxear_render::TrackMaker),
+    WaterWake(voxear_render::WaterWake),
     CaveShape(voxear_terrain::generate::CaveShape),
     CaveExit(voxear_terrain::generate::CaveExit),
     Behaviour(BehaviourSpec),
@@ -150,6 +151,7 @@ impl Copied {
             Part::Seasons => Self::Seasons(Box::new(*world.get::<Seasons>(entity)?)),
             Part::FoliageInteraction => Self::FoliageInteraction(*world.get::<FoliageInteraction>(entity)?),
             Part::TrackMaker => Self::TrackMaker(*world.get::<voxear_render::TrackMaker>(entity)?),
+            Part::WaterWake => Self::WaterWake(*world.get::<voxear_render::WaterWake>(entity)?),
             Part::CaveShape => Self::CaveShape(*world.get::<voxear_terrain::generate::CaveShape>(entity)?),
             Part::CaveExit => Self::CaveExit(*world.get::<voxear_terrain::generate::CaveExit>(entity)?),
             Part::Behaviour(name) => {
@@ -204,6 +206,7 @@ impl Copied {
             Self::Seasons(seasons) => drop(world.insert(entity, **seasons)),
             Self::FoliageInteraction(push) => drop(world.insert(entity, *push)),
             Self::TrackMaker(maker) => drop(world.insert(entity, *maker)),
+            Self::WaterWake(wake) => drop(world.insert(entity, *wake)),
             Self::CaveShape(shape) => drop(world.insert(entity, *shape)),
             Self::CaveExit(exit) => drop(world.insert(entity, *exit)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),

@@ -233,3 +233,86 @@ fn a_wander_goes_somewhere_it_can_walk_to_within_its_reach() {
         assert!((5.0 / 3.0..=5.0).contains(&far), "{far}");
     }
 }
+
+/// A wall of stone across the floor at x = 8, two blocks high, its only way through a door at z = 4.
+fn walled_with_a_door() -> (BlockMap, Vec<BlockFaces>) {
+    use voxear_terrain::blocks::{PART_DRAWN, PART_SOLID, PART_USED, block::BlockShape};
+    let mut faces = FACES.to_vec();
+    let door =
+        BlockFaces { shape: BlockShape::Door, part: PART_DRAWN | PART_SOLID | PART_USED, ..BlockFaces::default() };
+    faces.push(door);
+    let mut blocks = floor();
+    for z in 0..16 {
+        let block = if z == 4 { 3 } else { STONE };
+        blocks.set([8, 1, z], block);
+        blocks.set([8, 2, z], block);
+    }
+    (blocks, faces)
+}
+
+#[test]
+fn a_shut_door_is_gone_through_by_what_opens_doors_and_is_a_wall_to_the_rest() {
+    let (blocks, faces) = walled_with_a_door();
+    let nav = nav_with(&blocks, &faces);
+    let (from, to) = (on([4, 1, 4]), on([12, 1, 4]));
+    let plain = find_path(&nav, &PathAsk::new(from, to, Walker::blocks(2)));
+    assert_eq!(plain.status, PathStatus::Partial, "no way through for what opens no doors");
+    let opener = Walker::blocks(2).with(false, true, 0);
+    let found = find_path(&nav, &PathAsk::new(from, to, opener));
+    assert_eq!(found.status, PathStatus::Complete);
+    assert_eq!(found.doors, vec![[8, 1, 4]], "through the door: {:?}", found.corners);
+}
+
+#[test]
+fn deep_water_is_swum_across_by_what_swims() {
+    let mut blocks = floor();
+    for x in 6..10 {
+        for z in 0..16 {
+            for y in -2..=0 {
+                blocks.set([x, y, z], WATER);
+            }
+            blocks.set([x, -3, z], STONE);
+        }
+    }
+    let nav = nav_of(&blocks);
+    let (from, to) = (on([3, 1, 4]), on([12, 1, 4]));
+    assert_eq!(find_path(&nav, &PathAsk::new(from, to, Walker::blocks(2))).status, PathStatus::Partial);
+    let swimmer = Walker::blocks(2).with(true, false, 0);
+    let found = find_path(&nav, &PathAsk::new(from, to, swimmer));
+    assert_eq!(found.status, PathStatus::Complete, "{:?}", found.corners);
+    assert!(found.places.iter().any(|at| nav.place(*at).unwrap().0.kind == PlaceKind::Swim));
+}
+
+#[test]
+fn a_gap_is_jumped_by_what_jumps_and_only_as_wide_as_it_jumps() {
+    // A trench across the floor, four blocks deep, one block wide; then one two blocks wide.
+    let trench = |wide: i32| {
+        let mut blocks = floor();
+        for x in 0..16 {
+            for z in 0..16 {
+                for y in -4..0 {
+                    blocks.set([x, y, z], STONE);
+                }
+            }
+        }
+        for x in 8..8 + wide {
+            for z in 0..16 {
+                for y in -3..=0 {
+                    blocks.set([x, y, z], 0);
+                }
+            }
+        }
+        blocks
+    };
+    let (from, to) = (on([4, 1, 4]), on([13, 1, 4]));
+    for (wide, jump, reaches) in [(1, 0, false), (1, 1, true), (2, 1, false), (2, 2, true)] {
+        let nav = nav_of(&trench(wide));
+        let found = find_path(&nav, &PathAsk::new(from, to, Walker::blocks(2).with(false, false, jump)));
+        assert_eq!(found.status == PathStatus::Complete, reaches, "{wide} wide, jumping {jump}: {:?}", found.corners);
+        if reaches {
+            let at = found.jumps.iter().position(|jumped| *jumped).expect("a corner jumped to");
+            let (before, after) = (cell(found.corners[at - 1]), cell(found.corners[at]));
+            assert_eq!((before[0], after[0]), (7, 8 + wide), "from the edge to the far edge: {:?}", found.corners);
+        }
+    }
+}

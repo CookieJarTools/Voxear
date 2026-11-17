@@ -4358,15 +4358,20 @@ engine's glue is `voxear_engine::navigation`.
 - **Places** (`blocks::places`). A place is a block whose feet are in it: the block under it can be stood on (not
   a fence or a wall), nothing of ground is in it, and the block over it is not water. A place keeps five bytes:
   its height in its chunk, the clear blocks over its floor (up to 31), its floor's top in sixteenths (a slab lying
-  low is 8), its area and its kind (standing or wading). A chunk keeps its places column by column, about 5 KB
+  low is 8), its area and its kind: standing, wading, swimming (the top of water too deep to stand in) or in a
+  shut door (its room counting the door open). A chunk keeps its places column by column, about 5 KB
   for a chunk of surface. Places are made from a chunk's blocks, the top layer of the chunk under it and the chunk
   over it, through a world's **walking table** (`blocks::walking`: what each block number is to something
   walking, made once from the world's `BlockFaces`), its palette read once a chunk.
 - **Steps are not stored.** A step from a place to the column beside it is worked out as it is walked, by the
-  walker's own rules (`Walker`: height, step and drop in sixteenths of a block): the highest place there whose
-  feet are within a step up and a drop down, with room for the walker over the higher floor in both columns.
-  Cornerwise steps are on the level only, with both columns beside on the level too. So one set of places
-  serves every walker, whatever its size.
+  walker's own rules (`Walker`: height, step and drop in sixteenths of a block, and whether it swims, opens
+  doors and jumps): the highest place there whose feet are within a step up and a drop down, with room for the
+  walker over the higher floor in both columns, of a kind it may be in. Cornerwise steps are on the level only,
+  with both columns beside on the level too. A jump (`jump_step`) crosses a gap of a block or two to a place near
+  the walker's height. So one set of places serves every walker, whatever its size and whatever it does.
+- **Regions are kept for the walker of each height that does everything** (`Walker::class`): a coarse way
+  never misses one it could take. A walker that does less and finds no way inside the regions a coarse way went
+  through looks again over every place, as far as it may.
 - **Regions and the coarse graph** (`blocks::regions`). Each chunk's places are gathered, for each walker kept
   (one, two and three blocks tall), into regions joined by steps that go both ways inside the chunk. A step one
   way only (a drop) makes an edge between regions of a chunk; a step out of a chunk makes one to a region of the
@@ -4389,12 +4394,27 @@ engine's glue is `voxear_engine::navigation`.
   and taken the next: done by then on a thread, or done there and then by the mob if no thread had begun it, so a
   way asked for is always there a frame later.
 
+### Nav Agents *(implemented)*
+
+- **The component** (`voxear_engine::nav_agent::NavAgent`): its settings (speed, acceleration, turn speed,
+  stopping distance, auto brake, radius, height, avoidance, priority, how it moves, swimming) are saved; its
+  destination is a game's to set and is not. What it is doing is `NavAgentState`: its corners, the next of them,
+  its status and cost, its velocity and the one it wants, the way asked for.
+- **A step** (`step_agents`, in the fixed step after FixedUpdate, before physics, only where the Obj has
+  authority): each agent takes the way it asked for last step, asks again where its destination is another
+  place, a chunk on its way changed (`FoundPath::is_stale`), or a way found part of the way nears its end, and
+  steers (`voxear_nav::steer`). Then every agent's velocity is chosen at once by avoidance (`voxear_nav::avoid`:
+  reciprocal velocity obstacles, neighbours from a grid of cells, the agents shared over the terrain's threads,
+  each working from where every agent was at the start of the step). Other Character Controllers, the player
+  among them, are gone round but do not go round. Then each moves: by its Character Controller, along the nav
+  (`blocks::moving::slide`, sliding along what it cannot step into), or not at all.
+- **Block Mob** sets a destination by its goal (`block_mob::set_destinations`, just before the agents step) and
+  walks as an agent made of its own settings, or by the Obj's own Nav Agent where it has one.
+- **Scripts** reach agents through `ComponentKind::NavAgent` and ways through `ComponentKind::Navigation`, four
+  numbers at a time: a way's corners are read one by one after it is found, so nothing crosses as text.
+
 ### Planned
 
-- **Nav Agents**: a component with the easy way (`agent.Destination = point;`) and the full one (paths, corners,
-  costs, areas), searches in a queue on the threads with a budget, steering, avoidance between agents by
-  reciprocal velocity obstacles on the workers, and ways of moving (by the Character Controller, along the nav for
-  crowds, or by a script from the desired velocity), in the fixed step.
 - **Moving in block worlds**: jumps, falls, swimming, climbing, doors; areas from a project list (blocks pick one,
   Nav Area boxes mark one); Nav Links; wider walkers.
 - **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level

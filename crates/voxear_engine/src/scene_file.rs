@@ -360,6 +360,9 @@ pub struct ObjData {
     /// Walks the Obj through a world of blocks by itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_mob: Option<crate::block_mob::BlockMob>,
+    /// Finds the Obj's way to where it is sent, and walks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_agent: Option<crate::nav_agent::NavAgent>,
     /// Animates the Obj's model by motion matching over its clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
@@ -509,6 +512,7 @@ impl ObjData {
             animator: None,
             mob_motion: None,
             block_mob: None,
+            nav_agent: None,
             motion_matcher: None,
             bone_attachment: None,
             first_person: None,
@@ -2215,6 +2219,9 @@ fn capture_instance(
     if root.block_mob.is_some() && root.block_mob != prefab_root.block_mob {
         instance.block_mob = root.block_mob.clone();
     }
+    if root.nav_agent.is_some() && root.nav_agent != prefab_root.nav_agent {
+        instance.nav_agent = root.nav_agent.clone();
+    }
     if root.motion_matcher.is_some() && root.motion_matcher != prefab_root.motion_matcher {
         instance.motion_matcher = root.motion_matcher.clone();
     }
@@ -2469,6 +2476,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(mob) = actual.block_mob.as_ref().filter(|m| Some(*m) != expected.block_mob.as_ref()) {
         put("block_mob", whole(mob, &crate::block_mob::BlockMob::default())?);
+    }
+    if let Some(agent) = actual.nav_agent.as_ref().filter(|a| Some(*a) != expected.nav_agent.as_ref()) {
+        put("nav_agent", whole(agent, &crate::nav_agent::NavAgent::default())?);
     }
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
@@ -2802,6 +2812,12 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
         goal: crate::block_mob::MobGoal::Stand,
         arrived: true,
         ..mob.clone()
+    });
+    // As saved: where a game sent it is not part of the scene.
+    obj.nav_agent = world.get::<crate::nav_agent::NavAgent>(entity).map(|agent| crate::nav_agent::NavAgent {
+        destination: None,
+        stopped: false,
+        ..agent.clone()
     });
     // As saved: what a game told it this frame is not part of the scene.
     obj.mob_motion = world.get::<crate::animation::MobMotion>(entity).map(|motion| crate::animation::MobMotion {

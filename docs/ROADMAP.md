@@ -3639,11 +3639,46 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     continuing; ways reaching wherever a search a block at a time reaches, the coarse graph keeping them within
     5% of the cheapest; chunks edited, streaming out and back, a block numbered for the first time; the timings;
     the Block Mob tests as they were.
-  - [ ] Nav Agents: the component (`Destination`, paths, corners, costs), searches queued with a budget,
-    steering, avoidance between agents on the workers, moving by the Character Controller or along the nav for
-    crowds, in the fixed step; Block Mob on a Nav Agent; the C# API
-  - [ ] moving in block worlds: jumps, falls, swimming, climbing, doors; areas from a project list, picked per
-    block and by Nav Area boxes; Nav Links; walkers two blocks wide
+  - [x] **Nav Agents** (`voxear_engine::nav_agent`, `[obj.nav_agent]`, Add Component ▸ Navigation ▸ Nav Agent,
+    every row with a tooltip): the easy way a destination, the full way its path, corners, status, cost,
+    remaining distance, velocity and the velocity it wants. Agents step in the fixed step, before physics, and
+    only where their Obj has authority: each takes the way it asked for the step before (a `threads::Job`, done
+    there and then if no thread had begun it) and asks again when its destination moves to another place, a
+    chunk on its way changes, or a way found part of the way nears its end; it steers corner to corner
+    (`voxear_nav::steer`: past each corner as it is reached or overshot, slowing to stop by its end, its speed
+    changing no faster than it may); then all of them choose their velocities together, each going round the
+    others and every other Character Controller by reciprocal velocity obstacles on the terrain's threads
+    (`voxear_nav::avoid`: neighbours from a grid, a half-plane for each, a small linear program on the ground
+    plane, its share of the turning by priority). It moves by its **Character Controller** (falling, swimming
+    up in deep water, stepping a block), **Along the Nav** (`blocks::moving::slide`: kept on the places,
+    sliding along what is in its way, falling where they drop away; no physics, for crowds), or **Not at All**
+    (a script or the motion matcher moves it by its desired velocity). **Block Mob** now sets where to go by
+    its goal (`set_destinations`) and walks as an agent made of its settings, or by the Obj's own Nav Agent, so
+    mobs go round each other too. C#: `Obj.NavAgent`/`AddNavAgent` (`Destination`, `Stop`, `Resume`, `Warp`,
+    `Arrived`, `HasPath`, `PathPending`, `PathStatus`, `RemainingDistance`, `Velocity`, `DesiredVelocity`,
+    `NextCorner`, `Path`, every setting), `NavPath`, `NavPathStatus`, `NavMoves`, `NavAvoidance`, and
+    `Navigation.FindPath`, `IsReachable`, `Nearest`, `RandomPlace`, through `ComponentKind::NavAgent` and
+    `Navigation` with no JSON. Timings (test build, least of 60 steps): 500 agents along the nav crossing a
+    square both ways, a step in about 1 ms. Tests: an agent round a wall by its controller and along the nav; two
+    passing in a corridor three blocks wide; twenty through a doorway two blocks wide, none left stuck; the 500;
+    a C# script sending an agent and asking Navigation for ways; the Block Mob tests, as they were, on agents.
+    Manual: Navigation (Nav Agents, Finding Ways from Scripts).
+  - [x] **Doors, swimming and jumps in block worlds**: places of two more kinds, on the top of water too deep
+    to stand in (swum, area Swim) and in a shut door (opened, area Door; a door is no floor, and its room counts
+    the door open); a `Walker` that swims, opens doors and jumps gaps of up to two blocks (`jump_step`: every
+    column between dropping away more than a step, with room for the arc, the far side no more than a block lower
+    or half a block higher); regions kept for the walker of each height that does everything, so a coarse way
+    never misses one, and a search kept to them looking again without them where a walker that does less finds
+    no way; ways saying which corners are jumped to and which doors they go through; straight lines through a
+    block's corner on sloping ground where both ways round it are walkable (a 500-block way 5 corners, not 45).
+    Nav Agents (**Opens Doors**, **Jumps**, and **Swims** now crossing deep water) open each door on their way as
+    they come within two blocks of it (`DoorsToOpen`, opened by the game with its content) and jump: up by their
+    Character Controller at the edge, or along an arc along the nav. Block Mobs jump and swim, and open no doors.
+    C#: `NavAgent.OpensDoors`, `Jumps`. Tests: door places and swim places; a door gone through only by what
+    opens doors; deep water swum only by what swims; gaps jumped only as wide as a walker jumps; an agent opening
+    a shut door in a wall and one that opens none stopping at it; agents jumping a trench by both ways of moving.
+  - [ ] areas from a project list, picked per block and by Nav Area boxes; Nav Links; climbing vines, ropes and
+    ladders; walkers two blocks wide
   - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
   - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions

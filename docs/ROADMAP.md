@@ -2844,6 +2844,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     there, and a biome's land rolls less over the lowland than over the uplands; its rivers start from 24 ha, as
     flat land gathers less water. In a real project's endless world, land under 100 m over the sea went from 7% to
     55% and nearly flat land from 14% to 31%. Generators' version raised, so kept far views are made again.
+  - ~~**Rivers to swim across:**~~ done: a world of levels' rivers are 24 m wide and 3.5 m deep where a square
+    kilometre drains into them, on the same courses: most are 12 to 50 m across, and deeper than a player stands
+    over most of their width.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the

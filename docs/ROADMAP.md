@@ -3779,8 +3779,13 @@ Done:
   - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
     colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
     each place, live reload and options carried over; the editor's menu, page and calls.
-  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
-    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
+- **Block faces and leaves lit by a pack's programs** (stage 2, without water). `[surface] blocks` and `leaves`, each
+  `float3 run(BlockSurface surface, BlockLighting light)`: the face (colour, normals, corner shade, sky light and block
+  light, look, what it is) and the light it sees (sun, shadow, sky, the blocks' glow, occlusion, reflections, lamps,
+  and the engine's own terms and colour). Compiled into the engine's block shader, swapped in while worn. Evening's
+  `faces.slang`: warm sun, cool shade, warm torchlight, leaves glowing against a low sun.
+  - Not yet: water's surface programs (stage 2's rest), its own tonemap and sky (3), shadows (4), and players' menu
+    and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

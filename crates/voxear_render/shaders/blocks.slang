@@ -780,6 +780,7 @@ bool terrainShading(
     terrainSunShare = 1.0;
     BlockWorld world = buffers()->blockWorlds[input.cluster & 0xFF];
     bool smooth = (world.flags & BLOCKS_SMOOTH) != 0;
+    terrainKind = smooth ? PACK_BLOCK_SMOOTH : 0;
     if (!smooth && blockRingHidden(world, input.cluster >> 8, input.worldPosition - world.corner, input.position.xy))
     {
         discard;
@@ -854,6 +855,7 @@ bool terrainShading(
         // Leaves take their biome's tint, as their block's faces do, and past the sun's shadows a crown's share of it.
         base = float4(look.rgb * blockTint(world, sheet.flags, spot.place), 1.0);
         terrainSunShare = BLOCK_CROWN_SUN;
+        terrainKind |= PACK_BLOCK_LEAVES | PACK_BLOCK_SHEET | PACK_BLOCK_CUT_OUT;
         metallic = material.metallic;
         roughness = material.roughness;
         return true;
@@ -914,11 +916,13 @@ bool terrainShading(
         {
             discard;
         }
+        terrainKind |= (cutoff > 0.0 ? PACK_BLOCK_CUT_OUT : 0) | (part ? PACK_BLOCK_PART : 0) | (cubes ? PACK_BLOCK_CUBES : 0);
         // A face of leaves is lit as its sheets are, leaning up, so a crown is one soft mass; with no picture it is
         // small leaves in shades of its colour. Past the sun's shadows it takes the sun a crown's leaves take within
         // them, so a far crown is not a flat sunlit box beside the shaded ones near.
         if ((surface.flags & TERRAIN_SURFACE_LEAFY) != 0)
         {
+            terrainKind |= PACK_BLOCK_LEAVES;
             terrainSunShare = BLOCK_CROWN_SUN;
             layer.normal = normalize(normal + float3(0.0, 0.6, 0.0));
             uint width, tall;

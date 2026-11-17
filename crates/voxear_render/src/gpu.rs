@@ -775,6 +775,10 @@ pub struct GpuPushes {
     pub origin: [i32; 2],
     pub cell: f32,
     pub count: u32,
+    /// How many seconds a push takes to fall to a third as plants spring
+    /// back (`FoliageMotion::spring`), then three words unused.
+    pub spring: f32,
+    pub _pad: [f32; 3],
 }
 
 /// The level's seasons, as shaders read them (`Seasons` in
@@ -803,7 +807,7 @@ pub struct GpuSeasons {
 }
 
 /// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;
-/// see `wind`). Strength 0 without a Wind Zone.
+/// see `wind`). Strength 0 without a Wind Zone or a fair day's wind.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuWind {
@@ -814,7 +818,10 @@ pub struct GpuWind {
     pub gust_size: f32,
     pub gust_speed: f32,
     pub turbulence: f32,
-    pub _pad: f32,
+    /// How far plants bend, in the wind and pushed, as many times as their
+    /// own bend says (`FoliageMotion::bend`); plants read it from the
+    /// frame's wind alone.
+    pub bend: f32,
 }
 
 /// Ray-traced GI's probes, as shaders find them (`Ddgi` in
@@ -1690,7 +1697,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + size_of::<GpuBake>()
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 32 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + size_of::<GpuBake>()
                 + vsm
                 + lamp_vsm
         );

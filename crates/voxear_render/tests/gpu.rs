@@ -4255,8 +4255,10 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
     world.spawn((MeshRenderer::new(cube, dark), pole));
     world.insert_resource(Sky::default());
     world.insert_resource(steady_post());
-    // Something standing just left of the pole, reaching over it, with no wind at all.
-    let pusher = world.spawn((FoliageInteraction { radius: 1.5, strength: 1.0 }, Transform::from_position(Vec3::new(-0.6, 0.0, 0.0))));
+    // Something just left of the pole, as high as its pivot in its middle where it bends from, reaching over it, with
+    // no wind at all.
+    let beside = Transform::from_position(Vec3::new(-0.6, 3.0, 0.0));
+    let pusher = world.spawn((FoliageInteraction { radius: 1.5, strength: 1.0 }, beside));
     let mut time = 0.0;
     run(&mut renderer, &world, &mut time, 3);
     let pushed = renderer.read_pixels().unwrap().2;
@@ -4277,6 +4279,19 @@ fn starter_plant_render(
     eye: Vec3,
     wind: Option<f32>,
     walker: Option<Vec3>,
+) -> Option<Vec<u8>> {
+    starter_plant_moving(plant, eye, wind, walker, None, 3)
+}
+
+/// As `starter_plant_render`, with plants moving as `motion` says or as a world without it has them, after `frames`
+/// frames.
+fn starter_plant_moving(
+    plant: voxear_render::StarterPlant,
+    eye: Vec3,
+    wind: Option<f32>,
+    walker: Option<Vec3>,
+    motion: Option<voxear_render::FoliageMotion>,
+    frames: u32,
 ) -> Option<Vec<u8>> {
     use voxear_render::{FoliageInteraction, Sky, Walkers, WindZone};
     let mut renderer = renderer()?;
@@ -4300,10 +4315,22 @@ fn starter_plant_render(
     if let Some(at) = walker {
         world.insert_resource(Walkers(vec![(at, FoliageInteraction { radius: 1.2, strength: 1.0 })]));
     }
+    if let Some(motion) = motion {
+        world.insert_resource(motion);
+    }
     world.insert_resource(Sky::default());
     world.insert_resource(steady_post());
-    run(&mut renderer, &world, &mut 0.0, 3);
+    run(&mut renderer, &world, &mut 0.0, frames);
     Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How many pixels are of a green plant in one picture and not the other.
+fn green_moved(a: &[u8], b: &[u8]) -> usize {
+    let green = |pixels: &[u8], x: u32, y: u32| {
+        let [r, g, b] = rgb_at(pixels, (x, y));
+        g > r + 8 && g > b + 8
+    };
+    (0..360).flat_map(|y| (0..640).map(move |x| (x, y))).filter(|&(x, y)| green(a, x, y) != green(b, x, y)).count()
 }
 
 /// How far right of its foot a green plant's top is, in pixels: the middle of its green across its highest rows
@@ -4345,6 +4372,50 @@ fn a_plant_of_cubes_leans_in_the_wind_and_away_from_what_walks_through_it() {
     keep_image("tuft pushed.png", &pushed);
     let (stood, leant) = (green_lean(&alone), green_lean(&pushed));
     assert!(leant - stood > 12.0, "its blades lean away from who stands beside it: {leant} against {stood}");
+}
+
+#[test]
+fn a_fair_days_wind_stirs_plants_of_cubes_as_the_game_says_and_bend_zero_holds_them() {
+    use voxear_render::{FoliageMotion, StarterPlant};
+    let eye = Vec3::new(0.0, 0.35, -1.6);
+    let tuft = |motion, frames| starter_plant_moving(StarterPlant::Tuft, eye, None, None, motion, frames);
+    // A breeze with no Wind Zone: the tuft is somewhere else from moment to moment.
+    let breeze = FoliageMotion { wind: 1.0, ..FoliageMotion::default() };
+    let Some(early) = tuft(Some(breeze), 3) else { return };
+    let later = tuft(Some(breeze), 45).unwrap();
+    keep_image("tuft in a breeze.png", &early);
+    keep_image("tuft in a breeze later.png", &later);
+    let stirred = green_moved(&early, &later);
+    assert!(stirred > 150, "a fair day's wind stirs it: {stirred} pixels");
+    // A world without the game's say has no fair day's wind, as before; and bend 0 holds it in the breeze.
+    let calm = green_moved(&tuft(None, 3).unwrap(), &tuft(None, 45).unwrap());
+    let held = FoliageMotion { bend: 0.0, ..breeze };
+    let unbent = green_moved(&tuft(Some(held), 3).unwrap(), &tuft(Some(held), 45).unwrap());
+    assert!(calm < 10 && unbent < 10, "still: {calm} and {unbent} pixels");
+    // Bent twice as far, it moves further.
+    let twice = FoliageMotion { bend: 2.0, ..breeze };
+    let more = green_moved(&tuft(Some(twice), 3).unwrap(), &tuft(Some(twice), 45).unwrap());
+    assert!(more > stirred, "twice the bend moves it further: {more} against {stirred} pixels");
+}
+
+#[test]
+fn what_walks_through_plants_pushes_only_what_is_rooted_as_high_as_it_and_not_with_interaction_off() {
+    use voxear_render::{FoliageMotion, StarterPlant};
+    let eye = Vec3::new(0.0, 0.35, -1.6);
+    let still = Some(FoliageMotion { wind: 0.0, ..FoliageMotion::default() });
+    let tuft = |walker, motion| starter_plant_moving(StarterPlant::Tuft, eye, None, walker, motion, 3);
+    let Some(alone) = tuft(None, still) else { return };
+    // Someone beside it leans it over; someone on a bridge four metres over it does not.
+    let beside = tuft(Some(Vec3::new(-0.5, 0.0, 0.0)), still).unwrap();
+    let over = tuft(Some(Vec3::new(-0.5, 4.0, 0.0)), still).unwrap();
+    keep_image("tuft under a bridge.png", &over);
+    let (pushed, bridged) = (green_moved(&alone, &beside), green_moved(&alone, &over));
+    assert!(pushed > 150, "someone beside it pushes it: {pushed} pixels");
+    assert!(bridged < 10, "someone high over it does not: {bridged} pixels");
+    // With interaction off, nothing beside it pushes it.
+    let off = Some(FoliageMotion { interaction: false, wind: 0.0, ..FoliageMotion::default() });
+    let ignored = green_moved(&alone, &tuft(Some(Vec3::new(-0.5, 0.0, 0.0)), off).unwrap());
+    assert!(ignored < 10, "nothing pushes with interaction off: {ignored} pixels");
 }
 
 #[test]

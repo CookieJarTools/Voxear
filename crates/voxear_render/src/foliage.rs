@@ -507,19 +507,85 @@ impl Default for FoliageInteraction {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Walkers(pub Vec<(Vec3, FoliageInteraction)>);
 
+/// How every plant moves, the game over: how hard a fair day's wind blows
+/// over a level with no Wind Zone, how far plants bend, and whether what
+/// walks through them pushes them aside. The project sets it in Project
+/// Settings ▸ Foliage (`[foliage]` in `voxear.toml`), and a script may
+/// change it as the game runs. A world without one, as the renderer's own
+/// tests have, has no fair day's wind and is otherwise as the defaults.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FoliageMotion {
+    /// How hard the wind blows over plants on a fair day where the level has
+    /// no Wind Zone, as a Wind Zone's Strength: 0.5 a light breeze, 1 one
+    /// that sways trees. Rain and storms blow harder on top; 0 is still until
+    /// the weather turns.
+    pub wind: f32,
+    /// How far plants bend, in the wind and pushed, as many times as each
+    /// plant's own Wind bend says: 0 holds every plant still.
+    pub bend: f32,
+    /// Whether characters, and Objs with a Foliage Interaction, push plants
+    /// aside as they pass.
+    pub interaction: bool,
+    /// How hard they push, as many times as each says.
+    pub push: f32,
+    /// How long pushed plants take to spring back, in seconds: a push falls
+    /// to a third in this time.
+    pub spring: f32,
+}
+
+impl Default for FoliageMotion {
+    fn default() -> Self {
+        Self { wind: 0.5, bend: 1.0, interaction: true, push: 1.0, spring: 0.8 }
+    }
+}
+
+impl FoliageMotion {
+    /// The most a plant bends, as many times its own bend, and the most a
+    /// push or spring back is.
+    pub const MOST_BEND: f32 = 3.0;
+    pub const MOST_PUSH: f32 = 3.0;
+    pub const MOST_SPRING: f32 = 10.0;
+
+    /// In the world, or what a world with none has: no fair day's wind.
+    pub fn of(world: &World) -> Self {
+        world.resource::<Self>().copied().unwrap_or(Self { wind: 0.0, ..Self::default() })
+    }
+
+    /// Kept within bounds, any number that is not one as its default.
+    pub fn bounded(self) -> Self {
+        let fair = Self::default();
+        let within =
+            |value: f32, most: f32, otherwise: f32| if value.is_finite() { value.clamp(0.0, most) } else { otherwise };
+        Self {
+            wind: within(self.wind, 10.0, fair.wind),
+            bend: within(self.bend, Self::MOST_BEND, fair.bend),
+            interaction: self.interaction,
+            push: within(self.push, Self::MOST_PUSH, fair.push),
+            spring: within(self.spring, Self::MOST_SPRING, fair.spring).max(0.05),
+        }
+    }
+}
+
 /// The pushers as shaders read them, the nearest to the camera first, at
-/// most `MAX_PUSHERS`, with the grid placed round the camera.
-pub(crate) fn pushes(camera: Vec3, mut pushers: Vec<(Vec3, FoliageInteraction)>) -> GpuPushes {
+/// most `MAX_PUSHERS`, with the grid placed round the camera: none while
+/// `motion` turns interaction off, each as hard as it says it pushes.
+pub(crate) fn pushes(camera: Vec3, mut pushers: Vec<(Vec3, FoliageInteraction)>, motion: FoliageMotion) -> GpuPushes {
+    let motion = motion.bounded();
+    if !motion.interaction {
+        pushers.clear();
+    }
     pushers.sort_by(|a, b| a.0.distance_squared(camera).total_cmp(&b.0.distance_squared(camera)));
     let mut gpu = GpuPushes::default();
     for (slot, (at, push)) in pushers.iter().take(MAX_PUSHERS).enumerate() {
         gpu.pushers[slot] = [at.x, at.y, at.z, push.radius.max(0.01)];
-        gpu.strengths[slot / 4][slot % 4] = push.strength.max(0.0);
+        gpu.strengths[slot / 4][slot % 4] = push.strength.max(0.0) * motion.push;
     }
     gpu.count = pushers.len().min(MAX_PUSHERS) as u32;
     let half = (PUSH_CELLS / 2) as i32;
     gpu.origin = [(camera.x / PUSH_CELL).floor() as i32 - half, (camera.z / PUSH_CELL).floor() as i32 - half];
     gpu.cell = PUSH_CELL;
+    gpu.spring = motion.spring;
     gpu
 }
 
@@ -552,11 +618,32 @@ mod tests {
         let push = FoliageInteraction::default();
         let far: Vec<_> = (0..MAX_PUSHERS + 4).map(|i| (Vec3::new(100.0 + i as f32, 0.0, 0.0), push)).collect();
         let near = (Vec3::new(1.0, 0.0, 1.0), FoliageInteraction { radius: 2.0, strength: 0.5 });
-        let gpu = pushes(Vec3::new(10.2, 3.0, -4.9), far.into_iter().chain([near]).collect());
+        let all: Vec<_> = far.into_iter().chain([near]).collect();
+        let gpu = pushes(Vec3::new(10.2, 3.0, -4.9), all.clone(), FoliageMotion::default());
         assert_eq!(gpu.count as usize, MAX_PUSHERS);
         assert_eq!(gpu.pushers[0], [1.0, 0.0, 1.0, 2.0], "the nearest first");
         assert_eq!(gpu.strengths[0][0], 0.5);
         let half = (PUSH_CELLS / 2) as i32;
         assert_eq!(gpu.origin, [20 - half, -10 - half]);
+        assert_eq!(gpu.spring, 0.8);
+
+        let harder = FoliageMotion { push: 2.0, spring: 1.5, ..FoliageMotion::default() };
+        let gpu = pushes(Vec3::ZERO, all.clone(), harder);
+        assert_eq!((gpu.strengths[0][0], gpu.spring), (1.0, 1.5));
+        let off = FoliageMotion { interaction: false, ..FoliageMotion::default() };
+        let gpu = pushes(Vec3::new(10.2, 3.0, -4.9), all, off);
+        assert_eq!(gpu.count, 0, "nothing pushes with interaction off");
+        assert_eq!(gpu.origin, [20 - half, -10 - half], "the grid still lies round the camera, to spring back");
+    }
+
+    #[test]
+    fn foliage_motion_is_kept_within_bounds_and_a_world_without_one_has_no_fair_days_wind() {
+        let wild = FoliageMotion { wind: f32::NAN, bend: 9.0, push: -1.0, spring: 0.0, interaction: false };
+        let kept = wild.bounded();
+        assert_eq!((kept.wind, kept.bend, kept.push, kept.spring), (0.5, FoliageMotion::MOST_BEND, 0.0, 0.05));
+        let mut world = World::new();
+        assert_eq!(FoliageMotion::of(&world).wind, 0.0);
+        world.insert_resource(FoliageMotion::default());
+        assert_eq!(FoliageMotion::of(&world), FoliageMotion::default());
     }
 }

@@ -887,9 +887,11 @@ pub fn extract(
         .map(|(_, push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
         .chain(walkers.iter().copied())
         .collect();
+    // How plants move, as the project or a script has it.
+    let motion = crate::FoliageMotion::of(world).bounded();
     // Plants seen through a Portal stand as they grew: what pushes them is where the world has it.
     if through.is_none() {
-        frame.pushes = crate::foliage::pushes(position, pushers);
+        frame.pushes = crate::foliage::pushes(position, pushers, motion);
     }
     // What presses tracks into the ground, each with how high it is above the ground under it.
     let pressing = world.query_ref::<(Entity, &crate::TrackMaker, &Transform, Option<&WorldTransform>)>();
@@ -903,16 +905,13 @@ pub fn extract(
             Some((entity, at, at.y - ground.height, *maker))
         })
         .collect();
-    // The first Global Wind Zone that is on blows over the whole level.
-    let zones = world.query_ref::<(Entity, &crate::WindZone, &Transform)>().without::<Destroying>();
-    let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
-        zone.shape == crate::WindShape::Global && on(*entity, Switch::WindZone)
-    };
-    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (weather.wind(*zone), transform.rotation));
-    // With none, the weather's own wind blows.
+    // The level's Wind Zone, or a fair day's wind, as the weather makes it.
+    frame.wind = crate::wind::plants_wind(world, weather, motion);
+    // The sea's wind is the Wind Zone's, or the weather's own: a fair day's breeze is the plants' alone.
+    let zone = crate::wind::level_zone(world).map(|(zone, rotation)| (weather.wind(zone), rotation));
     let zone = zone.or_else(|| weather.wind_alone());
-    if let Some((zone, rotation)) = zone {
-        frame.wind = zone.gpu(rotation);
+    if !frame.pushes.spring.is_normal() {
+        frame.pushes.spring = motion.spring;
     }
     // Weather over parts of the level, and the sea under it.
     let places = world.resource::<crate::weather::WeatherPlaces>();

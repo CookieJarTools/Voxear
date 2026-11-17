@@ -242,8 +242,18 @@ impl WeatherAmounts {
     /// with nothing set up. It blows along +X, the way clouds drift over a
     /// level with no wind.
     pub fn wind_alone(self) -> Option<(WindZone, voxear_core::math::Quat)> {
+        self.wind_over(0.0)
+    }
+
+    /// As [`wind_alone`](Self::wind_alone), over plants that feel a fair
+    /// day's wind as hard as `breeze` with nothing set up (a Wind Zone's
+    /// Strength, `FoliageMotion::wind`): it blows that hard in still
+    /// weather, and harder in rain and storms.
+    pub fn wind_over(self, breeze: f32) -> Option<(WindZone, voxear_core::math::Quat)> {
         let along_x = voxear_core::math::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-        (self.wind > 0.0).then(|| (self.wind(WindZone { strength: 0.0, ..WindZone::default() }), along_x))
+        let breeze = breeze.max(0.0);
+        (self.wind > 0.0 || breeze > 0.0)
+            .then(|| (self.wind(WindZone { strength: breeze, ..WindZone::default() }), along_x))
     }
 
     /// The level's Wind Zone under this weather: blowing harder, in harder
@@ -514,6 +524,15 @@ mod tests {
         assert!(zone.strength >= storm.wind && zone.strength > 0.5, "as hard as the storm blows: {}", zone.strength);
         let gpu = zone.gpu(turned);
         assert!((gpu.direction[0] - 1.0).abs() < 1e-4 && gpu.direction[1].abs() < 1e-4, "along x: {:?}", gpu.direction);
+    }
+
+    #[test]
+    fn plants_feel_a_fair_days_breeze_rising_through_rain_to_a_storm() {
+        let strength = |kind: WeatherKind| kind.amounts().wind_over(0.5).map_or(0.0, |(zone, _)| zone.strength);
+        let [clear, rain, storm] = [WeatherKind::Clear, WeatherKind::Rain, WeatherKind::Storm].map(strength);
+        assert!((clear - 0.5).abs() < 1e-6, "the breeze itself on a fair day: {clear}");
+        assert!(clear < rain && rain < storm && storm > 2.0, "{clear} {rain} {storm}");
+        assert!(WeatherKind::Clear.amounts().wind_over(0.0).is_none(), "no breeze, no wind on a fair day");
     }
 
     #[test]

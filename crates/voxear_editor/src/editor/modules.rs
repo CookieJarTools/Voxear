@@ -234,6 +234,7 @@ impl Editor {
         match table {
             "quality" => file.quality.put(world),
             "portals" => file.portals.put(world),
+            "foliage" => world.insert_resource(file.foliage.bounded()),
             "physics" => file.physics.put(world),
             "audio" => {
                 let audio = &mut self.game.audio;

@@ -30,6 +30,11 @@ pub const CATEGORIES: &[Category] = &[
         about: "How builds pack the project's assets into bundles",
         manual: "Content and Builds/What Goes into a Build",
     },
+    Category {
+        name: "Foliage",
+        about: "Plants in the wind, and pushed aside by what walks through them",
+        manual: "Models and Materials/Wind",
+    },
     Category { name: "Graphics", about: "What drawing through Portals may spend", manual: "Objs and Levels/Portals" },
     Category { name: "Input", about: "The input actions the game plays with", manual: "Scripting/Reading Input" },
     Category {
@@ -251,6 +256,44 @@ const FIXED: &[Setting] = &[
         "Leave out",
         Kind::Words,
         "Assets that are not roots of their own, as patterns like Always include's. One that a shipped scene uses, or a behaviour names, still ships.",
+    )
+    .advanced(),
+    // Foliage
+    Setting::new(
+        ("Foliage", "Wind"),
+        "foliage.wind",
+        "Wind",
+        slider(0.0, 3.0, ""),
+        "How hard the wind blows over plants on a fair day, in a level without a Wind Zone: 0.5 a light breeze, 1 one that sways trees. Rain and storms blow harder on top; 0 is still until the weather turns.",
+    ),
+    Setting::new(
+        ("Foliage", "Wind"),
+        "foliage.bend",
+        "Bend",
+        slider(0.0, 3.0, "×"),
+        "How far plants bend in the wind and when pushed, times each plant's own Wind bend. 0 holds every plant still; trunks, rocks and solid blocks never bend.",
+    ),
+    Setting::new(
+        ("Foliage", "Interaction"),
+        "foliage.interaction",
+        "Interaction",
+        Kind::Toggle,
+        "Characters, and Objs with a Foliage Interaction, push grass, bushes and leaves aside as they pass, and the plants spring back after them.",
+    ),
+    Setting::new(
+        ("Foliage", "Interaction"),
+        "foliage.push",
+        "Push strength",
+        slider(0.0, 3.0, "×"),
+        "How hard what passes through pushes plants, times each one's own Strength.",
+    )
+    .advanced(),
+    Setting::new(
+        ("Foliage", "Interaction"),
+        "foliage.spring",
+        "Spring back",
+        number(0.05, 10.0, "s"),
+        "How long a pushed plant takes to spring most of the way back. Longer leaves a longer trail through a field.",
     )
     .advanced(),
     // Graphics

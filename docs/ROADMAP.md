@@ -3026,6 +3026,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     walks straight out; in some stretches the land rises at once from the bank, as on the outside of a bend, in
     others along a low strip. Where the land is lower than the water a low sloping rim holds it in, for ponds and
     lakes too, in place of flat-topped walls. Rivers do not yet run on to the sea across wide lowland.
+  - ~~**Great rivers to the sea:**~~ done: a world of levels runs a coarse Rivers network first, over points
+    256 m apart, from where four square kilometres drain: each great river is carried on 12 km past where it starts
+    (the node's new **Run On**), broad and deep, across the lowland to the sea; a hollow spills only towards lower
+    ground, the river cutting through the rim, and each turn is drawn as a curve. The fine rivers take the great
+    ones' water in a new **Standing** input and run into it as into the sea. A Rivers node's outputs share one pass
+    over the places, and a great network's cells keep the points that reach them, so ground is made no slower. Near
+    CubeGame's start, pieces of river over a hectare meeting the sea in a 33 km square: 1 of 95 before, 24 of 149
+    after. Tests: great rivers meet the sea where none did, one at least 60 m across, and no water stands over dry
+    lower ground beside it.
+  - ~~**Continents and open oceans:**~~ done: a world of levels' new **Oceans** (0.9; Levels node, Inspector and
+    `vox editor call`) stands its land in continents, one to a place on a loose grid some 72 km apart (in
+    CubeGame), a few places empty: each shaped by a broad noise into a whole land 25 to 40 km across, an hour or
+    so to run across, with capes, gulfs and bays, and open ocean tens of kilometres wide between any two, so the
+    next is reached by boat. The wired-in ground's own seas are filled on a continent, it lies deep under the sea
+    out in the ocean, and makes the coast over a shelf between. The world starts on a continent a few kilometres
+    in from its coast, the ground round the start kept. Land is about a tenth of the world.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the

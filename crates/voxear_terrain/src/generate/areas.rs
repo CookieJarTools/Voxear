@@ -259,23 +259,44 @@ fn lowland(share: f32) -> f32 {
     t * t
 }
 
-/// How far across the open oceans' pattern rises and falls, in spacings;
-/// over how much of the pattern a coast falls from the land to the open
-/// ocean's floor; and how far under the ground wired in that floor lies, in
-/// metres, deeper than any of that ground stands over the sea.
-const OCEAN_SIZE: f32 = 9.0;
-const OCEAN_SHELF: f32 = 0.08;
+/// How far apart the continents' middles are, in spacings of areas, how
+/// far each is moved off its place in their grid, as a share of that, and
+/// how many places in a hundred have none, so the ocean is wide between any
+/// two, and wider here and there.
+const CONTINENT_SPACING: f32 = 20.0;
+const CONTINENT_JITTER: f32 = 0.25;
+const CONTINENT_GONE: f32 = 0.1;
+
+/// How much larger or smaller than the rest a continent may be, and how
+/// much longer one way than across, as shares of its size; and how much a
+/// broad noise shapes it into capes, gulfs, bays and offshore islands, over
+/// what, as a share of its size, and through how many halvings.
+const CONTINENT_SIZES: f32 = 0.3;
+const CONTINENT_STRETCH: f32 = 0.6;
+const CONTINENT_SHAPE: f32 = 1.4;
+const CONTINENT_SHAPE_SIZE: f32 = 1.0;
+const CONTINENT_OCTAVES: u32 = 6;
+
+/// Over how much of the pattern a coast falls to the open ocean's floor.
+const OCEAN_SHELF: f32 = 0.1;
+
+/// How far from its continent's middle a world starts, as a share of how
+/// far its coast would be without the noise: a few kilometres in from it.
+const START_FROM_MIDDLE: f32 = 0.45;
+
+/// How far under the ground wired in the open ocean's floor lies, and at
+/// least how far under the sea, in metres; and how far over the sea a
+/// continent's filled seas lie.
 const OCEAN_DEPTH: f32 = 240.0;
+const OCEAN_FLOOR: f32 = 40.0;
+const CONTINENT_FLOOR: f32 = 8.0;
 
-/// How far from where the world starts the land is never open ocean, in
-/// metres, and from how far it may be.
+/// How far from where the world starts the ground wired in is kept as it
+/// is, in metres, and from how far it is laid out in continents and
+/// oceans; and how far that edge wanders, over how many metres.
 const OCEAN_KEEP: [f32; 2] = [2500.0, 6000.0];
-
-/// How many places of the oceans' pattern, a side, are read to find where
-/// as much of it as is ocean lies under, and how far apart, in sizes of the
-/// pattern.
-const OCEAN_SAMPLES: usize = 64;
-const OCEAN_SAMPLE_STEP: f32 = 0.61;
+const KEEP_WANDER: f32 = 1800.0;
+const KEEP_WANDER_SIZE: f32 = 1500.0;
 
 /// How far from where the world starts the land lies low, in metres, and
 /// over how many spacings past that it climbs to its full height.
@@ -312,8 +333,7 @@ pub struct Areas {
     pub plan: LevelPlan,
     /// The site of the area kept open and low, where there is one.
     kept: Option<[i32; 2]>,
-    /// The oceans' pattern under which the open oceans lie.
-    ocean_line: f32,
+
     /// What tells these areas from any others.
     id: u64,
 }
@@ -339,57 +359,96 @@ impl Areas {
         }
         let keep = plan.keep.filter(|keep| keep.iter().all(|v| v.is_finite()));
         let kept = keep.map(|[x, z]| sites.nearest(sites.warped(x, z)).0);
-        let oceans = if plan.oceans.is_finite() { plan.oceans.clamp(0.0, 0.9) } else { 0.0 };
+        let oceans = if plan.oceans.is_finite() { plan.oceans.clamp(0.0, 0.97) } else { 0.0 };
         let plan = LevelPlan { levels, low, high, characters, oceans, keep };
         let id = crate::layers::stable_hash(format!("{sites:?} {plan:?}").as_bytes());
-        let mut areas = Self { sites, plan, kept, ocean_line: f32::MIN, id };
-        if oceans > 0.0 {
-            // As much of the pattern lies under the line as is ocean, read over a few hundred of its rises and falls.
-            let size = areas.sites.spacing() * OCEAN_SIZE;
-            let step = size * OCEAN_SAMPLE_STEP;
-            let mut read: Vec<f32> = (0..OCEAN_SAMPLES * OCEAN_SAMPLES)
-                .map(|k| {
-                    let (x, z) = ((k % OCEAN_SAMPLES) as f32 * step, (k / OCEAN_SAMPLES) as f32 * step);
-                    areas.ocean_pattern(x, z)
-                })
-                .collect();
-            read.sort_by(f32::total_cmp);
-            areas.ocean_line = read[((read.len() as f32 * oceans) as usize).min(read.len() - 1)];
+        Self { sites, plan, kept, id }
+    }
+
+    /// How far into a continent `(x, z)` lies, from 0 at its coast, less
+    /// than nothing out at sea. The continents lie a grid apart, each moved
+    /// a little off its place, its own size and drawn out its own way, so
+    /// the ocean is wide between any two; a broad noise shapes each into a
+    /// natural land, with capes, gulfs, bays and islands off its coast. The
+    /// world starts on one, a few kilometres in from its coast.
+    fn continent_pattern(&self, x: f32, z: f32) -> f32 {
+        let spacing = self.sites.spacing() * CONTINENT_SPACING;
+        let seed = self.sites.seed() ^ 0xC0A7;
+        // As large as leaves the share of the world Oceans says to the ocean, the places with none counted in.
+        let land = ((1.0 - self.plan.oceans) / (1.0 - CONTINENT_GONE)).min(1.0);
+        let size = (land / std::f32::consts::PI).sqrt() * spacing;
+        let origin = self.plan.keep.unwrap_or([0.0, 0.0]);
+        let (lx, lz) = (x - origin[0], z - origin[1]);
+        let cell = [(lx / spacing).round() as i32, (lz / spacing).round() as i32];
+        let mut nearest = f32::MIN;
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let at = [cell[0] + dx, cell[1] + dz];
+                let pick = |part: u32| (mix(seed, at, part) >> 8) as f32 / (1u32 << 24) as f32;
+                let start = at == [0, 0] && self.plan.keep.is_some();
+                if !start && pick(8) < CONTINENT_GONE {
+                    continue;
+                }
+                let reach = size * (1.0 + CONTINENT_SIZES * (2.0 * pick(5) - 1.0));
+                let middle = match start {
+                    true => {
+                        let way = pick(9) * std::f32::consts::TAU;
+                        [way.cos() * reach * START_FROM_MIDDLE, way.sin() * reach * START_FROM_MIDDLE]
+                    }
+                    false => [
+                        (at[0] as f32 + CONTINENT_JITTER * (2.0 * pick(3) - 1.0)) * spacing,
+                        (at[1] as f32 + CONTINENT_JITTER * (2.0 * pick(4) - 1.0)) * spacing,
+                    ],
+                };
+                // Drawn out along a way of its own.
+                let (way, long) = (pick(6) * std::f32::consts::PI, 1.0 + CONTINENT_STRETCH * pick(7));
+                let (ox, oz) = (lx - middle[0], lz - middle[1]);
+                let (along, across) = (ox * way.cos() + oz * way.sin(), oz * way.cos() - ox * way.sin());
+                let away = ((along / long).powi(2) + (across * long).powi(2)).sqrt();
+                nearest = nearest.max(1.0 - away / reach);
+            }
         }
-        areas
+        let shape = size * CONTINENT_SHAPE_SIZE;
+        let noise = noise::fractal(noise::NoiseStyle::Fractal, x / shape, z / shape, CONTINENT_OCTAVES, seed);
+        nearest + CONTINENT_SHAPE * (2.0 * noise - 1.0)
     }
 
-    /// The broad pattern the open oceans lie where it is low, at `(x, z)`.
-    fn ocean_pattern(&self, x: f32, z: f32) -> f32 {
-        let size = self.sites.spacing() * OCEAN_SIZE;
-        noise::fractal(noise::NoiseStyle::Fractal, x / size, z / size, 3, self.sites.seed() ^ 0x0CEA)
-    }
-
-    /// How far the open ocean sinks the ground wired in under the land at
-    /// `(x, z)`, in metres: nothing on the continents and their islands,
-    /// falling over a broad shelf to the open ocean's floor, deeper than
-    /// that ground stands anywhere, so it lies under the sea however high.
-    /// None near where the world starts.
-    pub fn ocean(&self, x: f32, z: f32) -> f32 {
+    /// The ground wired in at `(x, z)`, `ground` high, laid out in
+    /// continents and open oceans: on a continent the ground's own seas are
+    /// filled, a little over the sea `sea` high, so the land is whole; out
+    /// in an ocean it lies well under the sea, however high it stood; and
+    /// over the shelf between, the coast is the ground's own, with its bays,
+    /// headlands and islands. As it was near where the world starts.
+    pub fn continents(&self, x: f32, z: f32, ground: f32, sea: f32) -> f32 {
         if self.plan.oceans <= 0.0 {
-            return 0.0;
+            return ground;
         }
         let ease = |t: f32| {
             let t = t.clamp(0.0, 1.0);
             t * t * (3.0 - 2.0 * t)
         };
-        let deep = ease(0.5 + (self.ocean_line - self.ocean_pattern(x, z)) / OCEAN_SHELF);
-        if deep <= 0.0 {
-            return 0.0;
-        }
         let open = match self.plan.keep {
             Some([kx, kz]) => {
-                let far = ((x - kx) * (x - kx) + (z - kz) * (z - kz)).sqrt();
+                // Its edge wanders, so the ground kept round the start meets the continent along no circle.
+                let far = ((x - kx) * (x - kx) + (z - kz) * (z - kz)).sqrt()
+                    + KEEP_WANDER
+                        * noise::gradient(x / KEEP_WANDER_SIZE, z / KEEP_WANDER_SIZE, self.sites.seed() ^ 0x0CEB);
                 ease((far - OCEAN_KEEP[0]) / (OCEAN_KEEP[1] - OCEAN_KEEP[0]))
             }
             None => 1.0,
         };
-        OCEAN_DEPTH * deep * open
+        if open <= 0.0 {
+            return ground;
+        }
+        let deep = ease(0.5 - self.continent_pattern(x, z) / OCEAN_SHELF);
+        let filled = ground.max(sea + CONTINENT_FLOOR);
+        let sunk = (ground - OCEAN_DEPTH).min(sea - OCEAN_FLOOR);
+        // From the continent's whole land, through the ground's own coast halfway across the shelf, to the floor.
+        let laid = match deep < 0.5 {
+            true => filled + (ground - filled) * deep * 2.0,
+            false => ground + (sunk - ground) * (deep * 2.0 - 1.0),
+        };
+        ground + (laid - ground) * open
     }
 
     pub fn id(&self) -> u64 {

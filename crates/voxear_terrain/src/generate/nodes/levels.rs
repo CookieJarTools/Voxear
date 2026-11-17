@@ -21,11 +21,13 @@
 //! is and where the sea: land rises out of the sea over Coast metres of
 //! that ground's height, high land in a cliff no more than 25 m tall, and
 //! slopes down to the shore as that ground does, a few times as steep.
-//! Oceans is how much of the world lies under open ocean: broad basins
-//! tens of kilometres across, where that ground is sunk under the sea over
-//! a wide shelf, so the land between stands as continents and great
-//! islands, their coasts still that ground's own. None lies within a few
-//! kilometres of a world's start.
+//! Oceans is how much of the world lies under open ocean: the land stands
+//! in continents some 25 to 40 km across, each a whole natural land with
+//! capes, gulfs and bays, lying far enough apart that open ocean tens of
+//! kilometres wide lies between any two. A continent's own seas in that
+//! ground are filled, and its coast is that ground's own over a shelf. The
+//! world starts on one a few kilometres in from its coast, the ground round
+//! the start kept as it is.
 //!
 //! Each area has a character, picked by the weights: Plains are nearly
 //! level, Rolling ground rolls as its biome's land does, Steps rise in
@@ -110,7 +112,7 @@ impl Default for Levels {
             spires: 0.1,
             peaks: 0.3,
             basins: 0.15,
-            oceans: 0.35,
+            oceans: 0.9,
             seed: 0,
             areas: None,
             world_areas: false,
@@ -161,7 +163,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("spires", "Spires", 0.0, 10.0, ""),
     ValueSpec::number("peaks", "Peaks", 0.0, 10.0, ""),
     ValueSpec::number("basins", "Basins", 0.0, 10.0, ""),
-    ValueSpec::number("oceans", "Oceans", 0.0, 0.9, ""),
+    ValueSpec::number("oceans", "Oceans", 0.0, 0.97, ""),
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
     ValueSpec::choice("areas", "Areas", AREAS).advanced(),
 ];
@@ -405,8 +407,8 @@ impl Lay {
     /// The height, walls, relief, spires, bridges and floor at `(x, z)`
     /// over ground `ground`.
     fn at(&self, x: f32, z: f32, ground: f32) -> [f32; 6] {
-        // The open oceans sink the ground wired in under the sea, which then says where the coasts are.
-        let ground = ground - self.areas.ocean(x, z);
+        // The ground wired in laid out in continents and open oceans, which then says where the coasts are.
+        let ground = self.areas.continents(x, z, ground, self.sea);
         let sites = &self.areas.sites;
         let spacing = sites.spacing();
         let seed = sites.seed();
@@ -679,7 +681,8 @@ mod tests {
 
     #[test]
     fn levels_climb_in_long_gentle_slopes_ending_in_sheer_walls() {
-        let levels = Levels { size: 1200.0, peaks: 0.0, steps: 0.0, canyons: 0.0, basins: 0.0, ..Levels::default() };
+        let levels =
+            Levels { size: 1200.0, peaks: 0.0, steps: 0.0, canyons: 0.0, basins: 0.0, oceans: 0.0, ..Levels::default() };
         let world = testing::world_of(NodeKind::Levels(levels), 0, &[]);
         // Four rows 12 km long at 2 m.
         let rows: Vec<Vec<f32>> = [300.0, 4300.0, 8300.0, 12300.0]
@@ -716,6 +719,7 @@ mod tests {
             spires: 0.0,
             peaks: 0.0,
             basins: 0.0,
+            oceans: 0.0,
             ..Levels::default()
         };
         let world = testing::world_of(NodeKind::Levels(canyons.clone()), 0, &[]);

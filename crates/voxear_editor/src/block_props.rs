@@ -795,7 +795,7 @@ const LIGHTINGS: [(BlockLighting, &str); 2] = [(BlockLighting::Blocks, "Block Li
 pub fn range(field: BlockField) -> Option<[f32; 2]> {
     match field {
         F::Caves | F::Ramps => Some([0.0, 1.0]),
-        F::Oceans => Some([0.0, 0.9]),
+        F::Oceans => Some([0.0, 0.97]),
         F::Glow => Some([0.0, 4.0]),
         F::Plains | F::Rolling | F::Steps | F::Canyons | F::Spires | F::Peaks | F::Basins => Some([0.0, 4.0]),
         _ => None,
@@ -1235,7 +1235,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
                 F::Canyons => levels.canyons = n.clamp(0.0, 10.0),
                 F::Spires => levels.spires = n.clamp(0.0, 10.0),
                 F::Peaks => levels.peaks = n.clamp(0.0, 10.0),
-                F::Oceans => levels.oceans = n.clamp(0.0, 0.9),
+                F::Oceans => levels.oceans = n.clamp(0.0, 0.97),
                 _ => levels.basins = n.clamp(0.0, 10.0),
             }
         }

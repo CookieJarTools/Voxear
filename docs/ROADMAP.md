@@ -257,7 +257,7 @@ Done so far:
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
   `Editor::add_command`.
 - **Preferences:** the editor's own settings (Scene view, Play mode, Console, appearance, external tools, keys,
-  tools) in a window laid out as Project Settings is, and in the palette, kept per project with the palette's
+  tools) in the rail's drawer, laid out as Project Settings is, and in the palette, kept per project with the palette's
   recent items.
 - **Hierarchy order:** scene headers, Objs in their scene's order (saved as shown), dragging before, after or into a
   row or onto a scene, undo putting Objs back at their places, `IInstance` badges and tinted prefab instances.
@@ -280,8 +280,8 @@ Done so far:
   script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
   checked to have left memory. `vox run`'s window reloads them too. A build that hangs is stopped.
 - **Windows, drawers and workspaces:** a context menu on panel tabs (Close, Close Other Tabs, Reset Layout), a
-  Window button listing every panel, the rail opening Levels and Lighting as a drawer and Project Settings and
-  Preferences as windows, the World and Profiling
+  Window button listing every panel, the rail opening Levels, Lighting, Project Settings and Preferences as a
+  drawer, the World and Profiling
   workspaces each keeping its layout, and dropdowns as wide as their options and kept on screen.
 - **The Scene view's header:** Lit, Unlit and Wireframe shading, gizmos for lights and cameras with the selected
   one's reach or frustum, and full screen.
@@ -393,8 +393,8 @@ Next in M3:
     and `BindRow`, rows filled in the frame they show in, and the selection
   - [ ] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
     organised, so a game can be tuned for each platform and quality level without touching code:
-    - [x] Project Settings and Preferences as windows laid out alike: the categories down the side, titled
-      sections with rarely wanted settings folded under Advanced, a search across every category that matches
+    - [x] Project Settings and Preferences in the side bar's drawer, laid out alike: the categories down the side,
+      titled sections with rarely wanted settings folded under Advanced, a search across every category that matches
       names, sections and the words of tooltips, a tooltip on every setting with its default, values changed from
       the default marked, reset per value or per category, a manual page per category, and changes shown live;
       every setting listed with its category, tooltip, type and range, and set by key, through `vox editor call`

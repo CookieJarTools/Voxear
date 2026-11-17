@@ -188,8 +188,10 @@ struct Nodes {
     drawer_close: NodeId,
     drawer_levels: NodeId,
     drawer_lighting: NodeId,
+    drawer_project: NodeId,
+    drawer_preferences: NodeId,
     /// Where the Project Settings and Preferences windows are built, in
-    /// their dock panels.
+    /// their pages of the drawer.
     project_settings_panel: NodeId,
     preferences_panel: NodeId,
     /// The top bar's Layout menu button and the name on it, the box that
@@ -581,6 +583,8 @@ impl Editor {
             drawer_close: find(&ui, "drawer-close"),
             drawer_levels: find(&ui, "drawer-levels"),
             drawer_lighting: find(&ui, "drawer-lighting"),
+            drawer_project: find(&ui, "drawer-project"),
+            drawer_preferences: find(&ui, "drawer-preferences"),
             project_settings_panel: find(&ui, "project-settings-panel"),
             preferences_panel: find(&ui, "preferences-panel"),
             layouts: find(&ui, "layouts"),

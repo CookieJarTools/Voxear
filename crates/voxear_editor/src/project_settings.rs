@@ -310,7 +310,7 @@ const FIXED: &[Setting] = &[
     Setting::new(
         ("Input", "Actions"),
         "input.actions",
-        "Input actions",
+        "Actions file",
         Kind::Asset(AssetKind::InputActions),
         "The actions the game plays with. None uses the project's first .inputactions file by path, or Voxear's own where it has none.",
     ),

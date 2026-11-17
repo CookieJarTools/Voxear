@@ -4,7 +4,7 @@ order: 9
 
 **Preferences** holds the editor's own settings: how it looks, how the Scene view's camera and handles behave, how Play starts, which code editor scripts open in. They are yours, not the game's: they are kept in the project's `.voxear/Editor.toml`, which stays out of version control, so everyone working on a project sets their own. The game's settings are in [[Project Settings]].
 
-Open it from the side bar (the button at the bottom, under Project Settings), or type *Preferences* in the command bar. It is laid out as Project Settings is: the categories down the left, a search across the top that looks through every category and every tooltip, a tooltip on each setting with its default, a bar beside a setting changed from its default, and **Reset to Default** on a setting's right-click menu.
+Open it from the side bar on the far left (the button at the bottom, under Project Settings), or type *Preferences* in the command bar. It opens over the left of the editor and is laid out as Project Settings is: the categories down the left, a search across the top that looks through every category and every tooltip, a tooltip on each setting with its default, a bar beside a setting changed from its default, and **Reset to Default** on a setting's right-click menu.
 
 ## Categories
 

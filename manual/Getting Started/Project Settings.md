@@ -4,7 +4,7 @@ order: 8
 
 **Project Settings** holds the settings of the game itself: how it sounds, how fast time steps, how far it draws, which layers collide, which languages it is in. They are saved in the project's `voxear.toml`, so they go into version control and every build. Your own editor's settings are in [[Preferences]].
 
-Open it from the side bar (the modules button), or type *Project Settings* in the command bar. It opens beside the Scene view, and like any panel it can be docked elsewhere or dragged out into a window of its own.
+Open it from the side bar on the far left (the modules button), or type *Project Settings* in the command bar. It opens over the left of the editor, as Levels and Lighting do, and the same button or its close button puts it away.
 
 ## Finding a setting
 
@@ -59,7 +59,7 @@ gravity = [0.0, -1.62, 0.0]   # the Moon's
 
 ## Input actions
 
-A project with several `.inputactions` files picks the one the game plays with in **Input ▸ Input actions**. With none picked, the game uses the first by path, or Voxear's own when the project has none.
+A project with several `.inputactions` files picks the one the game plays with in **Input ▸ Actions file**. With none picked, the game uses the first by path, or Voxear's own when the project has none.
 
 ## What is written
 

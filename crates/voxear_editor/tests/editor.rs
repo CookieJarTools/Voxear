@@ -2176,8 +2176,9 @@ fn preferences_open_from_the_rail_with_categories_a_search_and_tooltips() {
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Preferences), "Preferences opens in the side bar's drawer");
     let panel = editor.ui.find(editor.ui.root(), "preferences-panel").unwrap();
-    assert!(shown(&editor.ui, panel) && editor.ui.rect(panel)[2] > 400.0, "Preferences opens wide, in the dock");
+    assert!(shown(&editor.ui, panel) && editor.ui.rect(panel)[2] > 600.0, "wide enough for its categories beside it");
     let names: Vec<String> =
         setting_categories(&editor.ui, "preferences").into_iter().map(|label| editor.ui.text(label)).collect();
     let expected = ["General", "Appearance", "Console", "External Tools", "Keys", "Play Mode", "Scene View", "Tools"];
@@ -2238,6 +2239,10 @@ fn preferences_open_from_the_rail_with_categories_a_search_and_tooltips() {
         texts.contains(&"Save".to_string()) && texts.contains(&"Ctrl+S".to_string())
     });
     assert!(saved, "Save is Ctrl+S");
+
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.drawer(), None, "the same button closes it");
 }
 
 #[test]
@@ -7803,6 +7808,8 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
     let written = Project::open(dir.path()).unwrap();
     assert!(!written.modules().has(Module::Water), "voxear.toml has water off");
     assert!(written.modules().has(Module::Networking), "and the rest as they were");
+
+    editor.open_drawer(None);
     frame(&mut editor, &mut renderer);
     assert!(!offers(&editor, "Pool"), "no Pool without Water");
     let note = label_starting(&editor.ui, editor.ui.root(), "Needs the Water module");
@@ -8047,6 +8054,7 @@ fn project_settings_lists_every_category_with_tooltips_and_finds_settings_by_the
     click(&mut editor.ui, rail);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Project), "in the side bar's drawer");
     let names: Vec<String> =
         setting_categories(&editor.ui, "project-settings").into_iter().map(|label| editor.ui.text(label)).collect();
     let expected: Vec<&str> = voxear_editor::project_settings::CATEGORIES.iter().map(|c| c.name).collect();

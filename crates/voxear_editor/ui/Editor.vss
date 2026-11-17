@@ -267,7 +267,7 @@
 .settings-window {
     flex-direction: column;
     font-size: 12px;
-    /* Sized by its dock area, as the Build window is, rather than by the settings in it. */
+    /* Sized by its page of the drawer, rather than by the settings in it. */
     position: absolute;
     left: 0px;
     top: 0px;
@@ -689,8 +689,8 @@
     flex-grow: 1;
 }
 
-/* The rail's drawer: Levels or Lighting, over the left of the dock, a third of the window wide: under the 40px
-   top bar, over the 22px status bar, and right of the 44px rail. */
+/* The rail's drawer: Levels, Lighting, Project Settings or Preferences, over the left of the dock, a third of the
+   window wide: under the 40px top bar, over the 22px status bar, and right of the 44px rail. */
 .drawer {
     position: absolute;
     left: 46px;
@@ -703,6 +703,12 @@
     background-color: var(--vx-panel);
     border: 1px solid var(--vx-line-2);
     box-shadow: 0px 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* Project Settings and Preferences: their categories beside their settings. */
+.drawer.drawer-wide {
+    width: 56%;
+    min-width: 640px;
 }
 
 .drawer-header {

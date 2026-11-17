@@ -135,7 +135,6 @@ pub struct BlockMobState {
 struct Found {
     version: u64,
     chunks: Vec<[i32; 3]>,
-    reaches: bool,
 }
 
 /// A search for a way going on in the background.
@@ -385,8 +384,7 @@ fn towards(
     {
         state.way = found.corners.iter().map(|corner| walked.world(*corner)).collect();
         state.next = 1;
-        let reaches = found.status == voxear_nav::PathStatus::Complete;
-        state.found = Some(Found { version: found.version, chunks: found.chunks, reaches });
+        state.found = Some(Found { version: found.version, chunks: found.chunks });
     }
     let to = walked.standing(target + Vec3::Y * 0.1, walker, 3.0).and_then(|place| walked.cell(place));
     state.search_in -= delta;

@@ -25,7 +25,8 @@ fn game(size: u32) -> (tempfile::TempDir, Game, Entity) {
     let mut file = BlockFile::default();
     file.ground.size = [size, size];
     file.ground.height = 6;
-    let scene = "format = 1\n\n[[obj]]\nid = 1\nname = \"Blocks\"\n[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n";
+    let scene =
+        "format = 1\n\n[[obj]]\nid = 1\nname = \"Blocks\"\n[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n";
     let files = [
         ("voxear.toml", "[project]\nname = \"Agents\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
         ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".to_string()),
@@ -59,7 +60,8 @@ fn at(game: &Game, entity: Entity) -> Vec3 {
 }
 
 fn arrived(game: &Game, entity: Entity) -> bool {
-    game.engine.world.get::<NavAgentState>(entity).is_some_and(|state| state.arrived)
+    let agent = game.engine.world.get::<NavAgent>(entity).unwrap();
+    game.engine.world.get::<NavAgentState>(entity).is_some_and(|state| state.is_arrived(agent))
 }
 
 /// Puts a wall of stone two blocks high on the field from `from` to `to` (inclusive), across x or z.
@@ -116,7 +118,10 @@ fn two_agents_walking_at_each_other_down_a_corridor_both_get_past() {
     wall(&mut game, field, [2, 10], [29, 10]);
     wall(&mut game, field, [2, 14], [29, 14]);
     game.tick(FRAME, None);
-    let (a, b) = (agent(&mut game, 4.5, 12.5, NavMoves::CharacterController), agent(&mut game, 27.5, 12.5, NavMoves::CharacterController));
+    let (a, b) = (
+        agent(&mut game, 4.5, 12.5, NavMoves::CharacterController),
+        agent(&mut game, 27.5, 12.5, NavMoves::CharacterController),
+    );
     for _ in 0..30 {
         game.tick(FRAME, None);
     }
@@ -161,7 +166,8 @@ fn a_crowd_goes_through_a_doorway_and_none_is_left_stuck() {
         game.tick(FRAME, None);
         frames += 1;
     }
-    let left: Vec<Vec3> = crowd.iter().filter(|(walker, _)| !arrived(&game, *walker)).map(|(walker, _)| at(&game, *walker)).collect();
+    let left: Vec<Vec3> =
+        crowd.iter().filter(|(walker, _)| !arrived(&game, *walker)).map(|(walker, _)| at(&game, *walker)).collect();
     assert!(left.is_empty(), "after {frames} frames, still on their way: {left:?}");
     for (walker, to) in &crowd {
         let now = at(&game, *walker);
@@ -178,7 +184,10 @@ fn five_hundred_agents_crossing_a_square_both_ways_take_little_of_the_frame() {
         for column in 0..10 {
             let (x, z) = (4.5 + column as f32 * 1.5, 10.5 + row as f32 * 3.0);
             agents.push((agent(&mut game, x, z, NavMoves::AlongTheNav), Vec3::new(91.5 - column as f32 * 1.5, 6.0, z)));
-            agents.push((agent(&mut game, 91.5 - column as f32 * 1.5, z + 1.5, NavMoves::AlongTheNav), Vec3::new(x, 6.0, z + 1.5)));
+            agents.push((
+                agent(&mut game, 91.5 - column as f32 * 1.5, z + 1.5, NavMoves::AlongTheNav),
+                Vec3::new(x, 6.0, z + 1.5),
+            ));
         }
     }
     for _ in 0..5 {
@@ -202,6 +211,11 @@ fn five_hundred_agents_crossing_a_square_both_ways_take_little_of_the_frame() {
     println!("{} agents along the nav: a step in {ms:.3} ms at least", agents.len());
     let slack = if cfg!(debug_assertions) { 4.0 } else { 1.0 };
     assert!(ms < 2.0 * slack, "{ms:.3} ms");
-    let moving = agents.iter().filter(|(walker, _)| game.engine.world.get::<NavAgentState>(*walker).is_some_and(|state| state.velocity.length() > 0.5)).count();
+    let moving = agents
+        .iter()
+        .filter(|(walker, _)| {
+            game.engine.world.get::<NavAgentState>(*walker).is_some_and(|state| state.velocity.length() > 0.5)
+        })
+        .count();
     assert!(moving > agents.len() / 2, "most of them on their way: {moving}");
 }

@@ -31,7 +31,10 @@ use voxear_physics::Ground;
 use voxear_scene::{Destroying, Transform, WorldTransform};
 use voxear_terrain::blocks::BlockWorld;
 
-use crate::physics::{CharacterController, PhysicsScene};
+use crate::{
+    block_mob::{BlockMob, BlockMobState},
+    physics::{CharacterController, PhysicsScene},
+};
 
 /// How many chunks of a long way an agent has found place by place at once.
 const REFINED: u32 = 6;
@@ -40,6 +43,13 @@ const MOST_LOOKED_AT: usize = 60_000;
 /// How often an agent going after a point that moves looks again, in
 /// seconds, though nothing on its way changed.
 const SEARCH_EVERY: f32 = 0.75;
+/// How many searches agents may begin in one step: a crowd sent somewhere
+/// at once has its ways found over the next few steps, not all in one.
+const MOST_ASKED: usize = 64;
+/// How many searches no thread has begun by the step after they were asked
+/// for may be done in the step itself: so an agent's way is there the step
+/// after it asked, unless a crowd asked at once.
+const MOST_TAKEN_HERE: usize = 8;
 
 /// How an agent moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,8 +155,11 @@ pub struct NavAgentState {
     /// How fast it goes, and how fast it wants to.
     pub velocity: Vec3,
     pub wanted: Vec3,
-    /// Whether it is where it was sent, or has nowhere to go.
+    /// Whether it is where it was sent, or has nowhere to go, as of the
+    /// destination it last stepped for (see [`NavAgentState::is_arrived`]).
     pub arrived: bool,
+    /// The destination it last stepped for.
+    planned_for: Option<Vec3>,
     /// The world of blocks it walks, and its place there.
     pub world: Option<Entity>,
     place: Option<PlaceRef>,
@@ -173,6 +186,12 @@ impl NavAgentState {
         self.corners.len() > 1
     }
 
+    /// Whether `agent` is where it was sent, or has nowhere to go: not
+    /// while it has been sent somewhere since it last stepped.
+    pub fn is_arrived(&self, agent: &NavAgent) -> bool {
+        self.arrived && self.planned_for == agent.destination.filter(|_| !agent.stopped)
+    }
+
     /// How far it is from `at` to the end of its way, on the ground.
     pub fn remaining(&self, at: Vec3) -> f32 {
         steer::remaining(at, &self.corners, self.next)
@@ -185,8 +204,9 @@ struct Found {
     chunks: Vec<[i32; 3]>,
 }
 
+/// A search asked for, and how many steps it has been waited for.
 #[derive(Clone)]
-struct Asked(Arc<Job<FoundPath>>);
+struct Asked(Arc<Job<FoundPath>>, u32);
 
 impl std::fmt::Debug for Asked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -238,13 +258,26 @@ pub fn step_agents(world: &mut World, delta: f32) {
     if delta <= 0.0 {
         return;
     }
-    let agents: Vec<(Entity, NavAgent)> = world
+    let mut agents: Vec<(Entity, NavAgent)> = world
         .query_ref::<(Entity, &NavAgent)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(entity, _)| crate::net::authority::has_authority(world, *entity))
+        .filter(|(entity, _)| crate::net::has_authority(world, *entity))
         .map(|(entity, agent)| (entity, agent.clone()))
         .collect();
+    // Block Mobs without a Nav Agent of their own walk as one made of their settings, to where their goal says.
+    let mobs: Vec<(Entity, NavAgent)> = world
+        .query_ref::<(Entity, &BlockMob, &CharacterController)>()
+        .without::<NavAgent>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(entity, ..)| crate::net::has_authority(world, *entity))
+        .map(|(entity, mob, controller)| {
+            let destination = world.get::<BlockMobState>(entity).and_then(|state| state.destination);
+            (entity, mob.as_agent(controller, destination))
+        })
+        .collect();
+    agents.extend(mobs);
     if agents.is_empty() {
         return;
     }
@@ -267,6 +300,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
 
     // Each agent: its way taken or asked for, and the velocity it wants.
     let mut steps: Vec<Stepping> = Vec::with_capacity(agents.len());
+    let mut budget = Budget { asked: MOST_ASKED, taken_here: MOST_TAKEN_HERE };
     for (entity, agent) in agents {
         let Some(at) = position(world, entity) else { continue };
         let mut state = world.get::<NavAgentState>(entity).cloned().unwrap_or_else(|| NavAgentState {
@@ -282,7 +316,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
             .or((!walked.is_empty()).then_some(0));
         state.world = index.map(|index| walked[index].entity);
         if let Some(walked) = index.map(|index| &walked[index]) {
-            plan(world, &agent, &mut state, walked, at, height, delta);
+            plan(world, &agent, &mut state, walked, at, height, delta, &mut budget);
         } else {
             state.wanted = Vec3::ZERO;
         }
@@ -293,6 +327,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
     let others: Vec<Mover> = world
         .query_ref::<(Entity, &CharacterController)>()
         .without::<NavAgent>()
+        .without::<BlockMob>()
         .into_iter()
         .filter_map(|(entity, controller)| {
             let at = position(world, entity)?;
@@ -314,7 +349,8 @@ pub fn step_agents(world: &mut World, delta: f32) {
     let mut movers: Vec<Mover> = steps
         .iter()
         .map(|step| {
-            let radius = step.controller.map_or(step.agent.radius, |controller| controller.radius.max(step.agent.radius));
+            let radius =
+                step.controller.map_or(step.agent.radius, |controller| controller.radius.max(step.agent.radius));
             Mover {
                 position: steer::flat(step.at),
                 velocity: steer::flat(step.state.velocity),
@@ -329,10 +365,8 @@ pub fn step_agents(world: &mut World, delta: f32) {
     let agents_count = movers.len();
     movers.extend(others);
     let heeding = steps.iter().map(|step| step.agent.avoidance).max_by_key(|quality| *quality as u8);
-    let avoidance = Avoidance {
-        neighbours: if heeding == Some(NavAvoidance::Low) { 4 } else { 10 },
-        ..Avoidance::default()
-    };
+    let avoidance =
+        Avoidance { neighbours: if heeding == Some(NavAvoidance::Low) { 4 } else { 10 }, ..Avoidance::default() };
     let chosen = avoid(&movers, &avoidance, delta);
 
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else {
@@ -356,20 +390,49 @@ fn position(world: &World, entity: Entity) -> Option<Vec3> {
         .or_else(|| world.get::<Transform>(entity).map(|transform| transform.position))
 }
 
+/// How many searches agents may still begin and do themselves this step.
+struct Budget {
+    asked: usize,
+    taken_here: usize,
+}
+
 /// Takes the way asked for last step, asks for one afresh where it is
 /// wanted, and works out the velocity the agent wants along it.
-fn plan(world: &World, agent: &NavAgent, state: &mut NavAgentState, walked: &Walked, at: Vec3, height: f32, delta: f32) {
+#[allow(clippy::too_many_arguments)]
+fn plan(
+    world: &World,
+    agent: &NavAgent,
+    state: &mut NavAgentState,
+    walked: &Walked,
+    at: Vec3,
+    height: f32,
+    delta: f32,
+    budget: &mut Budget,
+) {
     let walker = walked.walker(height);
-    // The way asked for: done by now on a thread, or done here.
-    if let Some(Asked(job)) = state.asked.take()
-        && let Some(found) = job.take()
-    {
+    // The way asked for: done by now on a thread, or done here while few are waiting on the threads.
+    let taken = state.asked.take().and_then(|Asked(job, waited)| {
+        let here = !job.is_done() && !job.is_begun() && budget.taken_here > 0;
+        let found = match job.is_done() || here {
+            true => {
+                budget.taken_here -= usize::from(here);
+                job.take()
+            }
+            false => None,
+        };
+        if found.is_none() {
+            state.asked = Some(Asked(job, waited + 1));
+        }
+        found
+    });
+    if let Some(found) = taken {
         state.corners = found.corners.iter().map(|corner| walked.world(*corner)).collect();
         state.next = 1.min(state.corners.len().saturating_sub(1));
         (state.status, state.cost) = (found.status, found.cost);
         state.found = Some(Found { version: found.version, chunks: found.chunks });
     }
     state.place = walked.standing(at, walker, 2.0);
+    state.planned_for = agent.destination.filter(|_| !agent.stopped);
     let Some(destination) = agent.destination.filter(|_| !agent.stopped) else {
         state.corners.clear();
         (state.wanted, state.arrived, state.status) = (Vec3::ZERO, true, PathStatus::None);
@@ -387,12 +450,14 @@ fn plan(world: &World, agent: &NavAgent, state: &mut NavAgentState, walked: &Wal
     // A way found part of the way is asked for again near its end.
     let near_end = state.status == PathStatus::Continues && state.remaining(at) < 32.0 * walked.size;
     let moved_goal = state.asked_to != to;
-    if state.asked.is_none() && (moved_goal || stale || near_end || state.search_in <= 0.0 && to.is_none()) {
+    let wanted = moved_goal || stale || near_end || state.search_in <= 0.0 && to.is_none();
+    if state.asked.is_none() && wanted && budget.asked > 0 {
+        budget.asked -= 1;
         let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
         let mut ask = PathAsk::new(from, walked.local(destination), walker);
         (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
         let nav = walked.nav.clone();
-        state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask))));
+        state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask)), 0));
         (state.asked_to, state.search_in) = (to, SEARCH_EVERY);
     }
     let _ = world;
@@ -435,7 +500,10 @@ fn finish(
 ) {
     let agent = &step.agent;
     let state = &mut step.state;
-    let flat = steer::accelerate(steer::flat(state.velocity), chosen, agent.acceleration.max(0.01) * 4.0, delta);
+    // A velocity that is no number, as from agents standing in one place, is no velocity.
+    let chosen = if chosen.is_finite() { chosen } else { Vec2::ZERO };
+    let velocity = if state.velocity.is_finite() { steer::flat(state.velocity) } else { Vec2::ZERO };
+    let flat = steer::accelerate(velocity, chosen, agent.acceleration.max(0.01) * 4.0, delta);
     let walked = step.walked.map(|index| &walked[index]);
     let facing = Vec3::new(flat.x, 0.0, flat.y);
     match (agent.moves, physics, step.controller) {
@@ -620,11 +688,12 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
     }
     // What it is doing, read from what the engine keeps.
     if written.is_none() && (HAS_PATH..=CORNER).contains(&what) {
-        world.get::<NavAgent>(entity)?;
         let at = position(world, entity).unwrap_or_default();
         let corner = world.resource::<ScriptAsked>().map_or(0, |asked| asked.corner);
         let state = world.get::<NavAgentState>(entity).cloned().unwrap_or_default();
-        let arrived = world.get::<NavAgentState>(entity).is_none_or(|state| state.arrived);
+        let agent = world.get::<NavAgent>(entity)?;
+        let arrived =
+            world.get::<NavAgentState>(entity).map_or(agent.destination.is_none(), |state| state.is_arrived(agent));
         return match what {
             HAS_PATH => toggle(state.has_path()),
             PATH_PENDING => toggle(state.pending()),
@@ -763,7 +832,14 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
                 let walker = walked.walker(1.8);
                 let from = walked.standing(at, walker, 4.0)?;
                 let costs = voxear_nav::AreaCosts::default();
-                let place = voxear_nav::blocks::search::random_near(&walked.nav, from, walker, &costs, radius / walked.size, seed >> 4)?;
+                let place = voxear_nav::blocks::search::random_near(
+                    &walked.nav,
+                    from,
+                    walker,
+                    &costs,
+                    radius / walked.size,
+                    seed >> 4,
+                )?;
                 Some(walked.world(walked.nav.point(place)?))
             });
             asked(world).random = random;

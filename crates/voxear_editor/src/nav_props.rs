@@ -76,7 +76,9 @@ pub fn tooltip(field: NavField) -> &'static str {
         F::Acceleration => "How quickly it speeds up and slows down, in metres a second each second. Default: 8.",
         F::TurnSpeed => "How fast it turns to face the way it goes, in degrees a second. Default: 360.",
         F::StoppingDistance => "How near its destination it stops, in metres. Default: 0.",
-        F::AutoBrake => "Whether it slows down to stop at its destination, or arrives at speed and stops there. Default: on.",
+        F::AutoBrake => {
+            "Whether it slows down to stop at its destination, or arrives at speed and stops there. Default: on."
+        }
         F::Radius => "How wide it is round its middle, in metres: how far other agents keep from it. Default: 0.35.",
         F::Height => {
             "How tall it is, in metres: what it fits under. With a Character Controller, the controller's height is \

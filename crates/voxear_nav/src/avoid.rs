@@ -317,7 +317,11 @@ mod tests {
         for _ in 0..(seconds / delta) as usize {
             for (mover, goal) in movers.iter_mut().zip(goals) {
                 let way = *goal - mover.position;
-                mover.wanted = if way.length() < 0.05 { Vec2::ZERO } else { way.normalize() * mover.speed.min(way.length() / delta) };
+                mover.wanted = if way.length() < 0.05 {
+                    Vec2::ZERO
+                } else {
+                    way.normalize() * mover.speed.min(way.length() / delta)
+                };
             }
             let chosen = avoid(movers, &Avoidance::default(), delta);
             for (mover, velocity) in movers.iter_mut().zip(chosen) {

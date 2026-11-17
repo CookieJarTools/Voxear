@@ -3548,9 +3548,30 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     continuing; ways reaching wherever a search a block at a time reaches, the coarse graph keeping them within
     5% of the cheapest; chunks edited, streaming out and back, a block numbered for the first time; the timings;
     the Block Mob tests as they were.
-  - [ ] Nav Agents: the component (`Destination`, paths, corners, costs), searches queued with a budget,
-    steering, avoidance between agents on the workers, moving by the Character Controller or along the nav for
-    crowds, in the fixed step; Block Mob on a Nav Agent; the C# API
+  - [x] **Nav Agents** (`voxear_engine::nav_agent`, `[obj.nav_agent]`, Add Component ▸ Navigation ▸ Nav Agent,
+    every row with a tooltip): the easy way a destination, the full way its path, corners, status, cost,
+    remaining distance, velocity and the velocity it wants. Agents step in the fixed step, before physics, and
+    only where their Obj has authority: each takes the way it asked for the step before (a `threads::Job`, done
+    there and then if no thread had begun it) and asks again when its destination moves to another place, a
+    chunk on its way changes, or a way found part of the way nears its end; it steers corner to corner
+    (`voxear_nav::steer`: past each corner as it is reached or overshot, slowing to stop by its end, its speed
+    changing no faster than it may); then all of them choose their velocities together, each going round the
+    others and every other Character Controller by reciprocal velocity obstacles on the terrain's threads
+    (`voxear_nav::avoid`: neighbours from a grid, a half-plane for each, a small linear program on the ground
+    plane, its share of the turning by priority). It moves by its **Character Controller** (falling, swimming
+    up in deep water, stepping a block), **Along the Nav** (`blocks::moving::slide`: kept on the places,
+    sliding along what is in its way, falling where they drop away; no physics, for crowds), or **Not at All**
+    (a script or the motion matcher moves it by its desired velocity). **Block Mob** now sets where to go by
+    its goal (`set_destinations`) and walks as an agent made of its settings, or by the Obj's own Nav Agent, so
+    mobs go round each other too. C#: `Obj.NavAgent`/`AddNavAgent` (`Destination`, `Stop`, `Resume`, `Warp`,
+    `Arrived`, `HasPath`, `PathPending`, `PathStatus`, `RemainingDistance`, `Velocity`, `DesiredVelocity`,
+    `NextCorner`, `Path`, every setting), `NavPath`, `NavPathStatus`, `NavMoves`, `NavAvoidance`, and
+    `Navigation.FindPath`, `IsReachable`, `Nearest`, `RandomPlace`, through `ComponentKind::NavAgent` and
+    `Navigation` with no JSON. Timings (test build, least of 60 steps): 500 agents along the nav crossing a
+    square both ways, a step in about 1 ms. Tests: an agent round a wall by its controller and along the nav; two
+    passing in a corridor three blocks wide; twenty through a doorway two blocks wide, none left stuck; the 500;
+    a C# script sending an agent and asking Navigation for ways; the Block Mob tests, as they were, on agents.
+    Manual: Navigation (Nav Agents, Finding Ways from Scripts).
   - [ ] moving in block worlds: jumps, falls, swimming, climbing, doors; areas from a project list, picked per
     block and by Nav Area boxes; Nav Links; walkers two blocks wide
   - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls

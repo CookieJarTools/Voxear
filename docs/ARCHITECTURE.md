@@ -4302,12 +4302,27 @@ engine's glue is `voxear_engine::navigation`.
   and taken the next: done by then on a thread, or done there and then by the mob if no thread had begun it, so a
   way asked for is always there a frame later.
 
+### Nav Agents *(implemented)*
+
+- **The component** (`voxear_engine::nav_agent::NavAgent`): its settings (speed, acceleration, turn speed,
+  stopping distance, auto brake, radius, height, avoidance, priority, how it moves, swimming) are saved; its
+  destination is a game's to set and is not. What it is doing is `NavAgentState`: its corners, the next of them,
+  its status and cost, its velocity and the one it wants, the way asked for.
+- **A step** (`step_agents`, in the fixed step after FixedUpdate, before physics, only where the Obj has
+  authority): each agent takes the way it asked for last step, asks again where its destination is another
+  place, a chunk on its way changed (`FoundPath::is_stale`), or a way found part of the way nears its end, and
+  steers (`voxear_nav::steer`). Then every agent's velocity is chosen at once by avoidance (`voxear_nav::avoid`:
+  reciprocal velocity obstacles, neighbours from a grid of cells, the agents shared over the terrain's threads,
+  each working from where every agent was at the start of the step). Other Character Controllers, the player
+  among them, are gone round but do not go round. Then each moves: by its Character Controller, along the nav
+  (`blocks::moving::slide`, sliding along what it cannot step into), or not at all.
+- **Block Mob** sets a destination by its goal (`block_mob::set_destinations`, just before the agents step) and
+  walks as an agent made of its own settings, or by the Obj's own Nav Agent where it has one.
+- **Scripts** reach agents through `ComponentKind::NavAgent` and ways through `ComponentKind::Navigation`, four
+  numbers at a time: a way's corners are read one by one after it is found, so nothing crosses as text.
+
 ### Planned
 
-- **Nav Agents**: a component with the easy way (`agent.Destination = point;`) and the full one (paths, corners,
-  costs, areas), searches in a queue on the threads with a budget, steering, avoidance between agents by
-  reciprocal velocity obstacles on the workers, and ways of moving (by the Character Controller, along the nav for
-  crowds, or by a script from the desired velocity), in the fixed step.
 - **Moving in block worlds**: jumps, falls, swimming, climbing, doors; areas from a project list (blocks pick one,
   Nav Area boxes mark one); Nav Links; wider walkers.
 - **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level

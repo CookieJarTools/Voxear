@@ -107,6 +107,7 @@ impl Engine {
         crate::animation::register_bone_attachments();
         crate::animation::register_mob_motion();
         crate::block_mob::register();
+        crate::nav_agent::register();
         voxear_scripting::set_kind_texts(voxear_scripting::ComponentKind::Vehicle, voxear_scripting::vehicle_curve_texts);
         let mut world = World::new();
         register_obj_components(&mut world);
@@ -619,6 +620,11 @@ impl Engine {
             self.run_fixed_update();
             self.run_stage("FixedUpdate");
             self.flush();
+            // What finds its own way takes its step on the tick, before physics, as the network keeps time.
+            if !self.edit_mode {
+                crate::block_mob::set_destinations(&mut self.world, self.time.fixed_delta);
+                crate::nav_agent::step_agents(&mut self.world, self.time.fixed_delta);
+            }
             self.step_physics();
             // What the tick moved through a Portal's opening comes out of the other.
             if !self.edit_mode {
@@ -662,10 +668,8 @@ impl Engine {
             // Posed after Update, so LateUpdate sees this frame's bones.
             profile_scope!("Animation");
             // What was hidden last frame shows, unless hidden again as the pose stage and the attachments pose it.
-            // What walks by itself takes its step first, for what animates it to see, on places kept up with
-            // this frame's blocks.
+            // Places to walk kept up with this frame's blocks, for the next tick's agents.
             crate::navigation::update(&mut self.world);
-            crate::block_mob::walk_block_mobs(&mut self.world, self.time.delta);
             crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);
             crate::animation::match_motion(&mut self.world, self.time.delta);

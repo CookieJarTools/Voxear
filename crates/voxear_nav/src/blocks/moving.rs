@@ -10,39 +10,51 @@ use super::{BlockNav, PlaceRef, walking::Walker};
 /// ground, kept `margin` blocks from the side of any block column it
 /// cannot step into: the place it is on, and its feet, on that place's
 /// floor.
-pub fn slide(nav: &BlockNav, from: PlaceRef, at: [f32; 3], by: [f32; 2], walker: Walker, margin: f32) -> (PlaceRef, [f32; 3]) {
+pub fn slide(
+    nav: &BlockNav,
+    from: PlaceRef,
+    at: [f32; 3],
+    by: [f32; 2],
+    walker: Walker,
+    margin: f32,
+) -> (PlaceRef, [f32; 3]) {
     let margin = margin.clamp(0.0, 0.45);
     let mut place = from;
     let mut point = [at[0], at[2]];
+    if !(by[0].is_finite() && by[1].is_finite()) {
+        return (place, at);
+    }
     for axis in 0..2 {
-        let mut left = by[axis];
-        // A column at a time, so a long move is stepped through each it crosses.
-        while left != 0.0 {
+        if by[axis] == 0.0 {
+            continue;
+        }
+        let way = by[axis].signum();
+        let target = point[axis] + by[axis];
+        let (dx, dz) = if axis == 0 { (way as i32, 0) } else { (0, way as i32) };
+        // A column at a time towards where the move ends, so a long move is stepped through each it crosses.
+        for _ in 0..64 {
             let cell = point[axis].floor();
-            let way = left.signum();
             let edge = if way > 0.0 { cell + 1.0 } else { cell };
-            let to_edge = edge - point[axis];
-            // Within this column, keeping the margin from a side it cannot step past.
-            let lead = point[axis] + left + way * margin;
-            if (lead - edge) * way < 0.0 || lead == edge {
-                point[axis] += left;
+            // Within this column, its side kept the margin off the next.
+            if (target + way * margin - edge) * way <= 0.0 {
+                point[axis] = target;
                 break;
             }
-            let (dx, dz) = if axis == 0 { (way as i32, 0) } else { (0, way as i32) };
             match nav.step(place, dx, dz, walker) {
-                Some(next) if (point[axis] + left - edge) * way >= 0.0 => {
-                    // Into the next column, and on from its side.
-                    place = next;
-                    point[axis] = edge + way * 1e-4;
-                    left -= to_edge + way * 1e-4;
-                }
-                Some(_) => {
-                    point[axis] += left;
-                    break;
-                }
+                // Nothing to step into: as near the side as the margin lets it.
                 None => {
-                    point[axis] = edge - way * margin;
+                    point[axis] = if way > 0.0 { target.min(edge - margin) } else { target.max(edge + margin) };
                     break;
+                }
+                // Its side over the next column, its middle still in this one.
+                Some(_) if (target - edge) * way < 0.0 => {
+                    point[axis] = target;
+                    break;
+                }
+                // Into the next column, and on from just inside it.
+                Some(next) => {
+                    place = next;
+                    point[axis] = edge + way * 1e-3;
                 }
             }
         }
@@ -88,5 +100,11 @@ mod tests {
         let (place, at) = slide(nav, near, [3.5, 1.0, 7.5], [0.0, 1.0], walker, 0.3);
         assert_eq!(nav.cell(place), Some([3, 2, 8]));
         assert_eq!(at[1], 2.0);
+        // A move ending exactly on a column's side, either way, and one of nothing at all.
+        let (place, at) = slide(nav, start, [2.5, 1.0, 2.5], [0.5, 0.0], walker, 0.3);
+        assert_eq!((nav.cell(place), at[0]), (Some([3, 1, 2]), 3.0));
+        let (place, at) = slide(nav, place, at, [-0.5, 0.0], walker, 0.3);
+        assert_eq!((nav.cell(place), at[0]), (Some([2, 1, 2]), 2.5));
+        assert_eq!(slide(nav, place, at, [f32::NAN, 0.0], walker, 0.3), (place, at));
     }
 }

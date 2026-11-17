@@ -658,6 +658,10 @@ pub enum ComponentKind {
     BakedLighting = 32,
     /// The model an Obj draws whole, and the colours it is tinted.
     ModelRenderer = 33,
+    /// What finds its Obj's way and walks it.
+    NavAgent = 34,
+    /// Ways over the ground, which no one Obj has.
+    Navigation = 35,
 }
 
 /// The most kinds `kind_value` answers.

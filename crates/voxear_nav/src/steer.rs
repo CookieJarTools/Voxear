@@ -23,7 +23,7 @@ pub struct Steering {
 impl Default for Steering {
     fn default() -> Self {
         Self { speed: 3.5, acceleration: 8.0, stopping: 0.0, brakes: true, corner: 0.3 }
-}
+    }
 }
 
 /// Along the ground: `v` without its height.

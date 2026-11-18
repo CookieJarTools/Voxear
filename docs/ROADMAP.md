@@ -3543,9 +3543,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   the new one has them all. Costs: a smooth world loads slower (three levels a chunk, Voxel Terrain 34 ms
   to 67). Not done: the coarse rings made and kept on the GPU, as nothing but drawing needs them; coarser levels past
   the chunks' fixed sides (resampled blocks); a coarser mesh for the GI's
-  rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
+  rays (very large worlds still fill lighting's share of the shared mesh pool); a frame's draws merged across a chunk's levels; ground
   generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
   the surface.
+- ~~**Room for models beside a world's lighting:**~~ done: a model loaded or spawned at any time fits beside a
+  streamed world of blocks. Its chunks' meshes for the GI's and sound's rays take at most 75% of the space every
+  mesh shares (`[quality] block_lighting`, Project Settings ▸ Quality ▸ Block Worlds ▸ Lighting share), the rest
+  kept free; as models take it, the farthest chunks give theirs back, never a nearer while a farther is held, and
+  a burst larger than the room kept has them give it back at once, the frame waiting for the GPU. The space is 8
+  million vertices and 16 million indices (was 4 and 8) and 2 million skinned vertices (was 1). A model too large
+  for it all says how full the space is and who holds it; the Profiler, `profiler.frames` and `mesh_pool.get`
+  show the split. GPU tests: models spawned over time and in a burst into a full world, a model too large; unit
+  test of the order chunks give back in. Frames after a model loads into the room kept: no slower than the rest.
+  Later: the same for a heightmap terrain's tiles' meshes for rays, which count as models.
 - ~~**Budgets for making chunks:**~~ done: what making worlds of blocks may spend is a setting
   (`voxear_terrain::WorldBudget`, `[world]` in `voxear.toml`, Project Settings ▸ World ▸ Block Worlds, `World.Quality`
   and the numbers under it for scripts): how many threads make terrain at once (a gate on the worker pool, so it

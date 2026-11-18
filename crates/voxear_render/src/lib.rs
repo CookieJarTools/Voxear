@@ -110,6 +110,7 @@ use voxear_rhi::{
 };
 
 pub use assets::AssetUsage;
+pub use assets::{DEFAULT_LIGHTING_SHARE, MAX_LIGHTING_SHARE, MIN_LIGHTING_SHARE, MeshPoolUse};
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use box_model::{
     BoneRole, BoxBone, BoxClip, BoxHit, BoxKey, BoxLayer, BoxModel, BoxSkin, BoxTrack, Ease, Face, FaceRect, KEY_STEP,
@@ -276,7 +277,18 @@ pub struct RenderStats {
     /// its pool, and how many it drew this frame.
     pub lamp_shadow_pages: u32,
     pub lamp_shadow_drawn: u32,
+    /// What the shared vertex and index space holds: models, worlds of
+    /// blocks' lighting, and what is free.
+    pub mesh_pool: MeshPoolUse,
 }
+
+/// How much of the shared vertex and index space worlds of blocks' lighting
+/// may hold, in percent, as the project sets it (`[quality] block_lighting`):
+/// the rest is kept free for models to arrive into, and lighting gives back
+/// its farthest chunks as models take it. [`DEFAULT_LIGHTING_SHARE`] where
+/// none is set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockLightingShare(pub u32);
 
 impl RenderStats {
     fn read(counters: &[u32], exposure: &[f32]) -> Self {
@@ -310,6 +322,7 @@ impl RenderStats {
             virtual_shadow_moving: 0,
             lamp_shadow_pages: 0,
             lamp_shadow_drawn: 0,
+            mesh_pool: MeshPoolUse::default(),
         }
     }
 }
@@ -1568,6 +1581,18 @@ impl Renderer {
         self.assets.as_ref().expect("assets live until drop").usage()
     }
 
+    /// What the shared vertex and index space holds now, and who holds it.
+    pub fn mesh_pool(&self) -> MeshPoolUse {
+        self.assets.as_ref().expect("assets live until drop").pool_use()
+    }
+
+    /// Lowers how many vertices and indices the shared space has room for,
+    /// where none is used past that yet, as a GPU with less memory would
+    /// have: for tests to fill it quickly. Returns the room it has now.
+    pub fn limit_mesh_pool(&mut self, vertices: u64, indices: u64) -> [u64; 2] {
+        self.assets.as_mut().expect("assets live until drop").limit_space(vertices, indices)
+    }
+
     /// Draws the 3D view into `rect` (left, top, width, height in pixels of
     /// the output) instead of all of it, as the editor's Scene panel does.
     /// What lies outside is cleared, for the UI to draw over.
@@ -1782,6 +1807,8 @@ impl Renderer {
         let mut waited = waiting.elapsed();
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
+        let share = world.resource::<BlockLightingShare>().map_or(DEFAULT_LIGHTING_SHARE, |share| share.0);
+        assets.set_lighting_share(share);
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
         // A lighting bake reads its sums back once traced, and finishes on a thread of its own; while it traces, as
         // many dispatches a frame as take about a frame's share of the GPU, by how long the last ones took.
@@ -1838,6 +1865,7 @@ impl Renderer {
         let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
         self.stats.particles = self.particle_sim.counts();
+        self.stats.mesh_pool = self.assets.as_ref().expect("assets live until drop").pool_use();
 
         let recording = profile_marker!("Record Passes").scope();
         let (output_format, display_settings) = (self.output_format, self.display);

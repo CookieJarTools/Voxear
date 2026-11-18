@@ -147,21 +147,29 @@ pub struct InputSettings {
 /// How much the project lets the renderer spend. `particles` is the most
 /// simulated particles every Particle System may have room for between
 /// them (see `voxear_render::ParticleBudget`): those there is no room for
-/// are not drawn.
+/// are not drawn. `block_lighting` is how much of the space every mesh
+/// shares worlds of blocks' lighting may take, in percent (see
+/// `voxear_render::BlockLightingShare`): the rest is kept free for models,
+/// and lighting gives back its farthest chunks as models take it.
 ///
 /// ```toml
 /// [quality]
 /// particles = 250000
+/// block_lighting = 75
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct QualitySettings {
     pub particles: u32,
+    pub block_lighting: u32,
 }
 
 impl Default for QualitySettings {
     fn default() -> Self {
-        Self { particles: voxear_render::DEFAULT_PARTICLE_BUDGET }
+        Self {
+            particles: voxear_render::DEFAULT_PARTICLE_BUDGET,
+            block_lighting: voxear_render::DEFAULT_LIGHTING_SHARE,
+        }
     }
 }
 
@@ -264,6 +272,7 @@ impl QualitySettings {
     /// Puts the project's budgets where the renderer reads them.
     pub fn put(&self, world: &mut voxear_ecs::World) {
         world.insert_resource(voxear_render::ParticleBudget(self.particles));
+        world.insert_resource(voxear_render::BlockLightingShare(self.block_lighting));
     }
 }
 
@@ -622,8 +631,11 @@ impl Project {
         let particles = settings.particles.min(voxear_render::MAX_PARTICLE_BUDGET);
         let written = (particles != QualitySettings::default().particles).then(|| toml_edit::value(i64::from(particles)));
         set_key(&mut document, "quality", "particles", written);
+        let share = settings.block_lighting.clamp(voxear_render::MIN_LIGHTING_SHARE, voxear_render::MAX_LIGHTING_SHARE);
+        let written = (share != voxear_render::DEFAULT_LIGHTING_SHARE).then(|| toml_edit::value(i64::from(share)));
+        set_key(&mut document, "quality", "block_lighting", written);
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
-        self.file.quality = QualitySettings { particles };
+        self.file.quality = QualitySettings { particles, block_lighting: share };
         Ok(())
     }
 

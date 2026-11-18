@@ -207,6 +207,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `play`, `pause`, `step`, `stop`, `game.console` | Run the game, and type into its console |
 | `console.read` | Read the Console's lines, from where the last read stopped |
 | `profiler.frames` | Read the Profiler's latest frames, each sample's time and each drawing pass's, from where the last read stopped |
+| `mesh_pool.get` | Read the room every mesh shares on the GPU: what models hold, what worlds of blocks' lighting holds and how far it reaches, and what is free |
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
 | `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |

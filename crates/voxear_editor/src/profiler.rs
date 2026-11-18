@@ -330,6 +330,7 @@ impl Profiler {
                 "triangles": blocks.triangles + blocks.water_triangles,
                 "shadow_draws": blocks.shadow_draws,
             });
+            frame["mesh_pool"] = serde_json::to_value(s.stats.mesh_pool).unwrap_or_default();
             frame
         });
         read_frames(frames, after, limit, self.frames + 1)
@@ -512,6 +513,8 @@ impl Profiler {
         let usage = game.content.usage();
         let memory = resident_megabytes().map_or_else(|| "-".to_string(), |mb| format!("{mb:.0} MB"));
         let lods: Vec<String> = stats.lods.iter().take_while(|&&n| n > 0).map(u32::to_string).collect();
+        let pool = stats.mesh_pool;
+        let millions = |count: u64| format!("{:.2}M", count as f64 / 1e6);
         let counts = [
             ("Objs drawn", format!("{} of {}", stats.drawn_early + stats.drawn_late, stats.instances)),
             ("Frustum culled", stats.frustum_culled.to_string()),
@@ -525,6 +528,10 @@ impl Profiler {
             ("By LOD", if lods.is_empty() { "-".into() } else { lods.join(" / ") }),
             ("LOD fades", stats.fade_draws.to_string()),
             ("Lights per cluster", stats.cluster_max_lights.to_string()),
+            ("Model vertices", millions(pool.model_vertices)),
+            ("Block light vertices", format!("{} · {} chunks", millions(pool.lighting_vertices), pool.lighting_meshes)),
+            ("Free vertices", format!("{} of {}", millions(pool.free_vertices), millions(pool.vertex_capacity))),
+            ("Block light reach", format!("{} m", pool.lighting_reach)),
             ("Memory", memory),
             ("Models", usage.models.to_string()),
             ("Prefabs", usage.prefabs.to_string()),

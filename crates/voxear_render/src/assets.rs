@@ -62,13 +62,25 @@ impl Glow {
     }
 }
 
-/// How many vertices all meshes may keep: room beside the rest for a world
-/// of cubes 900 blocks across, whose chunks' meshes for rays take nearly
-/// three million, each block's face keeping its corners to itself.
-const MAX_VERTICES: u64 = 4 * 1024 * 1024;
-/// How many skinned vertices' bones all meshes may keep (see `skeleton::SkinVertex`).
-const MAX_SKIN_VERTICES: u64 = 1024 * 1024;
-const MAX_INDICES: u64 = 8 * 1024 * 1024;
+/// How many vertices all meshes may keep, 60 bytes each with their lightmap
+/// UVs: models and worlds of blocks' lighting share it (see
+/// [`MeshPoolUse`]). A world of cubes 900 blocks across takes nearly three
+/// million for its chunks' meshes for rays, each block's face keeping its
+/// corners to itself, and a skinned part takes three times its vertices
+/// for its poses.
+const MAX_VERTICES: u64 = 8 * 1024 * 1024;
+/// How much of the shared vertex and index space worlds of blocks' lighting
+/// may hold, in percent, unless the project says otherwise: the rest is kept
+/// free for models to arrive into (see [`Assets::set_lighting_share`]).
+pub const DEFAULT_LIGHTING_SHARE: u32 = 75;
+/// The least and most share of the space lighting may be given, in percent.
+pub const MIN_LIGHTING_SHARE: u32 = 10;
+pub const MAX_LIGHTING_SHARE: u32 = 95;
+/// How many skinned vertices' bones all meshes may keep (see
+/// `skeleton::SkinVertex`): every box model's count, a fleet of ships'
+/// over half a million.
+const MAX_SKIN_VERTICES: u64 = 2 * 1024 * 1024;
+const MAX_INDICES: u64 = 16 * 1024 * 1024;
 const MAX_MESHES: u64 = 16 * 1024;
 /// Enough for every index in meshlets of 64 triangles, half the most they hold.
 const MAX_MESHLETS: u64 = MAX_INDICES / (3 * 64);
@@ -226,6 +238,77 @@ pub struct AssetUsage {
     pub retiring: u32,
     /// Cooked model bytes the GPU has decompressed since startup.
     pub decompressed_on_gpu: u64,
+    pub pool: MeshPoolUse,
+}
+
+/// What the shared vertex and index space holds, and who holds it: models
+/// (and everything else drawn from it: built-in meshes, skinned parts'
+/// poses), and worlds of blocks' lighting, their chunks' meshes for the
+/// GI's and sound's rays. Lighting may take no more than leaves the share
+/// of the space it is not given free, and gives back its farthest chunks
+/// as models take that room (see [`Assets::set_lighting_share`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct MeshPoolUse {
+    /// Room for this many vertices and indices in all.
+    pub vertex_capacity: u64,
+    pub index_capacity: u64,
+    /// Held by models, built-in meshes and poses.
+    pub model_vertices: u64,
+    pub model_indices: u64,
+    /// Held by worlds of blocks' lighting, in this many chunks' meshes, the
+    /// farthest of them this many metres from the camera.
+    pub lighting_vertices: u64,
+    pub lighting_indices: u64,
+    pub lighting_meshes: u32,
+    pub lighting_reach: u32,
+    /// Freed, and free again once frames in flight are done with it.
+    pub freeing_vertices: u64,
+    pub freeing_indices: u64,
+    /// Free now.
+    pub free_vertices: u64,
+    pub free_indices: u64,
+    /// The most of the space lighting may take, in percent.
+    pub lighting_share: u32,
+    /// Lighting chunks given back so far for models to fit, and of those,
+    /// how many at once, waiting for the GPU, as a model did not fit even in
+    /// the room kept free.
+    pub given_back: u64,
+    pub given_back_at_once: u64,
+}
+
+impl MeshPoolUse {
+    /// One line, as an error or a log says it: how full the space is, and
+    /// who holds it.
+    pub fn describe(&self) -> String {
+        let m = |count: u64| format!("{:.2}M", count as f64 / 1e6);
+        format!(
+            "vertices {} of {} used: models {}, block lighting {} in {} chunks, freeing {}, free {}; \
+             indices {} of {}: models {}, block lighting {}, freeing {}, free {}",
+            m(self.vertex_capacity - self.free_vertices),
+            m(self.vertex_capacity),
+            m(self.model_vertices),
+            m(self.lighting_vertices),
+            self.lighting_meshes,
+            m(self.freeing_vertices),
+            m(self.free_vertices),
+            m(self.index_capacity - self.free_indices),
+            m(self.index_capacity),
+            m(self.model_indices),
+            m(self.lighting_indices),
+            m(self.freeing_indices),
+            m(self.free_indices),
+        )
+    }
+}
+
+/// A world of blocks' lighting mesh: how many vertices and indices it holds,
+/// how far it is from the camera, in metres, for the farthest to be given
+/// back first, and the frame it was made in.
+#[derive(Clone, Copy)]
+struct Lit {
+    room: [u64; 2],
+    away: f32,
+    made: u64,
 }
 
 /// Where a mesh's data sits in the shared buffers, each as (offset, count).
@@ -375,6 +458,24 @@ pub struct Assets {
     /// How many times a material has been written again, so what keeps
     /// shadows drawn with them knows when to draw them again.
     material_writes: u64,
+    /// Worlds of blocks' lighting meshes (see [`MeshPoolUse`]), and the room
+    /// they hold between them.
+    lighting: HashMap<MeshHandle, Lit>,
+    lighting_room: [u64; 2],
+    /// The meshes freed and waiting for frames in flight, so none is freed
+    /// twice.
+    retiring_meshes: std::collections::HashSet<MeshHandle>,
+    /// The vertices and indices retiring holds, free once frames in flight
+    /// are done with them.
+    freeing_room: [u64; 2],
+    /// How much of the space lighting may take, in percent.
+    lighting_share: u32,
+    /// Lighting meshes given back for models to fit, for their worlds to
+    /// let go of (see [`take_given_back`](Self::take_given_back)).
+    given_back: Vec<MeshHandle>,
+    given_back_count: [u64; 2],
+    /// The frame `collect` was last called for.
+    frame: u64,
 }
 
 impl Assets {
@@ -462,6 +563,14 @@ impl Assets {
             particle_textures: [TextureId(0); 5],
             puff_light_maps: [TextureId(0); 2],
             particle_meshes: [MeshHandle(0); 4],
+            lighting: HashMap::new(),
+            lighting_room: [0; 2],
+            retiring_meshes: Default::default(),
+            freeing_room: [0; 2],
+            lighting_share: DEFAULT_LIGHTING_SHARE,
+            given_back: Vec::new(),
+            given_back_count: [0; 2],
+            frame: 0,
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
         assets.white = assets.add_texture(gpu, bindless, &white)?;
@@ -506,9 +615,195 @@ impl Assets {
     /// loading thread.
     pub fn add_mesh_with_lods(&mut self, gpu: &Gpu, mesh: &MeshData, lods: &[Lod]) -> Result<MeshHandle> {
         let meshlets = MeshMeshlets::gather(lods.iter().map(|lod| &lod.meshlets));
-        let (handle, ranges) = self.reserve_mesh(sizes(mesh, lods, &meshlets))?;
+        let (handle, ranges) = self.reserve_mesh(gpu, sizes(mesh, lods, &meshlets))?;
         self.write_mesh(gpu, handle, ranges, mesh, lods, &meshlets)?;
         Ok(handle)
+    }
+
+    /// Uploads a world of blocks' lighting mesh, one of its chunks' meshes for
+    /// rays, `away` metres from the camera, where lighting's share of the
+    /// space has room for it beside what is kept free for models; it fails
+    /// otherwise, and nothing is given back for it.
+    pub(crate) fn add_lighting_mesh(
+        &mut self,
+        gpu: &Gpu,
+        mesh: &MeshData,
+        lods: &[Lod],
+        away: f32,
+    ) -> Result<MeshHandle> {
+        let meshlets = MeshMeshlets::gather(lods.iter().map(|lod| &lod.meshlets));
+        let sizes = sizes(mesh, lods, &meshlets);
+        let [vertices, indices] = self.lighting_room_left();
+        if sizes[0] > vertices || sizes[1] > indices {
+            anyhow::bail!(
+                "block lighting's share of the mesh space is full ({}%): {}",
+                self.lighting_share,
+                self.pool_use().describe()
+            );
+        }
+        let space = self.reserve_space(None, sizes)?;
+        let Some(slot) = self.mesh_slots.alloc() else {
+            self.free_space(space);
+            anyhow::bail!("too many meshes");
+        };
+        let (handle, ranges) = (MeshHandle(slot), MeshRanges::new(space));
+        self.mesh_ranges.insert(handle, ranges);
+        let room = [sizes[0], sizes[1]];
+        self.lighting.insert(handle, Lit { room, away, made: self.frame });
+        self.lighting_room = [self.lighting_room[0] + room[0], self.lighting_room[1] + room[1]];
+        self.write_mesh(gpu, handle, ranges, mesh, lods, &meshlets)?;
+        Ok(handle)
+    }
+
+    /// How many more vertices and indices lighting may take now: as many as
+    /// leave the share of the space it is not given free.
+    fn lighting_room_left(&self) -> [u64; 2] {
+        [0, 1].map(|pool| {
+            let capacity = self.space[pool].capacity();
+            let kept = capacity * u64::from(100 - self.lighting_share) / 100;
+            (capacity - self.space[pool].used()).saturating_sub(kept)
+        })
+    }
+
+    /// Whether lighting has no room left at all, so a world of blocks need not
+    /// make a mesh to find out.
+    pub(crate) fn lighting_full(&self) -> bool {
+        self.lighting_room_left().contains(&0)
+    }
+
+    /// Says how far a lighting mesh is from the camera now, in metres.
+    pub(crate) fn set_lighting_away(&mut self, mesh: MeshHandle, away: f32) {
+        if let Some(lit) = self.lighting.get_mut(&mesh) {
+            lit.away = away;
+        }
+    }
+
+    /// How much of the shared vertex and index space worlds of blocks'
+    /// lighting may take, in percent: the rest is kept free for models to
+    /// arrive into, and as models take it, lighting gives back its farthest
+    /// chunks until it is free again.
+    pub fn set_lighting_share(&mut self, percent: u32) {
+        self.lighting_share = percent.clamp(MIN_LIGHTING_SHARE, MAX_LIGHTING_SHARE);
+    }
+
+    /// The lighting meshes given back for models since this was last called:
+    /// freed already, their worlds must let them go without freeing them.
+    pub(crate) fn take_given_back(&mut self) -> Vec<MeshHandle> {
+        std::mem::take(&mut self.given_back)
+    }
+
+    /// Lowers how many vertices and indices the shared space has room for,
+    /// as a GPU with less memory would have, where none is used past that
+    /// yet: for tests to fill it quickly.
+    pub fn limit_space(&mut self, vertices: u64, indices: u64) -> [u64; 2] {
+        [self.space[0].limit(vertices), self.space[1].limit(indices)]
+    }
+
+    /// What the shared vertex and index space holds, and who holds it.
+    pub fn pool_use(&self) -> MeshPoolUse {
+        let [vertex_capacity, index_capacity] = [0, 1].map(|pool| self.space[pool].capacity());
+        let [used_vertices, used_indices] = [0, 1].map(|pool| self.space[pool].used());
+        let [freeing_vertices, freeing_indices] = self.freeing_room;
+        let [lighting_vertices, lighting_indices] = self.lighting_room;
+        MeshPoolUse {
+            vertex_capacity,
+            index_capacity,
+            model_vertices: used_vertices.saturating_sub(lighting_vertices + freeing_vertices),
+            model_indices: used_indices.saturating_sub(lighting_indices + freeing_indices),
+            lighting_vertices,
+            lighting_indices,
+            lighting_meshes: self.lighting.len() as u32,
+            lighting_reach: self.lighting.values().map(|lit| lit.away).fold(0.0, f32::max) as u32,
+            freeing_vertices,
+            freeing_indices,
+            free_vertices: vertex_capacity - used_vertices,
+            free_indices: index_capacity - used_indices,
+            lighting_share: self.lighting_share,
+            given_back: self.given_back_count[0],
+            given_back_at_once: self.given_back_count[1],
+        }
+    }
+
+    /// Lets a lighting mesh go, as it is freed.
+    fn forget_lighting(&mut self, mesh: MeshHandle) {
+        if let Some(lit) = self.lighting.remove(&mesh) {
+            self.lighting_room = [0, 1].map(|pool| self.lighting_room[pool] - lit.room[pool]);
+        }
+    }
+
+    /// The lighting meshes to give back for `needed` more vertices and
+    /// indices, the farthest from the camera first, of those made before
+    /// `before`.
+    fn farthest_lighting(&self, needed: [u64; 2], before: u64) -> Vec<MeshHandle> {
+        let lit = self.lighting.iter().filter(|(_, lit)| lit.made < before);
+        farthest(lit.map(|(mesh, lit)| (*mesh, lit.room, lit.away)).collect(), needed)
+    }
+
+    /// Lighting gives back its farthest chunks while models hold some of the
+    /// room kept free for them, so the next model has it: freed once frames
+    /// in flight are done with them, a frame or two from now.
+    fn keep_room_for_models(&mut self, frame: u64) {
+        let needed = [0, 1].map(|pool| {
+            let capacity = self.space[pool].capacity();
+            let kept = capacity * u64::from(100 - self.lighting_share) / 100;
+            let free = capacity - self.space[pool].used() + self.freeing_room[pool];
+            kept.saturating_sub(free)
+        });
+        if needed == [0, 0] || self.lighting.is_empty() {
+            return;
+        }
+        for mesh in self.farthest_lighting(needed, u64::MAX) {
+            self.free_mesh(mesh, frame);
+            self.given_back.push(mesh);
+            self.given_back_count[0] += 1;
+        }
+    }
+
+    /// Gives back lighting's farthest chunks for a model's `sizes` that did
+    /// not fit, `short` of vertices (0) or indices (1), their room free at once: it waits for the GPU to finish the
+    /// frames in flight, which may still read them. Lighting made this frame
+    /// is kept, as its upload may not have been done yet. Whether any was
+    /// given back.
+    fn give_back_now(&mut self, gpu: &Gpu, sizes: [u64; 5], short: usize) -> bool {
+        let mut needed = [0, 1].map(|pool| {
+            let free = self.space[pool].capacity() - self.space[pool].used();
+            sizes[pool].saturating_sub(free)
+        });
+        // Free enough, but in pieces: as much again, from wherever it comes.
+        if needed[short] == 0 {
+            needed[short] = sizes[short];
+        }
+        // None is given back where all of it would not make room enough.
+        let free = self.space[short].capacity() - self.space[short].used();
+        let held: u64 = self.lighting.values().filter(|lit| lit.made < self.frame).map(|lit| lit.room[short]).sum();
+        if free + held < sizes[short] {
+            return false;
+        }
+        let given = self.farthest_lighting(needed, self.frame);
+        if given.is_empty() {
+            return false;
+        }
+        voxear_core::profile_scope!("Give Back Block Lighting");
+        let waiting = std::time::Instant::now();
+        gpu.wait_idle();
+        tracing::info!(
+            "{} chunks of block lighting gave back their room at once for a model, the frame waiting {:.1} ms for the GPU",
+            given.len(),
+            waiting.elapsed().as_secs_f32() * 1000.0
+        );
+        for mesh in given {
+            // Its slot and bottom level go as any freed mesh's do; only its room is free at once.
+            if let Some(ranges) = self.mesh_ranges.get_mut(&mesh) {
+                let space = std::mem::take(&mut ranges.space);
+                self.free_space(space);
+            }
+            self.forget_lighting(mesh);
+            self.retire(self.frame, Retiring::Mesh(mesh));
+            self.given_back.push(mesh);
+            self.given_back_count[0] += 1;
+            self.given_back_count[1] += 1;
+        }
+        true
     }
 
     /// Puts new data behind a mesh's handle, as when its model is imported
@@ -525,7 +820,7 @@ impl Assets {
     ) -> Result<()> {
         let old = *self.mesh_ranges.get(&mesh).context("the mesh to replace is not loaded")?;
         let meshlets = MeshMeshlets::gather(lods.iter().map(|lod| &lod.meshlets));
-        let ranges = MeshRanges::new(self.reserve_space(sizes(data, lods, &meshlets))?);
+        let ranges = MeshRanges::new(self.reserve_space(Some(gpu), sizes(data, lods, &meshlets))?);
         self.mesh_ranges.insert(mesh, ranges);
         self.mesh_bounds.remove(&mesh);
         self.bounds_changes += 1;
@@ -734,8 +1029,8 @@ impl Assets {
     /// Takes space in every shared buffer and a mesh table slot, all or
     /// nothing. `sizes` counts vertices, indices, meshlets, meshlet vertices
     /// and meshlet triangles.
-    fn reserve_mesh(&mut self, sizes: [u64; 5]) -> Result<(MeshHandle, MeshRanges)> {
-        let space = self.reserve_space(sizes)?;
+    fn reserve_mesh(&mut self, gpu: &Gpu, sizes: [u64; 5]) -> Result<(MeshHandle, MeshRanges)> {
+        let space = self.reserve_space(Some(gpu), sizes)?;
         let Some(slot) = self.mesh_slots.alloc() else {
             self.free_space(space);
             anyhow::bail!("too many meshes");
@@ -746,15 +1041,38 @@ impl Assets {
     }
 
     /// Room in each shared buffer for as many as `sizes` says, all or nothing.
-    fn reserve_space(&mut self, sizes: [u64; 5]) -> Result<Space> {
-        const WHAT: [&str; 5] = ["vertex", "index", "meshlet", "meshlet vertex", "meshlet triangle"];
+    /// For a model (`gpu` given), worlds of blocks' lighting gives back its
+    /// farthest chunks, at once, where there is not room enough otherwise.
+    fn reserve_space(&mut self, gpu: Option<&Gpu>, sizes: [u64; 5]) -> Result<Space> {
+        loop {
+            match self.try_reserve_space(sizes) {
+                Ok(space) => return Ok(space),
+                // Lighting holds only vertices and indices.
+                Err(index @ 0..2) if gpu.is_some_and(|gpu| self.give_back_now(gpu, sizes, index)) => {}
+                Err(index) => {
+                    const WHAT: [&str; 5] = ["vertex", "index", "meshlet", "meshlet vertex", "meshlet triangle"];
+                    let largest = self.space[index].largest();
+                    anyhow::bail!(
+                        "out of {what} space: {} {what} wanted, {largest} free in one piece; {}",
+                        sizes[index],
+                        self.pool_use().describe(),
+                        what = WHAT[index],
+                    );
+                }
+            }
+        }
+    }
+
+    /// Room in each shared buffer for as many as `sizes` says, all or
+    /// nothing, or which buffer had none.
+    fn try_reserve_space(&mut self, sizes: [u64; 5]) -> Result<Space, usize> {
         let mut ranges = [(0, 0); 5];
         for (index, &count) in sizes.iter().enumerate() {
             let Some(offset) = self.space[index].alloc(count) else {
                 for (allocator, &(offset, count)) in self.space.iter_mut().zip(&ranges[..index]) {
                     allocator.free(offset, count);
                 }
-                anyhow::bail!("out of {} space", WHAT[index]);
+                return Err(index);
             };
             ranges[index] = (offset, count);
         }
@@ -783,7 +1101,7 @@ impl Assets {
             let index_count = mesh.lods.iter().map(|&(_, count, _)| u64::from(count)).sum();
             let sizes =
                 [mesh.vertices.1, mesh.meshlets.1, mesh.meshlet_vertices.1, mesh.meshlet_triangles.1].map(u64::from);
-            match self.reserve_mesh([sizes[0], index_count, sizes[1], sizes[2], sizes[3]]) {
+            match self.reserve_mesh(gpu, [sizes[0], index_count, sizes[1], sizes[2], sizes[3]]) {
                 Ok(reserved) => meshes.push(reserved),
                 Err(error) => {
                     meshes.into_iter().for_each(|(handle, _)| self.release_mesh(handle));
@@ -1219,8 +1537,15 @@ impl Assets {
 
     /// Room for `count` posed vertices in `vertices`, which a skinned
     /// instance's skinning writes each frame; `None` when there is none.
-    pub(crate) fn reserve_posed(&mut self, count: u64) -> Option<u64> {
-        self.space[0].alloc(count)
+    pub(crate) fn reserve_posed(&mut self, gpu: &Gpu, count: u64) -> Option<u64> {
+        let sizes = [count, 0, 0, 0, 0];
+        match self.reserve_space(Some(gpu), sizes) {
+            Ok(space) => Some(space.vertices.0),
+            Err(error) => {
+                tracing::warn!("a skinned part is not drawn posed: {error:#}");
+                None
+            }
+        }
     }
 
     /// Gives back posed vertices' room once frames in flight are done with it.
@@ -1239,7 +1564,9 @@ impl Assets {
     /// stay.
     pub fn free_mesh(&mut self, mesh: MeshHandle, frame: u64) {
         let builtin = self.primitives.values().any(|&p| p == mesh);
-        if !builtin && self.mesh_ranges.contains_key(&mesh) {
+        // Lighting given back for a model is freed already.
+        if !builtin && self.mesh_ranges.contains_key(&mesh) && !self.retiring_meshes.contains(&mesh) {
+            self.forget_lighting(mesh);
             self.retire(frame, Retiring::Mesh(mesh));
         }
     }
@@ -1259,7 +1586,22 @@ impl Assets {
     }
 
     fn retire(&mut self, frame: u64, what: Retiring) {
+        let room = self.retiring_room(&what);
+        self.freeing_room = [0, 1].map(|pool| self.freeing_room[pool] + room[pool]);
+        if let Retiring::Mesh(mesh) = what {
+            self.retiring_meshes.insert(mesh);
+        }
         self.retiring.push((frame + FRAMES_IN_FLIGHT as u64, what));
+    }
+
+    /// The vertices and indices what is retiring holds.
+    fn retiring_room(&self, what: &Retiring) -> [u64; 2] {
+        let space = match what {
+            Retiring::Mesh(mesh) => self.mesh_ranges.get(mesh).map(|ranges| ranges.space),
+            Retiring::Space(space) => Some(*space),
+            _ => None,
+        };
+        space.map_or([0; 2], |space| [space.vertices.1, space.indices.1])
     }
 
     /// Retires the bottom levels replaced since the last frame, as of `frame`.
@@ -1272,15 +1614,19 @@ impl Assets {
     /// Gives back everything whose frames in flight have finished. Call at
     /// the start of a frame, once its slot's fence has been waited on.
     pub fn collect(&mut self, gpu: &Gpu, bindless: &mut Bindless, frame: u64) {
+        self.frame = frame;
         self.retire_levels(frame);
         let (ready, waiting): (Vec<_>, Vec<_>) = self.retiring.drain(..).partition(|(at, _)| *at <= frame);
         self.retiring = waiting;
         for (_, what) in ready {
             self.reclaim(gpu, bindless, what);
         }
+        self.keep_room_for_models(frame);
     }
 
     fn reclaim(&mut self, gpu: &Gpu, bindless: &mut Bindless, what: Retiring) {
+        let room = self.retiring_room(&what);
+        self.freeing_room = [0, 1].map(|pool| self.freeing_room[pool].saturating_sub(room[pool]));
         match what {
             Retiring::BottomLevel(level) => gpu.destroy_acceleration_structure(level),
             Retiring::Mesh(mesh) => {
@@ -1302,6 +1648,7 @@ impl Assets {
                     self.free_space(ranges.space);
                     self.mesh_slots.free(mesh.0);
                 }
+                self.retiring_meshes.remove(&mesh);
             }
             Retiring::Space(space) => self.free_space(space),
             Retiring::Material(material) => {
@@ -1328,6 +1675,7 @@ impl Assets {
             indices: self.space[1].used(),
             retiring: self.retiring.len() as u32,
             decompressed_on_gpu: self.decompressed_on_gpu,
+            pool: self.pool_use(),
         }
     }
 
@@ -1353,6 +1701,22 @@ impl Assets {
             gpu.destroy_buffer(buffer);
         }
     }
+}
+
+/// Of lighting meshes, each with the vertices and indices it holds and how
+/// far it is from the camera, those to give back for `needed` more, the
+/// farthest first: a nearer one only once every farther one is given.
+fn farthest(mut lit: Vec<(MeshHandle, [u64; 2], f32)>, needed: [u64; 2]) -> Vec<MeshHandle> {
+    lit.sort_unstable_by(|a, b| b.2.total_cmp(&a.2));
+    let mut freed = [0; 2];
+    lit.into_iter()
+        .take_while(|(_, room, _)| {
+            let more = freed[0] < needed[0] || freed[1] < needed[1];
+            freed = [freed[0] + room[0], freed[1] + room[1]];
+            more
+        })
+        .map(|(mesh, ..)| mesh)
+        .collect()
 }
 
 /// How much of each shared buffer a mesh takes, as [`Assets::reserve_space`] counts.
@@ -1474,6 +1838,18 @@ fn copy_mips(gpu: &Gpu, cmd: vk::CommandBuffer, from: vk::Buffer, texture: &Cook
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lighting_is_given_back_from_the_farthest_chunk_in_and_no_nearer_than_is_needed() {
+        let lit = [(0, 10.0), (1, 50.0), (2, 30.0), (3, 90.0), (4, 70.0)]
+            .map(|(mesh, away)| (MeshHandle(mesh), [100, 300], away))
+            .to_vec();
+        assert_eq!(farthest(lit.clone(), [150, 0]), [MeshHandle(3), MeshHandle(4)]);
+        assert_eq!(farthest(lit.clone(), [0, 301]), [MeshHandle(3), MeshHandle(4)], "indices count too");
+        assert!(farthest(lit.clone(), [0, 0]).is_empty());
+        let all = farthest(lit, [10_000, 0]);
+        assert_eq!(all, [3, 4, 1, 2, 0].map(MeshHandle), "the nearest last, once all the farther are given");
+    }
 
     #[test]
     fn a_meshs_uv_span_is_how_far_its_uvs_run_over_a_whole_picture() {

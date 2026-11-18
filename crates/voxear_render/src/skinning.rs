@@ -164,7 +164,7 @@ impl Skinning {
                     break;
                 }
                 let owner = Owner { entity, plant: None, part: Some(index as u32), far_side: false };
-                let Some(kept) = self.slot(assets, owner, u64::from(count), frame) else { continue };
+                let Some(kept) = self.slot(gpu, assets, owner, u64::from(count), frame) else { continue };
                 // Each joint's matrix: where its bone is now, from where it was when the mesh was bound to it.
                 let matrices = (rows.len() / 4) as u32;
                 let mut far = 0.0f32;
@@ -219,13 +219,13 @@ impl Skinning {
 
     /// The part's slot, made, or made again when its mesh's vertices
     /// changed in number; `None` when there is no room.
-    fn slot(&mut self, assets: &mut Assets, owner: Owner, count: u64, frame: u64) -> Option<&mut Slot> {
+    fn slot(&mut self, gpu: &Gpu, assets: &mut Assets, owner: Owner, count: u64, frame: u64) -> Option<&mut Slot> {
         if self.slots.get(&owner).is_some_and(|slot| slot.count != count) {
             let old = self.slots.remove(&owner)?;
             assets.release_posed(old.offset, old.count * 3, frame);
         }
         if !self.slots.contains_key(&owner) {
-            let offset = assets.reserve_posed(count * 3)?;
+            let offset = assets.reserve_posed(gpu, count * 3)?;
             // Never written yet, so no last frame's pose to move from.
             self.slots.insert(owner, Slot { offset, count, written: u64::MAX });
         }

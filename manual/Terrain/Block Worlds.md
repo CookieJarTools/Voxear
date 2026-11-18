@@ -495,6 +495,14 @@ Each grows on through its plant's **Stages** over its **Grow time**, a stage at 
 
 A world keeps its growing saplings in a short list, a few bytes each, saved with its changes. Saplings grow only while the game plays, and only in worlds that are loaded.
 
+### Room for models
+
+A world's lighting, the shape of its chunks that the GI's and sound's rays see, is kept in the same room on the GPU as every model's mesh: about eight million vertices. A world takes no more than its **Lighting share** of that room, 75% unless **Project Settings ▸ Quality ▸ Block Worlds ▸ Lighting share** says otherwise, and the rest is kept free, so a ship, an animal or a sea creature spawned long after the world has streamed in always has room. As models take that free room, the world gives back the lighting of its farthest chunks, the farthest first, and makes it again when there is room and the camera comes near. A chunk without lighting is still drawn and still collides: only the bounced light and the echoes off it are missing, far from the camera where they are hardest to see.
+
+Spawning more at once than the free room holds still works: the farthest chunks give theirs back on the spot, and that frame waits a moment for the GPU. Keep the share lower for a game that spawns many large models together, higher for a world with few models and a long view.
+
+The Profiler's counts show the split: **Model vertices**, **Block light vertices** with their chunks, **Free vertices**, and **Block light reach**, how far off the farthest chunk with lighting is. A tool reads it all with `vox editor call mesh_pool.get`.
+
 ## How blocks are drawn
 
 The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air or water, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth, and takes the light kept for the blocks touching it: sky light and the light of blocks that give it (see [[Block Light]]).

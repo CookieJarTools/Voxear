@@ -69,6 +69,10 @@ pub struct PlayerSettings {
     /// The project's `[quality]` budget for simulated particles.
     #[serde(default = "default_particles")]
     pub particles: u32,
+    /// The project's `[quality]` share of the mesh space for worlds of
+    /// blocks' lighting, in percent.
+    #[serde(default = "default_block_lighting")]
+    pub block_lighting: u32,
     /// The project's `[world]` budget for making worlds of blocks.
     #[serde(default)]
     pub world: voxear_terrain::WorldBudget,
@@ -165,6 +169,10 @@ fn is_parametric(mode: &voxear_audio::ReverbMode) -> bool {
 
 fn default_particles() -> u32 {
     voxear_render::DEFAULT_PARTICLE_BUDGET
+}
+
+fn default_block_lighting() -> u32 {
+    voxear_render::DEFAULT_LIGHTING_SHARE
 }
 
 impl PlayerSettings {
@@ -313,7 +321,10 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             },
             network: settings.network.clone(),
             floating_origin: settings.floating_origin.clone(),
-            quality: crate::project::QualitySettings { particles: settings.particles },
+            quality: crate::project::QualitySettings {
+                particles: settings.particles,
+                block_lighting: settings.block_lighting,
+            },
             world: settings.world,
             portals: settings.portals,
             water_trails: settings.water_trails,

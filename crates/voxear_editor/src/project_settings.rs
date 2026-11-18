@@ -597,6 +597,14 @@ const FIXED: &[Setting] = &[
         whole(0.0, voxear_render::MAX_PARTICLE_BUDGET as f64, ""),
         "The most simulated particles every Particle System may have between them; those there is no room for are not drawn. More costs GPU memory and time.",
     ),
+    Setting::new(
+        ("Quality", "Block Worlds"),
+        "quality.block_lighting",
+        "Lighting share",
+        whole(voxear_render::MIN_LIGHTING_SHARE as f64, voxear_render::MAX_LIGHTING_SHARE as f64, "%"),
+        "How much of the room every mesh shares a world of blocks' lighting may take. The rest is kept free for models spawned later, and the farthest chunks give theirs back as models take it.",
+    )
+    .advanced(),
     // Scripts
     Setting::new(
         ("Scripts", "C#"),

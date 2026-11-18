@@ -3783,3 +3783,132 @@ fn a_world_lit_by_block_light_looks_the_same_with_gi_on_as_off() {
     let (a, b) = (mean_brightness(&off), mean_brightness(&on));
     assert!((a - b).abs() < 1.0, "as bright with GI as without: {a:.2} against {b:.2}, most apart {most:?}");
 }
+
+/// A field of blocks `side` across, each column one to six high by a hash of
+/// where it is, so its chunks' meshes for rays keep many faces each.
+fn bumpy_field(side: i32) -> voxear_terrain::blocks::BlockMap {
+    let mut blocks = voxear_terrain::blocks::BlockMap::default();
+    for x in 0..side {
+        for z in 0..side {
+            let hash = (x as u32).wrapping_mul(0x9E37_79B1) ^ (z as u32).wrapping_mul(0x85EB_CA77);
+            for y in 0..=(hash >> 13) % 6 {
+                blocks.set([x, y as i32, z], 3);
+            }
+        }
+    }
+    blocks
+}
+
+/// A renderer whose shared mesh space is 400,000 vertices and 4 million
+/// indices beside what it holds already, and a bumpy world of blocks 256 across
+/// seen from over its corner, its lighting made till it stops growing.
+fn filled_world() -> Option<(Renderer, World)> {
+    let mut renderer = renderer()?;
+    let start = renderer.mesh_pool();
+    let used = [start.vertex_capacity - start.free_vertices, start.index_capacity - start.free_indices];
+    renderer.limit_mesh_pool(used[0] + 400_000, used[1] + 4_000_000);
+    let (_, faces) = BlockFile::default().faces();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook {
+        material,
+        surfaces: Arc::from([]),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+        light: Default::default(),
+    };
+    let mut world = World::new();
+    world.spawn((BlockWorld::new(bumpy_field(256), &faces, 1.0), look, Transform::default()));
+    let down = Quat::from_rotation_x(0.6);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(8.0, 30.0, 8.0), down, Vec3::ONE)));
+    let mut last = None;
+    for _ in 0..40 {
+        render(&mut renderer, &world, 2);
+        let now = renderer.mesh_pool().lighting_meshes;
+        if last == Some(now) {
+            break;
+        }
+        last = Some(now);
+    }
+    Some((renderer, world))
+}
+
+#[test]
+fn a_world_of_blocks_lighting_leaves_its_share_free_for_models_and_gives_back_its_farthest_chunks_as_they_arrive() {
+    use voxear_render::MeshData;
+    let Some((mut renderer, world)) = filled_world() else { return };
+    let filled = renderer.mesh_pool();
+    eprintln!("filled: {}", filled.describe());
+    // The world's 64 chunks want more than lighting's share: it stops short, a quarter of the space left free.
+    let kept = filled.vertex_capacity / 4;
+    assert!(filled.lighting_meshes > 8 && filled.lighting_meshes < 64, "{filled:?}");
+    assert!(filled.free_vertices >= kept, "the room kept for models is free: {filled:?}");
+    assert!(filled.lighting_vertices + filled.model_vertices <= filled.vertex_capacity * 3 / 4, "{filled:?}");
+
+    // Models spawned a few frames apart, each into the room kept free: none waits for the GPU.
+    let ball = MeshData::sphere(100, 100);
+    let frame_ms = |renderer: &mut Renderer| {
+        let began = std::time::Instant::now();
+        render(renderer, &world, 1);
+        began.elapsed().as_secs_f32() * 1000.0
+    };
+    let steady: Vec<f32> = (0..10).map(|_| frame_ms(&mut renderer)).collect();
+    let (mut spaced_ms, mut giving_ms) = (Vec::new(), Vec::new());
+    for _ in 0..6 {
+        let began = std::time::Instant::now();
+        renderer.add_mesh(&ball).expect("a model spawned later fits");
+        spaced_ms.push(began.elapsed().as_secs_f32() * 1000.0);
+        // The frame after, in which lighting gives back what the model took of the room kept free.
+        giving_ms.push(frame_ms(&mut renderer));
+        render(&mut renderer, &world, 2);
+    }
+    let spaced = renderer.mesh_pool();
+    eprintln!("after six spaced: {}; loads took {spaced_ms:?} ms", spaced.describe());
+    eprintln!("frames: steady {steady:?} ms, after a load {giving_ms:?} ms");
+    assert!(spaced.given_back > 0, "lighting gave back room as models took it: {spaced:?}");
+    assert_eq!(spaced.given_back_at_once, 0, "and never made a model wait: {spaced:?}");
+    assert!(spaced.lighting_reach < filled.lighting_reach, "the farthest went first: {spaced:?} against {filled:?}");
+    assert!(spaced.free_vertices + spaced.freeing_vertices >= kept, "the room is kept free again: {spaced:?}");
+
+    // A burst larger than the room kept free, all in one frame: lighting gives back at once.
+    let burst = (spaced.free_vertices * 3 / 2) / ball.vertices.len() as u64 + 1;
+    let mut burst_ms = Vec::new();
+    for _ in 0..burst {
+        let began = std::time::Instant::now();
+        renderer.add_mesh(&ball).expect("a model in a burst fits");
+        burst_ms.push(began.elapsed().as_secs_f32() * 1000.0);
+    }
+    let after = renderer.mesh_pool();
+    eprintln!("after a burst of {burst}: {}; loads took {burst_ms:?} ms", after.describe());
+    assert!(after.given_back_at_once > 0, "{after:?}");
+    assert!(after.lighting_meshes > 0, "the nearest chunks keep theirs: {after:?}");
+    assert!(after.lighting_reach < spaced.lighting_reach, "{after:?} against {spaced:?}");
+    // Frames go on, the world's nearest chunks lit, and the room kept free comes back.
+    let mut frame_ms = Vec::new();
+    for _ in 0..10 {
+        let began = std::time::Instant::now();
+        render(&mut renderer, &world, 1);
+        frame_ms.push(began.elapsed().as_secs_f32() * 1000.0);
+    }
+    let settled = renderer.mesh_pool();
+    eprintln!("settled: {}; frames {frame_ms:?} ms", settled.describe());
+    assert!(settled.free_vertices + settled.freeing_vertices >= kept, "{settled:?}");
+    assert!(settled.lighting_meshes > 0, "{settled:?}");
+}
+
+#[test]
+fn a_model_too_large_for_the_space_says_how_full_it_is_and_who_holds_it() {
+    use voxear_render::MeshData;
+    let Some((mut renderer, _world)) = filled_world() else { return };
+    let pool = renderer.mesh_pool();
+    // More vertices than the whole space, in a single triangle, so its LODs are quick to make.
+    let corner = MeshData::sphere(4, 4).vertices[0];
+    let count = pool.vertex_capacity as usize + 1;
+    let huge = MeshData { vertices: vec![corner; count], indices: vec![0, 1, 2], ..MeshData::default() };
+    let error = format!("{:#}", renderer.add_mesh(&huge).expect_err("cannot fit"));
+    eprintln!("{error}");
+    assert!(error.contains("out of vertex space"), "{error}");
+    assert!(error.contains("models") && error.contains("block lighting") && error.contains("free"), "{error}");
+    // Giving back every chunk would not have made it fit, so the world keeps its lighting.
+    assert_eq!(renderer.mesh_pool().lighting_meshes, pool.lighting_meshes);
+    assert_eq!(renderer.mesh_pool().given_back_at_once, 0);
+}

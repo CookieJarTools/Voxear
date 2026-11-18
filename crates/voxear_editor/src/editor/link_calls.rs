@@ -535,6 +535,7 @@ impl Editor {
                 done(self.profiler.read_frames(after, limit))
             }
             "capture" => self.capture(args),
+            "mesh_pool.get" => done(serde_json::to_value(renderer.mesh_pool()).unwrap_or_default()),
             "scripts.build" => {
                 self.rebuild_scripts = true;
                 self.link.scripts_failed = None;

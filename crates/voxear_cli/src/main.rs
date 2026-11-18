@@ -1285,6 +1285,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         megabytes(held(&|name| name.starts_with("block"))),
         megabytes(voxear_core::memory::heap().0)
     );
+    println!("mesh space: {}", renderer.mesh_pool().describe());
     if let Some(cpu) = &cpu {
         cpu.print();
     }

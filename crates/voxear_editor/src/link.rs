@@ -897,7 +897,14 @@ pub const CALLS: &[CallInfo] = &[
             maybe("limit", ArgKind::Whole, "The most frames, the latest; 120 when left out."),
         ],
         changes: false,
-        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, gpu_frame_ms, blocks: { draws, triangles, shadow_draws }, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
+        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, gpu_frame_ms, blocks: { draws, triangles, shadow_draws }, mesh_pool: { … as mesh_pool.get }, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
+    },
+    CallInfo {
+        name: "mesh_pool.get",
+        about: "The vertex and index space every mesh shares, and who holds it: models (with built-in meshes and skinned parts' poses), worlds of blocks' lighting (their chunks' meshes for the GI's and sound's rays, and how far from the camera the farthest is), what is being freed, and what is free; the share lighting may take (Project Settings ▸ Quality ▸ Block Worlds ▸ Lighting share), and how many lighting chunks have been given back for models to fit, of those at once.",
+        args: &[],
+        changes: false,
+        returns: "{ vertex_capacity, index_capacity, model_vertices, model_indices, lighting_vertices, lighting_indices, lighting_meshes, lighting_reach, freeing_vertices, freeing_indices, free_vertices, free_indices, lighting_share, given_back, given_back_at_once }",
     },
     CallInfo {
         name: "capture",

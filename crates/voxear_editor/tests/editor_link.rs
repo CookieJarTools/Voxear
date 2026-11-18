@@ -294,6 +294,11 @@ fn a_tool_reads_the_profilers_frames_with_its_panel_hidden() {
     assert!(!frame["gpu"].as_array().unwrap().is_empty(), "the GPU's passes come with each frame");
     let limited = done(&mut editor, &mut renderer, "profiler.frames", json!({ "limit": 1 }));
     assert_eq!(limited["frames"].as_array().unwrap().len(), 1);
+    // The room every mesh shares, with each frame and by a call of its own.
+    assert!(frame["mesh_pool"]["model_vertices"].as_u64().unwrap() > 0, "{}", frame["mesh_pool"]);
+    let pool = done(&mut editor, &mut renderer, "mesh_pool.get", json!({}));
+    let capacity = pool["vertex_capacity"].as_u64().unwrap();
+    assert!(pool["free_vertices"].as_u64().unwrap() <= capacity && pool["lighting_share"] == 75, "{pool}");
 }
 
 #[test]

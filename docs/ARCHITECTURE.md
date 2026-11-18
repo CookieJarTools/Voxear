@@ -1055,6 +1055,25 @@ decompression, background loading, unloading)*.
 - **GPU side.** The shared vertex and index buffers hand out ranges from a first-fit allocator whose freed ranges
   merge. Mesh and material table slots are reused, and textures are destroyed. Nothing is reclaimed until the
   frames still on the GPU are done with it.
+- **Who holds the shared space.** Models (with built-in meshes and skinned parts' poses) and worlds of blocks'
+  lighting, their chunks' meshes for the GI's and sound's rays, share the eight million vertices and sixteen million
+  indices (`assets::MeshPoolUse`), and two million skinned vertices' bones beside them; a skinned part's poses take three
+  times its vertices. With the meshlets' buffers sized from the indices they take about 660 MB of GPU memory, held
+  from the start, 330 MB more than at four million. Lighting is registered apart (`Assets::add_lighting_mesh`, each mesh with how far
+  its chunk is from the camera) and may take only what leaves the rest of its share free: 75% by default,
+  `[quality] block_lighting` (`BlockLightingShare`, Project Settings ▸ Quality ▸ Block Worlds ▸ Lighting share).
+  The quarter kept free is room for models spawned at any time. As models take it, `Assets::collect` has lighting
+  give back its farthest chunks, the farthest first and never a nearer while a farther is held, freed as anything is
+  once frames in flight are done, so the room is free again a frame or two later; the worlds let those chunks go
+  (`Assets::take_given_back`) and make them again as room comes back and the camera moves. A model that does not
+  fit even then, a burst larger than the room kept, has lighting give back at once: the renderer waits for the GPU
+  to finish the frames in flight (`give_back_now`, about a frame's GPU time), frees the farthest chunks' room and
+  puts the model in it; lighting made this frame is kept, as its upload may not have been done. Only a model larger
+  than all lighting gives fails, and its error says how full the space is and who holds it
+  (`MeshPoolUse::describe`). The Profiler's counts, `profiler.frames` and `mesh_pool.get` show the split. The space
+  is not grown: its buffers' addresses are in every frame's tables and bottom levels' builds, and growing them
+  would copy hundreds of megabytes and double their memory while it did; lighting giving back its far chunks costs
+  only far GI.
 - **The developer's controls** follow Unity's names:
 
   ```csharp
@@ -4150,12 +4169,13 @@ surface (`ChunkMesh::surfaces`), so the rays' hits take the colour of the face t
 smooth chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles,
 `RAYS_LEVEL`, each point its top's, sides' or bottom's surface by the way it faces). A mesh for rays is solid ground:
 a crown of leaf blocks is no cut-out sheet to them, though it bounces its leaves' colour. The ray meshes are kept in
-the meshes' shared pool of four million vertices, room for a world of cubes 900 blocks across; the shapes made on
+the meshes' shared pool of eight million vertices, as the world's lighting, within its share of it beside models
+(see "Who holds the shared space"), room for a world of cubes 900 blocks across and more beside the models; the shapes made on
 every core and kept while a chunk's triangles stay the same (a world without end's new chunks' on the terrain's
 threads, their bodies added at a later step, but for those within a chunk of a character or a body and chunks
 changed, `BlockBodies::making`), the ray meshes made a few a frame, the nearest the camera first, and uploaded and
-built in one GPU batch (`Gpu::batch`); made again where its surfaces' looks change. A world too large for the pool
-goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the room of the farthest
+built in one GPU batch (`Gpu::batch`); made again where its surfaces' looks change. A world too large for its share of the pool
+goes without its farthest chunks' ray meshes, and with lighting's share full it makes none to find out: as the camera moves, a nearer chunk takes the room of the farthest
 made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose faces did not change costs
 physics and the renderer no walk over its chunks. The frame's chunks go up within
 `WorldBudget::upload` megabytes, shared by every world (16 on High), each pool grown once for all that are coming: each

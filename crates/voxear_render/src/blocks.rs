@@ -1535,6 +1535,22 @@ impl BlockWorlds {
         voxear_core::profile_scope!("Block Uploads");
         self.drawn.clear();
         self.copies.clear();
+        // Chunks' lighting given back for models to fit is let go, freed already, to be made again as there is room.
+        let given = assets.take_given_back();
+        if !given.is_empty() {
+            let given: std::collections::HashSet<MeshHandle> = given.into_iter().collect();
+            for pool in self.resident.values_mut().chain(self.leaving.values_mut()) {
+                let before = pool.proxies.len();
+                pool.proxies.retain(|_, (_, mesh, ..)| !given.contains(mesh));
+                if pool.proxies.len() != before {
+                    (pool.proxied, pool.placed, pool.made_to) = (None, None, 0);
+                }
+                // As it was last drawn, where that is drawn in place of the pool that follows it.
+                if let Some(shown) = &mut pool.shown {
+                    shown.proxies = shown.proxies.iter().filter(|(mesh, ..)| !given.contains(mesh)).copied().collect();
+                }
+            }
+        }
         // Staged and never recorded: every chunk staged again.
         if let Some(staging) = self.staging.take() {
             frames.retire(Retired::Buffer(staging));
@@ -1699,6 +1715,12 @@ impl BlockWorlds {
                     pool.order.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
                     pool.ordered = Some((blocks.meshes.clone(), blocks.places.clone(), camera_chunk));
                     pool.made_to = 0;
+                    // The farthest from the camera give theirs back first when a model needs the room.
+                    for (key, away) in &pool.order {
+                        if let Some((_, mesh, ..)) = pool.proxies.get(key) {
+                            assets.set_lighting_away(*mesh, away * side);
+                        }
+                    }
                 }
                 let mut changed = pool.proxies.len() != before;
                 let mut all = true;
@@ -1726,15 +1748,27 @@ impl BlockWorlds {
                     }
                     proxies_left -= 1;
                     let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                    let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
-                    let data = proxy(mesh, blocks.smooth, blocks.block_size, from, (&look.surfaces, uv_scale));
-                    let lods = crate::lod::rays_only(&data);
-                    drop(making);
-                    let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
-                    let room = [data.vertices.len(), data.indices.len()];
+                    // With lighting's share full, nothing is made to find out it does not fit.
+                    let made = match assets.lighting_full() {
+                        true => Err(anyhow::anyhow!(
+                            "block lighting's share of the mesh space is full: {}",
+                            assets.pool_use().describe()
+                        )),
+                        false => {
+                            let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
+                            let data = proxy(mesh, blocks.smooth, blocks.block_size, from, (&look.surfaces, uv_scale));
+                            let lods = crate::lod::rays_only(&data);
+                            drop(making);
+                            let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                            let room = [data.vertices.len(), data.indices.len()];
+                            assets.add_lighting_mesh(gpu, &data, &lods, away * side).map(|handle| (handle, room))
+                        }
+                    };
+                    // A chunk of cubes needs as many as its own faces have, a smooth one less.
+                    let room = made.as_ref().map_or([mesh.positions.len(), mesh.indices.len()], |(_, room)| *room);
                     // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
-                    let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
-                        Ok(handle) => handle,
+                    let handle = match made {
+                        Ok((handle, _)) => handle,
                         Err(error) => {
                             if !std::mem::replace(&mut self.warned_full, true) {
                                 tracing::warn!(

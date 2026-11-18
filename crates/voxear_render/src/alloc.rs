@@ -46,6 +46,32 @@ impl RangeAllocator {
     pub fn used(&self) -> u64 {
         self.capacity - self.free.iter().map(|&(_, length)| length).sum::<u64>()
     }
+
+    /// The longest range free.
+    pub fn largest(&self) -> u64 {
+        self.free.iter().map(|&(_, length)| length).max().unwrap_or(0)
+    }
+
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
+    /// Hands out nothing past `capacity` from now on, as a smaller buffer
+    /// would, where nothing has been handed out there yet; returns the
+    /// capacity it has now.
+    pub fn limit(&mut self, capacity: u64) -> u64 {
+        let Some(&(start, length)) = self.free.last() else { return self.capacity };
+        if start + length != self.capacity {
+            return self.capacity;
+        }
+        let capacity = capacity.clamp(start, self.capacity);
+        match capacity == start {
+            true => drop(self.free.pop()),
+            false => self.free.last_mut().expect("seen above").1 = capacity - start,
+        }
+        self.capacity = capacity;
+        capacity
+    }
 }
 
 /// Numbered slots, such as mesh table entries, handed out lowest-free first.
@@ -97,6 +123,17 @@ mod tests {
         ranges.free(b, 30);
         assert_eq!(ranges.used(), 0);
         assert_eq!(ranges.alloc(100), Some(0), "the three frees merged into one range");
+    }
+
+    #[test]
+    fn a_limit_takes_off_the_free_end_only() {
+        let mut ranges = RangeAllocator::new(100);
+        let a = ranges.alloc(30).unwrap();
+        assert_eq!(ranges.limit(50), 50);
+        assert_eq!((ranges.used(), ranges.alloc(30), ranges.alloc(20)), (30, None, Some(30)));
+        assert_eq!(ranges.limit(10), 50, "what is handed out stays");
+        ranges.free(a, 30);
+        assert_eq!(ranges.used(), 20);
     }
 
     #[test]

@@ -1748,6 +1748,9 @@ pub struct DryAreaData {
     /// How deep the water in it stands, in metres; none when left out.
     #[serde(skip_serializing_if = "no_bilge")]
     pub bilge: f32,
+    /// Whether its bilge is there; on when left out.
+    #[serde(skip_serializing_if = "is_true")]
+    pub bilge_on: bool,
 }
 
 fn no_bilge(depth: &f32) -> bool {
@@ -1757,7 +1760,7 @@ fn no_bilge(depth: &f32) -> bool {
 impl Default for DryAreaData {
     fn default() -> Self {
         let area = DryArea::default();
-        Self { shape: area.shape, size: area.size, mesh: None, bilge: area.bilge }
+        Self { shape: area.shape, size: area.size, mesh: None, bilge: area.bilge, bilge_on: area.bilge_on }
     }
 }
 
@@ -1765,7 +1768,7 @@ impl DryAreaData {
     /// `area` as a scene writes it, its mesh named as `content` knows it.
     pub fn of(content: &Content, area: &DryArea) -> Self {
         let mesh = area.mesh.and_then(|mesh| content.mesh_ref(mesh)).map(|reference| reference.to_string());
-        Self { shape: area.shape, size: area.size, mesh, bilge: area.bilge }
+        Self { shape: area.shape, size: area.size, mesh, bilge: area.bilge, bilge_on: area.bilge_on }
     }
 }
 
@@ -3427,6 +3430,20 @@ mod tests {
         // Its own Mesh Renderer's mesh, written as none.
         let own: ObjData = toml::from_str("id = 4\n[dry_area]\nshape = \"mesh\"").unwrap();
         assert_eq!(own.dry_area.and_then(|d| d.mesh), None);
+    }
+
+    #[test]
+    fn a_dry_area_s_bilge_is_written_only_when_it_has_one_and_switched_off_only_when_off() {
+        let dry = |data: DryAreaData| ObjData { dry_area: Some(data), ..ObjData::new(5, "Hold") };
+        let written = toml::to_string(&dry(DryAreaData::default())).unwrap();
+        assert!(!written.contains("bilge"), "{written}");
+        let flooded = dry(DryAreaData { bilge: 1.25, bilge_on: false, ..DryAreaData::default() });
+        let written = toml::to_string(&flooded).unwrap();
+        assert!(written.contains("bilge = 1.25") && written.contains("bilge_on = false"), "{written}");
+        let back: ObjData = toml::from_str(&written).unwrap();
+        assert_eq!(back.dry_area, flooded.dry_area);
+        let on: ObjData = toml::from_str("id = 6\n[dry_area]\nbilge = 0.5").unwrap();
+        assert!(on.dry_area.is_some_and(|area| area.bilge_on && area.bilge == 0.5), "on when left out");
     }
 
     #[test]

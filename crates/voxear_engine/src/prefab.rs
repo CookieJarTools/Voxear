@@ -1374,7 +1374,7 @@ pub(crate) fn resolve_obj(
                 (Some(shaped), Some(gpu)) => gpu.mesh_bounds(shaped).map(|(low, high)| [low, high]),
                 _ => None,
             };
-            Some(DryArea { shape: dry.shape, size: dry.size, mesh, bounds, bilge: dry.bilge })
+            Some(DryArea { shape: dry.shape, size: dry.size, mesh, bounds, bilge: dry.bilge, bilge_on: dry.bilge_on })
         }
         None => None,
     };

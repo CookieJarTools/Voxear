@@ -137,7 +137,19 @@ fn placed(transform: &Transform, at: Option<&WorldTransform>) -> (Vec3, Quat) {
 /// or away from the sea, every Pool and every Stream. Over a Pool's
 /// footprint its surface, not the sea's; over a Stream its, flowing.
 pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
-    let dry = world.query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>().into_iter().find_map(|(area, t, w)| {
+    if let Some(bilge) = in_dry_area(world, at, None) {
+        return bilge.map(|height| WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid: Liquid::Water });
+    }
+    sample_wet(world, world.resource::<PhysicsScene>(), at)
+}
+
+/// Whether `at` is inside a Dry Area, but for those on `own` and under it:
+/// `None` when it is in none; or the height of the water in that Dry Area's
+/// bilge, if `at` is under it.
+fn in_dry_area(world: &World, at: Vec3, own: Option<Entity>) -> Option<Option<f32>> {
+    let areas = world.query_ref::<(Entity, &DryArea, &Transform, Option<&WorldTransform>)>();
+    let mut others = areas.into_iter().filter(|(entity, ..)| own.is_none_or(|own| !is_under(world, *entity, own)));
+    others.find_map(|(_, area, t, w)| {
         let (position, rotation) = placed(t, w);
         let (inside, model) = match area.shape {
             DryShape::Mesh => {
@@ -148,11 +160,19 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
         };
         // Inside, only its bilge's water.
         inside.then(|| area.bilge_over(model, at))
-    });
-    if let Some(bilge) = dry {
-        return bilge.map(|height| WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid: Liquid::Water });
+    })
+}
+
+/// Whether `entity` is `above` or under it in the hierarchy.
+fn is_under(world: &World, entity: Entity, above: Entity) -> bool {
+    let mut at = Some(entity);
+    while let Some(here) = at {
+        if here == above {
+            return true;
+        }
+        at = world.get::<voxear_scene::Parent>(here).map(|parent| parent.0);
     }
-    sample_wet(world, world.resource::<PhysicsScene>(), at)
+    false
 }
 
 /// How shallow the sea is round `at` for how much its waves die away there:
@@ -290,6 +310,17 @@ fn depth_at(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option<(
     sample_wet(world, physics, at).map(|water| (water.height - at.y, water.flow, water.liquid))
 }
 
+/// How deep `at` is under the water that floats `body`, as [`depth_at`]: in
+/// another Obj's Dry Area, its bilge's or none, so cargo floats on the water
+/// flooding a hold; the Dry Areas on `body` and under it, a boat's own hull,
+/// it does not ask, so the boat floats on the sea round it.
+fn floating_depth(world: &World, physics: &PhysicsScene, at: Vec3, body: Entity) -> Option<(f32, Vec3, Liquid)> {
+    match in_dry_area(world, at, Some(body)) {
+        Some(bilge) => bilge.map(|height| (height - at.y, Vec3::ZERO, Liquid::Water)),
+        None => depth_at(world, Some(physics), at),
+    }
+}
+
 /// The water at a point as scripts take it: height, normal and flow.
 fn for_scripts(world: &World, at: [f32; 3]) -> Option<[f32; 7]> {
     let water = sample(world, Vec3::from(at))?;
@@ -374,7 +405,7 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
             for j in 0..COLUMNS {
                 let spot = |k: usize| (k as f32 + 0.5) / COLUMNS as f32 * 2.0 - 1.0;
                 let at = to_world.transform_point3(middle + Vec3::new(reach.x * spot(i), 0.0, reach.z * spot(j)));
-                let Some((depth, flow, _)) = depth_at(world, Some(&*physics), at) else { continue };
+                let Some((depth, flow, _)) = floating_depth(world, &*physics, at, entity) else { continue };
                 let under = ((depth + tall * 0.5) / tall).clamp(0.0, 1.0);
                 if under <= 0.0 {
                     continue;
@@ -389,7 +420,7 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
             let slowing = buoyancy.angular_drag * damping * across * under_all / submerged;
             physics.world_mut().push(body, Push::Torque(-turning * slowing));
         }
-        let water = depth_at(world, Some(&*physics), centre);
+        let water = floating_depth(world, &*physics, centre, entity);
         let surface = water.map_or(centre, |(depth, ..)| centre + up * depth);
         let width = (across * 3.0).sqrt() * 2.0;
         let (flow, liquid) = water.map_or((Vec3::ZERO, Liquid::Water), |(_, flow, liquid)| (flow, liquid));
@@ -694,6 +725,51 @@ mod tests {
             float(world, &mut physics);
             physics.step(world, dt);
         }
+    }
+
+    #[test]
+    fn cargo_floats_on_a_hold_s_bilge_as_it_floods_and_the_ship_on_the_sea() {
+        let mut world = World::new();
+        // Still water all round, its top at 0; a hold under it, from 3 m down to 1 m up, a metre of water in it.
+        world.spawn((Pool { size: [40.0, 40.0], depth: 10.0, ..Pool::default() }, Transform::default()));
+        let hold = DryArea { size: [6.0, 4.0, 6.0], bilge: 1.0, ..DryArea::default() };
+        let hold = world.spawn((hold, Transform::from_position(Vec3::new(0.0, -1.0, 0.0))));
+        let cargo = crate_over(&mut world, Vec3::new(0.0, -1.5, 0.0));
+        // A ship beside it, its own hull a Dry Area on a child: it floats on the water round it all the same.
+        let ship = Rigidbody { mass: 400.0, ..Rigidbody::default() };
+        let hull = Collider { size: [2.0, 1.0, 4.0], ..Collider::default() };
+        let ship = world.spawn((Buoyancy::default(), hull, ship, Transform::from_position(Vec3::new(12.0, 0.5, 0.0))));
+        let inside = DryArea { size: [2.0, 1.0, 4.0], ..DryArea::default() };
+        world.spawn((inside, Transform::default(), voxear_scene::Parent(ship)));
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        let mut run = |world: &mut World, seconds: f32, bilge: &dyn Fn(f32) -> f32| {
+            for step in 0..(seconds / dt) as usize {
+                world.get_mut::<DryArea>(hold).unwrap().bilge = bilge(step as f32 * dt);
+                update(world, f64::from(step as f32 * dt));
+                voxear_scene::propagate_transforms(world);
+                float(world, &mut physics);
+                physics.step(world, dt);
+            }
+        };
+        let height = |world: &World, entity: Entity| world.get::<Transform>(entity).unwrap().position.y;
+        run(&mut world, 4.0, &|_| 1.0);
+        let floating = height(&world, cargo);
+        assert!((floating + 2.0).abs() < 0.2, "half under the bilge's top, at -2: {floating}");
+        assert!(height(&world, ship).abs() < 0.2, "half under the water round it: {}", height(&world, ship));
+        assert_eq!(sample(&world, Vec3::new(1.0, -2.5, 1.0)).map(|w| w.height), Some(-2.0), "the bilge, to scripts");
+        // The hold floods over two seconds, its bilge set each frame, and the cargo rises with it.
+        run(&mut world, 2.0, &|t| 1.0 + t * 0.75);
+        run(&mut world, 3.0, &|_| 2.5);
+        let floating = height(&world, cargo);
+        assert!((floating + 0.5).abs() < 0.2, "risen to the flooded hold's -0.5: {floating}");
+        assert_eq!(sample(&world, Vec3::new(1.0, -2.5, 1.0)).map(|w| w.height), Some(-0.5));
+        // Its bilge switched off, the hold is dry inside, its depth kept.
+        world.get_mut::<DryArea>(hold).unwrap().bilge_on = false;
+        assert!(sample(&world, Vec3::new(1.0, -2.5, 1.0)).is_none(), "dry");
+        assert_eq!(world.get::<DryArea>(hold).unwrap().bilge, 2.5);
+        world.get_mut::<DryArea>(hold).unwrap().bilge_on = true;
+        assert_eq!(sample(&world, Vec3::new(1.0, -2.5, 1.0)).map(|w| w.height), Some(-0.5), "on again");
     }
 
     #[test]

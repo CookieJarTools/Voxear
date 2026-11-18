@@ -3793,8 +3793,6 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     way they move. Drawn as arrows by the Navigation gizmo. Tests: a way over a wall only by a link, one way only;
     an agent climbing a ladder link onto a platform four blocks high, by its controller and along the nav;
     every component's fields reached. Manual: Nav Links.
-  - [ ] climbing vines and ropes without a link; walkers two blocks wide; agent types in Project Settings; costs
-    per agent
   - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
     `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
     its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
@@ -3803,7 +3801,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     uses too; `vox mcp` reaches them as it reaches every call. Tests: a tool finding a way over a Block World,
     reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
     ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
-  - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
+  - [ ] Project Settings ▸ Navigation: budgets (how many searches agents begin a step, how many places one looks
+    at), now set in code; areas, costs and agent types are there (see below)
   - [x] **Baked nav meshes for levels of models** (`voxear_nav::mesh`): every still collider's triangles
     (`navigation::bake_triangles`, from the level's real middle) laid into a grid of columns 0.3 m across, each
     triangle clipped to each column so walls count as well as floors; a span's top walkable where its triangles

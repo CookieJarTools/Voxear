@@ -3845,7 +3845,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Type** dropdown (`agent_type`, saved as its slot; C# `NavAgentType`, `NavAgent.AgentType`). A type's costs are
     its agents' searches'. Tests: a horse type keeping off a ford the Default type wades; the C# type with no
     engine. Manual: Agent Types.
-  - [ ] a baked nav mesh for each agent type; walkers wider than a block
+  - [x] **A baked nav mesh for each agent type**: Bake Navigation bakes the Default type and each named one with its
+    own sizes (`NavAgentType::bake_settings`) into one `.nav` (`VXNV` 3, `mesh::meshes_to_bytes`; a file of one
+    mesh reads as the Default type's); `LevelNav` is the Default type's, `TypeNavs` the rest; an agent walks its
+    type's (`navigation::level_nav_for`), Nav Obstacles cut each, play takes them all, and `navigation.bake` says
+    what each was baked to. Tests: an ogre too wide for a doorway going round by a wider gap where the Default type
+    walks through, both meshes read back from a file, and a crate cutting the ogre's; a tool baking an ogre type;
+    meshes kept and read by their numbers.
+  - [ ] walkers wider than a block
   - [x] **Co-op, Portals and dimensions.** Agents move only where their Obj has authority; a player's script
     setting `Destination`, `SetDestination`, `Stop` or `Resume` on one the server moves sends `Message::NavGo`
     (`net::ask_nav`), which the server takes for an Obj no player owns or the player's own (`net::take_nav_asked`,

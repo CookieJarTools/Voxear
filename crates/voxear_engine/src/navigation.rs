@@ -564,21 +564,42 @@ pub fn nav_file(level: &str) -> String {
 }
 
 /// The open level's baked nav mesh, for what walks its models rather than
-/// blocks, in metres from the level's real middle (see `crate::origin`).
+/// blocks, in metres from the level's real middle (see `crate::origin`):
+/// the Default agent type's.
 #[derive(Clone, Debug)]
 pub struct LevelNav(pub Arc<voxear_nav::mesh::NavMesh>);
+
+/// The open level's nav meshes baked for the project's own agent types,
+/// each by its slot, beside the Default type's [`LevelNav`].
+#[derive(Clone, Debug, Default)]
+pub struct TypeNavs(pub Vec<(u8, Arc<voxear_nav::mesh::NavMesh>)>);
 
 /// Opens the current level's nav mesh, if it has one baked, in place of
 /// any before.
 pub fn put_level_nav(levels: &crate::levels::Levels, world: &mut World, content: &mut crate::Content) {
     world.remove_resource::<LevelNav>();
+    world.remove_resource::<TypeNavs>();
     let Some(level) = levels.current() else { return };
     let path = nav_file(level);
     let Ok(bytes) = content.read(&path) else { return };
-    match voxear_nav::mesh::NavMesh::from_bytes(&bytes) {
-        Some(mesh) => world.insert_resource(LevelNav(Arc::new(mesh))),
+    match voxear_nav::mesh::meshes_from_bytes(&bytes) {
+        Some(meshes) => put_meshes(world, meshes),
         None => tracing::warn!("{path} is not a nav mesh this engine reads; bake it again"),
     }
+}
+
+/// Puts a level's nav meshes in `world`, each by the slot of the agent type
+/// it was baked for, in place of any before.
+pub fn put_meshes(world: &mut World, meshes: Vec<(u8, voxear_nav::mesh::NavMesh)>) {
+    world.remove_resource::<LevelNav>();
+    let mut own = Vec::new();
+    for (slot, mesh) in meshes {
+        match slot {
+            0 => world.insert_resource(LevelNav(Arc::new(mesh))),
+            _ => own.push((slot, Arc::new(mesh))),
+        }
+    }
+    world.insert_resource(TypeNavs(own));
 }
 
 /// The triangles a level's nav mesh is baked from: every still collider's
@@ -625,4 +646,22 @@ pub fn bake_grounds(world: &World) -> Vec<voxear_nav::mesh::Ground> {
 pub fn level_nav(world: &World) -> Option<(Arc<voxear_nav::mesh::NavMesh>, voxear_core::math::Vec3)> {
     let mesh = world.resource::<LevelNav>()?.0.clone();
     Some((mesh, voxear_scene::WorldOrigin::of(world).0.as_vec3()))
+}
+
+/// The level's nav mesh for agent type `slot`: the one baked for it, or the
+/// Default type's where none was; and how far the world's origin is from
+/// the level's real middle.
+pub fn level_nav_for(world: &World, slot: u8) -> Option<(Arc<voxear_nav::mesh::NavMesh>, voxear_core::math::Vec3)> {
+    let own = world.resource::<TypeNavs>().and_then(|navs| navs.0.iter().find(|(of, _)| *of == slot && slot > 0));
+    match own {
+        Some((_, mesh)) => Some((mesh.clone(), voxear_scene::WorldOrigin::of(world).0.as_vec3())),
+        None => level_nav(world),
+    }
+}
+
+/// The slots of the agent types the level's nav meshes are baked for.
+pub fn baked_types(world: &World) -> Vec<u8> {
+    let default = world.resource::<LevelNav>().map(|_| 0);
+    let own = world.resource::<TypeNavs>().map(|navs| navs.0.iter().map(|(slot, _)| *slot).collect::<Vec<_>>());
+    default.into_iter().chain(own.into_iter().flatten()).collect()
 }

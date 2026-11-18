@@ -441,7 +441,10 @@ pub fn step_agents(world: &mut World, delta: f32) {
         .filter_map(|(entity, corner, size, blocks)| walked_of(world, entity, corner, size, blocks))
         .collect();
 
-    let level_mesh = crate::navigation::level_nav(world);
+    // The level's nav mesh for each agent type: its own, or the Default one's.
+    let meshes: Vec<Option<(Arc<voxear_nav::mesh::NavMesh>, Vec3)>> =
+        (0..crate::navigation::AGENT_TYPES).map(|slot| crate::navigation::level_nav_for(world, slot as u8)).collect();
+    let mesh_of = |agent: &NavAgent| meshes[usize::from(agent.agent_type).min(meshes.len() - 1)].as_ref();
     let portals = crate::portals::nav_portals(world);
     // Each agent: its way taken or asked for, and the velocity it wants.
     let mut steps: Vec<Stepping> = Vec::with_capacity(agents.len());
@@ -496,7 +499,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
         };
         if let Some(walked) = index.map(|index| &walked[index]) {
             plan(world, &agent, &mut state, walked, &portals, layer, at, height, delta, &mut budget);
-        } else if let Some((mesh, offset)) = &level_mesh {
+        } else if let Some((mesh, offset)) = mesh_of(&agent) {
             // No world of blocks under it: the level's nav mesh, where it has one.
             plan_mesh(world, &agent, &mut state, mesh, *offset, dimension, &portals, layer, at, delta, &mut budget);
         } else {
@@ -585,12 +588,14 @@ pub fn step_agents(world: &mut World, delta: f32) {
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else {
         // With no physics there is nothing to stand on or fall on: only those moving along the nav move.
         for (step, chosen) in steps.into_iter().zip(chosen.into_iter().take(agents_count)) {
-            finish(world, step, chosen, &walked, None, level_mesh.as_ref(), &portals, delta);
+            let mesh = mesh_of(&step.agent);
+            finish(world, step, chosen, &walked, None, mesh, &portals, delta);
         }
         return;
     };
     for (step, chosen) in steps.into_iter().zip(chosen.into_iter().take(agents_count)) {
-        finish(world, step, chosen, &walked, Some(&mut physics), level_mesh.as_ref(), &portals, delta);
+        let mesh = mesh_of(&step.agent);
+        finish(world, step, chosen, &walked, Some(&mut physics), mesh, &portals, delta);
     }
     world.insert_resource(physics);
 }

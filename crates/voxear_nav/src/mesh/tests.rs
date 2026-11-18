@@ -128,6 +128,12 @@ fn a_nav_mesh_is_kept_as_bytes_and_read_back_the_same() {
     older.extend(1u32.to_le_bytes());
     older.extend(lz4_flex::compress_prepend_size(&raw));
     assert_eq!(NavMesh::from_bytes(&older).as_ref(), Some(&mesh));
+    // Several, one for each kind of walker, read back by their numbers; and one alone read as the first's.
+    let narrow = bake(&triangles, BakeSettings { radius: 0.8, ..BakeSettings::default() }).unwrap();
+    let both = meshes_to_bytes(&[(0, mesh.clone()), (2, narrow.clone())]);
+    assert_eq!(meshes_from_bytes(&both), Some(vec![(0, mesh.clone()), (2, narrow)]));
+    assert_eq!(meshes_from_bytes(&bytes), Some(vec![(0, mesh)]));
+    assert!(meshes_from_bytes(&both[..both.len() - 3]).is_none());
 }
 
 #[test]

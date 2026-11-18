@@ -30,7 +30,9 @@ A type's costs change only its own ways. With a Water cost of 50, a horse goes f
 
 ## Sizes
 
-In a [[Block Worlds|Block World]] a Nav Agent's own **Height** says what it fits under, whatever its type. A type's sizes say what a level's baked nav mesh is made for.
+**Bake Navigation** bakes a [[Levels of Models|level of models]] once for the Default type and once for each type the project has named, each for its own sizes, all into the level's one `.nav` file. An agent walks the mesh baked for its type: an ogre too wide for a doorway goes round by a wider gap, where a person walks through. An agent whose type was not baked for, as one named since the last bake, walks the Default type's. [[Nav Obstacles]] cut every type's mesh. The Navigation gizmo shows the Default type's.
+
+In a [[Block Worlds|Block World]] a Nav Agent's own **Height** says what it fits under, whatever its type.
 
 ## From a script
 

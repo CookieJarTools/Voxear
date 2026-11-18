@@ -881,5 +881,49 @@ impl NavMesh {
     }
 }
 
+/// What a `.nav` file of a nav mesh for each of several kinds of walker
+/// is, after its first four bytes.
+const MESHES_VERSION: u32 = 3;
+
+/// A level's nav meshes as the bytes of a `.nav` file: one for each kind
+/// of walker it is baked for, each by its number (an agent type's slot),
+/// one after another.
+pub fn meshes_to_bytes(meshes: &[(u8, NavMesh)]) -> Vec<u8> {
+    let mut out = MAGIC.to_vec();
+    out.extend(MESHES_VERSION.to_le_bytes());
+    out.extend((meshes.len() as u32).to_le_bytes());
+    for (slot, mesh) in meshes {
+        let bytes = mesh.to_bytes();
+        out.extend(u32::from(*slot).to_le_bytes());
+        out.extend((bytes.len() as u32).to_le_bytes());
+        out.extend(bytes);
+    }
+    out
+}
+
+/// A level's nav meshes from a `.nav` file's bytes, each by its number; a
+/// file of one mesh, as those baked before kinds of walker were, is the
+/// first's. `None` where they are not one.
+pub fn meshes_from_bytes(bytes: &[u8]) -> Option<Vec<(u8, NavMesh)>> {
+    if bytes.get(..4)? != MAGIC {
+        return None;
+    }
+    let version = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
+    if version != MESHES_VERSION {
+        return NavMesh::from_bytes(bytes).map(|mesh| vec![(0, mesh)]);
+    }
+    let word = |at: usize| -> Option<u32> { Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?)) };
+    let count = word(8)? as usize;
+    let mut at = 12;
+    let mut meshes = Vec::with_capacity(count.min(16));
+    for _ in 0..count {
+        let (slot, length) = (u8::try_from(word(at)?).ok()?, word(at + 4)? as usize);
+        let mesh = NavMesh::from_bytes(bytes.get(at + 8..at + 8 + length)?)?;
+        meshes.push((slot, mesh));
+        at += 8 + length;
+    }
+    Some(meshes)
+}
+
 #[cfg(test)]
 mod tests;

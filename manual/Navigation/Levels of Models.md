@@ -27,6 +27,4 @@ Turn on **Gizmos ▸ Navigation** to see what was baked: a green tint on every f
 
 [[Nav Links]] and [[Portals and Dimensions|Portals]] join places on the mesh as they do in a Block World, and [[Nav Obstacles]] cut it while the game runs.
 
-## Not done yet
-
-- Setting what is baked for, such as a smaller creature or a steeper slope.
+It is baked for each of the project's [[Agent Types]], each for its own height, width, step and slope.

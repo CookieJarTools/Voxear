@@ -28,7 +28,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_nav::{AreaBox, NOT_WALKABLE, Walker, mesh::NavMesh, threads::Job};
 use voxear_scene::{Destroying, DimensionId, Transform, WorldTransform, dimension_of};
 
-use crate::navigation::LevelNav;
+use crate::navigation::{LevelNav, TypeNavs};
 
 /// A box agents go round: centred on its Obj, as wide, high and long as
 /// `size` in the Obj's own space, so it turns and grows with it.
@@ -75,10 +75,12 @@ pub struct NavCuts {
     version: u64,
     previous: u64,
     changed: Vec<(DimensionId, [Vec3; 2])>,
-    mesh: MeshCuts,
+    /// Each of the level's nav meshes, by the slot of the agent type it is
+    /// baked for.
+    meshes: HashMap<u8, MeshCuts>,
 }
 
-/// The level's nav mesh as baked, the cut one last put in its place, the
+/// A level's nav mesh as baked, the cut one last put in its place, the
 /// boxes that is cut round, and a cut under way.
 #[derive(Default)]
 struct MeshCuts {
@@ -220,25 +222,38 @@ pub fn update(world: &mut World, delta: f32) {
     world.insert_resource(cuts);
 }
 
-/// Keeps the level's nav mesh cut round the boxes carved in the dimension
-/// shown: a cut begun on navigation's threads where they changed, and put
-/// in place once it is done, or at once where `wait`.
-fn cut_mesh(world: &mut World, cuts: &mut NavCuts, wait: bool) {
-    let Some(live) = world.resource::<LevelNav>().map(|nav| nav.0.clone()) else {
-        cuts.mesh = MeshCuts::default();
-        return;
-    };
-    // A mesh put there by something else is a mesh as baked: a level opened, or one baked again. The mesh as baked
-    // is still there while its first cut is made.
-    let ours = std::ptr::eq(Arc::as_ptr(&live), cuts.mesh.made.as_ptr())
-        || cuts.mesh.baked.as_ref().is_some_and(|baked| Arc::ptr_eq(baked, &live));
-    if !ours {
-        cuts.mesh = MeshCuts { baked: Some(live), ..MeshCuts::default() };
-    } else if !std::ptr::eq(Arc::as_ptr(&live), cuts.mesh.made.as_ptr()) {
-        // The mesh as baked is back where a cut was put: nothing is cut round now.
-        cuts.mesh.cut_round.clear();
+/// Agent type `slot`'s nav mesh of the level, as it is now.
+fn mesh_of(world: &World, slot: u8) -> Option<Arc<NavMesh>> {
+    match slot {
+        0 => world.resource::<LevelNav>().map(|nav| nav.0.clone()),
+        _ => world.resource::<TypeNavs>()?.0.iter().find(|(of, _)| *of == slot).map(|(_, mesh)| mesh.clone()),
     }
-    let Some(baked) = cuts.mesh.baked.clone() else { return };
+}
+
+/// Puts `mesh` in agent type `slot`'s nav mesh's place.
+fn put_mesh(world: &mut World, slot: u8, mesh: Arc<NavMesh>) {
+    match slot {
+        0 => world.insert_resource(LevelNav(mesh)),
+        _ => {
+            if let Some(navs) = world.resource_mut::<TypeNavs>()
+                && let Some(kept) = navs.0.iter_mut().find(|(of, _)| *of == slot)
+            {
+                kept.1 = mesh;
+            }
+        }
+    }
+}
+
+/// Keeps each of the level's nav meshes cut round the boxes carved in the
+/// dimension shown: a cut begun on navigation's threads where they changed,
+/// and put in place once it is done, or at once where `wait`.
+fn cut_mesh(world: &mut World, cuts: &mut NavCuts, wait: bool) {
+    let mut slots: Vec<u8> = crate::navigation::baked_types(world);
+    slots.sort_unstable();
+    cuts.meshes.retain(|slot, _| slots.contains(slot));
+    if slots.is_empty() {
+        return;
+    }
     let offset = voxear_scene::WorldOrigin::of(world).0.as_vec3();
     let here = crate::dimensions::current(world);
     let mut boxes: Vec<[Vec3; 2]> = cuts
@@ -249,25 +264,48 @@ fn cut_mesh(world: &mut World, cuts: &mut NavCuts, wait: bool) {
         .map(|[low, high]| [low + offset, high + offset])
         .collect();
     boxes.sort_by(|a, b| a[0].to_array().partial_cmp(&b[0].to_array()).unwrap_or(std::cmp::Ordering::Equal));
-    let asked = cuts.mesh.cutting.as_ref().map_or(&cuts.mesh.cut_round, |(_, boxes, _)| boxes);
-    if *asked != boxes {
+    for slot in slots {
+        let Some(live) = mesh_of(world, slot) else { continue };
+        let state = cuts.meshes.entry(slot).or_default();
+        if let Some(cut) = cut_one(state, live, &boxes, wait) {
+            put_mesh(world, slot, cut);
+        }
+    }
+}
+
+/// One mesh kept cut round `boxes`, `live` as it is now: the cut mesh to put
+/// in its place, once one is made.
+fn cut_one(state: &mut MeshCuts, live: Arc<NavMesh>, boxes: &[[Vec3; 2]], wait: bool) -> Option<Arc<NavMesh>> {
+    // A mesh put there by something else is a mesh as baked: a level opened, or one baked again. The mesh as baked
+    // is still there while its first cut is made.
+    let ours = std::ptr::eq(Arc::as_ptr(&live), state.made.as_ptr())
+        || state.baked.as_ref().is_some_and(|baked| Arc::ptr_eq(baked, &live));
+    if !ours {
+        *state = MeshCuts { baked: Some(live), ..MeshCuts::default() };
+    } else if !std::ptr::eq(Arc::as_ptr(&live), state.made.as_ptr()) {
+        // The mesh as baked is back where a cut was put: nothing is cut round now.
+        state.cut_round.clear();
+    }
+    let baked = state.baked.clone()?;
+    let asked = state.cutting.as_ref().map_or(&state.cut_round, |(_, boxes, _)| boxes);
+    if asked.as_slice() != boxes {
         let mesh = baked.clone();
-        let round = boxes.clone();
+        let round = boxes.to_vec();
         // With none left, the mesh as baked goes back: nothing to cut.
         let job = Job::start(move || if round.is_empty() { NavMesh::default() } else { mesh.cut(&round) });
-        cuts.mesh.cutting = Some((job, boxes, 0));
+        state.cutting = Some((job, boxes.to_vec(), 0));
     }
     // The cut taken once a thread has made it, or made here where none has begun it by the step after.
-    let Some((job, round, waited)) = cuts.mesh.cutting.take() else { return };
+    let (job, round, waited) = state.cutting.take()?;
     if !wait && !job.is_done() && (job.is_begun() || waited == 0) {
-        cuts.mesh.cutting = Some((job, round, waited + 1));
-        return;
+        state.cutting = Some((job, round, waited + 1));
+        return None;
     }
-    let Some(cut) = job.take() else { return };
+    let cut = job.take()?;
     let cut = if round.is_empty() { baked } else { Arc::new(cut) };
-    cuts.mesh.made = Arc::downgrade(&cut);
-    cuts.mesh.cut_round = round;
-    world.insert_resource(LevelNav(cut));
+    state.made = Arc::downgrade(&cut);
+    state.cut_round = round;
+    Some(cut)
 }
 
 /// Waits for the level's nav mesh to be cut round every obstacle carved:

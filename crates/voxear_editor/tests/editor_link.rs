@@ -580,8 +580,14 @@ fn a_tool_bakes_a_levels_nav_mesh_from_its_colliders_and_finds_a_way_over_it() {
         done(&mut editor, &mut renderer, "field.set", json!({ "obj": crate_obj, "component": component, "field": "size", "value": size }));
     }
     done(&mut editor, &mut renderer, "save", json!({}));
+    // An agent type of the project's own, an ogre, is baked for too.
+    done(&mut editor, &mut renderer, "project.set", json!({ "key": "navigation.agent_1_name", "value": "Ogre" }));
+    done(&mut editor, &mut renderer, "project.set", json!({ "key": "navigation.agent_1_radius", "value": 0.8 }));
     let baked = done(&mut editor, &mut renderer, "navigation.bake", json!({}));
     assert!(baked["polygons"].as_u64().unwrap() > 0, "{baked}");
+    let types = baked["agent_types"].as_array().unwrap();
+    let names: Vec<&str> = types.iter().map(|kind| kind["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Default", "Ogre"], "{baked}");
     let file = dir.path().join(baked["path"].as_str().unwrap());
     assert!(file.is_file(), "written beside the level: {}", file.display());
     let way = done(&mut editor, &mut renderer, "navigation.path", json!({ "from": [-8.0, 0.0, 5.0], "to": [8.0, 0.0, 5.0] }));

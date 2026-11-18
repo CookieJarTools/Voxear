@@ -846,6 +846,9 @@ impl Levels {
         if let Some(nav) = edit.world.resource::<crate::navigation::LevelNav>() {
             play.world.insert_resource(nav.clone());
         }
+        if let Some(navs) = edit.world.resource::<crate::navigation::TypeNavs>() {
+            play.world.insert_resource(navs.clone());
+        }
         // The reflection probes' bakes go with them, as baked, even before the level is saved.
         for scene in &self.scenes {
             for (path, entity) in &scene.objs {

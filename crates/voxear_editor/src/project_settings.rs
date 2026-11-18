@@ -753,7 +753,6 @@ const FIXED: &[Setting] = &[
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {
-    let at = FIXED.iter().position(|setting| setting.category == "Network").unwrap_or(FIXED.len());
     let modules = Module::ALL.into_iter().map(|module| {
         let key: &'static str = Box::leak(format!("modules.{}", module.key()).into_boxed_str());
         let tip: &'static str = Box::leak(

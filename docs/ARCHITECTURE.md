@@ -4592,7 +4592,8 @@ engine's glue is `voxear_engine::navigation`.
   crossed by agents along their line or arc. Jumps, swimming and doors are done, and areas:
   a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
   to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
-- **Mesh levels**: bake settings per agent type. (Terrain is baked from its heights directly,
+- **Mesh levels**: none planned. (Each agent type has a mesh of its own, `navigation::TypeNavs` beside `LevelNav`,
+  baked into one `.nav`. Terrain is baked from its heights directly,
   `mesh::bake_ground`; polygons are found through a grid of squares made as a mesh is read, `mesh::Buckets`, so a
   `.nav` keeps polygons and edges alone. Run-time cutting for Nav Obstacles is done, above. The baked nav mesh is done: `voxear_nav::mesh::bake` lays still colliders' triangles into a grid
   of spans, keeps the walkable tops with room over them, shrinks them by the walker's radius and gathers them

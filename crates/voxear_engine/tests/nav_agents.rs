@@ -34,6 +34,7 @@ fn game(size: u32) -> (tempfile::TempDir, Game, Entity) {
         ("Scenes/Field.scene", scene.to_string()),
         ("Blocks/Field.blockworld", file.to_text()),
         ("Blocks/Door.block", "color = [0.5, 0.35, 0.2]\nshape = \"door\"\n".to_string()),
+        ("Blocks/Vine.block", "color = [0.2, 0.5, 0.2]\nshape = \"vine\"\n".to_string()),
     ];
     for (path, text) in files {
         let path = dir.path().join(path);
@@ -366,5 +367,38 @@ fn an_agent_climbs_a_nav_link_onto_a_platform_it_cannot_walk_up_to() {
         }
         let now = at(&game, walker);
         assert!(frames < 1800 && (now - to).length() < 0.6, "{moves:?}: up on the platform: {now} after {frames}");
+    }
+}
+
+#[test]
+fn an_agent_climbs_a_vine_up_a_cliff_by_its_controller_and_along_the_nav_and_one_that_does_not_climb_stays_below() {
+    use voxear_engine::blocks::block_number_state;
+    for (moves, climbs) in
+        [(NavMoves::AlongTheNav, true), (NavMoves::CharacterController, true), (NavMoves::AlongTheNav, false)]
+    {
+        let (_dir, mut game, field) = game(32);
+        // A cliff five blocks high over the far half of the field, and a vine up its face.
+        let vine =
+            block_number_state(&mut game.engine.world, &mut game.content, field, "Blocks/Vine.block", 0, true).unwrap();
+        let mut blocks = Vec::new();
+        for x in 16..32 {
+            for z in 0..32 {
+                for y in 6..11 {
+                    blocks.push(([x, y, z], 1));
+                }
+            }
+        }
+        blocks.extend((6..11).map(|y| ([15, y, 6], vine)));
+        game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(blocks);
+        game.tick(FRAME, None);
+        let walker = agent(&mut game, 4.5, 6.5, moves);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().climbs = climbs;
+        let to = Vec3::new(24.5, 11.0, 6.5);
+        let frames = walk(&mut game, walker, to, 1800);
+        let now = at(&game, walker);
+        match climbs {
+            true => assert!((now - to).length() < 0.6, "{moves:?}: up the vine and on: {now} after {frames} frames"),
+            false => assert!(now.y < 6.5, "{moves:?}: one that does not climb stays below: {now}"),
+        }
     }
 }

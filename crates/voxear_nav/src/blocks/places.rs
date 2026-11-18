@@ -35,6 +35,9 @@ pub enum PlaceKind {
     Swim = 2,
     /// In a shut door, for what opens doors.
     Door = 3,
+    /// Holding on to a vine, a rope or a ladder, with nothing to stand on,
+    /// for what climbs.
+    Climb = 4,
 }
 
 /// A place to stand, in its chunk.
@@ -246,6 +249,8 @@ impl<'a> ColumnBuilder<'a> {
                             (true, _, _, true) => (PlaceKind::Wade, clear[y + 1], feet.area, floor.floor),
                             (true, _, _, false) => (PlaceKind::Stand, clear[y + 1], floor.area, floor.floor),
                             (false, _, _, true) if floor.is_wet() => (PlaceKind::Swim, clear[y + 1], crate::SWIM, 16),
+                            // Feet on a vine or a ladder with nothing under them: held on to, from its foot.
+                            (false, _, _, false) if feet.climbs() => (PlaceKind::Climb, clear[y + 1], feet.area, 16),
                             _ => continue,
                         };
                     places.push(Place { y: y as u8, room: room.min(ROOM_MOST), floor: top, area, kind });

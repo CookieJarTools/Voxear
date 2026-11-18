@@ -367,7 +367,7 @@ fn straight_step<G: Ground>(
                 break;
             }
             let over = feet.max(to_feet) + height;
-            if !walker_may(walker, to.kind) {
+            if !walker_may(walker, to.kind) || !climbs_across(place.kind, to.kind, to_feet - feet) {
                 continue;
             }
             if top >= over && to.top(column.cy) >= over {
@@ -379,13 +379,63 @@ fn straight_step<G: Ground>(
     None
 }
 
+/// Whether a step across from a place of kind `from` to one of kind `to`,
+/// `rise` sixteenths up, may be taken by what climbs: nothing walks from
+/// one hold of a vine to the next across, onto one only down or level, as
+/// from a ledge, and off one only up or level, as over a ledge.
+#[inline]
+fn climbs_across(from: PlaceKind, to: PlaceKind, rise: i32) -> bool {
+    match (from == PlaceKind::Climb, to == PlaceKind::Climb) {
+        (true, true) => false,
+        (false, true) => rise <= 0,
+        (true, false) => rise >= 0,
+        (false, false) => true,
+    }
+}
+
+/// The place a block up or down the same column from `from`, for `walker`
+/// climbing: the one above held on to, a vine, a rope or a ladder, with
+/// room for the walker, whether it climbs up into it or down from it to
+/// the place under.
+pub(crate) fn climb_step<G: Ground>(
+    ground: &G,
+    from: PlaceRef,
+    up: bool,
+    walker: Walker,
+) -> Option<(PlaceRef, Place, i32)> {
+    if !walker.climbs {
+        return None;
+    }
+    let (place, cy) = ground.place(from);
+    let feet = place.feet(cy);
+    let want = if up { feet + 16 } else { feet - 16 };
+    let fits = |at: Place, at_cy: i32| at.top(at_cy) >= at.feet(at_cy) + i32::from(walker.height);
+    for oy in [0, if up { 1 } else { -1 }] {
+        let Some(column) = ground.column(from.slot, [0, oy, 0], u32::from(from.x), u32::from(from.z)) else { continue };
+        for (n, to) in column.places.iter().enumerate() {
+            if to.feet(column.cy) != want {
+                continue;
+            }
+            let upper = if up { (*to, column.cy) } else { (place, cy) };
+            if upper.0.kind != PlaceKind::Climb || !fits(upper.0, upper.1) || !walker_may(walker, to.kind) {
+                return None;
+            }
+            let at = PlaceRef { slot: column.slot, index: column.first + n as u16, x: from.x, z: from.z };
+            return Some((at, *to, column.cy));
+        }
+    }
+    None
+}
+
 /// Whether `walker` may be in a place of `kind`: water too deep to stand
-/// in only if it swims, a shut door only if it opens doors.
+/// in only if it swims, a shut door only if it opens doors, a vine only if
+/// it climbs.
 #[inline]
 pub(crate) fn walker_may(walker: Walker, kind: PlaceKind) -> bool {
     match kind {
         PlaceKind::Swim => walker.swims,
         PlaceKind::Door => walker.doors,
+        PlaceKind::Climb => walker.climbs,
         PlaceKind::Stand | PlaceKind::Wade => true,
     }
 }

@@ -140,6 +140,7 @@ impl BlockMob {
             // Animals and monsters jump gaps, but open no doors: a game gives one a Nav Agent of its own for that.
             opens_doors: false,
             jumps: true,
+            climbs: false,
             destination,
             destination_dimension: None,
             stopped: false,

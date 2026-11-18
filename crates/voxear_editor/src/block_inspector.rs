@@ -191,8 +191,9 @@ pub struct BlockFields {
     /// Whether it sways in the wind; none for a liquid.
     sways: Option<NodeId>,
     tint: Option<NodeId>,
-    /// What ground it makes for navigation.
+    /// What ground it makes for navigation, and whether it is climbed.
     nav_area: NodeId,
+    climbable: NodeId,
     /// How far up the order of blocks that meet it lies; none for a liquid.
     overlap: Option<NodeId>,
     /// How much light it gives.
@@ -288,6 +289,11 @@ impl BlockFields {
         let picked = BlockNavArea::ALL.iter().position(|area| *area == block.nav_area).unwrap_or_default();
         let nav_area = ui.dropdown(row, &BlockNavArea::ALL.map(BlockNavArea::name), picked);
         ui.add_class(nav_area, "value-choice");
+        let row = prop(ui, rows, "Climbable");
+        let tip = "Whether things that find their way climb it, up and down, as a ladder. Vines, ropes and chains \
+                   are climbed whatever this says";
+        ui.set_tooltip(row, tip, None);
+        let climbable = ui.toggle(row, "", block.climbable);
         if block.liquid.is_none() {
             field(ui, rows, BlockRef::Covered, "Covered");
         }
@@ -384,6 +390,7 @@ impl BlockFields {
                 sways,
                 tint,
                 nav_area,
+                climbable,
                 overlap,
                 light,
                 shape,
@@ -492,6 +499,9 @@ impl BlockFields {
         if ui.changed(self.nav_area) {
             let picked = ui.selected_option(self.nav_area).min(BlockNavArea::ALL.len() - 1);
             (block.nav_area, typed) = (BlockNavArea::ALL[picked], true);
+        }
+        if ui.changed(self.climbable) {
+            (block.climbable, typed) = (ui.is_checked(self.climbable), true);
         }
         if let Some(tint) = self.tint.filter(|&tint| ui.changed(tint)) {
             (block.tint, typed) = (BlockTint::ALL[ui.selected_option(tint).min(BlockTint::ALL.len() - 1)], true);

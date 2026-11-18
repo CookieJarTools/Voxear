@@ -117,6 +117,8 @@ pub struct NavAgent {
     pub opens_doors: bool,
     /// Whether it jumps gaps of a block or two on its way.
     pub jumps: bool,
+    /// Whether it climbs vines, ropes and ladders on its way.
+    pub climbs: bool,
     /// Where it is to go, for a game to set; `None` to stand.
     #[serde(skip)]
     pub destination: Option<Vec3>,
@@ -147,6 +149,7 @@ impl Default for NavAgent {
             swims: true,
             opens_doors: true,
             jumps: true,
+            climbs: true,
             destination: None,
             destination_dimension: None,
             stopped: false,
@@ -307,7 +310,7 @@ impl Walked {
     /// and jumping as it does.
     fn walker_of(&self, agent: &NavAgent, height: f32) -> Walker {
         let jump = if agent.jumps { voxear_nav::blocks::walking::MOST_JUMP } else { 0 };
-        self.walker(height).with(agent.swims, agent.opens_doors, jump)
+        self.walker(height).with(agent.swims, agent.opens_doors, jump).climbing(agent.climbs)
     }
 
     fn standing(&self, at: Vec3, walker: Walker, reach: f32) -> Option<PlaceRef> {
@@ -1103,6 +1106,7 @@ const SWIMS: i32 = 18;
 const OPENS_DOORS: i32 = 33;
 const JUMPS: i32 = 34;
 const DESTINATION_DIMENSION: i32 = 35;
+const CLIMBS: i32 = 36;
 const HAS_PATH: i32 = 20;
 const PATH_PENDING: i32 = 21;
 const ARRIVED: i32 = 22;
@@ -1289,6 +1293,8 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (OPENS_DOORS, None) => return toggle(agent.opens_doors),
         (JUMPS, Some([on, ..])) => agent.jumps = on != 0.0,
         (JUMPS, None) => return toggle(agent.jumps),
+        (CLIMBS, Some([on, ..])) => agent.climbs = on != 0.0,
+        (CLIMBS, None) => return toggle(agent.climbs),
         _ => return None,
     }
     if matches!(what, DESTINATION | STOP | RESUME) {

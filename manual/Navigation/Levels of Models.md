@@ -6,7 +6,7 @@ A level made of models rather than blocks has its navigation **baked**: worked o
 
 ## Baking
 
-1. Give the floors, walls, stairs and ramps of your level **Colliders**. Only still colliders count: not triggers, and not those with a Rigidbody.
+1. Give the floors, walls, stairs and ramps of your level **Colliders**. Only still colliders count: not triggers, and not those with a Rigidbody. A [[Terrains|Terrain]] of a set size counts too, its holes left out: its slopes are walked where they are no steeper than 45 degrees. A terrain without end is not baked, as its ground comes and goes.
 2. Open the level, select its `.level` file in the Project panel, and choose **Bake Navigation** under **Navigation** in the Inspector. **Bake Navigation** in the command palette does the same.
 3. The status bar says **Baking navigation** while it works. When it is done, a `.nav` file stands beside the level, and agents walk on it at once.
 

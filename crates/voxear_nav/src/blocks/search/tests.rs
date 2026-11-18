@@ -364,3 +364,57 @@ fn a_link_is_taken_where_there_is_no_other_way_and_its_ends_are_corners() {
     let back = find_path(&nav, &PathAsk { from: on([13, 1, 4]), to: on([3, 1, 4]), ..ask.clone() });
     assert_eq!(back.status, PathStatus::Partial);
 }
+
+#[test]
+fn a_vine_up_a_cliff_is_climbed_by_what_climbs_and_its_top_reached_over_the_ledge() {
+    use voxear_terrain::blocks::block::BlockShape;
+    const VINE: u16 = 3;
+    const LADDER: u16 = 4;
+    let vine = BlockFaces { shape: BlockShape::Vine, ..BlockFaces::new(0, 0, 0) };
+    let ladder = BlockFaces { climbable: true, ..BlockFaces::new(0, 0, 0) };
+    let faces = [FACES[0], FACES[1], FACES[2], vine, ladder];
+    // A cliff five blocks high over the whole floor's far side, a vine up its face and, further along, a ladder.
+    let mut blocks = floor();
+    for x in 10..16 {
+        for z in 0..16 {
+            for y in 1..6 {
+                blocks.set([x, y, z], STONE);
+            }
+        }
+    }
+    for y in 1..6 {
+        blocks.set([9, y, 3], VINE);
+        blocks.set([9, y, 12], LADDER);
+    }
+    let nav = nav_with(&blocks, &faces);
+    let (from, to) = ([3, 1, 3], [13, 6, 3]);
+    let climber = Walker::blocks(2).climbing(true);
+    let found = find_path(&nav, &PathAsk::new(on(from), on(to), climber));
+    assert_eq!(found.status, PathStatus::Complete, "{:?}", found.corners);
+    let climbs: Vec<usize> = (0..found.links.len()).filter(|at| found.links[*at] == Some(CLIMB_LINK)).collect();
+    assert!(!climbs.is_empty(), "climbed: {:?} {:?}", found.corners, found.links);
+    let up = climbs[0];
+    let (foot, top) = (found.corners[up - 1], found.corners[up]);
+    assert!(
+        foot[1] < 2.0 && top[1] > 4.5 && (foot[0] - 9.5).abs() < 0.01 && (top[0] - 9.5).abs() < 0.01,
+        "up the vine: {foot:?} to {top:?}"
+    );
+    assert!(
+        found.corners.iter().any(|c| c[0] > 10.0 && (c[1] - 6.0).abs() < 0.01),
+        "over the ledge: {:?}",
+        found.corners
+    );
+    // Something that does not climb finds no way up.
+    assert_eq!(find_path(&nav, &PathAsk::new(on(from), on(to), Walker::blocks(2))).status, PathStatus::Partial);
+    // The ladder is climbed as the vine is: on its side of the floor, it is the nearer way.
+    let found = find_path(&nav, &PathAsk::new(on([3, 1, 12]), on([13, 6, 12]), climber));
+    assert_eq!(found.status, PathStatus::Complete);
+    assert!(
+        found.corners.iter().any(|c| (c[0] - 9.5).abs() < 0.01 && (c[2] - 12.5).abs() < 0.01 && c[1] > 3.0),
+        "{:?}",
+        found.corners
+    );
+    // And down again, from the top to the foot.
+    let down = find_path(&nav, &PathAsk::new(on(to), on(from), climber));
+    assert_eq!(down.status, PathStatus::Complete, "{:?}", down.corners);
+}

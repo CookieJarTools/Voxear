@@ -121,6 +121,13 @@ fn a_nav_mesh_is_kept_as_bytes_and_read_back_the_same() {
     let bytes = mesh.to_bytes();
     assert_eq!(NavMesh::from_bytes(&bytes).as_ref(), Some(&mesh));
     assert!(NavMesh::from_bytes(&bytes[..10]).is_none());
+    // A file baked before the mesh stopped keeping its cells reads as well, its cells read past.
+    let mut raw = lz4_flex::decompress_size_prepended(&bytes[8..]).unwrap();
+    raw.splice(40..40, [0u8; 8]);
+    let mut older = b"VXNV".to_vec();
+    older.extend(1u32.to_le_bytes());
+    older.extend(lz4_flex::compress_prepend_size(&raw));
+    assert_eq!(NavMesh::from_bytes(&older).as_ref(), Some(&mesh));
 }
 
 #[test]
@@ -136,8 +143,8 @@ fn a_level_two_hundred_metres_square_bakes_in_seconds_and_a_long_way_over_it_is_
     let began = Instant::now();
     let mesh = bake(&triangles, BakeSettings::default()).unwrap();
     let baked = began.elapsed().as_secs_f64();
-    let (polys, cells, bytes) = mesh.counts();
-    println!("baked 200 m square: {polys} polygons, {cells} cells, {} KB, in {baked:.2} s", bytes / 1024);
+    let (polys, edges, bytes) = mesh.counts();
+    println!("baked 200 m square: {polys} polygons, {edges} edges, {} KB, in {baked:.2} s", bytes / 1024);
     assert!(baked < 10.0 * slack, "{baked:.2} s");
     let (from, to) = (Vec3::new(2.0, 0.0, 2.0), Vec3::new(198.0, 0.0, 197.0));
     let mut found = MeshPath::default();
@@ -283,4 +290,78 @@ fn a_link_joins_two_floors_walking_does_not_and_is_taken_only_where_it_is_shorte
     let up = MeshLink { from: Vec3::new(10.0, 0.0, 28.0), to: Vec3::new(15.0, 3.0, 20.0), cost: 1.0 };
     let onto = mesh.find_path_linked(from, Vec3::new(15.0, 3.0, 10.0), 0.5, &[up]);
     assert_eq!(onto.status, MeshPathStatus::Complete, "{:?}", onto.corners);
+}
+
+/// Ground 40 metres square, a sample a metre, its height `height(x, z)`.
+fn ground(height: impl Fn(f32, f32) -> f32) -> Ground {
+    let side = 41;
+    let heights = (0..side * side).map(|n| height((n % side) as f32, (n / side) as f32)).collect();
+    Ground {
+        corner: Vec3::ZERO,
+        spacing: 1.0,
+        samples: [side, side],
+        heights,
+        holes: vec![false; (side * side) as usize],
+    }
+}
+
+#[test]
+fn ground_given_as_heights_is_walked_up_a_hill_but_not_a_cliff_and_round_its_holes_and_what_stands_on_it() {
+    let settings = BakeSettings::default();
+    // A hill rising 4 m over 20 m along x, then flat.
+    let hill = ground(|x, _| (x.min(30.0) - 10.0).max(0.0) * 0.2);
+    let mesh = bake_ground(&[], &[hill.clone()], settings).unwrap();
+    let way = mesh.find_path(Vec3::new(3.0, 0.0, 20.0), Vec3::new(36.0, 4.0, 20.0), 0.5);
+    assert_eq!(way.status, MeshPathStatus::Complete, "up the hill: {:?}", way.corners);
+    let top = *way.corners.last().unwrap();
+    assert!((top.y - 4.0).abs() < 0.15, "on its top: {top}");
+    // A cliff rising 8 m over 2 m is not walked up.
+    let cliff = ground(|x, _| ((x - 19.0).clamp(0.0, 2.0)) * 4.0);
+    let mesh = bake_ground(&[], &[cliff], settings).unwrap();
+    assert_eq!(
+        mesh.find_path(Vec3::new(3.0, 0.0, 20.0), Vec3::new(36.0, 8.0, 20.0), 0.5).status,
+        MeshPathStatus::Partial
+    );
+    // A hole across all but one end is gone round.
+    let mut holed = ground(|_, _| 0.0);
+    for z in 0..36 {
+        for x in 19..22 {
+            holed.holes[z * 41 + x] = true;
+        }
+    }
+    let mesh = bake_ground(&[], &[holed], settings).unwrap();
+    let way = mesh.find_path(Vec3::new(5.0, 0.0, 5.0), Vec3::new(35.0, 0.0, 5.0), 0.5);
+    assert_eq!(way.status, MeshPathStatus::Complete);
+    assert!(way.corners.iter().any(|corner| corner.z > 35.0), "round the hole's end: {:?}", way.corners);
+    // A box standing on the hill's flat foot is gone round.
+    let boulder = boxed(Vec3::new(4.0, -0.5, 10.0), Vec3::new(8.0, 3.0, 30.0));
+    let mesh = bake_ground(&boulder, &[hill], settings).unwrap();
+    let way = mesh.find_path(Vec3::new(2.0, 0.0, 20.0), Vec3::new(12.0, 0.0, 20.0), 0.5);
+    assert_eq!(way.status, MeshPathStatus::Complete);
+    assert!(way.corners.len() > 2, "round the box: {:?}", way.corners);
+}
+
+#[test]
+fn a_terrain_a_kilometre_square_bakes_in_seconds() {
+    let slack = if cfg!(debug_assertions) { 4.0 } else { 1.0 };
+    let side = 513;
+    let heights = (0..side * side)
+        .map(|n| {
+            let (x, z) = ((n % side) as f32, (n / side) as f32);
+            (x * 0.02).sin() * 6.0 + (z * 0.015).cos() * 4.0
+        })
+        .collect();
+    let field = Ground { corner: Vec3::ZERO, spacing: 2.0, samples: [side, side], heights, holes: Vec::new() };
+    let began = Instant::now();
+    let mesh = bake_ground(&[], &[field], BakeSettings { cell: 0.5, ..BakeSettings::default() }).unwrap();
+    let baked = began.elapsed().as_secs_f64();
+    let (polys, edges, bytes) = mesh.counts();
+    println!("baked 1 km of terrain: {polys} polygons, {edges} edges, {} KB, in {baked:.2} s", bytes / 1024);
+    assert!(baked < 20.0 * slack, "{baked:.2} s");
+    let height = |x: f32, z: f32| (x / 2.0 * 0.02).sin() * 6.0 + (z / 2.0 * 0.015).cos() * 4.0;
+    let (from, to) = (Vec3::new(5.0, height(5.0, 5.0), 5.0), Vec3::new(1000.0, height(1000.0, 1000.0), 1000.0));
+    let way = mesh.find_path(from, to, 2.0);
+    assert_eq!(way.status, MeshPathStatus::Complete);
+    assert!(bytes < 2 << 20, "kept small: {} KB", bytes / 1024);
+    assert!(mesh.to_bytes().len() < 2 << 20, "and small on disk: {} KB", mesh.to_bytes().len() / 1024);
 }

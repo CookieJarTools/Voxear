@@ -14,7 +14,7 @@ use std::{
 };
 
 use voxear_engine::navigation::{self, LevelNav};
-use voxear_nav::mesh::{BakeSettings, NavMesh, bake};
+use voxear_nav::mesh::{BakeSettings, NavMesh, bake_ground};
 
 use super::Editor;
 
@@ -37,9 +37,10 @@ impl Editor {
             return self.notify("Open a level to bake its navigation");
         };
         let triangles = navigation::bake_triangles(&self.game.engine.world);
+        let grounds = navigation::bake_grounds(&self.game.engine.world);
         let (given, done) = mpsc::channel();
         let started = thread::Builder::new().name("voxear-navigation".into()).spawn(move || {
-            let _ = given.send(bake(&triangles, BakeSettings::default()));
+            let _ = given.send(bake_ground(&triangles, &grounds, BakeSettings::default()));
         });
         match started {
             Ok(_) => self.nav_bake = Some(NavBake { level, done }),
@@ -73,7 +74,7 @@ impl Editor {
         let level = self.nav_bake.take().map(|bake| bake.level).unwrap_or_default();
         let name = level.rsplit('/').next().unwrap_or(&level).trim_end_matches(".level").to_string();
         let Some(mesh) = baked else {
-            return self.notify(&format!("{name} has no still colliders to bake navigation from"));
+            return self.notify(&format!("{name} has no still colliders or terrain to bake navigation from"));
         };
         let path = navigation::nav_file(&level);
         if let Err(error) = std::fs::write(self.game.project.root.join(&path), mesh.to_bytes()) {

@@ -52,6 +52,7 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	private const int OpensDoorsValue = 33;
 	private const int JumpsValue = 34;
 	private const int DestinationDimensionValue = 35;
+	private const int ClimbsValue = 36;
 
 	public static readonly NavAgent None = default;
 
@@ -169,6 +170,13 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	{
 		get { return Number(JumpsValue) != 0f; }
 		set { Write(JumpsValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>Whether it climbs vines, ropes, chains and ladders on its way, up and down, or goes round them.</summary>
+	public bool Climbs
+	{
+		get { return Number(ClimbsValue) != 0f; }
+		set { Write(ClimbsValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
 	}
 
 	/// <summary>Whether it has a way to walk.</summary>

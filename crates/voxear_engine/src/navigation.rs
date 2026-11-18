@@ -403,6 +403,29 @@ pub fn bake_triangles(world: &World) -> Vec<[voxear_core::math::Vec3; 3]> {
     triangles
 }
 
+/// The ground of every terrain of a set size, as a level's nav mesh is
+/// baked over it: its heights and holes, in metres from the level's real
+/// middle. A terrain without end has none: its ground comes and goes.
+pub fn bake_grounds(world: &World) -> Vec<voxear_nav::mesh::Ground> {
+    let offset = voxear_scene::WorldOrigin::of(world).0.as_vec3();
+    voxear_terrain::terrains(world)
+        .into_iter()
+        .filter(|(_, terrain, _)| terrain.origin.is_none())
+        .map(|(_, terrain, corner)| {
+            let map = &terrain.heights;
+            let samples = map.resolution();
+            let at = |n: u32| (i64::from(n % samples[0]), i64::from(n / samples[0]));
+            let every = 0..samples[0] * samples[1];
+            let heights = every.clone().map(|n| map.sample(at(n).0, at(n).1)).collect();
+            let holes = match map.has_holes() {
+                true => every.map(|n| map.is_hole(at(n).0, at(n).1)).collect(),
+                false => Vec::new(),
+            };
+            voxear_nav::mesh::Ground { corner: corner + offset, spacing: map.spacing(), samples, heights, holes }
+        })
+        .collect()
+}
+
 /// The level's nav mesh and how far the world's origin is from the level's
 /// real middle: a point in the world is the mesh's less that.
 pub fn level_nav(world: &World) -> Option<(Arc<voxear_nav::mesh::NavMesh>, voxear_core::math::Vec3)> {

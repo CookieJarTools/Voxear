@@ -3839,7 +3839,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     in a world of blocks and on a mesh stopped short by a crate put in it, and let on once it goes; an obstacle
     carving only once still; one that never carves gone round; a tool's crate shutting a gap once the game runs;
     the C# API with no engine. Manual: Nav Obstacles.
-  - [ ] bake settings per agent type; terrain heightfields in the bake
+  - [ ] agent types: sizes, costs and bakes for each, walkers wider than a block
   - [x] **Co-op, Portals and dimensions.** Agents move only where their Obj has authority; a player's script
     setting `Destination`, `SetDestination`, `Stop` or `Resume` on one the server moves sends `Message::NavGo`
     (`net::ask_nav`), which the server takes for an Obj no player owns or the player's own (`net::take_nav_asked`,
@@ -3863,6 +3863,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     from until it lands. Tests: an agent through two Portals into a dimension two away; a Portal for one layer
     only; an agent over a plank from one field of blocks into another, by both ways of moving.
   - [ ] walking from one world of blocks into another where they touch, with no link
+  - [x] **Terrain in the bake, and climbing.** A heightmap terrain of a set size is baked with the level's colliders
+    (`navigation::bake_grounds`, `mesh::bake_ground`): a span a column from its heights, solid below, walkable where
+    no steeper than the slope, its holes left out, with no triangles made. Nav meshes no longer keep every cell:
+    polygons are found by a grid of 8 m squares made as a mesh is read, so a `.nav` is polygons and edges alone
+    (`VXNV` 2; 1 reads as well): a kilometre of terrain bakes in 2 s to 839 KB, where its cells came to 49 MB.
+    Vines, ropes, chains and any block marked **Climbable** (`BlockDef::climbable`, the block Inspector) are
+    climbed: a place of kind Climb where feet hold on to one with nothing under them, steps up and down its column
+    (`climb_step`, in searches and regions, a block climbed costing two), none across in the air, and a climb
+    given back as one Climb link from foot to top and one over the ledge, which agents cross as Nav Links.
+    Agents' **Climbs** (default on; C# `NavAgent.Climbs`); Block Mobs do not climb. Tests: ground walked up a hill
+    and not a cliff, round its holes and what stands on it; a kilometre of terrain baked, and kept small; an old
+    `.nav` read; agents round a wall and up a terrain hill, by both ways of moving; a vine and a ladder climbed up
+    a cliff and down, and not by what does not climb; an agent climbing a vine by both ways of moving.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

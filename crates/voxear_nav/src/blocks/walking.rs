@@ -23,7 +23,7 @@ pub const GROUND: u8 = 1;
 pub const STANDS: u8 = 2;
 /// It is water.
 pub const WET: u8 = 4;
-/// It can be climbed: a vine or a rope.
+/// It can be climbed: a vine, a rope, a chain, or a block its file says is.
 pub const CLIMB: u8 = 8;
 /// It is a shut door, which something that opens doors walks through.
 pub const DOOR: u8 = 16;
@@ -58,6 +58,10 @@ impl Walking {
 
     pub fn is_door(self) -> bool {
         self.bits & DOOR != 0
+    }
+
+    pub fn climbs(self) -> bool {
+        self.bits & CLIMB != 0
     }
 }
 
@@ -96,9 +100,10 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
     if is_water(faces, id) {
         return Walking { bits: WET, floor: 0, area: given(WATER) };
     }
-    let climbs = matches!(kind.shape, BlockShape::Vine | BlockShape::Rope);
-    if !is_ground(faces, id) {
-        return Walking { bits: u8::from(climbs) * CLIMB, floor: 0, area: WALKABLE };
+    // What is climbed is no ground, whatever its boxes: a ladder is climbed, not walked into.
+    let climbs = kind.climbable || matches!(kind.shape, BlockShape::Vine | BlockShape::Rope | BlockShape::Chain);
+    if climbs || !is_ground(faces, id) {
+        return Walking { bits: u8::from(climbs) * CLIMB, floor: 0, area: given(WALKABLE) };
     }
     let part = part_of(faces, id);
     let door = u8::from(kind.shape == BlockShape::Door) * DOOR;
@@ -118,8 +123,9 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
 
 /// How something walks a world of blocks, in sixteenths of a block: how
 /// tall it is, how high it steps up, and how far it drops; and what more it
-/// does: whether it swims across deep water, opens shut doors, and jumps
-/// gaps (as many blocks across as `jump`, none for 0).
+/// does: whether it swims across deep water, opens shut doors, jumps gaps
+/// (as many blocks across as `jump`, none for 0), and climbs vines, ropes
+/// and ladders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Walker {
     pub height: u16,
@@ -128,13 +134,14 @@ pub struct Walker {
     pub swims: bool,
     pub doors: bool,
     pub jump: u8,
+    pub climbs: bool,
 }
 
 impl Walker {
     /// A walker `tall` blocks high that steps up a block and drops three,
     /// as mobs walk worlds of blocks, and does nothing more.
     pub const fn blocks(tall: u16) -> Self {
-        Self { height: tall * 16, step: 16, drop: 48, swims: false, doors: false, jump: 0 }
+        Self { height: tall * 16, step: 16, drop: 48, swims: false, doors: false, jump: 0, climbs: false }
     }
 
     /// A walker `height` metres tall in a world of blocks `size` metres a
@@ -151,11 +158,16 @@ impl Walker {
         Self { swims, doors, jump, ..self }
     }
 
+    /// The same walker climbing as `climbs` says.
+    pub const fn climbing(self, climbs: bool) -> Self {
+        Self { climbs, ..self }
+    }
+
     /// The walker whose regions it shares: as tall, stepping and dropping
     /// as far, doing everything any walker does (see [`WALKERS`]), so a way
     /// over regions never misses one it could take.
     pub const fn class(self) -> Self {
-        self.with(true, true, MOST_JUMP)
+        self.with(true, true, MOST_JUMP).climbing(true)
     }
 
     /// How many whole blocks its drop and its step reach, at most: how far

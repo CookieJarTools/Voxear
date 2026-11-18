@@ -99,11 +99,76 @@ pub struct NavMesh {
     /// Where its grid begins along x and z, and how many columns it has.
     pub origin: [f32; 2],
     pub columns: [u32; 2],
-    /// Each column's walkable cells: their floors and polygons.
-    starts: Vec<u32>,
-    cells: Vec<(f32, u32)>,
     pub polys: Vec<Poly>,
     pub edges: Vec<PolyEdge>,
+    /// Which polygons lie over each square of a coarse grid, to find the
+    /// one under a point: made from the polygons, never kept in a file.
+    buckets: Buckets,
+}
+
+/// How wide a square of the grid that finds polygons is, in metres.
+const BUCKET: f32 = 8.0;
+
+/// The polygons over each square of a coarse grid, square after square:
+/// where each square's begin among `polys`.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Buckets {
+    origin: [f32; 2],
+    count: [u32; 2],
+    starts: Vec<u32>,
+    polys: Vec<u32>,
+}
+
+impl Buckets {
+    fn of(polys: &[Poly]) -> Self {
+        let (mut low, mut high) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+        for poly in polys {
+            for axis in 0..2 {
+                (low[axis], high[axis]) = (low[axis].min(poly.min[axis]), high[axis].max(poly.max[axis]));
+            }
+        }
+        if polys.is_empty() {
+            return Self::default();
+        }
+        let count = [0, 1].map(|axis| ((high[axis] - low[axis]) / BUCKET).floor() as u32 + 1);
+        let mut each: Vec<Vec<u32>> = vec![Vec::new(); (count[0] * count[1]) as usize];
+        for (n, poly) in polys.iter().enumerate() {
+            let first = [0, 1].map(|axis| ((poly.min[axis] - low[axis]) / BUCKET).floor() as u32);
+            let last = [0, 1].map(|axis| (((poly.max[axis] - low[axis]) / BUCKET).floor() as u32).min(count[axis] - 1));
+            for z in first[1]..=last[1] {
+                for x in first[0]..=last[0] {
+                    each[(z * count[0] + x) as usize].push(n as u32);
+                }
+            }
+        }
+        let mut starts = Vec::with_capacity(each.len() + 1);
+        let mut flat = Vec::new();
+        starts.push(0);
+        for bucket in each {
+            flat.extend(bucket);
+            starts.push(flat.len() as u32);
+        }
+        Self { origin: low, count, starts, polys: flat }
+    }
+
+    /// The polygons over the squares from `low` to `high` along x and z, a
+    /// polygon over several once for each.
+    fn near(&self, low: [f32; 2], high: [f32; 2]) -> impl Iterator<Item = u32> + '_ {
+        let square = |value: f32, axis: usize| {
+            (((value - self.origin[axis]) / BUCKET).floor() as i64).clamp(0, i64::from(self.count[axis]) - 1) as u32
+        };
+        let inside = !self.starts.is_empty()
+            && (0..2).all(|axis| {
+                high[axis] >= self.origin[axis] && low[axis] <= self.origin[axis] + self.count[axis] as f32 * BUCKET
+            });
+        let (x0, x1, z0, z1) = match inside {
+            true => (square(low[0], 0), square(high[0], 0), square(low[1], 1), square(high[1], 1)),
+            false => (1, 0, 1, 0),
+        };
+        (z0..=z1)
+            .flat_map(move |z| (x0..=x1).map(move |x| (z * self.count[0] + x) as usize))
+            .flat_map(move |at| self.polys[self.starts[at] as usize..self.starts[at + 1] as usize].iter().copied())
+    }
 }
 
 /// One span of solid in a column, as triangles laid there make it.
@@ -139,16 +204,75 @@ fn clip(polygon: &[Vec3], axis: usize, low: f32, high: f32) -> Vec<Vec3> {
     kept
 }
 
+/// Ground given as heights on a grid rather than triangles, as a terrain's:
+/// `samples` across along x and z, `spacing` metres apart from `corner`,
+/// each height over the corner's, row after row along z; and which samples
+/// are holes, where there is no ground. Solid all the way down.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Ground {
+    pub corner: Vec3,
+    pub spacing: f32,
+    pub samples: [u32; 2],
+    pub heights: Vec<f32>,
+    pub holes: Vec<bool>,
+}
+
+impl Ground {
+    /// Its height at `(x, z)` in metres from its corner, between its
+    /// samples; `None` off its edges or over a hole.
+    fn height_at(&self, x: f32, z: f32) -> Option<f32> {
+        let spacing = self.spacing.max(1e-3);
+        let (fx, fz) = (x / spacing, z / spacing);
+        let [w, d] = self.samples;
+        if !(0.0..=(w.saturating_sub(1)) as f32).contains(&fx) || !(0.0..=(d.saturating_sub(1)) as f32).contains(&fz) {
+            return None;
+        }
+        let (ix, iz) = ((fx as u32).min(w.saturating_sub(2)), (fz as u32).min(d.saturating_sub(2)));
+        let at = |x: u32, z: u32| (z * w + x) as usize;
+        let corners = [at(ix, iz), at(ix + 1, iz), at(ix, iz + 1), at(ix + 1, iz + 1)];
+        if corners.iter().any(|n| self.holes.get(*n).copied().unwrap_or(false)) {
+            return None;
+        }
+        let h = |n: usize| *self.heights.get(n).unwrap_or(&0.0);
+        let (u, v) = (fx - ix as f32, fz - iz as f32);
+        let near = h(corners[0]) + (h(corners[1]) - h(corners[0])) * u;
+        let far = h(corners[2]) + (h(corners[3]) - h(corners[2])) * u;
+        Some(self.corner.y + near + (far - near) * v)
+    }
+
+    /// Its lowest and highest points in the world.
+    fn bounds(&self) -> (Vec3, Vec3) {
+        let (low, high) =
+            self.heights.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), y| (l.min(*y), h.max(*y)));
+        let size = Vec3::new(
+            self.samples[0].saturating_sub(1) as f32 * self.spacing,
+            0.0,
+            self.samples[1].saturating_sub(1) as f32 * self.spacing,
+        );
+        (self.corner + Vec3::Y * low, self.corner + size + Vec3::Y * high)
+    }
+}
+
 /// Bakes a nav mesh from `triangles`, in metres, as `settings` say. `None`
 /// where there are none.
 pub fn bake(triangles: &[[Vec3; 3]], settings: BakeSettings) -> Option<NavMesh> {
+    bake_ground(triangles, &[], settings)
+}
+
+/// Bakes a nav mesh from `triangles` and `grounds`, in metres, as
+/// `settings` say. `None` where there is neither.
+pub fn bake_ground(triangles: &[[Vec3; 3]], grounds: &[Ground], settings: BakeSettings) -> Option<NavMesh> {
     voxear_core::profile_scope!("Nav Mesh Bake");
     let cell = settings.cell.max(0.05);
     let (mut low, mut high) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
     for corner in triangles.iter().flatten() {
         (low, high) = (low.min(*corner), high.max(*corner));
     }
-    if triangles.is_empty() || !low.is_finite() {
+    for ground in grounds {
+        let (a, b) = ground.bounds();
+        (low, high) = (low.min(a), high.max(b));
+    }
+    if (triangles.is_empty() && grounds.is_empty()) || !low.is_finite() || !high.is_finite() {
         return None;
     }
     let origin = [low.x, low.z];
@@ -179,6 +303,28 @@ pub fn bake(triangles: &[[Vec3; 3]], settings: BakeSettings) -> Option<NavMesh> 
                 let (low, high) =
                     piece.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), p| (l.min(p.y), h.max(p.y)));
                 spans.push((column(x, z) as u32, Span { low, high, walkable }));
+            }
+        }
+    }
+    // Each ground under each column: its height at the column's middle, solid below; walkable where no steeper
+    // than the steepest slope across the column.
+    for ground in grounds {
+        let (a, b) = ground.bounds();
+        let floor = a.y - 1.0;
+        let x0 = ((a.x - origin[0]) / cell).floor().max(0.0) as u32;
+        let x1 = (((b.x - origin[0]) / cell).floor() as u32).min(columns[0] - 1);
+        let z0 = ((a.z - origin[1]) / cell).floor().max(0.0) as u32;
+        let z1 = (((b.z - origin[1]) / cell).floor() as u32).min(columns[1] - 1);
+        for z in z0..=z1 {
+            for x in x0..=x1 {
+                let (cx, cz) = (origin[0] + (x as f32 + 0.5) * cell, origin[1] + (z as f32 + 0.5) * cell);
+                let at = |dx: f32, dz: f32| ground.height_at(cx + dx - ground.corner.x, cz + dz - ground.corner.z);
+                let Some(top) = at(0.0, 0.0) else { continue };
+                let half = cell * 0.5;
+                let slope = |a: Option<f32>, b: Option<f32>| a.zip(b).map_or(0.0, |(a, b)| (b - a) / cell);
+                let (dx, dz) = (slope(at(-half, 0.0), at(half, 0.0)), slope(at(0.0, -half), at(0.0, half)));
+                let walkable = 1.0 / (1.0 + dx * dx + dz * dz).sqrt() >= steep;
+                spans.push((column(x, z) as u32, Span { low: floor, high: top, walkable }));
             }
         }
     }
@@ -364,18 +510,7 @@ pub fn bake(triangles: &[[Vec3; 3]], settings: BakeSettings) -> Option<NavMesh> 
         edges.push(PolyEdge { to, a, b });
     }
 
-    let mut starts = Vec::with_capacity(count + 1);
-    let mut cells = Vec::new();
-    starts.push(0);
-    for (at, column_tops) in tops.iter().enumerate() {
-        for (n, (floor, _)) in column_tops.iter().enumerate() {
-            if poly_of[at][n] != u32::MAX {
-                cells.push((*floor, poly_of[at][n]));
-            }
-        }
-        starts.push(cells.len() as u32);
-    }
-    Some(NavMesh { settings, origin, columns, starts, cells, polys, edges })
+    Some(NavMesh::new(settings, origin, columns, polys, edges))
 }
 
 /// How a way over a nav mesh ends.
@@ -424,45 +559,43 @@ fn area2(a: Vec3, b: Vec3, c: Vec3) -> f32 {
 }
 
 impl NavMesh {
+    /// A mesh of `polys` joined by `edges`, from a grid of `columns` at
+    /// `origin` baked as `settings` say.
+    pub(crate) fn new(
+        settings: BakeSettings,
+        origin: [f32; 2],
+        columns: [u32; 2],
+        polys: Vec<Poly>,
+        edges: Vec<PolyEdge>,
+    ) -> Self {
+        let buckets = Buckets::of(&polys);
+        Self { settings, origin, columns, polys, edges, buckets }
+    }
+
     /// The polygon whose floor is nearest `at`, within `reach` metres up or
-    /// down, and across, and its floor's height there.
+    /// down, and across, and the point of its floor nearest: of those
+    /// nearest across, a cell at a time, the one nearest up or down.
     pub fn locate(&self, at: Vec3, reach: f32) -> Option<(u32, Vec3)> {
-        let cell = self.settings.cell;
-        let (cx, cz) =
-            (((at.x - self.origin[0]) / cell).floor() as i32, ((at.z - self.origin[1]) / cell).floor() as i32);
-        let rings = (reach / cell).ceil() as i32;
-        for ring in 0..=rings {
-            let mut best: Option<(f32, u32, Vec3)> = None;
-            for dz in -ring..=ring {
-                for dx in -ring..=ring {
-                    if dx.abs() != ring && dz.abs() != ring {
-                        continue;
-                    }
-                    let (x, z) = (cx + dx, cz + dz);
-                    if x < 0 || z < 0 || x as u32 >= self.columns[0] || z as u32 >= self.columns[1] {
-                        continue;
-                    }
-                    let column = (z as u32 * self.columns[0] + x as u32) as usize;
-                    for &(floor, poly) in &self.cells[self.starts[column] as usize..self.starts[column + 1] as usize] {
-                        let off = (floor - at.y).abs();
-                        if off > reach || best.is_some_and(|(kept, ..)| off >= kept) {
-                            continue;
-                        }
-                        let middle = Vec3::new(
-                            self.origin[0] + (x as f32 + 0.5) * cell,
-                            floor,
-                            self.origin[1] + (z as f32 + 0.5) * cell,
-                        );
-                        let point = if ring == 0 { Vec3::new(at.x, floor, at.z) } else { middle };
-                        best = Some((off, poly, point));
-                    }
-                }
+        let cell = self.settings.cell.max(0.05);
+        let (low, high) = ([at.x - reach, at.z - reach], [at.x + reach, at.z + reach]);
+        let mut best: Option<((u32, f32), u32, Vec3)> = None;
+        for n in self.buckets.near(low, high) {
+            let poly = &self.polys[n as usize];
+            let inset = (cell * 0.05).min((poly.max[0] - poly.min[0]) * 0.5).min((poly.max[1] - poly.min[1]) * 0.5);
+            let x = at.x.clamp(poly.min[0] + inset, poly.max[0] - inset);
+            let z = at.z.clamp(poly.min[1] + inset, poly.max[1] - inset);
+            let across = (at.x - x).hypot(at.z - z);
+            let floor = poly.height_at(x, z);
+            let off = (floor - at.y).abs();
+            if across > reach + inset || off > reach {
+                continue;
             }
-            if let Some((_, poly, point)) = best {
-                return Some((poly, point));
+            let key = ((across / cell).ceil() as u32, off);
+            if best.is_none_or(|(kept, ..)| key.0 < kept.0 || key.0 == kept.0 && key.1 < kept.1) {
+                best = Some((key, n, Vec3::new(x, floor, z)));
             }
         }
-        None
+        best.map(|(_, poly, point)| (poly, point))
     }
 
     /// The edges out of polygon `poly`.
@@ -613,10 +746,11 @@ impl NavMesh {
         Some(self.polys[poly as usize].height_at(x, z))
     }
 
-    /// How many polygons and cells it has, and how many bytes it keeps.
+    /// How many polygons and edges it has, and how many bytes it keeps.
     pub fn counts(&self) -> (usize, usize, usize) {
-        let bytes = self.starts.len() * 4 + self.cells.len() * 8 + self.polys.len() * 48 + self.edges.len() * 28;
-        (self.polys.len(), self.cells.len(), bytes)
+        let buckets = self.buckets.starts.len() * 4 + self.buckets.polys.len() * 4;
+        let bytes = self.polys.len() * 48 + self.edges.len() * 28 + buckets;
+        (self.polys.len(), self.edges.len(), bytes)
     }
 }
 
@@ -665,7 +799,8 @@ fn funnel(portals: &[(Vec3, Vec3)]) -> Vec<Vec3> {
 
 /// What a `.nav` file begins with, and its version.
 const MAGIC: &[u8; 4] = b"VXNV";
-const VERSION: u32 = 1;
+/// Version 1 kept each column's cells as well, which are read past.
+const VERSION: u32 = 2;
 
 impl NavMesh {
     /// It as the bytes of a `.nav` file: LZ4 after a short header.
@@ -675,16 +810,8 @@ impl NavMesh {
         let s = self.settings;
         f32s(&mut raw, &[s.cell, s.height, s.radius, s.climb, s.slope, s.largest as f32]);
         f32s(&mut raw, &self.origin);
-        for value in [self.columns[0], self.columns[1], self.starts.len() as u32, self.cells.len() as u32] {
+        for value in [self.columns[0], self.columns[1], self.polys.len() as u32, self.edges.len() as u32] {
             raw.extend(value.to_le_bytes());
-        }
-        for value in [self.polys.len() as u32, self.edges.len() as u32] {
-            raw.extend(value.to_le_bytes());
-        }
-        self.starts.iter().for_each(|n| raw.extend(n.to_le_bytes()));
-        for (floor, poly) in &self.cells {
-            raw.extend(floor.to_le_bytes());
-            raw.extend(poly.to_le_bytes());
         }
         for poly in &self.polys {
             f32s(&mut raw, &[poly.min[0], poly.min[1], poly.max[0], poly.max[1]]);
@@ -705,7 +832,8 @@ impl NavMesh {
 
     /// A nav mesh from a `.nav` file's bytes; `None` where they are not one.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.get(..4)? != MAGIC || u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?) != VERSION {
+        let version = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
+        if bytes.get(..4)? != MAGIC || !(1..=VERSION).contains(&version) {
             return None;
         }
         let raw = lz4_flex::decompress_size_prepended(bytes.get(8..)?).ok()?;
@@ -721,10 +849,17 @@ impl NavMesh {
         let origin = [f()?, f()?];
         let mut u = || word().map(u32::from_le_bytes);
         let columns = [u()?, u()?];
-        let (starts_len, cells_len, polys_len, edges_len) =
-            (u()? as usize, u()? as usize, u()? as usize, u()? as usize);
-        let starts = (0..starts_len).map(|_| u()).collect::<Option<Vec<u32>>>()?;
-        let cells = (0..cells_len).map(|_| Some((f32::from_bits(u()?), u()?))).collect::<Option<Vec<_>>>()?;
+        let (polys_len, edges_len) = match version {
+            1 => {
+                let (starts_len, cells_len, polys_len, edges_len) =
+                    (u()? as usize, u()? as usize, u()? as usize, u()? as usize);
+                for _ in 0..starts_len + cells_len * 2 {
+                    u()?;
+                }
+                (polys_len, edges_len)
+            }
+            _ => (u()? as usize, u()? as usize),
+        };
         let polys = (0..polys_len)
             .map(|_| {
                 let mut n = || u().map(f32::from_bits);
@@ -740,15 +875,9 @@ impl NavMesh {
                 Some(PolyEdge { to, a: Vec3::new(n()?, n()?, n()?), b: Vec3::new(n()?, n()?, n()?) })
             })
             .collect::<Option<Vec<_>>>()?;
-        (starts.len() == (columns[0] * columns[1]) as usize + 1).then_some(Self {
-            settings,
-            origin,
-            columns,
-            starts,
-            cells,
-            polys,
-            edges,
-        })
+        let fits = polys.iter().all(|poly| (poly.edges + poly.count) as usize <= edges.len())
+            && edges.iter().all(|edge| (edge.to as usize) < polys.len());
+        fits.then(|| Self::new(settings, origin, columns, polys, edges))
     }
 }
 

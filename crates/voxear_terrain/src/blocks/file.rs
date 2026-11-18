@@ -232,6 +232,9 @@ pub struct BlockKind {
     /// `block::BlockNavArea::number`). Never written.
     #[serde(skip)]
     pub nav_area: u8,
+    /// Whether it is climbed, as its block says. Never written.
+    #[serde(skip)]
+    pub climbable: bool,
 }
 
 /// Over a look's number, the look it is with another block's picture over
@@ -354,6 +357,7 @@ impl Default for BlockKind {
             part: PartLook::default(),
             light: 0,
             nav_area: 0,
+            climbable: false,
         }
     }
 }
@@ -691,7 +695,8 @@ impl BlockFile {
             let shown = BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn };
             let light = if kind.removed { 0 } else { kind.light.min(15) };
             let nav_area = if kind.removed { 0 } else { kind.nav_area };
-            let joined = BlockFaces { connects, mixes, overlap, light, nav_area, ..shown };
+            let climbable = kind.climbable && !kind.removed;
+            let joined = BlockFaces { connects, mixes, overlap, light, nav_area, climbable, ..shown };
             faces.push(self.part_faces(kind, shape, &mut motions, joined));
         }
         // What a block shows as while it is covered: another of its world's blocks, drawn in the same shape, and

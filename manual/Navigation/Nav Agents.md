@@ -46,6 +46,7 @@ Press Play. The guard walks to its post, round anything in the way. Add a [[Mob 
 | Swims | On, its ways cross water too deep to stand in, and it swims across. Off, it goes round deep water, and sinks if it falls in |
 | Opens Doors | On, it opens a shut door on its way and walks through. Off, a shut door is a wall to it |
 | Jumps | On, it jumps a gap one or two blocks across rather than going round. Off, it goes round |
+| Climbs | On, it climbs vines, ropes, chains and ladders, up and down, and over the ledge at their top. Off, it goes round them |
 
 Hover over a setting in the Inspector to see what it does and its default.
 

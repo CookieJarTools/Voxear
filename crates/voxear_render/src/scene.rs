@@ -849,6 +849,11 @@ pub fn extract(
         (None, Some(worn)) => worn.sun,
         (None, None) => world.resource::<crate::looks::SunLook>().copied(),
     };
+    // A worn shader pack's settings for the sun's shadows, each in place of the look's and the light's.
+    let pack_shadows = world
+        .resource::<crate::shader_packs::WornShaderPack>()
+        .map(|worn| worn.pack.manifest.shadows.clone())
+        .unwrap_or_default();
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
     // Baked lights first, then Mixed, then Realtime, so the shaders tell them apart by where they are in the list;
     // and among each, by where they are and what they are, never by how the world happens to keep them, so a
@@ -906,8 +911,10 @@ pub fn extract(
                 frame.sun_color = vec3(radiance * weather.sun());
                 let own = light.light_color();
                 sun_own = [own.x, own.y, own.z, light.intensity];
-                frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
-                frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
+                let softness = pack_shadows.softness.unwrap_or(light.softness);
+                frame.lighting.sun_softness = (softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
+                let tint = pack_shadows.tint.map_or(light.shadow_tint, Vec3::from);
+                frame.lighting.sun_shadow_tint = vec3(tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
                 // A look's canopy where the light has no cookie: the renderer names its picture.
                 let canopy = light.cookie.is_none() && sun_look.is_some_and(|look| look.canopy > 0.0);
@@ -1048,6 +1055,7 @@ pub fn extract(
         let (distance, split) = sun_look.map_or((shadows::SHADOW_DISTANCE, shadows::SHADOW_SPLIT), |look| {
             (look.shadow_distance, look.shadow_split)
         });
+        let distance = pack_shadows.distance.unwrap_or(distance);
         // Through a Portal the sun's shadows reach only a little way past the opening: the far side is seen through a
         // small part of the screen, and what is further off in it casts none.
         let distance = if through.is_some() { distance.min(PORTAL_SHADOW_REACH) } else { distance };
@@ -1174,6 +1182,7 @@ pub fn extract(
         shadow_lights,
         sun_shadows: options
             .sun_shadows
+            .or(pack_shadows.maps)
             .unwrap_or(sun_look.map_or(crate::SunShadows::default(), |look| look.sun_shadows)),
         lamp_shadows: options
             .lamp_shadows

@@ -1,5 +1,5 @@
 format = 1
-description = "Long warm evenings: warm sun and cool shade on every block, leaves glowing against the sun, a golden path of sun on the water, a gold sky round a low sun, shafts of sun through the leaves, a golden haze and a warm grade of its own."
+description = "Long warm evenings: warm sun and cool shade on every block, leaves glowing against the sun, a golden path of sun on the water, a gold sky round a low sun, long shadows paled by the sky, shafts of sun through the leaves, a golden haze and a warm grade of its own."
 
 [options]
 rays = { kind = "toggle", default = true, label = "Rays", about = "Shafts of sunlight where it breaks through leaves and between blocks" }
@@ -11,6 +11,7 @@ sky_glow = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Sky gl
 curve = { kind = "choice", choices = ["Soft", "Filmic", "Neutral"], default = "Soft", label = "Curve", about = "How the light is fitted to the screen: Soft as the engine's, Filmic with more contrast, Neutral keeping colours as they are" }
 glow = { kind = "number", range = [0.0, 3.0], default = 1.0, label = "Glow", about = "How much bright light glows round itself, where the bloom is on" }
 vignette = { kind = "number", range = [0.0, 1.0], default = 0.5, label = "Vignette", about = "How much darker the corners are" }
+long_shadows = { kind = "number", range = [0.0, 1.0], default = 0.6, label = "Long shadows", about = "How much paler shadows are the farther they fall from what casts them" }
 
 # How block faces are lit: warm sun, cool shade, warm torchlight, and leaves lit through from behind; water: the sun's
 # path on it golden; and the sky, gold round a low sun.
@@ -18,6 +19,10 @@ vignette = { kind = "number", range = [0.0, 1.0], default = 0.5, label = "Vignet
 blocks = "faces.slang"
 water = "water.slang"
 sky = "sky.slang"
+
+# The sun's shadows paler the farther they fall from what casts them.
+[shadows]
+filter = "shadows.slang"
 
 # The sky round the sun, marched towards it from each pixel at half size: what stands in the way casts the shafts.
 [[pass]]

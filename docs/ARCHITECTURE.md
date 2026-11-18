@@ -1491,7 +1491,13 @@ again from its shaders with that module in place (`pack_modules`), and back with
 `VOXEAR_PACK_WATER` (`project_pack_water.slang`, `packWaterColor`), handed the water by `waterFragment` and
 `blockWaterLit` before the air's haze; a `sky` program into `sky.slang` with `VOXEAR_PACK_SKY` (`packSkyColor`),
 handed the sky by `skyFragment` by its parts, the disc and the stars apart, before its colour is written
-(`SURFACE_MODULES` lists the modules). A pass at the `tonemap` point that writes the colour is recorded by
+(`SURFACE_MODULES` lists the modules). A pack's `[shadows]` settings take the look's place in `scene.rs`'s
+extraction (the sun's width and tint, the cascades' reach, virtual maps or cascades), and its `filter` is compiled
+into every module in `SHADOW_MODULES` with `VOXEAR_PACK_SHADOWS`: `shading.slang`'s `sunShadow` then hands the
+engine's shadow (`engineSunShadow`), its hard one and the clouds' to `packSunShadow`, and `sunShadowMap`,
+`shadowLit` and `shadowCaster` read the virtual pages or the cascades for it. `module_files` writes what each module
+includes (the options once, in `project_pack_options.slang`) and `compile` runs its jobs on a few threads. A pass at
+the `tonemap` point that writes the colour is recorded by
 `post_passes::record` in the Composite pass's place, into the same image, reading the light after TAA and, if it
 lists `bloom`, the bloom chain's top level (`bloomScale` in `PackFrame` normalises its sum); the Finish pass then
 runs to dither, as for a final pass.

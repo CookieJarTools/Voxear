@@ -8,7 +8,7 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 
 ## The pack Voxear comes with
 
-**Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, a golden path of sun on the water, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, a sky turned gold near the horizon and round a low sun with the clouds on its side gold too, and a tonemap and grade of its own that warm the light and cool the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
+**Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, a golden path of sun on the water, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, a sky turned gold near the horizon and round a low sun with the clouds on its side gold too, long shadows paled by the evening sky, and a tonemap and grade of its own that warm the light and cool the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
 
 | Option | What it does |
 | --- | --- |
@@ -21,6 +21,7 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 | **Curve** | How the light is fitted to the screen: **Soft** as the engine's, **Filmic** with more contrast, **Neutral** keeping colours as they are |
 | **Glow** | How much bright light glows round itself, where the level's bloom is on, 0 to 3 |
 | **Vignette** | How much darker the corners are, 0 to 1 |
+| **Long shadows** | How much paler shadows are the farther they fall from what casts them, 0 to 1 |
 
 The rays show when the camera looks towards the sun. They are worked out at half size, forty steps a pixel, and cost about half a millisecond a frame at 1440p on an RTX 3070; the whole pack's passes, looking into the sun, about 0.8 ms. Facing away from the sun the rays cost nothing.
 
@@ -290,6 +291,45 @@ float3 run(SkySurface surface, SkyLighting light)
 
 Water and shiny blocks still mirror the engine's own sky.
 
+### Shadows
+
+`[shadows]` sets the sun's shadows while the pack is worn, each in place of the level's lighting, and can name a program that reads them:
+
+```toml
+[shadows]
+softness = 1.5          # how wide the sun is, in degrees: the wider, the softer shadows grow away from what casts them
+distance = 150.0        # how far from the camera the cascades reach, in metres
+tint = [0.04, 0.05, 0.08]   # the colour shade is lifted by
+maps = "virtual"        # "virtual" shadow maps, or "cascades"
+filter = "shadows.slang"
+```
+
+A filter returns how much of the sun reaches a point, from 1 lit to 0 in shade, wherever blocks, models, terrain, grass, glass, water and particles are lit:
+
+```slang
+// shadows.slang: shadows paler the farther above what casts them is.
+float run(ShadowSurface surface, ShadowLighting light)
+{
+	SunShadowMap map = sunShadowMap(surface, 0.0);
+	float above = shadowCaster(map, float2(0.0));
+	return lerp(light.engine, light.clouds, smoothstep(2.0, 40.0, above) * 0.5);
+}
+```
+
+| `surface.` | |
+| --- | --- |
+| `position`, `normal` | The point, and the way its surface faces |
+| `toSun`, `sunWidth` | The way to the sun, and how wide it is: the tangent of half its angle. A soft edge is as wide as twice that by the distance to what casts it |
+| `turn` | An angle different for each point and each frame, for turning taps, which TAA then averages |
+
+| `light.` | |
+| --- | --- |
+| `engine` | The engine's soft shadow, under the clouds' shadow |
+| `hard` | The engine's shadow with a hard edge, under the clouds' shadow |
+| `clouds` | The clouds' shadow alone |
+
+The easy way in is to change `light.engine`; the full one is to read the shadow map yourself. `sunShadowMap(surface, reach)` finds the map round the point, fine enough to read `reach` metres round it, and then `shadowLit(map, offset)` says whether the sun reaches a point `offset` metres across the sun's view (1 lit, 0 shaded), and `shadowCaster(map, offset)` how far above it, towards the sun, what casts the shadow there is, 0 where nothing does. `shadowDisc(index, count, surface.turn)` spreads taps over a disc of radius 1. A filter is compiled into every shader that lights things in the sun, so a pack with one takes a minute or two to compile the first time it is worn. The fog's light shafts and the GI still read the engine's shadow.
+
 ### Things to make
 
 - **Fog of your own**: at `after_fog`, blend towards a colour by `sceneDistance` and by height from `scenePosition`, and turn the engine's fog off in the level's lighting.
@@ -297,6 +337,7 @@ Water and shiny blocks still mirror the engine's own sky.
 - **A painted look**: at `final`, average the colours round each pixel in four corners and keep the calmest, which flattens surfaces into strokes and keeps edges.
 - **A grade**: at `final`, change the colour as shown; or at `tonemap`, fit the light to the screen yourself, as Evening's grade does.
 - **Coloured torchlight**: in a `blocks` program, `light.glow` tinted orange near the floor and redder as `surface.blockLight` falls off.
+- **Softer shadows**: a filter of a dozen `shadowLit` taps over a disc as wide as `shadowCaster` and `sunWidth` make the edge, with more taps or a wider disc than the engine's.
 - **Glowing ore**: a `blocks` program that brightens a look of yours by `surface.look` when `surface.skyLight` is low.
 
 ## From the command line and tools

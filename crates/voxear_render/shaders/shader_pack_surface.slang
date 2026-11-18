@@ -8,9 +8,13 @@
 //
 //     float3 run(WaterSurface surface, WaterLighting light)
 //
-// and a sky program
+// a sky program
 //
 //     float3 run(SkySurface surface, SkyLighting light)
+//
+// and a shadow filter
+//
+//     float run(ShadowSurface surface, ShadowLighting light)
 //
 // each returning the light leaving the surface towards the camera, before the air's haze and the clouds in front of
 // it. Voxear compiles them into its own shaders that draw block faces (blocks.slang, with VOXEAR_PACK_BLOCKS defined)
@@ -181,6 +185,38 @@ float3 skyLayered(float3 behind, float4 clouds, float4 weather, bool underClouds
     return underClouds ? (behind * clouds.a + clouds.rgb) * weather.a + weather.rgb
         : (behind * weather.a + weather.rgb) * clouds.a + clouds.rgb;
 }
+
+// A point a shadow filter reads the sun's shadow at.
+struct ShadowSurface
+{
+    // Where it is, and the way the surface faces there, in the world.
+    float3 position;
+    float3 normal;
+    // The way to the sun (or the moon), and how wide it is: the tangent of half the angle it takes up in the sky, 0
+    // for a sun with no width. A shadow's soft edge is as wide as twice that by the distance to what casts it.
+    float3 toSun;
+    float sunWidth;
+    // An angle that is different for each point and each frame, for turning taps round it, as TAA averages them.
+    float turn;
+};
+
+// The sun's shadow there as the engine reads it, from 1 lit to 0 in shade.
+struct ShadowLighting
+{
+    // Soft as the sun's width makes it, and with a hard edge; each under the clouds' shadow.
+    float engine;
+    float hard;
+    // The clouds' shadow alone.
+    float clouds;
+};
+
+// A shadow filter reads the sun's shadow map itself with these (shaders/shading.slang has them):
+//
+//     SunShadowMap sunShadowMap(ShadowSurface surface, float reach)  the map round the point, fine enough to read
+//                                                                    `reach` metres round it
+//     float shadowLit(SunShadowMap map, float2 offset)               1 lit, 0 in shade, `offset` metres across
+//     float shadowCaster(SunShadowMap map, float2 offset)            metres up to what casts the shadow there, or 0
+//     float2 shadowDisc(uint index, uint count, float turn)          points spread over a disc, for taps
 
 // The frame as every program of the pack sees it.
 PackFrame* frame()

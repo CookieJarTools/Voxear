@@ -532,8 +532,30 @@ pub fn worn_json(world: &World) -> serde_json::Value {
         "standing": standing(world),
         "passes": passes,
         "surfaces": surfaces,
+        "shadows": shadows_json(&manifest.shadows),
         "options": options,
     })
+}
+
+/// What a pack sets of the sun's shadows, only what it sets.
+fn shadows_json(shadows: &packs::PackShadows) -> serde_json::Value {
+    let mut json = serde_json::Map::new();
+    if let Some(filter) = &shadows.filter {
+        json.insert("filter".into(), filter.clone().into());
+    }
+    if let Some(softness) = shadows.softness {
+        json.insert("softness".into(), softness.into());
+    }
+    if let Some(distance) = shadows.distance {
+        json.insert("distance".into(), distance.into());
+    }
+    if let Some(tint) = shadows.tint {
+        json.insert("tint".into(), tint.to_vec().into());
+    }
+    if let Some(maps) = shadows.maps {
+        json.insert("maps".into(), maps.name().into());
+    }
+    json.into()
 }
 
 #[cfg(test)]

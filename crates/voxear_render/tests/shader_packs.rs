@@ -509,7 +509,8 @@ fn the_evening_pack_warms_a_world_of_blocks_and_lays_rays_through_its_leaves() {
         None => PackFiles::Embedded(shader_packs::builtin_files("evening").unwrap()),
     };
     let evening = Arc::new(shader_packs::compile(&manifest, &files).unwrap());
-    assert_eq!(evening.modules.len(), 3, "its programs for block faces, water and the sky, beside its passes");
+    let modules = evening.modules.len();
+    assert_eq!(modules, 10, "its block faces', water's and sky's programs, and its shadow filter in seven more");
     world.insert_resource(WornShaderPack::new(evening.clone()));
     let worn = render(&mut renderer, &world, 24);
     // The same, without the rays.
@@ -618,6 +619,110 @@ fn a_blocks_program_lights_every_face_and_a_leaves_program_the_leaves() {
     assert!(!renderer.pack_surfaces_drawn());
     let (off, mean) = alike(&plain, &again);
     assert!(off < (WIDTH * HEIGHT / 200) as usize && mean < 0.6, "as it was: {off} pixels off, {mean:.2} on average");
+}
+
+/// A shadow filter that reads the sun's shadow one way or another by its option `level`: 0 all in shade, 0.5 the
+/// engine's hard edge, 1 the engine's own, 1.5 one tap of its own, 2 where something casts a shadow.
+const SHADOW_FILTER: &str = "float run(ShadowSurface surface, ShadowLighting light)
+{
+    float level = options().level;
+    SunShadowMap map = sunShadowMap(surface, 0.0);
+    if (level < 0.25)
+    {
+        return 0.0;
+    }
+    if (level < 0.75)
+    {
+        return light.hard;
+    }
+    if (level < 1.25)
+    {
+        return light.engine;
+    }
+    if (level < 1.75)
+    {
+        return shadowLit(map, shadowDisc(0, 1, surface.turn) * 0.0) * light.clouds;
+    }
+    return shadowCaster(map, float2(0.0)) > 0.0 ? 0.0 : light.clouds;
+}
+";
+
+fn set_level(world: &mut World, level: f32) {
+    if let Some(worn) = world.resource_mut::<WornShaderPack>() {
+        worn.options[0] = level;
+    }
+}
+
+/// How bright the picture is on average, from 0 to 255.
+fn brightness(pixels: &[u8]) -> f32 {
+    pixels.chunks(4).map(|p| (f32::from(p[0]) + f32::from(p[1]) + f32::from(p[2])) / 3.0).sum::<f32>()
+        / (pixels.len() / 4) as f32
+}
+
+#[test]
+fn a_shadow_filter_reads_the_suns_shadow_as_the_engine_does_or_its_own_way() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let plain = render(&mut renderer, &world, 6);
+    let manifest = "[options]\nlevel = { kind = \"number\", range = [0.0, 2.0], default = 1.0 }\n\
+                    [shadows]\nfilter = \"shadows.slang\"\n";
+    let compiled = pack(manifest, &[("shadows.slang", SHADOW_FILTER)]).unwrap_or_else(|error| panic!("{error:#}"));
+    let mut modules: Vec<&str> = compiled.modules.iter().map(|(module, _)| module.as_str()).collect();
+    modules.sort_unstable();
+    let mut every = shader_packs::SHADOW_MODULES.to_vec();
+    every.sort_unstable();
+    assert_eq!(modules, every, "compiled into every module that reads the sun's shadow");
+    wear(&mut world, compiled);
+    // The engine's own, handed on: as it was.
+    let engine = render(&mut renderer, &world, 6);
+    let (off, mean) = alike(&plain, &engine);
+    let close = off < (WIDTH * HEIGHT / 100) as usize && mean < 1.0;
+    assert!(close, "as the engine: {off} pixels off, {mean:.2} on average");
+    // Everything in shade is darker all over.
+    set_level(&mut world, 0.0);
+    let shaded = render(&mut renderer, &world, 4);
+    keep_image("shadows all shade.png", &shaded, (WIDTH, HEIGHT));
+    let (lit, dark) = (brightness(&plain), brightness(&shaded));
+    assert!(dark < lit - 8.0, "in shade the world is darker: {dark:.1} against {lit:.1}");
+    // Its own taps of the map and the casters found on it draw the shadows where the engine's hard edge has them.
+    set_level(&mut world, 0.5);
+    let hard = render(&mut renderer, &world, 6);
+    keep_image("shadows hard.png", &hard, (WIDTH, HEIGHT));
+    for (level, name) in [(1.5, "shadows own tap.png"), (2.0, "shadows casters.png")] {
+        set_level(&mut world, level);
+        let own = render(&mut renderer, &world, 6);
+        keep_image(name, &own, (WIDTH, HEIGHT));
+        let (off, mean) = alike(&hard, &own);
+        eprintln!("{name}: {off} pixels off the hard edge, {mean:.2} on average");
+        assert!(off < (WIDTH * HEIGHT / 25) as usize, "{name}: where the hard edge has them, {off} pixels off");
+        let (same_as_shade, _) = alike(&shaded, &own);
+        assert!(same_as_shade > off * 3, "{name}: not all in shade ({same_as_shade} off it)");
+    }
+}
+
+#[test]
+fn a_packs_shadow_settings_set_the_suns_width_and_maps() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let settings = |text: &str| {
+        let manifest = PackManifest::parse(text).unwrap_or_else(|error| panic!("{error:#}"));
+        shader_packs::compile(&manifest, &PackFiles::Embedded(&[])).unwrap()
+    };
+    wear(&mut world, settings("[shadows]\nsoftness = 0.0\n"));
+    let sharp = render(&mut renderer, &world, 8);
+    keep_image("shadows sharp.png", &sharp, (WIDTH, HEIGHT));
+    wear(&mut world, settings("[shadows]\nsoftness = 12.0\n"));
+    let soft = render(&mut renderer, &world, 8);
+    keep_image("shadows soft.png", &soft, (WIDTH, HEIGHT));
+    let (off, mean) = alike(&sharp, &soft);
+    eprintln!("a wide sun changes {off} pixels, {mean:.2} on average");
+    assert!(off > (WIDTH * HEIGHT / 200) as usize, "a wide sun softens the shadows' edges: {off} pixels changed");
+    // The cascades in place of the shadow pages draw the same shadows, near enough.
+    wear(&mut world, settings("[shadows]\nsoftness = 0.0\nmaps = \"cascades\"\n"));
+    let cascades = render(&mut renderer, &world, 8);
+    keep_image("shadows cascades.png", &cascades, (WIDTH, HEIGHT));
+    let (off, _) = alike(&sharp, &cascades);
+    assert!(off < (WIDTH * HEIGHT / 10) as usize, "the cascades' shadows where the pages have them: {off} off");
 }
 
 #[test]

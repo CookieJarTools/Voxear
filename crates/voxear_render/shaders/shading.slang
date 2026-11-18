@@ -533,8 +533,9 @@ float vsmShadowSoft(Frame* frame, float3 position, float3 normal, float tanHalfA
 // shadows (Fernando 2005). Blockers are found round the point first; the
 // farther they are above it, the wider the filter, so shadows stay sharp
 // where things touch and soften away from them. Without a softness it is
-// the hard shadow.
-float sunShadow(Frame* frame, float3 position, float3 normal)
+// the hard shadow. A worn shader pack's shadow filter reads it as
+// `light.engine` (sunShadow, below).
+float engineSunShadow(Frame* frame, float3 position, float3 normal)
 {
     float tanHalfAngle = frame->lighting.sunSoftness;
     if (tanHalfAngle <= 0.0)
@@ -591,6 +592,148 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
         lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
     }
     return lit / float(PCSS_FILTER_TAPS) * clouds;
+}
+
+#ifdef VOXEAR_PACK_SHADOWS
+#include "shader_pack_surface.slang"
+
+// The sun's shadow map round a point, for a pack's shadow filter: a page of the virtual shadow maps at the level that
+// fits a reach, or the point's cascade.
+struct SunShadowMap
+{
+    bool found;
+    bool pages;
+    VsmTap tap;
+    // Where the point is on it: across the sun's view in metres (pages), or in the cascades' atlas.
+    float2 centre;
+    float depth;
+    // The atlas's distance across a metre, and the metres of the map's whole depth.
+    float perMetre;
+    float depthMetres;
+    float2 low;
+    float2 high;
+    uint texture;
+};
+
+// The sun's shadow map round the point, fine enough to read `reach` metres round it in a few texels (a soft edge's
+// width), or as fine as the point has it where `reach` is 0.
+SunShadowMap sunShadowMap(ShadowSurface surface, float reach)
+{
+    Frame* frame = push.frame;
+    SunShadowMap map;
+    map.found = false;
+    map.pages = false;
+    map.centre = 0.0;
+    map.depth = 0.0;
+    map.perMetre = 0.0;
+    map.depthMetres = 0.0;
+    map.low = 0.0;
+    map.high = 1.0;
+    map.texture = NO_TEXTURE;
+    if (frame->vsm.pool != NO_TEXTURE)
+    {
+        uint finest = vsmLevelFor(frame, surface.position);
+        uint level = vsmLevelForWidth(frame, max(reach, 0.0), VSM_SOFT_TEXELS, finest);
+        VsmTap tap = vsmTap(frame, vsmAcross(frame, surface.position), level);
+        if (!tap.found)
+        {
+            return map;
+        }
+        // Off its surface by the level's own texels, as the engine's taps are.
+        float3 offset = surface.position + surface.normal * tap.texel * 1.5;
+        map.found = true;
+        map.pages = true;
+        map.tap = tap;
+        map.centre = vsmAcross(frame, offset);
+        map.depth = vsmDepth(frame, offset);
+        map.depthMetres = frame->vsm.depthRange;
+        map.texture = tap.texture;
+        return map;
+    }
+    ShadowLookup lookup = shadowLookup(frame, surface.position, surface.normal);
+    if (!lookup.found || frame->shadowTexture == NO_TEXTURE)
+    {
+        return map;
+    }
+    float worldTexel = frame->cascadeTexel[lookup.cascade];
+    map.found = true;
+    map.centre = lookup.uv;
+    map.depth = lookup.depth;
+    map.perMetre = 1.0 / (float(push.size.x) * worldTexel);
+    map.depthMetres = worldTexel * float(push.size.x);
+    map.low = lookup.low;
+    map.high = lookup.high;
+    map.texture = frame->shadowTexture;
+    return map;
+}
+
+// Whether the sun reaches the point moved `offset` metres across the sun's view: 1 lit, 0 in shadow, between on an
+// edge, smoothed over the texels round it. 1 where the map does not reach.
+float shadowLit(SunShadowMap map, float2 offset)
+{
+    if (!map.found)
+    {
+        return 1.0;
+    }
+    if (map.pages)
+    {
+        return vsmLit(map.tap, map.centre + offset, map.depth);
+    }
+    float2 uv = clamp(map.centre + offset * map.perMetre, map.low, map.high);
+    return textures[map.texture].SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], uv, map.depth);
+}
+
+// How far above the point, towards the sun, what casts its shadow there is, in metres, `offset` metres across the
+// sun's view: 0 where nothing does.
+float shadowCaster(SunShadowMap map, float2 offset)
+{
+    if (!map.found)
+    {
+        return 0.0;
+    }
+    float found;
+    if (map.pages)
+    {
+        Texture2D pool = textures[NonUniformResourceIndex(map.texture)];
+        found = pool.SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], vsmUvIn(map.tap, map.centre + offset), 0.0).r;
+    }
+    else
+    {
+        float2 uv = clamp(map.centre + offset * map.perMetre, map.low, map.high);
+        found = textures[map.texture].SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], uv, 0.0).r;
+    }
+    return found < map.depth ? (map.depth - found) * map.depthMetres : 0.0;
+}
+
+// The `index`th of `count` points spread evenly over a disc of radius 1, turned by `turn`: where to tap round a point.
+float2 shadowDisc(uint index, uint count, float turn)
+{
+    return vogelDisc(index, count, turn);
+}
+
+#include "project_pack_shadows.slang"
+#endif
+
+// The sun's shadow at a point: 1 lit, 0 in shade, the clouds' shadow in it. A worn shader pack's shadow filter has
+// the last word, given the engine's.
+float sunShadow(Frame* frame, float3 position, float3 normal)
+{
+#ifdef VOXEAR_PACK_SHADOWS
+    ShadowSurface surface;
+    surface.position = position;
+    surface.normal = normal;
+    surface.toSun = -frame->sunDirection;
+    surface.sunWidth = frame->lighting.sunSoftness;
+    surface.turn = frac(52.9829189 * frac(dot(position.xz * 37.0, float2(0.06711056, 0.00583715)))) * 2.0 * PI
+        + float(frame->frameIndex % 64) * 2.39996323;
+    ShadowLighting light;
+    light.clouds = cloudShadowAt(frame, position);
+    light.hard = sunShadowHard(frame, position, normal);
+    light.engine = engineSunShadow(frame, position, normal);
+    return saturate(packSunShadow(surface, light));
+#else
+    return engineSunShadow(frame, position, normal);
+#endif
 }
 
 // Whether the sun's shadows are drawn at a point: a page of its virtual shadow maps holds it, or one of its cascades

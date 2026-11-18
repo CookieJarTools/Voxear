@@ -3976,8 +3976,13 @@ Done:
   `[surface] sky`, `float3 run(SkySurface surface, SkyLighting light)`, compiled into the sky shader: the engine's
   sky by its parts (sky, disc, stars, clouds, far weather) and `skyLayered` to lay clouds over a sky of its own.
   Evening tonemaps for itself (a choice of curve, glow, vignette) and turns a low sun's sky and clouds gold.
-  - Not yet: shadows (4), and players' menu and C# (5); models' programs; reflections still see the engine's sky;
-    pictures of a pack's own (noise, a grade's table).
+- **The sun's shadows set and read by a pack** (stage 4, first part). `[shadows]`: the sun's width, how far the
+  cascades reach, the shade's tint, virtual maps or cascades. A `filter`, `float run(ShadowSurface surface,
+  ShadowLighting light)`, compiled into every module that lights things in the sun: given the engine's soft and hard
+  shadow and the clouds', and `sunShadowMap`, `shadowLit` and `shadowCaster` to read the map itself. Evening pales
+  long shadows by how far above what casts them is.
+  - Not yet: coloured shadows through leaves and glass and a pack's own cascade pass (4), and players' menu and C#
+    (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

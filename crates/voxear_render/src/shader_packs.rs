@@ -84,6 +84,7 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 1] = [(
         ("faces.slang", include_str!("../shader_packs/evening.shaderpack/faces.slang")),
         ("water.slang", include_str!("../shader_packs/evening.shaderpack/water.slang")),
         ("sky.slang", include_str!("../shader_packs/evening.shaderpack/sky.slang")),
+        ("shadows.slang", include_str!("../shader_packs/evening.shaderpack/shadows.slang")),
     ],
 )];
 
@@ -358,7 +359,34 @@ pub struct PackManifest {
     /// Its surface programs, which light kinds of geometry in place of the
     /// engine.
     pub surfaces: PackSurfaces,
+    /// How the sun's shadows are drawn and read under it.
+    pub shadows: PackShadows,
 }
+
+/// What a pack sets of the sun's shadows: each in place of the level's
+/// lighting where it is set, and a program that reads them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PackShadows {
+    /// A `.slang` file in its folder that defines `float run(ShadowSurface
+    /// surface, ShadowLighting light)`: how much of the sun reaches a point,
+    /// in place of the engine's soft shadow (see
+    /// `shaders/shader_pack_surface.slang`).
+    pub filter: Option<String>,
+    /// How wide the sun is, in degrees: the wider, the softer its shadows
+    /// grow away from what casts them.
+    pub softness: Option<f32>,
+    /// How far from the camera the sun's cascades reach, in metres.
+    pub distance: Option<f32>,
+    /// The colour shade is lifted by, as the sky's light fills it.
+    pub tint: Option<[f32; 3]>,
+    /// Virtual shadow maps or cascades.
+    pub maps: Option<crate::shadows::SunShadows>,
+}
+
+/// The engine's shader modules that read the sun's shadow (`sunShadow` in
+/// `shaders/shading.slang`), which a pack's shadow filter is compiled into.
+pub const SHADOW_MODULES: [&str; 9] =
+    ["forward", "blocks", "terrain", "grass", "meshlets", "dice", "glass", "water", "particles"];
 
 /// A pack's surface programs, each a `.slang` file in its folder that
 /// defines `float3 run(BlockSurface surface, BlockLighting light)` (see
@@ -401,6 +429,8 @@ struct ManifestFile {
     passes: Vec<PassData>,
     #[serde(default)]
     surface: SurfaceData,
+    #[serde(default)]
+    shadows: ShadowsData,
     #[serde(default)]
     engine: Option<toml::Value>,
 }
@@ -450,6 +480,21 @@ struct SurfaceData {
     models: Option<String>,
     #[serde(default)]
     sky: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShadowsData {
+    #[serde(default)]
+    filter: Option<String>,
+    #[serde(default)]
+    softness: Option<f32>,
+    #[serde(default)]
+    distance: Option<f32>,
+    #[serde(default)]
+    tint: Option<[f32; 3]>,
+    #[serde(default)]
+    maps: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -527,6 +572,36 @@ fn check_name(name: &str, what: &str) -> Result<()> {
 }
 
 /// A program's file: a `.slang` file in the pack's own folder.
+/// The `[shadows]` table, checked.
+fn shadows(data: &ShadowsData) -> Result<PackShadows> {
+    if let Some(filter) = &data.filter {
+        check_program(filter).context("filter")?;
+    }
+    if let Some(softness) = data.softness {
+        ensure!((0.0..=20.0).contains(&softness), "softness: the sun is from 0 to 20 degrees wide, not {softness}");
+    }
+    if let Some(distance) = data.distance {
+        ensure!((5.0..=1000.0).contains(&distance), "distance: from 5 to 1000 metres, not {distance}");
+    }
+    if let Some(tint) = data.tint {
+        ensure!(tint.iter().all(|c| c.is_finite() && *c >= 0.0), "tint: a colour of three numbers from 0");
+    }
+    let maps = match &data.maps {
+        Some(name) => {
+            let maps = crate::shadows::SunShadows::named(name);
+            Some(maps.with_context(|| format!("maps: `virtual` or `cascades`, not `{name}`"))?)
+        }
+        None => None,
+    };
+    Ok(PackShadows {
+        filter: data.filter.clone(),
+        softness: data.softness,
+        distance: data.distance,
+        tint: data.tint,
+        maps,
+    })
+}
+
 fn check_program(program: &str) -> Result<()> {
     let path = Path::new(program);
     let inside = path.components().all(|part| matches!(part, std::path::Component::Normal(_)));
@@ -554,6 +629,7 @@ impl PackManifest {
         for (key, program) in surfaces.named() {
             check_program(program).with_context(|| format!("[surface] {key}"))?;
         }
+        let shadows = shadows(&file.shadows).context("[shadows]")?;
         ensure!(file.engine.is_none(), "[engine]: a pack does not set the engine's own passes yet");
         // As the file lists them, which a menu keeps.
         let order = option_order(text);
@@ -563,8 +639,8 @@ impl PackManifest {
         ensure!(options.len() <= MAX_OPTIONS, "{} options are more than the {MAX_OPTIONS} a pack has", options.len());
         ensure!(file.passes.len() <= MAX_PASSES, "{} passes are more than {MAX_PASSES}", file.passes.len());
         ensure!(
-            !file.passes.is_empty() || !surfaces.named().is_empty(),
-            "the pack has no [[pass]] and no [surface] programs"
+            !file.passes.is_empty() || !surfaces.named().is_empty() || shadows != PackShadows::default(),
+            "the pack has no [[pass]], no [surface] programs and no [shadows]"
         );
         // Every target is named by the pass that writes it.
         let mut targets: Vec<PackTarget> = Vec::new();
@@ -641,7 +717,22 @@ impl PackManifest {
         let tonemaps =
             passes.iter().filter(|pass| pass.point == PackPoint::Tonemap && pass.writes == PassWrites::Color);
         ensure!(tonemaps.count() <= 1, "two passes write the colour at the tonemap; one takes the engine's place");
-        Ok(Self { description: file.description, options, passes, targets, surfaces })
+        Ok(Self { description: file.description, options, passes, targets, surfaces, shadows })
+    }
+
+    /// The engine's shader modules the pack's programs are compiled into: its
+    /// surface programs' and, for its shadow filter, every one that reads the
+    /// sun's shadow.
+    pub fn engine_modules(&self) -> Vec<&'static str> {
+        let mut modules: Vec<&'static str> = SURFACE_MODULES
+            .iter()
+            .filter(|(module, _, _)| self.surfaces.compiles_into(module))
+            .map(|(module, _, _)| *module)
+            .collect();
+        if self.shadows.filter.is_some() {
+            modules.extend(SHADOW_MODULES.iter().filter(|module| !modules.contains(module)).collect::<Vec<_>>());
+        }
+        modules
     }
 
     /// One of the engine's own packs, by its name.
@@ -815,8 +906,7 @@ pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&st
     let included = |program: &str| place(program).to_string_lossy().replace('\\', "/");
     let surfaces = &manifest.surfaces;
     let mut code = String::from("// Made by Voxear for a shader pack's surface programs.\n\n");
-    code.push_str("#include \"shader_pack_surface.slang\"\n\n");
-    code.push_str(&options_code(manifest));
+    code.push_str("#include \"shader_pack_surface.slang\"\n#include \"project_pack_options.slang\"\n\n");
     let programs = match module {
         "water" => vec![("pack_water", &surfaces.water)],
         "sky" => vec![("pack_sky", &surfaces.sky)],
@@ -850,6 +940,57 @@ pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&st
         None => code.push_str("    return light.engine;\n}\n"),
     }
     code
+}
+
+/// The pack's options as its programs compiled into the engine's modules
+/// read them, written once for every file that includes it.
+pub fn options_file(manifest: &PackManifest) -> String {
+    let mut code = String::from("// Made by Voxear: a shader pack's options.\n\n#pragma once\n\n");
+    code.push_str("#include \"shader_pack_surface.slang\"\n\n");
+    code.push_str(&options_code(manifest));
+    code
+}
+
+/// The file `shaders/shading.slang` includes as `project_pack_shadows.slang`
+/// for a pack's shadow filter: the program in a namespace of its own, by
+/// its file's place as `place` gives it, and `packSunShadow`, which the
+/// engine's `sunShadow` calls.
+pub fn shadow_wrapper(manifest: &PackManifest, place: &dyn Fn(&str) -> PathBuf) -> String {
+    let mut code = String::from("// Made by Voxear for a shader pack's shadow filter.\n\n");
+    code.push_str("#include \"shader_pack_surface.slang\"\n#include \"project_pack_options.slang\"\n\n");
+    if let Some(filter) = &manifest.shadows.filter {
+        let included = place(filter).to_string_lossy().replace('\\', "/");
+        code.push_str(&format!("namespace pack_shadows\n{{\n#include \"{included}\"\n}}\n\n"));
+    }
+    code.push_str("float packSunShadow(ShadowSurface surface, ShadowLighting light)\n{\n");
+    code.push_str("    if (frame() == nullptr)\n    {\n        return light.engine;\n    }\n");
+    match manifest.shadows.filter {
+        Some(_) => code.push_str("    return pack_shadows::run(surface, light);\n}\n"),
+        None => code.push_str("    return light.engine;\n}\n"),
+    }
+    code
+}
+
+/// What the engine's shader `module` is compiled with for the pack: the
+/// files of Voxear's making it includes, by name, and what is defined.
+fn module_files(
+    manifest: &PackManifest,
+    module: &str,
+    place: &dyn Fn(&str) -> PathBuf,
+) -> (Vec<(String, String)>, Vec<&'static str>) {
+    let mut files = vec![("project_pack_options.slang".to_string(), options_file(manifest))];
+    let mut defines = Vec::new();
+    for (named, define, file) in &SURFACE_MODULES {
+        if *named == module && manifest.surfaces.compiles_into(module) {
+            files.push((file.to_string(), surface_wrapper(manifest, module, place)));
+            defines.push(*define);
+        }
+    }
+    if manifest.shadows.filter.is_some() && SHADOW_MODULES.contains(&module) {
+        files.push(("project_pack_shadows.slang".to_string(), shadow_wrapper(manifest, place)));
+        defines.push("VOXEAR_PACK_SHADOWS");
+    }
+    (files, defines)
 }
 
 /// Where a pack's programs are read from.
@@ -921,7 +1062,7 @@ struct Job<'a> {
     label: String,
     files: Vec<(String, String)>,
     engine_module: Option<&'a str>,
-    defines: &'a [&'a str],
+    defines: Vec<&'static str>,
 }
 
 /// Compiles a pack's programs, one `slangc` a pass and one for the engine's
@@ -971,65 +1112,45 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
             label: format!("the pass `{}`", pass.name),
             files: vec![(format!("voxear_pass_{at}.slang"), wrapper(manifest, pass))],
             engine_module: None,
-            defines: &[],
+            defines: Vec::new(),
         })
         .collect();
-    for (module, define, file) in &SURFACE_MODULES {
-        if manifest.surfaces.compiles_into(module) {
-            // Named by the programs' own names here, for the hash; by where they are once written, below.
-            let wrapped = surface_wrapper(manifest, module, &|program| PathBuf::from(program));
-            jobs.push(Job {
-                label: format!("its surface programs for {module}"),
-                files: vec![(file.to_string(), wrapped)],
-                engine_module: Some(*module),
-                defines: std::slice::from_ref(define),
-            });
-        }
+    for module in manifest.engine_modules() {
+        // Named by the programs' own names here, for the hash; by where they are once written, below.
+        let (files, defines) = module_files(manifest, module, &|program| PathBuf::from(program));
+        let label = format!("its programs compiled into {module}");
+        jobs.push(Job { label, files, engine_module: Some(module), defines });
     }
-    let results: Vec<Result<Arc<[u8]>>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = jobs
-            .iter()
-            .map(|job| {
+    // A few at once: the engine's modules are large, and each compile takes a core and a lot of memory.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let cores = std::thread::available_parallelism().map_or(4, |cores| cores.get());
+    let workers = (cores / 2).clamp(2, 8).min(jobs.len());
+    let mut results: Vec<Option<Result<Arc<[u8]>>>> = (0..jobs.len()).map(|_| None).collect();
+    let finished: Vec<Vec<(usize, Result<Arc<[u8]>>)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
                 let (work, engine, written, sources) = (&work, &engine, &written, &sources);
-                scope.spawn(move || -> Result<Arc<[u8]>> {
-                    let first = job.files.first().map(|(name, text)| format!("{name}\n{text}")).unwrap_or_default();
-                    let hash = stable_hash(&[&first, job.engine_module.unwrap_or_default(), sources]);
-                    if let Some(spirv) = compiled_before().lock().expect("not poisoned").get(&hash) {
-                        return Ok(spirv.clone());
+                let (jobs, next) = (&jobs, &next);
+                scope.spawn(move || {
+                    let mut done = Vec::new();
+                    loop {
+                        let at = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(job) = jobs.get(at) else { break };
+                        done.push((at, compile_job(job, (manifest, files), (work, engine, written, sources))));
                     }
-                    // A folder of its own, as the same pack may compile on two threads at once.
-                    let dir = work.join(format!("{hash:016x}-{}", GENERATIONS.fetch_add(1, Ordering::Relaxed)));
-                    std::fs::create_dir_all(&dir)?;
-                    for (name, text) in written {
-                        std::fs::write(dir.join(name), text)?;
-                    }
-                    let folder = files.folder().map_or_else(|| dir.clone(), Path::to_path_buf);
-                    for (name, text) in &job.files {
-                        let text = match job.engine_module {
-                            // The surface programs' wrapper names their files where they are.
-                            Some(module) => surface_wrapper(manifest, module, &|program| folder.join(program)),
-                            None => text.clone(),
-                        };
-                        std::fs::write(dir.join(name), text)?;
-                    }
-                    let source = match job.engine_module {
-                        Some(module) => engine.join(format!("{module}.slang")),
-                        None => dir.join(&job.files[0].0),
-                    };
-                    let spirv = compile_program(&source, &[&dir, &folder, engine], job.defines, &dir.join("out.spv"))
-                        .with_context(|| job.label.clone())?;
-                    let spirv: Arc<[u8]> = spirv.into();
-                    compiled_before().lock().expect("not poisoned").insert(hash, spirv.clone());
-                    let _ = std::fs::remove_dir_all(&dir);
-                    Ok(spirv)
+                    done
                 })
             })
             .collect();
-        handles
-            .into_iter()
-            .map(|job| job.join().unwrap_or_else(|_| bail!("the shader compiler thread panicked")))
-            .collect()
+        handles.into_iter().map(|worker| worker.join().unwrap_or_default()).collect()
     });
+    for (at, result) in finished.into_iter().flatten() {
+        results[at] = Some(result);
+    }
+    let results: Vec<Result<Arc<[u8]>>> = results
+        .into_iter()
+        .map(|result| result.unwrap_or_else(|| bail!("the shader compiler thread panicked")))
+        .collect();
     let mut compiled = results.into_iter().collect::<Result<Vec<_>>>()?;
     // The passes' first, then the engine's modules.
     let modules: Vec<(String, Arc<[u8]>)> = jobs[manifest.passes.len()..]
@@ -1039,6 +1160,46 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
         .collect();
     let generation = GENERATIONS.fetch_add(1, Ordering::Relaxed);
     Ok(CompiledPack { manifest: manifest.clone(), passes: compiled, modules, generation })
+}
+
+/// One of a pack's compiles: a pass, or one of the engine's modules with
+/// the pack's programs in it; kept by a hash of all it is made from.
+fn compile_job(
+    job: &Job<'_>,
+    (manifest, files): (&PackManifest, &PackFiles),
+    (work, engine, written, sources): (&Path, &Path, &[(String, String)], &str),
+) -> Result<Arc<[u8]>> {
+    let named: Vec<String> = job.files.iter().map(|(name, text)| format!("{name}\n{text}")).collect();
+    let module = job.engine_module.unwrap_or_default();
+    let hash = stable_hash(&[&named.join("\n"), module, &job.defines.join(" "), sources]);
+    if let Some(spirv) = compiled_before().lock().expect("not poisoned").get(&hash) {
+        return Ok(spirv.clone());
+    }
+    // A folder of its own, as the same pack may compile on two threads at once.
+    let dir = work.join(format!("{hash:016x}-{}", GENERATIONS.fetch_add(1, Ordering::Relaxed)));
+    std::fs::create_dir_all(&dir)?;
+    for (name, text) in written {
+        std::fs::write(dir.join(name), text)?;
+    }
+    let folder = files.folder().map_or_else(|| dir.clone(), Path::to_path_buf);
+    let made = match job.engine_module {
+        // The files of Voxear's making name the pack's programs where they are.
+        Some(module) => module_files(manifest, module, &|program| folder.join(program)).0,
+        None => job.files.clone(),
+    };
+    for (name, text) in &made {
+        std::fs::write(dir.join(name), text)?;
+    }
+    let source = match job.engine_module {
+        Some(module) => engine.join(format!("{module}.slang")),
+        None => dir.join(&job.files[0].0),
+    };
+    let spirv = compile_program(&source, &[&dir, &folder, engine], &job.defines, &dir.join("out.spv"))
+        .with_context(|| job.label.clone())?;
+    let spirv: Arc<[u8]> = spirv.into();
+    compiled_before().lock().expect("not poisoned").insert(hash, spirv.clone());
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(spirv)
 }
 
 /// One program compiled to SPIR-V by `slangc`, its error with a word on what
@@ -1654,6 +1815,12 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         fails(&format!("{}reads = [\"bloom\"]\n", pass.replace("final", "after_taa")), "from the tonemap on");
         fails("[surface]\nblocks = \"../b.slang\"", "not a file in the pack's folder");
         fails("[surface]\nshadows = \"s.slang\"", "unknown field");
+        fails("[shadows]\nfilter = \"../s.slang\"", "not a file in the pack's folder");
+        fails("[shadows]\nsoftness = 30.0", "0 to 20 degrees");
+        fails("[shadows]\ndistance = 2.0", "5 to 1000 metres");
+        fails("[shadows]\ntint = [-1.0, 0.0, 0.0]", "tint");
+        fails("[shadows]\nmaps = \"many\"", "`virtual` or `cascades`");
+        fails("[shadows]\nblur = 1.0", "unknown field");
         fails(&format!("[options]\nx = {{ kind = \"number\", range = [1.0, 0.0], default = 0.5 }}\n{pass}"), "range");
         fails(
             &format!("[options]\nx = {{ kind = \"choice\", choices = [\"A\"], default = \"B\" }}\n{pass}"),
@@ -1687,7 +1854,9 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         assert!(manifest.passes.is_empty());
         assert_eq!(manifest.surfaces.named(), [("blocks", "faces.slang"), ("leaves", "leaves.slang")]);
         let wrapped = surface_wrapper(&manifest, "blocks", &|program| Path::new("/p").join(program));
-        assert!(wrapped.contains("#include \"shader_pack_surface.slang\"") && wrapped.contains("    bool warm;"));
+        assert!(wrapped.contains("#include \"project_pack_options.slang\""));
+        let options = options_file(&manifest);
+        assert!(options.contains("#pragma once") && options.contains("    bool warm;"));
         assert!(wrapped.contains("namespace pack_blocks\n{\n#include \"/p/faces.slang\"\n}"));
         assert!(wrapped.contains("return pack_leaves::run(surface, light);"));
         assert!(wrapped.contains("return pack_blocks::run(surface, light);"));
@@ -1695,6 +1864,33 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         let leaves = PackManifest::parse("[surface]\nleaves = \"leaves.slang\"\n").unwrap();
         let wrapped = surface_wrapper(&leaves, "blocks", &|program| PathBuf::from(program));
         assert!(wrapped.contains("pack_leaves::run") && wrapped.ends_with("    return light.engine;\n}\n"));
+    }
+
+    #[test]
+    fn a_packs_shadows_set_the_suns_and_its_filter_is_compiled_into_every_module_that_reads_them() {
+        let manifest = PackManifest::parse(
+            "[shadows]\nfilter = \"soft.slang\"\nsoftness = 2.0\ndistance = 150.0\ntint = [0.1, 0.1, 0.2]\nmaps = \"cascades\"\n",
+        )
+        .unwrap();
+        let shadows = &manifest.shadows;
+        assert_eq!(shadows.filter.as_deref(), Some("soft.slang"));
+        assert_eq!((shadows.softness, shadows.distance, shadows.tint), (Some(2.0), Some(150.0), Some([0.1, 0.1, 0.2])));
+        assert_eq!(shadows.maps, Some(crate::shadows::SunShadows::Cascades));
+        assert_eq!(manifest.engine_modules(), SHADOW_MODULES);
+        let (files, defines) = module_files(&manifest, "water", &|program| Path::new("/p").join(program));
+        assert_eq!(defines, ["VOXEAR_PACK_SHADOWS"]);
+        let wrapped = &files.iter().find(|(name, _)| name == "project_pack_shadows.slang").unwrap().1;
+        assert!(wrapped.contains("namespace pack_shadows\n{\n#include \"/p/soft.slang\"\n}"));
+        assert!(wrapped.contains("return pack_shadows::run(surface, light);"));
+        // With water's own program too, one module takes both.
+        let both = PackManifest::parse("[surface]\nwater = \"w.slang\"\n[shadows]\nfilter = \"s.slang\"\n").unwrap();
+        let (files, defines) = module_files(&both, "water", &|program| PathBuf::from(program));
+        assert_eq!(defines, ["VOXEAR_PACK_WATER", "VOXEAR_PACK_SHADOWS"]);
+        assert_eq!(files.len(), 3, "the options, water's and the shadows'");
+        assert_eq!(both.engine_modules().iter().filter(|module| **module == "water").count(), 1);
+        // Settings alone compile nothing.
+        let settings = PackManifest::parse("[shadows]\nsoftness = 0.0\n").unwrap();
+        assert!(settings.engine_modules().is_empty());
     }
 
     #[test]
@@ -1709,7 +1905,8 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
             let manifest = PackManifest::builtin(key).unwrap_or_else(|error| panic!("{key}: {error:#}"));
             assert!(!title.is_empty() && manifest.description.len() > 20, "{key} says what it is");
             let programs = manifest.passes.iter().map(|pass| pass.program.as_str());
-            for program in programs.chain(manifest.surfaces.named().into_iter().map(|(_, program)| program)) {
+            let surfaces = manifest.surfaces.named().into_iter().map(|(_, program)| program);
+            for program in programs.chain(surfaces).chain(manifest.shadows.filter.as_deref()) {
                 builtin_files(key).unwrap().iter().find(|(name, _)| *name == program).expect("its program");
             }
         }

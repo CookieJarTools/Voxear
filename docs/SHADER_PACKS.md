@@ -157,7 +157,7 @@ passes took the same with and without it. The plan's estimates, before it was bu
 3. **The final pass and the sky:** a pack's own tonemap and grade in place of the engine's and the look shader, and
    its own sky and clouds. ✅ Built.
 4. **Shadows:** a pack's shadow settings and filter, then coloured shadows through leaves and glass, then a pack's
-   own cascade pass.
+   own cascade pass. The settings and the filter are built.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
    surface id image for passes that want it.
 
@@ -243,6 +243,26 @@ A pack's own tonemap, and a program for the sky. Settled on the way:
 - **Evening** tonemaps for itself, with a choice of curve, a little glow and a vignette, and turns a low sun's sky
   and the clouds on its side gold.
 - **Not yet:** models' surface programs; reflections, the sea's mirror and the GI still see the engine's sky.
+
+## What stage 4 has built
+
+The first part: a pack's settings for the sun's shadows and a filter that reads them. Settled on the way:
+
+- **`[shadows]`** sets the sun's width (`softness`, degrees), how far the cascades reach (`distance`), the shade's
+  `tint`, and the `maps` (virtual or cascades), each in place of the level's lighting and its look while the pack is
+  worn; a command line's choice of maps still wins. Settings alone compile nothing.
+- **The filter** is `float run(ShadowSurface surface, ShadowLighting light)`, returning how much of the sun reaches a
+  point. `shading.slang`'s `sunShadow` hands it the point, the way to the sun, its width and an angle that turns each
+  frame, and the engine's soft shadow, its hard one and the clouds' shadow; the engine's own is now
+  `engineSunShadow`. For a filter of its own a pack reads the map with `sunShadowMap` (a page of the virtual maps at
+  the level that fits a reach, or the cascade), `shadowLit` (a compare tap, metres across the sun's view),
+  `shadowCaster` (metres up to the caster) and `shadowDisc`, the same over pages and cascades.
+- **Where:** the filter is compiled into every module that lights things in the sun (`SHADOW_MODULES`: models,
+  meshlets, blocks, terrain, grass, dice, glass, water, particles), with `VOXEAR_PACK_SHADOWS` and a
+  `project_pack_shadows.slang`; a module that takes a surface program too takes both, the pack's options in a
+  `project_pack_options.slang` both include. The fog's light shafts, smoke and the GI keep the engine's hard shadow.
+  Compiling ten modules, a pack's compiles now run a few at once (half the cores, two to eight) rather than all.
+- **Evening** pales its shadows the farther above the point what casts them is, as an evening sky fills a long shadow.
 
 ## Questions to settle
 

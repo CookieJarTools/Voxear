@@ -6,7 +6,10 @@ use voxear_engine::{
     Game,
     shader_packs::{self, Standing},
 };
-use voxear_render::shader_packs::{OptionKind, PackManifest, PassWrites, TargetScale};
+use voxear_render::{
+    SunShadows,
+    shader_packs::{OptionKind, PackManifest, PackShadows, PassWrites, TargetScale},
+};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::{asset_inspector::part, inspector::prop};
@@ -111,6 +114,38 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
             let value = ui.add_label(row, program);
             ui.add_class(value, "value");
             tip(ui, row, tip_text);
+        }
+    }
+
+    let shadows = &manifest.shadows;
+    if *shadows != PackShadows::default() {
+        let rows = part(ui, root, "Shadows", "sun");
+        let mut row_of = |label: &str, value: String, about: &str| {
+            let row = prop(ui, rows, label);
+            let text = ui.add_label(row, &value);
+            ui.add_class(text, "value");
+            tip(ui, row, about);
+        };
+        if let Some(filter) = &shadows.filter {
+            let about = "Reads the sun's shadow at every point, in place of the engine's soft shadow";
+            row_of("Filter", filter.clone(), about);
+        }
+        if let Some(softness) = shadows.softness {
+            let about = "How wide the sun is: the wider, the softer shadows grow away from what casts them";
+            row_of("Sun Width", format!("{softness}°"), about);
+        }
+        if let Some(distance) = shadows.distance {
+            row_of("Distance", format!("{distance} m"), "How far from the camera the sun's cascades reach");
+        }
+        if let Some([r, g, b]) = shadows.tint {
+            row_of("Tint", format!("{r}, {g}, {b}"), "The colour shade is lifted by, as the sky's light fills it");
+        }
+        if let Some(maps) = shadows.maps {
+            let name = match maps {
+                SunShadows::Virtual => "Virtual",
+                SunShadows::Cascades => "Cascades",
+            };
+            row_of("Maps", name.to_string(), "Virtual shadow maps, or cascades drawn every frame");
         }
     }
 

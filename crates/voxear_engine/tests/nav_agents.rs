@@ -402,3 +402,39 @@ fn an_agent_climbs_a_vine_up_a_cliff_by_its_controller_and_along_the_nav_and_one
         }
     }
 }
+
+#[test]
+fn an_agent_type_that_keeps_off_water_goes_round_a_ford_the_default_type_wades() {
+    use voxear_engine::navigation::NavArea;
+    use voxear_terrain::blocks::block::BlockNavArea;
+    let mut crossed = Vec::new();
+    for slot in [0, 1] {
+        let (_dir, mut game, _) = game(32);
+        // The project's first own agent type, a horse, pays much more for water than the Default type does.
+        let navigation = &mut game.project.file.navigation;
+        (navigation.agent_1_name, navigation.agent_1_water_cost) = ("Horse".into(), 50.0);
+        let settings = game.project.file.navigation.clone();
+        settings.put(&mut game.engine.world);
+        assert_eq!(voxear_engine::navigation::agent_type(&game.engine.world, 1).name, "Horse");
+        // A ford across the field, dry at its far end.
+        let middle = Transform::from_position(Vec3::new(16.0, 6.5, 12.0));
+        game.engine.world.spawn((middle, NavArea { size: [4.0, 3.0, 24.0], area: BlockNavArea::Water }));
+        let walker = agent(&mut game, 6.5, 6.5, NavMoves::AlongTheNav);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().agent_type = slot;
+        let to = Vec3::new(26.5, 6.0, 6.5);
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let (mut frames, mut wet) = (0, false);
+        while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+            let now = at(&game, walker);
+            wet |= (14.0..18.0).contains(&now.x) && now.z < 20.0;
+        }
+        assert!((at(&game, walker) - to).length() < 0.6, "type {slot}: got there after {frames} frames");
+        crossed.push(wet);
+    }
+    assert_eq!(crossed, [true, false], "the Default type wades the ford, the horse goes round it");
+}

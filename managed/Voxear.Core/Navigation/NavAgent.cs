@@ -53,6 +53,7 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	private const int JumpsValue = 34;
 	private const int DestinationDimensionValue = 35;
 	private const int ClimbsValue = 36;
+	private const int AgentTypeValue = 37;
 
 	public static readonly NavAgent None = default;
 
@@ -170,6 +171,13 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	{
 		get { return Number(JumpsValue) != 0f; }
 		set { Write(JumpsValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>Its agent type: what each kind of ground costs it, and which of a level's baked nav meshes it walks.</summary>
+	public NavAgentType AgentType
+	{
+		get { return NavAgentType.OfSlot((int)Number(AgentTypeValue)); }
+		set { Write(AgentTypeValue, new Vector4(value.Slot, 0f, 0f, 0f)); }
 	}
 
 	/// <summary>Whether it climbs vines, ropes, chains and ladders on its way, up and down, or goes round them.</summary>

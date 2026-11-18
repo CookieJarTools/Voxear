@@ -119,6 +119,10 @@ pub struct NavAgent {
     pub jumps: bool,
     /// Whether it climbs vines, ropes and ladders on its way.
     pub climbs: bool,
+    /// Its agent type, by its slot in Project Settings ▸ Navigation: 0
+    /// for the Default one, 1 to 4 for the project's own. What each area
+    /// costs it, and which of a level's baked nav meshes it walks.
+    pub agent_type: u8,
     /// Where it is to go, for a game to set; `None` to stand.
     #[serde(skip)]
     pub destination: Option<Vec3>,
@@ -150,6 +154,7 @@ impl Default for NavAgent {
             opens_doors: true,
             jumps: true,
             climbs: true,
+            agent_type: 0,
             destination: None,
             destination_dimension: None,
             stopped: false,
@@ -770,7 +775,9 @@ fn plan(
         budget.asked -= 1;
         let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
         let mut ask = PathAsk::new(from, walked.local(destination), walker);
-        (ask.costs, ask.boxes) = (walked.costs, walked.boxes.clone());
+        // What each area costs its agent type.
+        let costs = crate::navigation::agent_type(world, agent.agent_type).costs;
+        (ask.costs, ask.boxes) = (costs, walked.boxes.clone());
         ask.links = crate::navigation::heeded(&walked.links, layer);
         ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
         (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
@@ -779,7 +786,6 @@ fn plan(
         state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask)), 0));
         (state.asked_to, state.search_in) = (to, SEARCH_EVERY);
     }
-    let _ = world;
     let steering = Steering {
         speed: agent.speed,
         acceleration: agent.acceleration,
@@ -1107,6 +1113,7 @@ const OPENS_DOORS: i32 = 33;
 const JUMPS: i32 = 34;
 const DESTINATION_DIMENSION: i32 = 35;
 const CLIMBS: i32 = 36;
+const AGENT_TYPE: i32 = 37;
 const HAS_PATH: i32 = 20;
 const PATH_PENDING: i32 = 21;
 const ARRIVED: i32 = 22;
@@ -1295,6 +1302,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (JUMPS, None) => return toggle(agent.jumps),
         (CLIMBS, Some([on, ..])) => agent.climbs = on != 0.0,
         (CLIMBS, None) => return toggle(agent.climbs),
+        (AGENT_TYPE, Some([slot, ..])) => {
+            agent.agent_type = (slot.max(0.0) as usize).min(crate::navigation::AGENT_TYPES - 1) as u8
+        }
+        (AGENT_TYPE, None) => return number(f32::from(agent.agent_type)),
         _ => return None,
     }
     if matches!(what, DESTINATION | STOP | RESUME) {

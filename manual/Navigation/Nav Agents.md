@@ -33,6 +33,7 @@ Press Play. The guard walks to its post, round anything in the way. Add a [[Mob 
 
 | Setting | What it does |
 | --- | --- |
+| Agent Type | Which of the project's [[Agent Types]] it is: what each kind of ground costs it |
 | Speed | How fast it walks at most, in metres a second |
 | Acceleration | How quickly it speeds up and slows down |
 | Turn Speed | How fast it turns to face the way it goes, in degrees a second |

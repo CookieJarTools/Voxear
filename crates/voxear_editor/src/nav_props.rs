@@ -27,11 +27,13 @@ pub enum NavField {
     OpensDoors,
     Jumps,
     Climbs,
+    AgentType,
 }
 
 use NavField as F;
 
-const ALL: [NavField; 14] = [
+const ALL: [NavField; 15] = [
+    F::AgentType,
     F::Speed,
     F::Acceleration,
     F::TurnSpeed,
@@ -73,6 +75,7 @@ pub fn label(field: NavField) -> String {
         F::OpensDoors => "Opens Doors",
         F::Jumps => "Jumps",
         F::Climbs => "Climbs",
+        F::AgentType => "Agent Type",
     };
     label.into()
 }
@@ -114,6 +117,11 @@ pub fn tooltip(field: NavField) -> &'static str {
         F::Climbs => {
             "Whether it climbs vines, ropes, chains and ladders on its way, up and down, or goes round them. Default: on."
         }
+        F::AgentType => {
+            "Which of Project Settings ▸ Navigation's agent types it is: what each kind of ground costs it, and which \
+             of a level's baked nav meshes it walks. In a world of blocks its own Height counts too. Default: \
+             Default."
+        }
     }
 }
 
@@ -134,6 +142,7 @@ pub fn key(field: NavField) -> &'static str {
         F::OpensDoors => "opens_doors",
         F::Jumps => "jumps",
         F::Climbs => "climbs",
+        F::AgentType => "agent_type",
     }
 }
 
@@ -200,6 +209,10 @@ pub fn get(game: &Game, entity: Entity, field: NavField) -> Option<Value> {
         F::OpensDoors => Value::Toggle(agent.opens_doors),
         F::Jumps => Value::Toggle(agent.jumps),
         F::Climbs => Value::Toggle(agent.climbs),
+        F::AgentType => {
+            let types = voxear_engine::navigation::NavigationSettings::agent_types(&game.project.file.navigation);
+            Value::Choice(usize::from(agent.agent_type), types.iter().map(|kind| kind.name.clone()).collect())
+        }
     })
 }
 
@@ -216,6 +229,9 @@ pub fn set(game: &mut Game, entity: Entity, field: NavField, value: Value) -> bo
         (F::OpensDoors, Value::Toggle(on)) => agent.opens_doors = *on,
         (F::Jumps, Value::Toggle(on)) => agent.jumps = *on,
         (F::Climbs, Value::Toggle(on)) => agent.climbs = *on,
+        (F::AgentType, Value::Choice(at, _)) => {
+            agent.agent_type = (*at).min(voxear_engine::navigation::AGENT_TYPES - 1) as u8
+        }
         (F::Moves, Value::Choice(at, _)) => agent.moves = MOVES.get(*at).copied().unwrap_or_default(),
         (F::Avoidance, Value::Choice(at, _)) => agent.avoidance = AVOIDANCE.get(*at).copied().unwrap_or_default(),
         (F::Speed, _) => agent.speed = number.unwrap_or(agent.speed).clamp(0.0, 100.0),

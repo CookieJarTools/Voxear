@@ -141,6 +141,7 @@ impl BlockMob {
             opens_doors: false,
             jumps: true,
             climbs: false,
+            agent_type: 0,
             destination,
             destination_dimension: None,
             stopped: false,

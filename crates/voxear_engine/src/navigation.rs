@@ -90,6 +90,11 @@ pub fn settle(world: &mut World) {
 /// door_cost = 2.0          # a shut door, opened to go through
 /// custom_1_name = "Mud"    # the project's own areas, named and costed
 /// custom_1_cost = 2.5
+/// agent_height = 1.8       # what the Default agent type is baked for
+/// agent_1_name = "Ogre"    # the project's own agent types, sized and costed
+/// agent_1_height = 3.2
+/// agent_1_radius = 0.9
+/// agent_1_water_cost = 8.0 # 0 for the project's own cost
 /// ```
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -106,6 +111,48 @@ pub struct NavigationSettings {
     pub custom_3_cost: f32,
     pub custom_4_name: String,
     pub custom_4_cost: f32,
+    /// What the Default agent type is baked for: how tall, how wide round
+    /// its middle, how high a step and how steep a slope, in metres and
+    /// degrees.
+    pub agent_height: f32,
+    pub agent_radius: f32,
+    pub agent_step: f32,
+    pub agent_slope: f32,
+    /// The project's own four agent types: each used once named, sized as
+    /// the Default one is, and with its own costs of roads, water and
+    /// swimming, 0 for the project's.
+    pub agent_1_name: String,
+    pub agent_1_height: f32,
+    pub agent_1_radius: f32,
+    pub agent_1_step: f32,
+    pub agent_1_slope: f32,
+    pub agent_1_road_cost: f32,
+    pub agent_1_water_cost: f32,
+    pub agent_1_swim_cost: f32,
+    pub agent_2_name: String,
+    pub agent_2_height: f32,
+    pub agent_2_radius: f32,
+    pub agent_2_step: f32,
+    pub agent_2_slope: f32,
+    pub agent_2_road_cost: f32,
+    pub agent_2_water_cost: f32,
+    pub agent_2_swim_cost: f32,
+    pub agent_3_name: String,
+    pub agent_3_height: f32,
+    pub agent_3_radius: f32,
+    pub agent_3_step: f32,
+    pub agent_3_slope: f32,
+    pub agent_3_road_cost: f32,
+    pub agent_3_water_cost: f32,
+    pub agent_3_swim_cost: f32,
+    pub agent_4_name: String,
+    pub agent_4_height: f32,
+    pub agent_4_radius: f32,
+    pub agent_4_step: f32,
+    pub agent_4_slope: f32,
+    pub agent_4_road_cost: f32,
+    pub agent_4_water_cost: f32,
+    pub agent_4_swim_cost: f32,
 }
 
 impl Default for NavigationSettings {
@@ -125,6 +172,42 @@ impl Default for NavigationSettings {
             custom_3_cost: 1.0,
             custom_4_name: String::new(),
             custom_4_cost: 1.0,
+            agent_height: 1.8,
+            agent_radius: 0.35,
+            agent_step: 0.45,
+            agent_slope: 45.0,
+            agent_1_name: String::new(),
+            agent_1_height: 1.8,
+            agent_1_radius: 0.35,
+            agent_1_step: 0.45,
+            agent_1_slope: 45.0,
+            agent_1_road_cost: 0.0,
+            agent_1_water_cost: 0.0,
+            agent_1_swim_cost: 0.0,
+            agent_2_name: String::new(),
+            agent_2_height: 1.8,
+            agent_2_radius: 0.35,
+            agent_2_step: 0.45,
+            agent_2_slope: 45.0,
+            agent_2_road_cost: 0.0,
+            agent_2_water_cost: 0.0,
+            agent_2_swim_cost: 0.0,
+            agent_3_name: String::new(),
+            agent_3_height: 1.8,
+            agent_3_radius: 0.35,
+            agent_3_step: 0.45,
+            agent_3_slope: 45.0,
+            agent_3_road_cost: 0.0,
+            agent_3_water_cost: 0.0,
+            agent_3_swim_cost: 0.0,
+            agent_4_name: String::new(),
+            agent_4_height: 1.8,
+            agent_4_radius: 0.35,
+            agent_4_step: 0.45,
+            agent_4_slope: 45.0,
+            agent_4_road_cost: 0.0,
+            agent_4_water_cost: 0.0,
+            agent_4_swim_cost: 0.0,
         }
     }
 }
@@ -157,12 +240,122 @@ impl NavigationSettings {
     /// Puts these settings in `world`, for what finds its way from now on.
     pub fn put(&self, world: &mut World) {
         world.insert_resource(NavCosts(self.costs()));
+        world.insert_resource(NavAgentTypes(self.agent_types().to_vec()));
+    }
+
+    /// Each agent type by its slot: the Default one, then the project's
+    /// own four, named or not.
+    pub fn agent_types(&self) -> [NavAgentType; AGENT_TYPES] {
+        let costs = self.costs();
+        let size = |[height, radius, step, slope]: [f32; 4]| {
+            let kept = |value: f32, low: f32, high: f32, otherwise: f32| match value.is_finite() {
+                true => value.clamp(low, high),
+                false => otherwise,
+            };
+            (
+                kept(height, 0.1, 100.0, 1.8),
+                kept(radius, 0.05, 50.0, 0.35),
+                kept(step, 0.0, 10.0, 0.45),
+                kept(slope, 0.0, 89.0, 45.0),
+            )
+        };
+        let default_size = size([self.agent_height, self.agent_radius, self.agent_step, self.agent_slope]);
+        let mut types = [(); AGENT_TYPES].map(|_| NavAgentType::default());
+        types[0] = NavAgentType::of("Default".into(), default_size, costs);
+        let own: [(&String, [f32; 4], [f32; 3]); 4] = [
+            (
+                &self.agent_1_name,
+                [self.agent_1_height, self.agent_1_radius, self.agent_1_step, self.agent_1_slope],
+                [self.agent_1_road_cost, self.agent_1_water_cost, self.agent_1_swim_cost],
+            ),
+            (
+                &self.agent_2_name,
+                [self.agent_2_height, self.agent_2_radius, self.agent_2_step, self.agent_2_slope],
+                [self.agent_2_road_cost, self.agent_2_water_cost, self.agent_2_swim_cost],
+            ),
+            (
+                &self.agent_3_name,
+                [self.agent_3_height, self.agent_3_radius, self.agent_3_step, self.agent_3_slope],
+                [self.agent_3_road_cost, self.agent_3_water_cost, self.agent_3_swim_cost],
+            ),
+            (
+                &self.agent_4_name,
+                [self.agent_4_height, self.agent_4_radius, self.agent_4_step, self.agent_4_slope],
+                [self.agent_4_road_cost, self.agent_4_water_cost, self.agent_4_swim_cost],
+            ),
+        ];
+        for (slot, (name, sizes, [road, water, swim])) in own.into_iter().enumerate() {
+            let mut own_costs = costs;
+            for (area, cost) in [(voxear_nav::ROAD, road), (voxear_nav::WATER, water), (voxear_nav::SWIM, swim)] {
+                if cost.is_finite() && cost > 0.0 {
+                    own_costs.0[usize::from(area)] = cost.clamp(0.05, 1000.0);
+                }
+            }
+            let shown =
+                if name.trim().is_empty() { format!("Agent Type {}", slot + 1) } else { name.trim().to_string() };
+            types[slot + 1] =
+                NavAgentType { named: !name.trim().is_empty(), ..NavAgentType::of(shown, size(sizes), own_costs) };
+        }
+        types
     }
 }
 
 /// What each area costs in `world`: the project's, or the defaults.
 pub fn costs(world: &World) -> voxear_nav::AreaCosts {
     world.resource::<NavCosts>().map(|costs| costs.0).unwrap_or_default()
+}
+
+/// How many agent types a project has: the Default one and four of its own.
+pub const AGENT_TYPES: usize = 5;
+
+/// A kind of thing finding its way, as a project sets it: what its level's
+/// nav mesh is baked for (how tall, how wide round its middle, how high a
+/// step and how steep a slope, in metres and degrees), and what each area
+/// costs it. Its name is as shown; `named` where the project named it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavAgentType {
+    pub name: String,
+    pub named: bool,
+    pub height: f32,
+    pub radius: f32,
+    pub step: f32,
+    pub slope: f32,
+    pub costs: voxear_nav::AreaCosts,
+}
+
+impl Default for NavAgentType {
+    fn default() -> Self {
+        Self::of("Default".into(), (1.8, 0.35, 0.45, 45.0), voxear_nav::AreaCosts::default())
+    }
+}
+
+impl NavAgentType {
+    fn of(name: String, (height, radius, step, slope): (f32, f32, f32, f32), costs: voxear_nav::AreaCosts) -> Self {
+        Self { name, named: true, height, radius, step, slope, costs }
+    }
+
+    /// What a level's nav mesh is baked with for it.
+    pub fn bake_settings(&self) -> voxear_nav::mesh::BakeSettings {
+        voxear_nav::mesh::BakeSettings {
+            height: self.height,
+            radius: self.radius,
+            climb: self.step,
+            slope: self.slope,
+            ..voxear_nav::mesh::BakeSettings::default()
+        }
+    }
+}
+
+/// The project's agent types, by slot (see [`NavigationSettings::agent_types`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NavAgentTypes(pub Vec<NavAgentType>);
+
+/// Agent type `slot` in `world`: the project's, or the Default one where
+/// there is none in that slot.
+pub fn agent_type(world: &World, slot: u8) -> NavAgentType {
+    let types = world.resource::<NavAgentTypes>();
+    let found = types.and_then(|types| types.0.get(usize::from(slot)).or_else(|| types.0.first())).cloned();
+    found.unwrap_or_else(|| NavAgentType { costs: costs(world), ..NavAgentType::default() })
 }
 
 /// A box of the world given an area of ground: a road through a town, a
@@ -180,10 +373,7 @@ impl voxear_ecs::Component for NavArea {}
 
 impl Default for NavArea {
     fn default() -> Self {
-        Self {
-            size: [4.0, 2.0, 4.0],
-            area: voxear_terrain::blocks::block::BlockNavArea::Road,
-        }
+        Self { size: [4.0, 2.0, 4.0], area: voxear_terrain::blocks::block::BlockNavArea::Road }
     }
 }
 
@@ -272,7 +462,11 @@ impl Default for NavLink {
 }
 
 /// Every Nav Link's two ends in the world: from where, to where, and it.
-pub fn link_ends(world: &World, entity: Entity, link: &NavLink) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
+pub fn link_ends(
+    world: &World,
+    entity: Entity,
+    link: &NavLink,
+) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
     let placed = match world.get::<voxear_scene::WorldTransform>(entity) {
         Some(placed) => placed.0,
         None => world.get::<voxear_scene::Transform>(entity)?.matrix(),

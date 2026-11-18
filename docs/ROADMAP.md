@@ -3839,7 +3839,13 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     in a world of blocks and on a mesh stopped short by a crate put in it, and let on once it goes; an obstacle
     carving only once still; one that never carves gone round; a tool's crate shutting a gap once the game runs;
     the C# API with no engine. Manual: Nav Obstacles.
-  - [ ] agent types: sizes, costs and bakes for each, walkers wider than a block
+  - [x] **Agent types** (`navigation::NavAgentType`): a Default type and four of the project's own in Project
+    Settings ▸ Navigation (`agent_height`, `agent_1_name`, `agent_1_height`, `_radius`, `_step`, `_slope`,
+    `_road_cost`, `_water_cost`, `_swim_cost`; 0 for the project's cost), in slots a Nav Agent picks by its **Agent
+    Type** dropdown (`agent_type`, saved as its slot; C# `NavAgentType`, `NavAgent.AgentType`). A type's costs are
+    its agents' searches'. Tests: a horse type keeping off a ford the Default type wades; the C# type with no
+    engine. Manual: Agent Types.
+  - [ ] a baked nav mesh for each agent type; walkers wider than a block
   - [x] **Co-op, Portals and dimensions.** Agents move only where their Obj has authority; a player's script
     setting `Destination`, `SetDestination`, `Stop` or `Resume` on one the server moves sends `Message::NavGo`
     (`net::ask_nav`), which the server takes for an Obj no player owns or the player's own (`net::take_nav_asked`,

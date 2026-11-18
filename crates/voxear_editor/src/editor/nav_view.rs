@@ -1,6 +1,6 @@
 //! The Navigation gizmo: where things can walk in each Block World near the
 //! first Scene view's camera, a square on each place's floor coloured by
-//! what it is (ground, a ford, water swum, a shut door), and the way each
+//! what it is (ground, a ford, water swum, a shut door, a vine held on to), and the way each
 //! Nav Agent and Block Mob is walking, drawn while editing and playing; and
 //! each Nav Obstacle's box, brighter while it is cut out of the nav, and
 //! each Portal's way in.
@@ -23,6 +23,7 @@ const STAND: [f32; 4] = [0.25, 0.85, 0.55, 0.35];
 const WADE: [f32; 4] = [0.35, 0.7, 1.0, 0.4];
 const SWIM: [f32; 4] = [0.2, 0.35, 1.0, 0.45];
 const DOOR: [f32; 4] = [1.0, 0.6, 0.2, 0.55];
+const CLIMB: [f32; 4] = [0.75, 0.95, 0.3, 0.5];
 /// How an agent's way is drawn.
 const WAY: [f32; 4] = [1.0, 0.85, 0.25, 1.0];
 /// How a Nav Link is drawn.
@@ -82,7 +83,7 @@ impl Editor {
             near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
             near.truncate(MOST);
             let half = 0.42 * size;
-            let mut squares: [Vec<[Vec3; 3]>; 4] = Default::default();
+            let mut squares: [Vec<[Vec3; 3]>; 5] = Default::default();
             for (_, at, kind) in near {
                 let middle = corner + at * size + Vec3::Y * 0.03 * size;
                 let [a, b, c, d] = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
@@ -91,7 +92,7 @@ impl Editor {
                 squares[kind as usize].extend([[a, c, b], [a, d, c]]);
             }
             for (kind, triangles) in squares.into_iter().enumerate() {
-                let color = [STAND, WADE, SWIM, DOOR][kind];
+                let color = [STAND, WADE, SWIM, DOOR, CLIMB][kind];
                 debug_draw::solid(triangles, color, 0.0, style);
             }
         }

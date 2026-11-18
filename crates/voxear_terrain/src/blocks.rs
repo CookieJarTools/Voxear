@@ -126,6 +126,10 @@ pub struct BlockFaces {
     /// What ground it makes for navigation: 0 as it is, or an area's number
     /// one more (see `block::BlockNavArea::number`).
     pub nav_area: u8,
+    /// Whether navigation climbs it as a ladder (see
+    /// `block::BlockDef::climbable`); vines, ropes and chains are climbed
+    /// by their shape.
+    pub climbable: bool,
 }
 
 /// A block drawn as parts, a few boxes, in place of a cube.
@@ -172,6 +176,7 @@ impl BlockFaces {
             press,
             light: 0,
             nav_area: 0,
+            climbable: false,
         }
     }
 

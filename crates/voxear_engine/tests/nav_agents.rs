@@ -34,6 +34,7 @@ fn game(size: u32) -> (tempfile::TempDir, Game, Entity) {
         ("Scenes/Field.scene", scene.to_string()),
         ("Blocks/Field.blockworld", file.to_text()),
         ("Blocks/Door.block", "color = [0.5, 0.35, 0.2]\nshape = \"door\"\n".to_string()),
+        ("Blocks/Vine.block", "color = [0.2, 0.5, 0.2]\nshape = \"vine\"\n".to_string()),
     ];
     for (path, text) in files {
         let path = dir.path().join(path);
@@ -366,5 +367,123 @@ fn an_agent_climbs_a_nav_link_onto_a_platform_it_cannot_walk_up_to() {
         }
         let now = at(&game, walker);
         assert!(frames < 1800 && (now - to).length() < 0.6, "{moves:?}: up on the platform: {now} after {frames}");
+    }
+}
+
+#[test]
+fn an_agent_climbs_a_vine_up_a_cliff_by_its_controller_and_along_the_nav_and_one_that_does_not_climb_stays_below() {
+    use voxear_engine::blocks::block_number_state;
+    for (moves, climbs) in
+        [(NavMoves::AlongTheNav, true), (NavMoves::CharacterController, true), (NavMoves::AlongTheNav, false)]
+    {
+        let (_dir, mut game, field) = game(32);
+        // A cliff five blocks high over the far half of the field, and a vine up its face.
+        let vine =
+            block_number_state(&mut game.engine.world, &mut game.content, field, "Blocks/Vine.block", 0, true).unwrap();
+        let mut blocks = Vec::new();
+        for x in 16..32 {
+            for z in 0..32 {
+                for y in 6..11 {
+                    blocks.push(([x, y, z], 1));
+                }
+            }
+        }
+        blocks.extend((6..11).map(|y| ([15, y, 6], vine)));
+        game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(blocks);
+        game.tick(FRAME, None);
+        let walker = agent(&mut game, 4.5, 6.5, moves);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().climbs = climbs;
+        let to = Vec3::new(24.5, 11.0, 6.5);
+        let frames = walk(&mut game, walker, to, 1800);
+        let now = at(&game, walker);
+        match climbs {
+            true => assert!((now - to).length() < 0.6, "{moves:?}: up the vine and on: {now} after {frames} frames"),
+            false => assert!(now.y < 6.5, "{moves:?}: one that does not climb stays below: {now}"),
+        }
+    }
+}
+
+#[test]
+fn an_agent_type_that_keeps_off_water_goes_round_a_ford_the_default_type_wades() {
+    use voxear_engine::navigation::NavArea;
+    use voxear_terrain::blocks::block::BlockNavArea;
+    let mut crossed = Vec::new();
+    for slot in [0, 1] {
+        let (_dir, mut game, _) = game(32);
+        // The project's first own agent type, a horse, pays much more for water than the Default type does.
+        let navigation = &mut game.project.file.navigation;
+        (navigation.agent_1_name, navigation.agent_1_water_cost) = ("Horse".into(), 50.0);
+        let settings = game.project.file.navigation.clone();
+        settings.put(&mut game.engine.world);
+        assert_eq!(voxear_engine::navigation::agent_type(&game.engine.world, 1).name, "Horse");
+        // A ford across the field, dry at its far end.
+        let middle = Transform::from_position(Vec3::new(16.0, 6.5, 12.0));
+        game.engine.world.spawn((middle, NavArea { size: [4.0, 3.0, 24.0], area: BlockNavArea::Water }));
+        let walker = agent(&mut game, 6.5, 6.5, NavMoves::AlongTheNav);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().agent_type = slot;
+        let to = Vec3::new(26.5, 6.0, 6.5);
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let (mut frames, mut wet) = (0, false);
+        while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+            let now = at(&game, walker);
+            wet |= (14.0..18.0).contains(&now.x) && now.z < 20.0;
+        }
+        assert!((at(&game, walker) - to).length() < 0.6, "type {slot}: got there after {frames} frames");
+        crossed.push(wet);
+    }
+    assert_eq!(crossed, [true, false], "the Default type wades the ford, the horse goes round it");
+}
+
+#[test]
+fn an_agent_two_blocks_wide_goes_round_by_a_gap_it_fits_through_by_its_controller_and_along_the_nav() {
+    for (moves, radius) in [
+        (NavMoves::AlongTheNav, 0.35),
+        (NavMoves::AlongTheNav, 0.8),
+        (NavMoves::CharacterController, 0.35),
+        (NavMoves::CharacterController, 0.8),
+    ] {
+        let (_dir, mut game, field) = game(32);
+        // A wall across the field: a gap a block wide at z 6, and one three wide at z 20 to 22.
+        let mut blocks = Vec::new();
+        for z in (0..32).filter(|z| *z != 6 && !(20..23).contains(z)) {
+            blocks.extend([([16, 6, z], 1), ([16, 7, z], 1)]);
+        }
+        game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(blocks);
+        game.tick(FRAME, None);
+        let at_start = Transform::from_position(Vec3::new(6.5, 6.0, 6.5));
+        let agent = NavAgent { moves, speed: 3.0, radius, ..NavAgent::default() };
+        let walker = match moves {
+            NavMoves::CharacterController => {
+                let controller = CharacterController { radius, ..CharacterController::default() };
+                game.engine.world.spawn((at_start, agent, controller))
+            }
+            _ => game.engine.world.spawn((at_start, agent)),
+        };
+        let to = Vec3::new(26.5, 6.0, 6.5);
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let (mut frames, mut through) = (0, None);
+        while frames < 2400 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+            let now = at(&game, walker);
+            if (16.0..17.0).contains(&now.x) {
+                through = Some(now.z);
+            }
+        }
+        let now = at(&game, walker);
+        assert!((now - to).length() < 0.7, "{moves:?} {radius}: got there: {now} after {frames} frames");
+        let through = through.expect("through the wall");
+        match radius > 0.5 {
+            false => assert!((6.0..7.0).contains(&through), "{moves:?}: a block wide, by the narrow gap: {through}"),
+            true => assert!((20.0..23.0).contains(&through), "{moves:?}: two wide, by the wide gap: {through}"),
+        }
     }
 }

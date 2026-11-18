@@ -27,6 +27,12 @@ const DIAGONAL: f32 = std::f32::consts::SQRT_2;
 const UPWARD: f32 = 0.5;
 /// What a jump adds to the blocks it crosses.
 const JUMPING: f32 = 1.5;
+/// What a block climbed up or down a vine, a rope or a ladder costs, over
+/// its area's: slower than walking.
+const CLIMBING: f32 = 2.0;
+/// The kind of link a climb is to what walks it, as `voxear_engine`
+/// numbers its Nav Links' kinds: Climb.
+pub const CLIMB_LINK: u8 = 2;
 /// The most regions a coarse search looks at.
 const MOST_REGIONS: usize = 60_000;
 /// How much a search over places in many regions leans towards the goal,
@@ -192,19 +198,39 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
         _ => PathStatus::Partial,
     };
     let mut kept = tight::pull(nav, &fine.places, walker, &|at| cost_of(nav, ask, at));
-    // Each link's two ends are corners, so what walks it knows where it is taken.
-    let linked: Vec<(usize, u8)> = (1..fine.places.len())
-        .filter_map(|at| joins.between(fine.places[at - 1], fine.places[at]).map(|kind| (at, kind)))
+    // Each link's two ends are corners, so what walks it knows where it is taken: a link's, from one place to the
+    // next; a climb's, from its foot to its top, every block of it at once, and stepping on or off it at a ledge.
+    let mut linked: Vec<(usize, usize, u8)> = (1..fine.places.len())
+        .filter_map(|at| joins.between(fine.places[at - 1], fine.places[at]).map(|kind| (at - 1, at, kind)))
         .collect();
-    kept.extend(linked.iter().flat_map(|(at, _)| [at - 1, *at]));
+    let held = |at: PlaceRef| nav.place(at).is_some_and(|(place, _)| place.kind == PlaceKind::Climb);
+    let climbed = |at: usize| held(fine.places[at - 1]) || held(fine.places[at]);
+    let upright = |at: usize| {
+        nav.cell(fine.places[at - 1]).zip(nav.cell(fine.places[at])).is_some_and(|(a, b)| [a[0], a[2]] == [b[0], b[2]])
+    };
+    let mut at = 1;
+    while at < fine.places.len() {
+        if !climbed(at) || linked.iter().any(|(_, end, _)| *end == at) {
+            at += 1;
+            continue;
+        }
+        let mut end = at;
+        while upright(end) && end + 1 < fine.places.len() && climbed(end + 1) && upright(end + 1) {
+            end += 1;
+        }
+        linked.push((at - 1, end, CLIMB_LINK));
+        at = end + 1;
+    }
+    kept.retain(|place| !linked.iter().any(|(from, to, _)| place > from && place < to));
+    kept.extend(linked.iter().flat_map(|(from, to, _)| [*from, *to]));
     kept.sort_unstable();
     kept.dedup();
     let links = kept
         .iter()
         .enumerate()
         .map(|(at, &place)| {
-            let joined = at > 0 && kept[at - 1] + 1 == place;
-            linked.iter().find(|(end, _)| joined && *end == place).map(|(_, kind)| *kind)
+            let before = at.checked_sub(1).map(|before| kept[before]);
+            linked.iter().find(|(from, to, _)| Some(*from) == before && *to == place).map(|(.., kind)| *kind)
         })
         .collect();
     let corners = kept.iter().filter_map(|&at| nav.point(fine.places[at])).collect();
@@ -643,6 +669,12 @@ fn fine(
         }
         // Along a link.
         for &(_, to, cost, _) in joins.out(at) {
+            scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
+        }
+        // Up and down a vine, a rope or a ladder.
+        for up in [true, false] {
+            let Some((to, to_place, _)) = super::climb_step(nav, at, up, walker) else { continue };
+            let cost = area_cost(nav, ask, to, to_place.area) * CLIMBING;
             scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
         }
         // Over gaps, for a walker that jumps.

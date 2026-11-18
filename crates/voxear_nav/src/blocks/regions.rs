@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use voxear_terrain::blocks::chunk::CHUNK;
 
-use super::{BlockNav, NavChunk, OneChunk, PlaceRef, around_index, jump_step, step, walking::Walker};
+use super::{BlockNav, NavChunk, OneChunk, PlaceRef, around_index, climb_step, jump_step, step, walking::Walker};
 
 /// A place a walker does not fit in: in no region of its.
 pub const NO_REGION: u16 = u16::MAX;
@@ -188,6 +188,14 @@ impl Regions {
                                 queue.push(to);
                             }
                         }
+                        // Up and down what is climbed, within the chunk: always both ways.
+                        for up in [true, false] {
+                            let Some((to, ..)) = climb_step(&ground, at, up, walker) else { continue };
+                            if to.slot == at.slot && of[usize::from(to.index)] == NO_REGION {
+                                of[usize::from(to.index)] = region;
+                                queue.push(to);
+                            }
+                        }
                     }
                     let count = f64::from(gathered.places.max(1));
                     gathered.middle = sum.map(|v| (v / count) as f32);
@@ -238,7 +246,9 @@ pub fn outer_edges(nav: &BlockNav, slot: u32, class: usize) -> Edges {
                 let walked = AXES.into_iter().filter_map(|[dx, dz]| step(nav, at, dx, dz, walker).map(|(to, _)| to));
                 let jumped =
                     AXES.into_iter().filter_map(|[dx, dz]| jump_step(nav, at, dx, dz, walker).map(|(to, ..)| to));
-                for to in walked.chain(jumped) {
+                let climbed =
+                    [true, false].into_iter().filter_map(|up| climb_step(nav, at, up, walker).map(|(to, ..)| to));
+                for to in walked.chain(jumped).chain(climbed) {
                     if to.slot == slot {
                         continue;
                     }

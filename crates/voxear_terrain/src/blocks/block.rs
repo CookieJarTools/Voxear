@@ -150,6 +150,11 @@ pub struct BlockDef {
     /// project's, as a road is.
     #[serde(skip_serializing_if = "BlockNavArea::is_auto")]
     pub nav_area: BlockNavArea,
+    /// Whether what finds its way climbs it, up and down, as a ladder: a
+    /// vine, a rope and a chain are climbed whatever this says. A block
+    /// climbed is no ground to navigation, though bodies still meet it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub climbable: bool,
     /// Whether its colour takes the biome it is in: grass and leaves green
     /// in a forest and yellowed on a savanna, fading from one to the other
     /// where biomes meet (see `generate::tints`).
@@ -600,6 +605,7 @@ impl Default for BlockDef {
             heat: None,
             light: 0,
             nav_area: BlockNavArea::Auto,
+            climbable: false,
             tint: BlockTint::None,
             usable: false,
             press_time: None,
@@ -709,6 +715,7 @@ impl BlockDef {
         kind.tint = self.tint;
         kind.light = self.light.min(MOST_BLOCK_LIGHT);
         kind.nav_area = self.nav_area.number();
+        kind.climbable = self.climbable;
         // A cube made a slab is one still.
         kind.shaped();
     }

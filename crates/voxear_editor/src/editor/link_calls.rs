@@ -627,10 +627,21 @@ impl Editor {
             Waiting::NavBake if self.is_baking_nav() => Ok(Outcome::Later(Waiting::NavBake)),
             Waiting::NavBake => {
                 let level = self.game.levels.current().unwrap_or_default().to_string();
-                match self.game.engine.world.resource::<voxear_engine::navigation::LevelNav>() {
+                let world = &self.game.engine.world;
+                let types = self.game.project.file.navigation.agent_types();
+                let baked: Vec<Json> = voxear_engine::navigation::baked_types(world)
+                    .into_iter()
+                    .filter_map(|slot| {
+                        let (mesh, _) = voxear_engine::navigation::level_nav_for(world, slot)?;
+                        let name = types.get(usize::from(slot)).map(|kind| kind.name.clone()).unwrap_or_default();
+                        Some(json!({ "agent_type": slot, "name": name, "polygons": mesh.counts().0 }))
+                    })
+                    .collect();
+                match world.resource::<voxear_engine::navigation::LevelNav>() {
                     Some(nav) => done(json!({
                         "path": voxear_engine::navigation::nav_file(&level),
                         "polygons": nav.0.counts().0,
+                        "agent_types": baked,
                     })),
                     None => Err(refuse(ErrorKind::Failed, "the level has no still colliders to bake navigation from")),
                 }

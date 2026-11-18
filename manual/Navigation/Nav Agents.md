@@ -33,12 +33,13 @@ Press Play. The guard walks to its post, round anything in the way. Add a [[Mob 
 
 | Setting | What it does |
 | --- | --- |
+| Agent Type | Which of the project's [[Agent Types]] it is: what each kind of ground costs it, and which baked nav mesh it walks |
 | Speed | How fast it walks at most, in metres a second |
 | Acceleration | How quickly it speeds up and slows down |
 | Turn Speed | How fast it turns to face the way it goes, in degrees a second |
 | Stopping Distance | How near its destination it stops |
 | Auto Brake | On, it slows down to stop at its destination. Off, it arrives at speed |
-| Radius | How wide it is round its middle: how far other agents keep from it |
+| Radius | How wide it is round its middle: how far other agents keep from it, and in a Block World how many blocks wide a way it needs. With a Character Controller, the wider of the two counts |
 | Height | How tall it is: what it fits under. With a Character Controller, the controller's height counts |
 | Avoidance | How carefully it goes round others: High, Low or None. Others still go round one set to None |
 | Priority | From 0 to 1. Others go round an agent with a higher priority more than it goes round them |
@@ -46,6 +47,7 @@ Press Play. The guard walks to its post, round anything in the way. Add a [[Mob 
 | Swims | On, its ways cross water too deep to stand in, and it swims across. Off, it goes round deep water, and sinks if it falls in |
 | Opens Doors | On, it opens a shut door on its way and walks through. Off, a shut door is a wall to it |
 | Jumps | On, it jumps a gap one or two blocks across rather than going round. Off, it goes round |
+| Climbs | On, it climbs vines, ropes, chains and ladders, up and down, and over the ledge at their top. Off, it goes round them |
 
 Hover over a setting in the Inspector to see what it does and its default.
 

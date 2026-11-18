@@ -3839,7 +3839,28 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     in a world of blocks and on a mesh stopped short by a crate put in it, and let on once it goes; an obstacle
     carving only once still; one that never carves gone round; a tool's crate shutting a gap once the game runs;
     the C# API with no engine. Manual: Nav Obstacles.
-  - [ ] bake settings per agent type; terrain heightfields in the bake
+  - [x] **Agent types** (`navigation::NavAgentType`): a Default type and four of the project's own in Project
+    Settings ▸ Navigation (`agent_height`, `agent_1_name`, `agent_1_height`, `_radius`, `_step`, `_slope`,
+    `_road_cost`, `_water_cost`, `_swim_cost`; 0 for the project's cost), in slots a Nav Agent picks by its **Agent
+    Type** dropdown (`agent_type`, saved as its slot; C# `NavAgentType`, `NavAgent.AgentType`). A type's costs are
+    its agents' searches'. Tests: a horse type keeping off a ford the Default type wades; the C# type with no
+    engine. Manual: Agent Types.
+  - [x] **A baked nav mesh for each agent type**: Bake Navigation bakes the Default type and each named one with its
+    own sizes (`NavAgentType::bake_settings`) into one `.nav` (`VXNV` 3, `mesh::meshes_to_bytes`; a file of one
+    mesh reads as the Default type's); `LevelNav` is the Default type's, `TypeNavs` the rest; an agent walks its
+    type's (`navigation::level_nav_for`), Nav Obstacles cut each, play takes them all, and `navigation.bake` says
+    what each was baked to. Tests: an ogre too wide for a doorway going round by a wider gap where the Default type
+    walks through, both meshes read back from a file, and a crate cutting the ogre's; a tool baking an ogre type;
+    meshes kept and read by their numbers.
+  - [x] **Walkers wider than a block** (`Walker::width`, `blocks::fits`): a place fits one where every column of
+    its footprint, the place its corner, has a floor within half a block with room over the highest; steps,
+    jumps' landings and finding where to stand all ask it; wide walkers do not climb. An agent's width is from its
+    own Radius (the wider of its controller's and its Nav Agent's) over the block size; its corners are its
+    middle (`Walked::anchor`, `centre`). Worlds gather regions for a walker three blocks tall and two wide too,
+    and two wide of four and five blocks tall in blocks under 0.7 m (`navigation::walkers_for`). Timings (test
+    build): a world of 93 chunks built in 27 ms with the wide class, 20 ms without. Tests: a walker two wide by
+    the wide gap, with its own regions and without, and fitting nowhere against a wall; an agent 0.8 m round its
+    middle by the wide gap and one 0.35 m by the narrow, by both ways of moving.
   - [x] **Co-op, Portals and dimensions.** Agents move only where their Obj has authority; a player's script
     setting `Destination`, `SetDestination`, `Stop` or `Resume` on one the server moves sends `Message::NavGo`
     (`net::ask_nav`), which the server takes for an Obj no player owns or the player's own (`net::take_nav_asked`,
@@ -3863,6 +3884,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     from until it lands. Tests: an agent through two Portals into a dimension two away; a Portal for one layer
     only; an agent over a plank from one field of blocks into another, by both ways of moving.
   - [ ] walking from one world of blocks into another where they touch, with no link
+  - [x] **Terrain in the bake, and climbing.** A heightmap terrain of a set size is baked with the level's colliders
+    (`navigation::bake_grounds`, `mesh::bake_ground`): a span a column from its heights, solid below, walkable where
+    no steeper than the slope, its holes left out, with no triangles made. Nav meshes no longer keep every cell:
+    polygons are found by a grid of 8 m squares made as a mesh is read, so a `.nav` is polygons and edges alone
+    (`VXNV` 2; 1 reads as well): a kilometre of terrain bakes in 2 s to 839 KB, where its cells came to 49 MB.
+    Vines, ropes, chains and any block marked **Climbable** (`BlockDef::climbable`, the block Inspector) are
+    climbed: a place of kind Climb where feet hold on to one with nothing under them, steps up and down its column
+    (`climb_step`, in searches and regions, a block climbed costing two), none across in the air, and a climb
+    given back as one Climb link from foot to top and one over the ledge, which agents cross as Nav Links.
+    Agents' **Climbs** (default on; C# `NavAgent.Climbs`); Block Mobs do not climb. Tests: ground walked up a hill
+    and not a cliff, round its holes and what stands on it; a kilometre of terrain baked, and kept small; an old
+    `.nav` read; agents round a wall and up a terrain hill, by both ways of moving; a vine and a ladder climbed up
+    a cliff and down, and not by what does not climb; an agent climbing a vine by both ways of moving.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

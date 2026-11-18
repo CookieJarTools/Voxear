@@ -753,7 +753,6 @@ const FIXED: &[Setting] = &[
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {
-    let at = FIXED.iter().position(|setting| setting.category == "Network").unwrap_or(FIXED.len());
     let modules = Module::ALL.into_iter().map(|module| {
         let key: &'static str = Box::leak(format!("modules.{}", module.key()).into_boxed_str());
         let tip: &'static str = Box::leak(
@@ -765,7 +764,63 @@ static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {
         );
         Setting::new(("Modules", "Modules"), key, module.title(), Kind::Toggle, tip)
     });
-    FIXED[..at].iter().copied().chain(modules).chain(FIXED[at..].iter().copied()).collect()
+    // The agent types after the rest of Navigation: the Default one's sizes, and each of the project's own.
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let sizes = |prefix: &str, section: &'static str, whose: &str| {
+        [
+            ("height", "Height", number(0.1, 100.0, "m"), "How tall it is: what room it needs over a floor."),
+            (
+                "radius",
+                "Radius",
+                number(0.05, 50.0, "m"),
+                "How wide it is round its middle: how far its ways keep from walls and edges.",
+            ),
+            (
+                "step",
+                "Step",
+                number(0.0, 10.0, "m"),
+                "How high a step it walks up, so stairs join one floor to the next.",
+            ),
+            ("slope", "Slope", number(0.0, 89.0, "°"), "The steepest slope it walks up, in degrees."),
+        ]
+        .map(|(key, label, kind, tip)| {
+            let tip = leak(format!("{tip} What {whose} level's nav mesh is baked for; bake again to take it up."));
+            Setting::new(("Navigation", section), leak(format!("navigation.{prefix}{key}")), label, kind, tip)
+        })
+    };
+    let mut types: Vec<Setting> = sizes("agent_", "Default Agent", "the Default agent type's").to_vec();
+    for slot in 1..voxear_engine::navigation::AGENT_TYPES {
+        let section = leak(format!("Agent Type {slot}"));
+        let prefix = format!("agent_{slot}_");
+        let named = "What the project calls it, as a Nav Agent's Agent Type offers it. Unnamed, it is not baked for.";
+        types.push(Setting::new(
+            ("Navigation", section),
+            leak(format!("navigation.{prefix}name")),
+            "Name",
+            Kind::Text,
+            named,
+        ));
+        types.extend(sizes(&prefix, section, "its"));
+        for (area, label) in [("road", "Road"), ("water", "Water"), ("swim", "Swim")] {
+            let tip = leak(format!(
+                "What a block of {} costs it to cross, in place of the project's: under 1 sought out, over 1 kept off. 0 for the project's.",
+                label.to_lowercase()
+            ));
+            let key = leak(format!("navigation.{prefix}{area}_cost"));
+            types.push(Setting::new(
+                ("Navigation", section),
+                key,
+                leak(format!("{label} cost")),
+                number(0.0, 1000.0, ""),
+                tip,
+            ));
+        }
+    }
+    let after = FIXED.iter().rposition(|setting| setting.category == "Navigation").map_or(FIXED.len(), |at| at + 1);
+    let fixed: Vec<Setting> =
+        FIXED[..after].iter().copied().chain(types).chain(FIXED[after..].iter().copied()).collect();
+    let at = fixed.iter().position(|setting| setting.category == "Network").unwrap_or(fixed.len());
+    fixed[..at].iter().copied().chain(modules).chain(fixed[at..].iter().copied()).collect()
 });
 
 /// Every setting Project Settings shows, in order.

@@ -34,10 +34,6 @@ impl Rect {
         (0..2).all(|axis| self.min[axis] < other.max[axis] - SLIVER && other.min[axis] < self.max[axis] - SLIVER)
     }
 
-    fn holds(&self, x: f32, z: f32) -> bool {
-        (self.min[0]..self.max[0]).contains(&x) && (self.min[1]..self.max[1]).contains(&z)
-    }
-
     /// What is left of it with `cut` taken out: up to four rectangles, the
     /// sides first and then what is between them.
     fn less(&self, cut: &Rect, into: &mut Vec<Rect>) {
@@ -221,25 +217,6 @@ impl NavMesh {
             edges.push(edge);
         }
 
-        // Each column's cells, on the pieces they are in now; those under an obstacle let go.
-        let mut starts = Vec::with_capacity(self.starts.len());
-        let mut cells = Vec::with_capacity(self.cells.len());
-        starts.push(0);
-        let columns = self.columns[0] as usize;
-        for column in 0..self.starts.len() - 1 {
-            let (x, z) = ((column % columns) as f32 + 0.5, (column / columns) as f32 + 0.5);
-            let (x, z) = (self.origin[0] + x * cell, self.origin[1] + z * cell);
-            for &(floor, old) in &self.cells[self.starts[column] as usize..self.starts[column + 1] as usize] {
-                let (first, count, cut) = pieces_of[old as usize];
-                if !cut {
-                    cells.push((floor, first));
-                } else if let Some(piece) = (first..first + count).find(|at| Rect::of(&polys[*at as usize]).holds(x, z))
-                {
-                    cells.push((floor, piece));
-                }
-            }
-            starts.push(cells.len() as u32);
-        }
-        NavMesh { settings, origin: self.origin, columns: self.columns, starts, cells, polys, edges }
+        NavMesh::new(settings, self.origin, self.columns, polys, edges)
     }
 }

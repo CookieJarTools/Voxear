@@ -1290,6 +1290,14 @@ float3 poolPoint(Frame* frame, WaterBody pool, float2 across, float sampled, boo
         float cooled = LAKE_TURNOVER * lakeAge(lake, t) / pool.lava.x;
         moved = float3(0.0, lavaHeave(lake + lakeDrift(t), t, cooled) * saturate(2.0 - sampled / 0.6), 0.0);
     }
+    else if (pool.shape != 0)
+    {
+        // A Dry Area's bilge lies in a hold as shallow as it is: its ripples die away over the floor as the sea's
+        // waves do over shallows, and its troughs never reach the floor, however little water there is.
+        float depth = pool.size.y;
+        moved = transform(pool.toLocal, float4(oceanMoved(frame, flat.xz, sampled, previous, pool.waves, depth), 0.0)).xyz;
+        moved.y = max(moved.y, -0.5 * depth);
+    }
     else
     {
         moved = transform(pool.toLocal, float4(oceanMoved(frame, flat.xz, sampled, previous, pool.waves), 0.0)).xyz;
@@ -2486,9 +2494,11 @@ FragmentOut waterFragment(WaterOut input)
     float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     // A line of foam where the water meets the ground, by its true depth under the moving surface, worked out from
     // the waves here, not the mesh's, whose rings each carry the ripples a little differently; by how far the view
-    // goes through the water where the ground is not known.
+    // goes through the water where the ground is not known. A Dry Area's bilge has no shore: the water standing on a
+    // hold's floor, however shallow, lies clear, and foams only against what stands in it.
     float waterY = frame->ocean.level + moved.y;
-    float shore = ground > -1e8 ? shoreEdge(waterY - ground) : saturate(1.0 - thickness / 0.6);
+    bool bilge = !sea && !stream && pool.shape != 0;
+    float shore = ground > -1e8 ? shoreEdge(waterY - ground) : (bilge ? 0.0 : saturate(1.0 - thickness / 0.6));
     // And a thin line where it meets whatever stands in it, a post or a wall, moving or not, by how little water
     // the view goes through there, swelling and thinning as the water laps against it.
     // Patterns are read from the level's middle, so they stay where they are as the world's middle moves.

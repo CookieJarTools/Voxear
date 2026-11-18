@@ -14,7 +14,7 @@ The water pushes up on nine upright columns across the Obj's Collider, three by 
 | Drag | How quickly the water slows it, and so how soon it stops bobbing and how fast a Stream carries it: 1 stops it bobbing with no overshoot, less lets it bob for longer |
 | Angular drag | The same for turning: how soon it stops rocking |
 
-Make the Collider the shape of what floats: a box round a boat's hull, not round its mast. Buoyancy does not ask [[Pools and Dry Areas|Dry Areas]], so a boat with a Dry Area keeping water out of its hull still floats.
+Make the Collider the shape of what floats: a box round a boat's hull, not round its mast. Buoyancy does not ask the [[Pools and Dry Areas|Dry Areas]] on its own Obj or under it, so a boat with a Dry Area keeping water out of its hull still floats. Inside another Obj's Dry Area, it floats on that Dry Area's Bilge, so a barrel in a flooding hold rises with the water.
 
 Floating Objs feel the sea floor through Colliders: near a shore, the waves calm where the water is shallow, so give the ground Colliders, or a floating Obj rides the open sea's waves over water drawn calm.
 
@@ -64,4 +64,4 @@ protected override void Update()
 | `Water.TrySample(position, out WaterPoint water)` | All three at once, and whether there is water there |
 | `Water.Splash(position, size)` | Throws up a splash where the water's surface is over or under a point, as wide as `size` in metres. False where there is no water |
 
-Inside a Dry Area there is no water. Over a Pool, its surface counts, not the sea's.
+Inside a Dry Area there is no water but its Bilge. Over a Pool, its surface counts, not the sea's.

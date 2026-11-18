@@ -816,8 +816,9 @@ pub enum Prop {
     DryHeight,
     /// A mesh Dry Area's mesh, or its Obj's Mesh Renderer's.
     DryMesh,
-    /// How deep the water in a Dry Area stands.
+    /// How deep the water in a Dry Area stands, and whether it is there.
     DryBilge,
+    DryBilgeOn,
     /// A Cave Shape's form, whether it carves or fills, its size, how likely a room has it, and how far in
     /// its walls' roughness may come.
     CaveForm,
@@ -1287,9 +1288,13 @@ impl Prop {
             | Prop::PoolMurk
             | Prop::PoolCooling
             | Prop::PoolGlow => Part::Pool,
-            Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight | Prop::DryMesh | Prop::DryBilge => {
-                Part::DryArea
-            }
+            Prop::DryShape
+            | Prop::DrySize
+            | Prop::DryWidth
+            | Prop::DryHeight
+            | Prop::DryMesh
+            | Prop::DryBilge
+            | Prop::DryBilgeOn => Part::DryArea,
             Prop::CaveForm | Prop::CaveMode | Prop::CaveSize | Prop::CaveChance | Prop::CaveMargin => Part::CaveShape,
             Prop::PathPoints | Prop::PathClosed => Part::Path,
             Prop::StreamLiquid
@@ -1719,6 +1724,7 @@ impl Prop {
             Prop::DrySize | Prop::DryWidth | Prop::DryHeight => "size",
             Prop::DryMesh => "mesh",
             Prop::DryBilge => "bilge",
+            Prop::DryBilgeOn => "bilge_on",
             Prop::CaveForm => "shape",
             Prop::CaveMode => "mode",
             Prop::CaveSize => "size",
@@ -2465,10 +2471,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         // Each shape's own measures: a box's three sides, a ball's width, a capsule's width and height.
         Part::DryArea => match world.get::<DryArea>(entity).map_or(DryShape::Box, |dry| dry.shape) {
-            DryShape::Box => vec![Prop::DryShape, Prop::DrySize, Prop::DryBilge],
-            DryShape::Sphere => vec![Prop::DryShape, Prop::DryWidth, Prop::DryBilge],
-            DryShape::Capsule => vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight, Prop::DryBilge],
-            DryShape::Mesh => vec![Prop::DryShape, Prop::DryMesh, Prop::DryBilge],
+            DryShape::Box => vec![Prop::DryShape, Prop::DrySize, Prop::DryBilge, Prop::DryBilgeOn],
+            DryShape::Sphere => vec![Prop::DryShape, Prop::DryWidth, Prop::DryBilge, Prop::DryBilgeOn],
+            DryShape::Capsule => {
+                vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight, Prop::DryBilge, Prop::DryBilgeOn]
+            }
+            DryShape::Mesh => vec![Prop::DryShape, Prop::DryMesh, Prop::DryBilge, Prop::DryBilgeOn],
         },
         Part::CaveShape => vec![Prop::CaveForm, Prop::CaveMode, Prop::CaveSize, Prop::CaveChance, Prop::CaveMargin],
         Part::CaveExit => Vec::new(),
@@ -2947,6 +2955,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::DryHeight => "Height",
         Prop::DryMesh => "Mesh",
         Prop::DryBilge => "Bilge",
+        Prop::DryBilgeOn => "Bilge on",
         Prop::CaveForm => "Shape",
         Prop::CaveMode => "Mode",
         Prop::CaveSize => "Size",
@@ -4175,6 +4184,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::DryWidth => Value::Number(world.get::<DryArea>(entity)?.size[0]),
         Prop::DryHeight => Value::Number(world.get::<DryArea>(entity)?.size[1]),
         Prop::DryBilge => Value::Number(world.get::<DryArea>(entity)?.bilge),
+        Prop::DryBilgeOn => Value::Toggle(world.get::<DryArea>(entity)?.bilge_on),
         Prop::DryMesh => Value::Asset(match world.get::<DryArea>(entity)?.mesh {
             None => OWN_MESH.into(),
             Some(mesh) => {
@@ -5681,6 +5691,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::DryWidth, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[0] = n.max(0.01)),
         (Prop::DryHeight, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[1] = n.max(0.01)),
         (Prop::DryBilge, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.bilge = n.max(0.0)),
+        (Prop::DryBilgeOn, Value::Toggle(on)) => with(world, entity, |d: &mut DryArea| d.bilge_on = on),
         (Prop::CaveForm, Value::Choice(index, _)) => {
             let form = RoomForm::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |c: &mut CaveShape| c.shape = form)
@@ -6644,6 +6655,19 @@ mod tests {
         assert!(props(&world, entity, &Part::Audio, &types).contains(&Prop::ReverbSend));
         assert!(set_component(&mut world, entity, &Prop::ReverbSend, Value::Number(2.0)));
         assert_eq!(world.get::<AudioSource>(entity).unwrap().reverb_send, 1.0, "never more than all of it");
+    }
+
+    #[test]
+    fn a_dry_areas_bilge_shows_its_depth_and_whether_it_is_on() {
+        let mut world = World::new();
+        let hold = world.spawn(DryArea { bilge: 1.0, ..DryArea::default() });
+        let types = ScriptTypes::default();
+        let shown = props(&world, hold, &Part::DryArea, &types);
+        assert!(shown.ends_with(&[Prop::DryBilge, Prop::DryBilgeOn]), "{shown:?}");
+        assert_eq!((label(&Prop::DryBilgeOn).as_str(), Prop::DryBilgeOn.lock_key().as_str()), ("Bilge on", "bilge_on"));
+        assert!(set_component(&mut world, hold, &Prop::DryBilgeOn, Value::Toggle(false)));
+        let area = *world.get::<DryArea>(hold).unwrap();
+        assert_eq!((area.bilge, area.bilge_on), (1.0, false), "its depth kept");
     }
 
     #[test]

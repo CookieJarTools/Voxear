@@ -482,6 +482,19 @@ public readonly partial struct Obj : IEquatable<Obj>
 	}
 
 	/// <summary>
+	/// The Obj's Dry Area, which keeps water out of its shape and holds its Bilge, the water standing in it; null when
+	/// it has none. Set its Bilge with <c>ship.DryArea?.Bilge = depth;</c>.
+	/// </summary>
+	public DryArea? DryArea => DryArea.Of(this);
+
+	/// <summary>Gives the Obj a Dry Area, a box 2 by 2 by 4 metres with no Bilge, unless it has one, and returns it.</summary>
+	public DryArea AddDryArea()
+	{
+		NativeComponent.Set(NativeComponent.DryArea, this, NativeComponent.Add, Vector4.Zero);
+		return new DryArea(this);
+	}
+
+	/// <summary>
 	/// The Obj's Reverb Probe, a box of probes baked for how long sound rings through it. Not valid when it has none.
 	/// </summary>
 	public ReverbProbe ReverbProbe => new ReverbProbe(this);

@@ -16,6 +16,7 @@ pub mod debug_texts;
 pub mod dimension_saves;
 pub mod dimension_scripts;
 pub mod dimensions;
+mod dry_areas;
 pub mod field_checks;
 pub mod first_person;
 mod dev_console;

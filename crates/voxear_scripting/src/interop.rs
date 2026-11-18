@@ -692,6 +692,9 @@ pub enum ComponentKind {
     WaterWake = 37,
     /// A box agents go round, cut out of the nav where it stands still.
     NavObstacle = 38,
+    /// What keeps water out of its shape, and the water standing in it, its
+    /// bilge.
+    DryArea = 39,
 }
 
 /// The most kinds `kind_value` answers.

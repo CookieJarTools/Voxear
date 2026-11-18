@@ -143,15 +143,19 @@ pub struct DryArea {
     #[serde(skip)]
     pub bounds: Option<[Vec3; 2]>,
     /// How deep the water in it stands when it is level, in metres from its
-    /// bottom: a hull's bilge. 0 for none.
+    /// bottom: a hull's bilge. 0 for none. Read afresh each frame, so a
+    /// script can raise it smoothly as a hold floods.
     pub bilge: f32,
+    /// Whether its bilge is there at all: off, it is dry inside, its depth
+    /// kept for when it is on again.
+    pub bilge_on: bool,
 }
 
 impl Component for DryArea {}
 
 impl Default for DryArea {
     fn default() -> Self {
-        Self { shape: DryShape::Box, size: [2.0, 2.0, 4.0], mesh: None, bounds: None, bilge: 0.0 }
+        Self { shape: DryShape::Box, size: [2.0, 2.0, 4.0], mesh: None, bounds: None, bilge: 0.0, bilge_on: true }
     }
 }
 
@@ -259,17 +263,9 @@ impl DryArea {
     /// surface's height in the middle of its top, as level as the sea
     /// however the hull rocks, the water staying as high over its middle.
     pub fn bilge(&self, model: Mat4) -> Option<[Vec3; 2]> {
-        let [low, high] = match self.shape {
-            DryShape::Mesh => self.bounds?,
-            DryShape::Box => [Vec3::from(self.size) * -0.5, Vec3::from(self.size) * 0.5],
-            DryShape::Sphere => [Vec3::splat(self.size[0] * -0.5), Vec3::splat(self.size[0] * 0.5)],
-            DryShape::Capsule => {
-                let half = Vec3::new(self.size[0], self.size[1].max(self.size[0]), self.size[0]) * 0.5;
-                [-half, half]
-            }
-        };
+        let [low, high] = self.inside()?;
         let tall = (high.y - low.y) * model.y_axis.truncate().length();
-        if self.bilge <= 0.0 || tall <= 0.0 {
+        if !self.bilge_on || self.bilge <= 0.0 || tall <= 0.0 {
             return None;
         }
         let level = model.transform_point3((low + high) * 0.5).y - tall * 0.5 + self.bilge.min(tall);
@@ -280,6 +276,27 @@ impl DryArea {
             .map(|corner| model.transform_point3(corner))
             .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(bottom, top), p| (bottom.min(p), top.max(p)));
         (level > bottom.y).then(|| [bottom, Vec3::new(top.x, level, top.z)])
+    }
+
+    /// The box round its inside, in its Obj's space: for a Mesh, the box
+    /// round its mesh, once that is known.
+    fn inside(&self) -> Option<[Vec3; 2]> {
+        Some(match self.shape {
+            DryShape::Mesh => self.bounds?,
+            DryShape::Box => [Vec3::from(self.size) * -0.5, Vec3::from(self.size) * 0.5],
+            DryShape::Sphere => [Vec3::splat(self.size[0] * -0.5), Vec3::splat(self.size[0] * 0.5)],
+            DryShape::Capsule => {
+                let half = Vec3::new(self.size[0], self.size[1].max(self.size[0]), self.size[0]) * 0.5;
+                [-half, half]
+            }
+        })
+    }
+
+    /// How tall its inside stands, in metres, placed by `model` as for
+    /// [`DryArea::bilge`]: the deepest its bilge can be. 0 for a Mesh whose
+    /// mesh is not known yet.
+    pub fn inside_height(&self, model: Mat4) -> f32 {
+        self.inside().map_or(0.0, |[low, high]| (high.y - low.y) * model.y_axis.truncate().length())
     }
 
     /// Its bilge as the shaders draw it: a Pool of murky water over the box
@@ -811,6 +828,8 @@ mod tests {
         assert_eq!(hull.bilge_over(at(0.0), Vec3::new(0.0, 2.2, 0.0)), Some(2.5));
         assert_eq!(hull.bilge_over(at(0.0), Vec3::new(0.0, 2.7, 0.0)), None, "over its water");
         assert!(DryArea { bilge: 0.0, ..hull }.bilge(at(0.0)).is_none());
+        assert!(DryArea { bilge_on: false, ..hull }.bilge(at(0.0)).is_none(), "switched off");
+        assert!((hull.inside_height(at(0.3)) - 2.0).abs() < 1e-5, "as tall, rocked");
     }
 
     #[test]

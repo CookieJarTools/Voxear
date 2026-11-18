@@ -341,3 +341,36 @@ fn an_agent_crosses_a_nav_link_from_one_world_of_blocks_into_another() {
         game.engine.world.despawn(walker);
     }
 }
+
+#[test]
+fn an_agent_walks_from_one_world_of_blocks_into_another_where_they_touch() {
+    let (_dir, mut game) = project(&[
+        ("voxear.toml", "[project]\nname = \"Touching\"\nstart_level = \"Levels/Main.level\"\n".into()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Main.scene\"\n".into()),
+        ("Scenes/Main.scene", "format = 1\n".into()),
+    ]);
+    // Two fields edge to edge along x, the second a block higher: a step up from one to the other.
+    field_in(&mut game, DimensionId::LEVEL, Vec3::ZERO);
+    field_in(&mut game, DimensionId::LEVEL, Vec3::new(32.0, 1.0, 0.0));
+    for moves in [NavMoves::AlongTheNav, NavMoves::CharacterController] {
+        let agent = NavAgent { moves, speed: 4.0, ..NavAgent::default() };
+        let start = Transform::from_position(Vec3::new(6.5, 6.0, 6.5));
+        let walker = match moves {
+            NavMoves::CharacterController => game.engine.world.spawn((start, agent, CharacterController::default())),
+            _ => game.engine.world.spawn((start, agent)),
+        };
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        let to = Vec3::new(50.5, 7.0, 20.5);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let mut frames = 0;
+        while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+        }
+        let now = at(&game, walker);
+        assert!((now - to).length() < 0.6, "{moves:?}: across where they touch and on: {now} after {frames} frames");
+        game.engine.world.despawn(walker);
+    }
+}

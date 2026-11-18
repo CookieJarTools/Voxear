@@ -378,7 +378,14 @@ impl Hop {
 /// dimension, that makes the shortest way from `at` to `destination` in
 /// straight lines, for an Obj `height` metres tall of `layer`: a Nav Link
 /// whose one end is in each, or a Portal from one to the other.
-fn link_between(from: &Walked, into: &Walked, at: Vec3, destination: Vec3, height: f32, layer: u8) -> Option<Hop> {
+fn link_between(
+    from: &Walked,
+    into: &Walked,
+    seams: &[(Vec3, Vec3)],
+    (at, destination): (Vec3, Vec3),
+    height: f32,
+    layer: u8,
+) -> Option<Hop> {
     let ends = |link: &voxear_nav::Link| {
         let (a, b) = (from.world(link.from), from.world(link.to));
         let mut ways = vec![(a, b)];
@@ -387,9 +394,12 @@ fn link_between(from: &Walked, into: &Walked, at: Vec3, destination: Vec3, heigh
         }
         ways
     };
+    // Where the two touch, a step across from one to the other is a way too.
+    let across = seams.iter().map(|(a, b)| (*a, *b, NavLinkKind::Walk.number()));
     crate::navigation::heeded(&from.links, layer)
         .iter()
         .flat_map(|link| ends(link).into_iter().map(move |(a, b)| (a, b, link.kind)))
+        .chain(across)
         .filter(|(a, b, _)| {
             from.standing(*a, from.walker(height), 1.5).is_some()
                 && into.standing(*b, into.walker(height), 1.5).is_some()
@@ -400,6 +410,55 @@ fn link_between(from: &Walked, into: &Walked, at: Vec3, destination: Vec3, heigh
         })
         .map(|(approach, exit, kind)| Hop { approach, exit, kind })
 }
+
+/// Where world of blocks `from` touches `into`: each place on `from`'s rim
+/// with a place a column across in `into`, no more than a block up or
+/// down, as the two points in the world. Found once for the worlds as they
+/// are, and kept while neither changes.
+fn seams(world: &mut World, from: &Walked, into: &Walked) -> Arc<Vec<(Vec3, Vec3)>> {
+    let key = (
+        from.nav.version(),
+        into.nav.version(),
+        from.corner.to_array().map(f32::to_bits),
+        into.corner.to_array().map(f32::to_bits),
+    );
+    if world.resource::<Seams>().is_none() {
+        world.insert_resource(Seams::default());
+    }
+    let kept = world.resource::<Seams>().and_then(|seams| seams.0.get(&(from.entity, into.entity)));
+    if let Some((was, found)) = kept
+        && *was == key
+    {
+        return found.clone();
+    }
+    let walker = Walker::blocks(1);
+    let found: Vec<(Vec3, Vec3)> = from
+        .nav
+        .rim()
+        .into_iter()
+        .filter_map(|(place, [dx, dz])| {
+            let here = from.world(from.nav.point(place)?);
+            let beyond = here + Vec3::new(dx as f32, 0.0, dz as f32) * from.size;
+            let there = into.nav.nearest(into.local(beyond + Vec3::Y * 0.1 * into.size), walker, 0.0, 1.0)?;
+            let there = into.world(into.nav.point(there)?);
+            let close = (there.y - here.y).abs() <= from.size.max(into.size) * 1.05
+                && steer::flat(there - beyond).length() <= into.size;
+            close.then_some((here, there))
+        })
+        .collect();
+    let found = Arc::new(found);
+    if let Some(seams) = world.resource_mut::<Seams>() {
+        seams.0.insert((from.entity, into.entity), (key, found.clone()));
+    }
+    found
+}
+
+/// Where worlds of blocks touch, from one to another, as last found, with
+/// what they were found for.
+#[derive(Default)]
+struct Seams(std::collections::HashMap<(Entity, Entity), (SeamKey, Arc<Vec<(Vec3, Vec3)>>)>);
+
+type SeamKey = (u64, u64, [u32; 3], [u32; 3]);
 
 /// How tall an agent is and how wide round its middle: as its Character
 /// Controller is, or else as its Nav Agent says.
@@ -511,7 +570,8 @@ pub fn step_agents(world: &mut World, delta: f32) {
                         && walked.standing(destination, walked.walker(height), 2.0).is_some()
                         && here.standing(destination, here.walker(height), 2.0).is_none()
                 })?;
-                link_between(here, there, at, destination, height, layer)
+                let seams = seams(world, here, there);
+                link_between(here, there, &seams, (at, destination), height, layer)
             }),
             // Sent into a dimension no Portal here leads into: nowhere to go.
             Err(()) => {

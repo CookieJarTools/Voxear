@@ -29,4 +29,4 @@ From a terminal, `nav_agent.set_destination` takes a `dimension`, by its number 
 
 ## From one world of blocks into another
 
-Two [[Block Worlds]] of one dimension each have their own places, as a dock and a ship's deck beside it. A [[Nav Links|Nav Link]] with one end on each joins them: an agent sent to the other world walks to the link, crosses it as its kind says, and walks on.
+Two [[Block Worlds]] of one dimension each have their own places, as a field and the quarry beside it. Where they touch, edge to edge, an agent sent into the other walks across where its way is shortest, a step up or down a block at most, and on. Where they do not touch, as a dock and a ship's deck with water between, a [[Nav Links|Nav Link]] with one end on each joins them: the agent walks to the link, crosses it as its kind says, and walks on.

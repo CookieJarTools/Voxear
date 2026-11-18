@@ -126,6 +126,37 @@ impl BlockNav {
         self.slots.iter().enumerate().filter_map(|(at, slot)| slot.as_ref().map(|slot| (at as u32, slot)))
     }
 
+    /// Every place on its rim: in a column on a chunk's side where the
+    /// chunk beyond has no places, each with the way out, along x or z.
+    /// Where another world of blocks touches this one, the ways across are
+    /// among these.
+    pub fn rim(&self) -> Vec<(PlaceRef, [i32; 2])> {
+        let last = CHUNK - 1;
+        let mut rim = Vec::new();
+        for (slot, kept) in self.slots() {
+            let [cx, cy, cz] = kept.key;
+            for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+                if self.slot_of([cx + dx, cy, cz + dz]).is_some() {
+                    continue;
+                }
+                for along in 0..CHUNK {
+                    let (x, z) = match [dx, dz] {
+                        [1, 0] => (last, along),
+                        [-1, 0] => (0, along),
+                        [0, 1] => (along, last),
+                        _ => (along, 0),
+                    };
+                    let first = kept.chunk.first_of(x, z);
+                    for n in 0..kept.chunk.column(x, z).len() {
+                        let at = PlaceRef { slot, index: first + n as u16, x: x as u8, z: z as u8 };
+                        rim.push((at, [dx, dz]));
+                    }
+                }
+            }
+        }
+        rim
+    }
+
     /// How many chunks have places, and how many places there are.
     pub fn counts(&self) -> (usize, usize) {
         self.slots().fold((0, 0), |(chunks, places), (_, slot)| {

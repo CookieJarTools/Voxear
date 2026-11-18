@@ -3931,7 +3931,10 @@ can move earlier if it becomes a priority.
 
 The launcher, the equivalent of Unity Hub, lives in its own repository. It covers:
 - installing engine versions side by side
-- updating itself
+- **updating itself:** 0.2.0 checks its updates with the release key built in, so there is nothing to set up. The
+  Launcher Release workflow here builds the AppImage, `.deb`, Windows setup and `voxup`, signs them with the
+  engine release key and publishes them on VoxearReleases. A launcher from before 0.2.0 has no key and has to be
+  replaced by hand once.
 - the project list
 - the new-project flow with templates and default setups
 - **release lists:** the official engine releases with nothing to set up, nightlies when turned on, and custom engine

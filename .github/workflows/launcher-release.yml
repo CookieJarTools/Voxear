@@ -1,0 +1,207 @@
+# Builds a Voxear Launcher release for Linux and Windows from CookieJarTools/VoxearLauncher, and can publish it so
+# installed launchers update themselves.
+#
+# It lives here rather than in the launcher's repository because the release key is a secret of this one: the
+# engine release key signs launcher updates too, and every launcher has its public half built in.
+#
+# Run it from the Actions tab: Launcher Release, then Run workflow. It builds the AppImage and .deb on Ubuntu 22.04
+# (so the AppImage runs on distros as old as its glibc), the Windows setup, and voxup for both, and keeps them as
+# this run's artifacts. With Publish ticked it also signs each one with `voxear-release launcher add`, which lists
+# it in the channel's update manifest, uploads them to a `launcher-v<version>` release of VoxearReleases, and then
+# pushes the manifest to its gh-pages branch. The version is the one the launcher's commit has; set it there with
+# scripts/set-version.sh first.
+#
+# Publishing uses the same three secrets as the Release workflow: VOXEAR_ENGINE_KEY, VOXEAR_SIGNING_PASSWORD and
+# VOXEAR_RELEASES_TOKEN.
+
+name: Launcher Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Launcher branch, tag or commit
+        type: string
+        default: master
+      channel:
+        description: Channel
+        type: choice
+        options: [stable, beta]
+        default: stable
+      notes:
+        description: What changed, in Markdown
+        type: string
+        required: false
+      publish:
+        description: Sign the builds and publish them as a launcher update
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Publishing adds to the same gh-pages branch as engine releases.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            voxup: voxup-linux-x86_64
+          - name: Windows
+            os: windows-latest
+            voxup: voxup-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: CookieJarTools/VoxearLauncher
+          ref: ${{ inputs.ref }}
+          path: launcher
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: launcher/app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: System packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file libfuse2
+
+      - name: Front end
+        working-directory: launcher/app
+        run: npm ci
+
+      - name: Installers
+        run: scripts/build-installers.sh
+
+      - name: voxup
+        run: |
+          cargo build --release -p voxup
+          exe=target/release/voxup
+          [ "$RUNNER_OS" = Windows ] && exe="$exe.exe"
+          cp "$exe" "out/${{ matrix.voxup }}"
+
+      - name: Check the AppImage starts
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          appimage=$(ls out/*.AppImage)
+          chmod +x "$appimage"
+          "$appimage" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ matrix.name }}
+          path: launcher/out/
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      NOTES: ${{ inputs.notes }}
+      GH_TOKEN: ${{ secrets.VOXEAR_RELEASES_TOKEN }}
+    steps:
+      - name: Check the secrets
+        env:
+          KEY: ${{ secrets.VOXEAR_ENGINE_KEY }}
+          PASSWORD: ${{ secrets.VOXEAR_SIGNING_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$KEY" ] || missing="$missing VOXEAR_ENGINE_KEY"
+          [ -n "$PASSWORD" ] || missing="$missing VOXEAR_SIGNING_PASSWORD"
+          [ -n "$GH_TOKEN" ] || missing="$missing VOXEAR_RELEASES_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::Publishing needs these secrets on this repository:$missing"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: CookieJarTools/VoxearLauncher
+          ref: ${{ inputs.ref }}
+          path: launcher
+
+      - uses: actions/checkout@v4
+        with:
+          repository: CookieJarTools/VoxearReleases
+          ref: gh-pages
+          token: ${{ secrets.VOXEAR_RELEASES_TOKEN }}
+          path: site
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Version
+        run: |
+          version=$(sed -nE 's/^  "version": "([^"]*)",$/\1/p' launcher/app/src-tauri/tauri.conf.json)
+          [ -n "$version" ] || { echo "::error::couldn't read the launcher's version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The key is written only for as long as signing takes, readable by this job alone.
+      - name: Sign the builds and list them
+        env:
+          VOXEAR_ENGINE_KEY: ${{ secrets.VOXEAR_ENGINE_KEY }}
+          VOXEAR_SIGNING_PASSWORD: ${{ secrets.VOXEAR_SIGNING_PASSWORD }}
+        run: |
+          key="$RUNNER_TEMP/engine.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$VOXEAR_ENGINE_KEY" > "$key")
+          release() { cargo run --quiet --release --manifest-path launcher/Cargo.toml -p voxear_release -- "$@"; }
+          add() {
+            release launcher add "dist/$1" --site site --channel "$CHANNEL" --version "$VERSION" --target "$2" \
+              --key "$key" ${NOTES:+--notes "$NOTES"}
+          }
+          add "Voxear.Launcher_${VERSION}_amd64.AppImage" linux-x86_64
+          add "Voxear.Launcher_${VERSION}_x64-setup.exe" windows-x86_64
+          add voxup-linux-x86_64 voxup-linux-x86_64
+          add voxup-windows-x86_64.exe voxup-windows-x86_64
+
+      # The builds go up before the manifest that points at them. --latest=false keeps the engine's newest
+      # stable release as the repository's latest.
+      - name: Upload the builds
+        run: |
+          prerelease=""
+          [ "$CHANNEL" = stable ] || prerelease="--prerelease"
+          gh release create "launcher-v$VERSION" dist/* \
+            --repo CookieJarTools/VoxearReleases --title "Voxear Launcher $VERSION" \
+            --notes "${NOTES:-Voxear Launcher $VERSION, $CHANNEL.}" --latest=false $prerelease
+
+      - name: Publish the manifest
+        working-directory: site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add launcher
+          git commit -m "Launcher $VERSION"
+          git push
+          echo "Published Voxear Launcher $VERSION ($CHANNEL)" >> "$GITHUB_STEP_SUMMARY"

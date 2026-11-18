@@ -541,6 +541,8 @@ impl Editor {
     fn open_with(project: Project, renderer: &mut Renderer, log: LogCapture, memory: Memory) -> Result<Self> {
         let started = Instant::now();
         let root = project.root.clone();
+        // Shader packs compiled in one session of the project are kept in it for the next.
+        voxear_render::shader_packs::keep_compiles_in(Some(root.join(".voxear").join("ShaderPacks")));
         let mut engine = Engine::new();
         engine.set_edit_mode(true);
         let mut game = Game::new(project, engine)?;

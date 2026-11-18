@@ -1017,10 +1017,11 @@ DockSpace .split-column > .split-divider {
     min-height: 0px;
 }
 
-/* The ready-made menus of look packs and texture packs (LookPackScreen and
-   TexturePackScreen in C#): a panel down the screen's left, so the game
-   shows beside it as packs are tried, with a row for each pack. */
-.look-pack-screen, .texture-pack-screen {
+/* The ready-made menus of look packs, texture packs and shader packs
+   (LookPackScreen, TexturePackScreen and ShaderPackScreen in C#): a panel
+   down the screen's left, so the game shows beside it as packs are tried,
+   with a row for each pack. */
+.look-pack-screen, .texture-pack-screen, .shader-pack-screen {
     position: absolute;
     left: 0px;
     top: 0px;
@@ -1032,35 +1033,35 @@ DockSpace .split-column > .split-divider {
     background-color: rgba(10, 11, 13, 0.92);
 }
 
-.lps-bar, .tps-bar {
+.lps-bar, .tps-bar, .sps-bar {
     flex-direction: row;
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
 }
 
-.lps-title, .tps-title {
+.lps-title, .tps-title, .sps-title {
     font-size: 18px;
     line-height: 24px;
     font-weight: 600;
     color: var(--vx-text);
 }
 
-.lps-spacer, .tps-spacer {
+.lps-spacer, .tps-spacer, .sps-spacer {
     flex-grow: 1;
 }
 
-.lps-scroll, .tps-scroll {
+.lps-scroll, .tps-scroll, .sps-scroll {
     flex-grow: 1;
     min-height: 0px;
 }
 
-.lps-list, .tps-list {
+.lps-list, .tps-list, .sps-list {
     flex-direction: column;
     gap: 6px;
 }
 
-.lps-row, .tps-row {
+.lps-row, .tps-row, .sps-row {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
@@ -1070,32 +1071,67 @@ DockSpace .split-column > .split-divider {
     text-align: left;
 }
 
-.lps-row.selected, .tps-row.selected {
+.lps-row.selected, .tps-row.selected, .sps-row.selected {
     background-color: var(--vx-accent-soft);
     border-color: var(--vx-accent);
 }
 
-.lps-name, .tps-name {
+.lps-name, .tps-name, .sps-name {
     font-weight: 600;
     color: var(--vx-text);
 }
 
-.lps-source, .tps-source {
+.lps-source, .tps-source, .sps-source {
     font-size: 11px;
     color: var(--vx-accent);
 }
 
-.lps-description, .tps-description {
+.lps-description, .tps-description, .sps-description {
     width: 100%;
     color: var(--vx-muted);
     white-space: normal;
 }
 
-.lps-folder, .tps-folder {
+.lps-folder, .tps-folder, .sps-folder {
     flex-shrink: 0;
     font-size: 11px;
     color: var(--vx-muted);
     white-space: normal;
+}
+
+/* ShaderPackScreen's options of the pack worn, under its packs: a label and
+   a slider, toggle or dropdown each, and how its compile stands. */
+.sps-status {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--vx-muted);
+    white-space: normal;
+}
+
+.sps-status.failed {
+    color: var(--vx-danger);
+}
+
+.sps-options {
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.sps-option {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.sps-label {
+    width: 140px;
+    flex-shrink: 0;
+    color: var(--vx-text);
+}
+
+.sps-control {
+    flex-grow: 1;
 }
 
 /* The controls as a list (ControlsList in C#): a row for each action, under

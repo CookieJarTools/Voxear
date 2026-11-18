@@ -414,6 +414,57 @@ impl Game {
         }
     }
 
+    /// Wears the shader pack the player chose last time, kept beside the
+    /// saves, with the options they set on it, as a game starts: compiled on
+    /// a thread, or read from the compiled packs kept. One that is no longer
+    /// there is forgotten.
+    pub fn wear_remembered_shader_pack(&mut self) {
+        let Some(saves) = voxear_scripting::saves_folder() else { return };
+        let Some((reference, options)) = crate::shader_packs::remembered(&saves) else { return };
+        match crate::shader_packs::wear_soon(&mut self.engine.world, &mut self.content, &reference, false) {
+            Ok(()) => {
+                tracing::info!("wearing the shader pack chosen last time, {reference}");
+                for (key, value) in options {
+                    // An option the pack no longer has is left behind.
+                    let _ = crate::shader_packs::set_option(&mut self.engine.world, &key, value);
+                }
+            }
+            Err(error) => {
+                tracing::warn!("the shader pack chosen last time is left off: {error:#}");
+                crate::shader_packs::take_off(&mut self.engine.world);
+                crate::shader_packs::remember(&self.engine.world, &saves);
+            }
+        }
+    }
+
+    /// Does what scripts asked of shader packs this frame: wearing one,
+    /// compiled on a thread, and setting its options; and keeps what the
+    /// player chose beside the saves where they asked to.
+    fn shader_pack_requests(&mut self) {
+        let requests = self.engine.scripts_mut().map(|scripts| scripts.take_shader_pack_requests()).unwrap_or_default();
+        let mut keep = false;
+        for request in requests {
+            match request {
+                voxear_scripting::ShaderPackRequest::Wear { reference, remember } => {
+                    let world = &mut self.engine.world;
+                    match crate::shader_packs::wear_soon(world, &mut self.content, &reference, false) {
+                        Ok(()) => keep |= remember,
+                        Err(error) => tracing::error!(target: "script", "{error:#}"),
+                    }
+                }
+                voxear_scripting::ShaderPackRequest::SetOption { name, value, remember } => {
+                    match crate::shader_packs::set_option(&mut self.engine.world, &name, value) {
+                        Ok(_) => keep |= remember,
+                        Err(error) => tracing::error!(target: "script", "{error:#}"),
+                    }
+                }
+            }
+        }
+        if keep && let Some(saves) = voxear_scripting::saves_folder() {
+            crate::shader_packs::remember(&self.engine.world, &saves);
+        }
+    }
+
     pub fn start(&mut self, mut renderer: Option<&mut Renderer>) -> Result<()> {
         self.audio.start_game();
         // For scripts that start networked play.
@@ -431,6 +482,12 @@ impl Game {
         }
         self.wear_remembered_look();
         self.wear_remembered_textures();
+        // Shader packs compiled in one run are kept beside the saves for the next; the game's own were compiled
+        // when it was built.
+        let kept = voxear_scripting::saves_folder().and_then(|saves| crate::shader_packs::compiled_folder(&saves));
+        voxear_render::shader_packs::keep_compiles_in(kept);
+        voxear_render::shader_packs::read_compiles_from(self.content.built_shader_packs());
+        self.wear_remembered_shader_pack();
         self.models = ModelWork::for_renderer(renderer.as_deref());
         let level = self
             .project
@@ -1386,6 +1443,7 @@ impl Game {
                 Err(error) => tracing::error!(target: "script", "{error:#}"),
             }
         }
+        self.shader_pack_requests();
         let texture_pack = self.engine.scripts_mut().and_then(|scripts| scripts.take_texture_pack_requests().pop());
         if let Some((reference, remember)) = texture_pack {
             match crate::texture_packs::wear(&mut self.content, &reference) {
@@ -1620,6 +1678,11 @@ impl ScriptServices for GameServices<'_> {
     fn look_packs_json(&mut self, world: &World) -> Result<String> {
         let folder = voxear_scripting::saves_folder().and_then(|saves| crate::look_packs::player_folder(&saves));
         Ok(crate::look_packs::json(self.content, world, folder.as_deref()))
+    }
+
+    fn shader_packs_json(&mut self, world: &World) -> Result<String> {
+        let folder = voxear_scripting::saves_folder().and_then(|saves| crate::shader_packs::player_folder(&saves));
+        Ok(crate::shader_packs::json(self.content, world, folder.as_deref()))
     }
 
     fn texture_packs_json(&mut self) -> Result<String> {

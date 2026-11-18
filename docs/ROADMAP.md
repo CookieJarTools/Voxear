@@ -4024,7 +4024,10 @@ Done:
   lets through leaves is tinted their colour. Evening lets a little green-gold light through crowns.
 - **The cascades' layout set by a pack** (stage 4, last part): `[shadows] cascades` (1 to 4) and `split`. A pack's own
   warped map was tried: the warp bends merged block faces, so it was left out.
-  - Not yet: players' menu and C# (5)
+- **Players' packs** (stage 5). C# `ShaderPacks` and `ShaderPack`; `ShaderPackScreen`, a ready-made menu of packs and
+  the worn one's options; the choice and options kept beside the saves and worn again at start; compiled programs
+  kept on disk by a hash that is the same on any machine; a game's packs compiled when it is built.
+  - Not yet: the surface id image for passes
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)

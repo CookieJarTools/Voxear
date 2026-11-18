@@ -182,3 +182,64 @@ fn every_built_in_pack_compiles() {
         assert!(compiled.passes.iter().all(|spirv| spirv.len() > 1000 && spirv[..4] == [0x03, 0x02, 0x23, 0x07]));
     }
 }
+
+const FACES: &str =
+    "float3 run(BlockSurface surface, BlockLighting light)\n{\n    return light.engine * options().strength;\n}\n";
+
+#[test]
+fn a_games_build_compiles_its_packs_and_the_built_game_reads_them_with_every_program() {
+    let dir = project();
+    // A program for block faces beside the pass: a built game reads both.
+    let manifest = MANIFEST.replace("[[pass]]", "[surface]\nblocks = \"faces.slang\"\n\n[[pass]]");
+    std::fs::write(dir.path().join("Packs/Warm.shaderpack/pack.toml"), &manifest).unwrap();
+    std::fs::write(dir.path().join("Packs/Warm.shaderpack/faces.slang"), FACES).unwrap();
+    let output = dir.path().join("Built");
+    let settings = voxear_engine::ContentSettings::default();
+    voxear_engine::content_build::build(dir.path(), &output, &settings, &[]).unwrap();
+    let compiled = output.join(voxear_engine::content_build::SHADER_PACKS_FOLDER);
+    let programs = std::fs::read_dir(&compiled).unwrap().count();
+    assert_eq!(programs, 2, "the pass and the block shader with its program, in {}", compiled.display());
+
+    let mut content = voxear_engine::Content::open_bundles(dir.path(), &output).unwrap();
+    assert_eq!(content.built_shader_packs(), [compiled.clone()]);
+    let guid = content.parse("Packs/Warm.shaderpack/pack.toml").unwrap().guid().unwrap().to_string();
+    let (manifest, files) = shader_packs::load(&mut content, &guid, false).unwrap();
+    for program in ["grade.slang", "faces.slang"] {
+        assert!(files.read(program).is_ok(), "{program} read from the bundles");
+    }
+    // What the build compiled is what the game would: named alike wherever the engine and the game are.
+    voxear_render::shader_packs::read_compiles_from(content.built_shader_packs());
+    let started = Instant::now();
+    let pack = voxear_render::shader_packs::compile(&manifest, &files).unwrap();
+    assert_eq!(pack.modules.len(), 1);
+    assert!(started.elapsed() < Duration::from_secs(2), "read, not compiled: {:?}", started.elapsed());
+    voxear_render::shader_packs::read_compiles_from(Vec::new());
+
+    // Built again with no pack: the folder goes.
+    std::fs::remove_dir_all(dir.path().join("Packs")).unwrap();
+    voxear_engine::content_build::build(dir.path(), &output, &settings, &[]).unwrap();
+    assert!(!compiled.exists());
+}
+
+#[test]
+fn the_pack_chosen_and_its_options_are_kept_beside_the_saves() {
+    let dir = project();
+    let saves = tempfile::tempdir().unwrap();
+    let mut game = game(&dir);
+    assert!(shader_packs::remembered(saves.path()).is_none());
+    shader_packs::wear(&mut game.engine.world, &mut game.content, "builtin:evening").unwrap();
+    shader_packs::set_option(&mut game.engine.world, "warmth", 0.25).unwrap();
+    shader_packs::set_option(&mut game.engine.world, "curve", 2.0).unwrap();
+    shader_packs::remember(&game.engine.world, saves.path());
+    let (reference, options) = shader_packs::remembered(saves.path()).unwrap();
+    assert_eq!(reference, "builtin:evening");
+    assert!(options.contains(&("warmth".to_string(), 0.25)) && options.contains(&("curve".to_string(), 2.0)));
+    let text = std::fs::read_to_string(saves.path().join(shader_packs::CHOICE_FILE)).unwrap();
+    assert!(text.starts_with("pack = \"builtin:evening\""), "{text}");
+    // None: nothing to wear next time.
+    shader_packs::take_off(&mut game.engine.world);
+    shader_packs::remember(&game.engine.world, saves.path());
+    assert!(shader_packs::remembered(saves.path()).is_none());
+    let compiled = saves.path().parent().map(|parent| parent.join("ShaderPacks/Compiled"));
+    assert_eq!(shader_packs::compiled_folder(saves.path()), compiled);
+}

@@ -353,6 +353,8 @@ pub fn build_mounted(
         progress(usage.len(), usage.len(), "custom shaders")?;
         let scratch = root.join(".voxear").join("ShaderBuild");
         compile_shaders(shaders, &used, &scratch, output).context("compiling the project's custom shaders")?;
+        progress(usage.len(), usage.len(), "shader packs")?;
+        compile_shader_packs(&db, output)?;
     }
     catalog.write(output)?;
     remove_stale(output, &catalog)?;
@@ -617,6 +619,47 @@ fn compile_shaders(
         std::fs::write(folder.join(format!("{name}.spv")), spirv)?;
     }
     std::fs::write(folder.join(SHADERS_STAMP), stamp)?;
+    Ok(())
+}
+
+/// Where a build keeps the programs of the game's shader packs compiled,
+/// each by the hash of what it was made from, for the game to read rather
+/// than compile them as a player wears one.
+pub const SHADER_PACKS_FOLDER: &str = "ShaderPacks";
+
+/// Compiles every shader pack of the game's into `output`'s
+/// [`SHADER_PACKS_FOLDER`], each program once: one compiled for an earlier
+/// build is read from there, and those no pack has now are taken out. A
+/// pack that does not compile fails the build, with Slang's message.
+fn compile_shader_packs(db: &voxear_assets::AssetDb, output: &Path) -> Result<()> {
+    use voxear_render::shader_packs::{PackFiles, PackManifest, compile_into};
+    let folder = output.join(SHADER_PACKS_FOLDER);
+    let packs: Vec<(String, PathBuf)> = db
+        .entries()
+        .filter(|entry| entry.kind == AssetKind::ShaderPack)
+        .filter_map(|entry| Some((entry.path.clone(), db.path(entry.guid)?)))
+        .collect();
+    if packs.is_empty() {
+        if folder.is_dir() {
+            std::fs::remove_dir_all(&folder).with_context(|| format!("removing {}", folder.display()))?;
+        }
+        return Ok(());
+    }
+    std::fs::create_dir_all(&folder)?;
+    // What this build reads or writes there is touched; what it does not, no pack has now.
+    let started = std::time::SystemTime::now() - std::time::Duration::from_secs(2);
+    for (path, file) in packs {
+        let text = std::fs::read_to_string(&file).with_context(|| format!("reading {path}"))?;
+        let manifest = PackManifest::parse(&text).with_context(|| format!("reading the shader pack {path}"))?;
+        let files = PackFiles::Folder(file.parent().unwrap_or(Path::new(".")).to_path_buf());
+        compile_into(&manifest, &files, &folder).with_context(|| format!("compiling the shader pack {path}"))?;
+    }
+    for entry in std::fs::read_dir(&folder)? {
+        let entry = entry?;
+        if entry.metadata()?.modified()? < started {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
     Ok(())
 }
 

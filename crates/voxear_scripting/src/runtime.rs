@@ -491,6 +491,11 @@ impl ScriptRuntime {
         interop::take_texture_pack_requests()
     }
 
+    /// What scripts asked of shader packs since the last call, oldest first.
+    pub fn take_shader_pack_requests(&mut self) -> Vec<interop::ShaderPackRequest> {
+        interop::take_shader_pack_requests()
+    }
+
     /// Tells scripts the level's weather.
     pub fn publish_weather(&mut self, state: interop::WeatherState) {
         interop::publish_weather(state);

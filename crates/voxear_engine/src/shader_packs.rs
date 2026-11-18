@@ -113,13 +113,12 @@ pub fn load(content: &mut Content, reference: &str, live: bool) -> Result<(PackM
         Some(file) => Ok((manifest, PackFiles::Folder(file.parent().unwrap_or(Path::new(".")).to_path_buf()))),
         None => {
             let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
-            let mut programs = Vec::new();
-            for pass in &manifest.passes {
-                let named = format!("{folder}/{}", pass.program);
+            // Every program it names: its passes', its surface programs and its shadow filter.
+            let mut programs: Vec<(String, String)> = Vec::new();
+            for program in manifest.programs() {
+                let named = format!("{folder}/{program}");
                 let text = content.read_text(&named).with_context(|| format!("reading {named}"))?;
-                if programs.iter().all(|(name, _): &(String, String)| *name != pass.program) {
-                    programs.push((pass.program.clone(), text));
-                }
+                programs.push((program.to_string(), text));
             }
             Ok((manifest, PackFiles::Files(programs.into())))
         }
@@ -535,6 +534,65 @@ pub fn worn_json(world: &World) -> serde_json::Value {
         "shadows": shadows_json(&manifest.shadows),
         "options": options,
     })
+}
+
+/// Every pack there is to wear and the one worn, for `ShaderPacks` in
+/// Voxear.Core: `packs`, `worn` as [`worn_json`] gives it, and `folder`,
+/// where a player keeps their own.
+pub fn json(content: &mut Content, world: &World, folder: Option<&Path>) -> String {
+    let packs = list(content, folder);
+    serde_json::json!({
+        "packs": packs,
+        "worn": worn_json(world),
+        "folder": folder.map(|folder| folder.display().to_string()),
+    })
+    .to_string()
+}
+
+/// The file beside the saves that keeps the shader pack the player chose
+/// and the options they set on it.
+pub const CHOICE_FILE: &str = "ShaderPack.toml";
+
+/// The shader pack the player last chose, kept beside `saves` so a game
+/// starts in it again, and the options they set on it by name; none when
+/// they chose none.
+pub fn remembered(saves: &Path) -> Option<(String, Vec<(String, f32)>)> {
+    let text = std::fs::read_to_string(saves.join(CHOICE_FILE)).ok()?;
+    let table: toml::Table = toml::from_str(&text).ok()?;
+    let reference = table.get("pack")?.as_str()?.trim().to_string();
+    if reference.is_empty() {
+        return None;
+    }
+    let options = table.get("options").and_then(toml::Value::as_table).map(|options| {
+        let value = |v: &toml::Value| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)).map(|v| v as f32);
+        options.iter().filter_map(|(key, v)| Some((key.clone(), value(v)?))).collect()
+    });
+    Some((reference, options.unwrap_or_default()))
+}
+
+/// Keeps the shader pack the world wears and its options, for
+/// [`remembered`], beside `saves`; none when none is worn.
+pub fn remember(world: &World, saves: &Path) {
+    let mut table = toml::Table::new();
+    table.insert("pack".into(), worn(world).unwrap_or_default().into());
+    let set: toml::Table =
+        options(world).into_iter().map(|(option, value)| (option.key, f64::from(value).into())).collect();
+    if !set.is_empty() {
+        table.insert("options".into(), set.into());
+    }
+    let kept = std::fs::create_dir_all(saves)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| Ok(std::fs::write(saves.join(CHOICE_FILE), toml::to_string(&table)?)?));
+    if let Err(error) = kept {
+        tracing::warn!("could not keep the shader pack chosen: {error:#}");
+    }
+}
+
+/// Where a game keeps its compiled shader packs, beside `saves`: in the
+/// player's `ShaderPacks` folder, so a pack worn again in a later run
+/// compiles nothing.
+pub fn compiled_folder(saves: &Path) -> Option<PathBuf> {
+    Some(player_folder(saves)?.join("Compiled"))
 }
 
 /// What a pack sets of the sun's shadows, only what it sets.

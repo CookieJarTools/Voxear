@@ -295,6 +295,15 @@ pub trait ScriptServices {
         anyhow::bail!("look packs are listed only in a running game, not here")
     }
 
+    /// Every shader pack there is to wear, for `ShaderPacks` in
+    /// Voxear.Core, as JSON: `packs`, each with what names it, its name,
+    /// its description and where it is from; `worn`, the pack worn as tools
+    /// read it (what names it, how its compile stands, its options), or
+    /// null; and `folder`, where a player keeps their own.
+    fn shader_packs_json(&mut self, _world: &World) -> Result<String> {
+        anyhow::bail!("shader packs are listed only in a running game, not here")
+    }
+
     /// Every texture pack there is to wear, for `TexturePacks` in
     /// Voxear.Core, as JSON: `packs`, each with what names it, its name,
     /// its description and where it is from; `worn`, what names the one
@@ -912,6 +921,14 @@ pub(crate) unsafe extern "C" fn data_assets(buffer: *mut u8, capacity: i32) -> i
 /// or -1 when there is none.
 pub(crate) unsafe extern "C" fn look_packs_info(buffer: *mut u8, capacity: i32) -> i32 {
     let said = crate::interop::with_world(|world| with_services(|services| services.look_packs_json(world)));
+    unsafe { answer_json(said, buffer, capacity) }
+}
+
+/// The shader packs as JSON for `ShaderPacks` in Voxear.Core (see
+/// [`ScriptServices::shader_packs_json`]), written when it fits: its
+/// length, or -1 when there is none.
+pub(crate) unsafe extern "C" fn shader_packs_info(buffer: *mut u8, capacity: i32) -> i32 {
+    let said = crate::interop::with_world(|world| with_services(|services| services.shader_packs_json(world)));
     unsafe { answer_json(said, buffer, capacity) }
 }
 

@@ -160,7 +160,7 @@ passes took the same with and without it. The plan's estimates, before it was bu
    own cascade pass. ✅ Built: the settings and filter, light through leaves and glass, and the cascades' layout in
    place of a pass of a pack's own.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
-   surface id image for passes that want it.
+   surface id image for passes that want it. Built, but for the surface id image.
 
 ## What stage 1 built
 
@@ -284,6 +284,31 @@ The first part: a pack's settings for the sun's shadows and a filter that reads 
   cascades' layout does the job without that.
 - **Evening** pales its shadows the farther above the point what casts them is, as an evening sky fills a long
   shadow, and lets a little of the sun through leaves.
+
+## What stage 5 built
+
+Players' packs, from C# and a ready-made menu. Settled on the way:
+
+- **C#:** `ShaderPack` (a typed reference: `ShaderPack.Evening`, a project's by `Load` or an Inspector field) and
+  `ShaderPacks` (`All`, `Current`, `Use`, `UseNone`, `Options`, `SetOption` by name for a number, a toggle or a
+  choice, `Standing`, `Error`, `Folder`, `Changed`), through `shader_pack_wear`, `shader_pack_set_option` and
+  `shader_packs_info` in the scripting table (version 94). A script's wear compiles on a thread, as the editor's does.
+- **`ShaderPackScreen`**, as `LookPackScreen` is: the packs under None, and under them the worn pack's options, a
+  slider, toggle or dropdown each, made again whenever the pack worn changes (its status line is bound, so it is
+  looked at each frame), and how its compile stands.
+- **Remembered:** `ShaderPack.toml` beside the saves keeps the pack and its options by name; the game wears it at
+  start, its options set as it compiles, and forgets one that is gone. In the editor's play, the Scene view's pack is
+  carried in as before, and with none there, the player's.
+- **The compile cache on disk:** each program by the hash of everything it is made from, now by the files' names
+  rather than where they are, so it means the same on any machine. A game keeps them in `ShaderPacks/Compiled`
+  beside its saves, the editor in the project's `.voxear/ShaderPacks`, up to 256 MB, those used least lately going
+  first; a file cut short is not read.
+- **A game's packs are compiled when it is built**, into `ShaderPacks` beside `Shaders`, read by the game before it
+  compiles anything; programs no pack has any more are taken out. A built game now reads every program a pack names,
+  its surface programs and shadow filter too, not only its passes'.
+- **Not yet:** the surface id image (an attachment of its own in every depth pipeline, and a variant of each without
+  it); and a program that includes a file its manifest does not name compiles in the editor but not in a built
+  game, which reads a pack's programs by name.
 
 ## Questions to settle
 

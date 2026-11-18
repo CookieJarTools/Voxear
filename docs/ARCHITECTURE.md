@@ -1464,7 +1464,7 @@ left on the GPU first. A game's pack names pictures that are assets; a player's 
 
 **Shader packs** (`voxear_render::shader_packs`, `voxear_engine::shader_packs`) are programs of a pack's own run
 over the frame, the player's to choose as the other packs are; the plan and its stages are in
-[SHADER_PACKS.md](SHADER_PACKS.md), of which the first three are built. A pack is a `Name.shaderpack` folder: its
+[SHADER_PACKS.md](SHADER_PACKS.md), of which all five are built but for the surface id image. A pack is a `Name.shaderpack` folder: its
 `pack.toml` (an asset of kind `ShaderPack`; its `.slang` programs ship beside it as companions) lists options and
 `[[pass]]`es, each at one of five points of a view's frame (after the opaque surfaces and the sky are lit, after the
 fog, after TAA, in the composite's place, over the finished picture) reading the frame's images it lists and writing the colour or a target of
@@ -1505,7 +1505,12 @@ includes (the options once, in `project_pack_options.slang`) and `compile` runs 
 the `tonemap` point that writes the colour is recorded by
 `post_passes::record` in the Composite pass's place, into the same image, reading the light after TAA and, if it
 lists `bloom`, the bloom chain's top level (`bloomScale` in `PackFrame` normalises its sum); the Finish pass then
-runs to dither, as for a final pass.
+runs to dither, as for a final pass. Players reach packs from C# (`ShaderPacks`, `ShaderPackScreen`) through the scripting table's
+`shader_pack_wear`, `shader_pack_set_option` and `shader_packs_info`; `Game` acts on the requests after the frame,
+keeps the choice and options in `ShaderPack.toml` beside the saves and wears them at start. Compiled programs are
+kept on disk by a hash of the sources' names and texts (`keep_compiles_in`: beside the saves, or the project's
+`.voxear/ShaderPacks`), and a content build compiles the game's packs into `ShaderPacks` beside `Shaders`, which the
+game reads first (`read_compiles_from`).
 
 **Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
 five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps

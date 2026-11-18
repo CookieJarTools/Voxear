@@ -536,8 +536,12 @@ impl Editor {
         let levels = std::mem::replace(&mut self.game.levels, levels);
         // As a build does: the look pack and the texture pack chosen last time.
         self.game.wear_remembered_look();
-        // The shader pack the Scene view wears, drawn in the game as it plays.
-        voxear_engine::shader_packs::carry(&edit.world, &mut self.game.engine.world);
+        // The shader pack the Scene view wears, drawn in the game as it plays; or with none there, the one the
+        // player chose last time, as a build does.
+        match voxear_engine::shader_packs::worn(&edit.world) {
+            Some(_) => voxear_engine::shader_packs::carry(&edit.world, &mut self.game.engine.world),
+            None => self.game.wear_remembered_shader_pack(),
+        }
         let textures = voxear_engine::texture_packs::worn(&self.game.content).map(str::to_string);
         if voxear_engine::texture_packs::wear(&mut self.game.content, "").is_ok() {
             self.game.wear_remembered_textures();

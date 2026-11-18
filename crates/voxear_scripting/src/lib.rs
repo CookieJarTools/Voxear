@@ -45,7 +45,7 @@ pub use interop::{
     set_motion_matcher_values, set_net_calls, set_net_fields, set_net_object_values, set_net_raycast, set_net_rpcs,
     set_kind_texts, set_kind_values, set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler, set_water_splasher,
     PoseOps, set_pose_ops,
-    WeatherRequest, WeatherState,
+    ShaderPackRequest, WeatherRequest, WeatherState,
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
 pub use post::{POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PostCall, set_post_call};

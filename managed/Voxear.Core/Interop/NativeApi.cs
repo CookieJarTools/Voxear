@@ -217,4 +217,7 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<ulong, Vector4*, byte*, int, int> DungeonsInfo;
 	public delegate* unmanaged[Cdecl]<int, float> FoliageMotion;
 	public delegate* unmanaged[Cdecl]<int, float, void> SetFoliageMotion;
+	public delegate* unmanaged[Cdecl]<byte*, int, int, void> ShaderPackWear;
+	public delegate* unmanaged[Cdecl]<byte*, int, float, int, void> ShaderPackSetOption;
+	public delegate* unmanaged[Cdecl]<byte*, int, int> ShaderPacksInfo;
 }

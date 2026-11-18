@@ -745,6 +745,17 @@ impl PackManifest {
         Ok(Self { description: file.description, options, passes, targets, surfaces, shadows })
     }
 
+    /// Every program the pack names, each once: its passes', its surface
+    /// programs and its shadow filter.
+    pub fn programs(&self) -> Vec<&str> {
+        let passes = self.passes.iter().map(|pass| pass.program.as_str());
+        let surfaces = self.surfaces.named().into_iter().map(|(_, program)| program);
+        let mut named: Vec<&str> = passes.chain(surfaces).chain(self.shadows.filter.as_deref()).collect();
+        let mut seen = std::collections::HashSet::new();
+        named.retain(|program| seen.insert(*program));
+        named
+    }
+
     /// The engine's shader modules the pack's programs are compiled into: its
     /// surface programs' and, for its shadow filter, every one that reads the
     /// sun's shadow.
@@ -1080,6 +1091,124 @@ fn compiled_before() -> &'static Mutex<HashMap<u64, Arc<[u8]>>> {
     COMPILED.get_or_init(Mutex::default)
 }
 
+/// Where compiled programs are kept on disk, if anywhere: each by the hash
+/// of everything it was made from, so a pack worn in an earlier run of the
+/// game compiles nothing.
+fn cache_folder() -> &'static Mutex<Option<PathBuf>> {
+    static FOLDER: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+    FOLDER.get_or_init(Mutex::default)
+}
+
+/// The most the compile cache on disk keeps; past it, what was used least
+/// lately goes first.
+pub const CACHE_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// Keeps compiled programs in `folder` from now on, a pack's compile
+/// reading them from there before compiling; `None` keeps them for this run
+/// alone. A game keeps them in its `ShaderPacks` folder, beside its saves;
+/// the editor in the project's own folder.
+pub fn keep_compiles_in(folder: Option<PathBuf>) {
+    *cache_folder().lock().expect("not poisoned") = folder;
+}
+
+/// Folders of compiled programs read before compiling, as a game reads what
+/// its build compiled of its packs (`ShaderPacks` beside its `Shaders`).
+fn read_folders() -> &'static Mutex<Vec<PathBuf>> {
+    static FOLDERS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+    FOLDERS.get_or_init(Mutex::default)
+}
+
+/// Reads compiled programs from `folders` too, before compiling them: what
+/// a game's build compiled of its packs ([`compile_into`]). Nothing is
+/// written there.
+pub fn read_compiles_from(folders: Vec<PathBuf>) {
+    *read_folders().lock().expect("not poisoned") = folders;
+}
+
+/// A program kept in the cache on disk, or compiled by the game's build, if
+/// it is there.
+fn cached(hash: u64) -> Option<Arc<[u8]>> {
+    let built = read_folders().lock().expect("not poisoned").clone();
+    let found = built.iter().find_map(|folder| {
+        let path = folder.join(format!("{hash:016x}.spv"));
+        let spirv = std::fs::read(path).ok()?;
+        whole(&spirv).then(|| Arc::from(spirv))
+    });
+    if found.is_some() {
+        return found;
+    }
+    let folder = cache_folder().lock().expect("not poisoned").clone()?;
+    cached_in(&folder, hash)
+}
+
+/// Whether `spirv` is a whole SPIR-V program, not one cut short by a crash:
+/// whole words, starting with its magic number.
+fn whole(spirv: &[u8]) -> bool {
+    spirv.len() >= 20 && spirv.len() % 4 == 0 && spirv[..4] == [0x03, 0x02, 0x23, 0x07]
+}
+
+/// A program kept in the cache in `folder`, its file touched so it is the
+/// last to go.
+fn cached_in(folder: &Path, hash: u64) -> Option<Arc<[u8]>> {
+    let path = folder.join(format!("{hash:016x}.spv"));
+    let spirv = std::fs::read(&path).ok()?;
+    if !whole(&spirv) {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
+    if let Ok(file) = std::fs::File::options().append(true).open(&path) {
+        let _ = file.set_modified(std::time::SystemTime::now());
+    }
+    Some(spirv.into())
+}
+
+/// Keeps a program in the cache on disk, if there is one.
+fn keep(hash: u64, spirv: &[u8]) {
+    if let Some(folder) = cache_folder().lock().expect("not poisoned").clone() {
+        keep_in(&folder, hash, spirv, CACHE_LIMIT);
+    }
+}
+
+/// Keeps a program in the cache in `folder`, written whole or not at all,
+/// and the cache within `limit` bytes.
+fn keep_in(folder: &Path, hash: u64, spirv: &[u8], limit: u64) {
+    if std::fs::create_dir_all(folder).is_err() {
+        return;
+    }
+    let path = folder.join(format!("{hash:016x}.spv"));
+    let part = folder.join(format!("{hash:016x}.{}.part", GENERATIONS.fetch_add(1, Ordering::Relaxed)));
+    if std::fs::write(&part, spirv).is_err() || std::fs::rename(&part, &path).is_err() {
+        let _ = std::fs::remove_file(&part);
+        return;
+    }
+    trim_cache(folder, limit);
+}
+
+/// Takes the programs used least lately out of the cache in `folder` until
+/// what is left fits in `limit` bytes.
+fn trim_cache(folder: &Path, limit: u64) {
+    let Ok(entries) = std::fs::read_dir(folder) else { return };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            path.extension().is_some_and(|e| e == "spv").then_some(())?;
+            let meta = entry.metadata().ok()?;
+            Some((meta.modified().ok()?, meta.len(), path))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|(_, size, _)| size).sum();
+    files.sort_by_key(|(when, ..)| *when);
+    for (_, size, path) in files {
+        if total <= limit {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= size;
+        }
+    }
+}
+
 /// One `slangc` run of a pack's compile: what it is called in an error, the
 /// files it writes beside its source (that first), the engine's shader it
 /// compiles in place of that source, if any, and what it defines.
@@ -1095,14 +1224,27 @@ struct Job<'a> {
 /// seconds the first time and nothing after. An error names the pass or the
 /// program, and Slang's message names the file and the line.
 pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPack> {
+    compile_with(manifest, files, None)
+}
+
+/// As [`compile`], each program kept in `keep` too, where it is read from
+/// before it is compiled: as a game's build compiles its packs, for the game
+/// to read as it runs (see [`read_compiles_from`]).
+pub fn compile_into(manifest: &PackManifest, files: &PackFiles, keep: &Path) -> Result<CompiledPack> {
+    compile_with(manifest, files, Some(keep))
+}
+
+fn compile_with(manifest: &PackManifest, files: &PackFiles, keep: Option<&Path>) -> Result<CompiledPack> {
     let engine =
         crate::hot_reload::engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
-    // Everything a program's SPIR-V is made from, for the hash it is kept by: the engine's shaders and the pack's.
+    // Everything a program's SPIR-V is made from, for the hash it is kept by: the engine's shaders and the pack's,
+    // by their names, not where they are, so a game built on one machine reads on another what its build compiled.
+    let named = |path: &Path| path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     let mut sources = Vec::new();
     for entry in std::fs::read_dir(&engine).with_context(|| format!("reading {}", engine.display()))? {
         let path = entry?.path();
         if path.extension().is_some_and(|e| e == "slang") {
-            sources.push(format!("{}\n{}", path.display(), std::fs::read_to_string(&path)?));
+            sources.push(format!("{}\n{}", named(&path), std::fs::read_to_string(&path)?));
         }
     }
     let mut written: Vec<(String, String)> = Vec::new();
@@ -1111,7 +1253,7 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
             for entry in std::fs::read_dir(folder).with_context(|| format!("reading {}", folder.display()))? {
                 let path = entry?.path();
                 if path.extension().is_some_and(|e| e == "slang") {
-                    sources.push(format!("{}\n{}", path.display(), std::fs::read_to_string(&path)?));
+                    sources.push(format!("{}\n{}", named(&path), std::fs::read_to_string(&path)?));
                 }
             }
         }
@@ -1161,7 +1303,8 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
                     loop {
                         let at = next.fetch_add(1, Ordering::Relaxed);
                         let Some(job) = jobs.get(at) else { break };
-                        done.push((at, compile_job(job, (manifest, files), (work, engine, written, sources))));
+                        let places = (work.as_path(), engine.as_path(), written.as_slice(), sources.as_str(), keep);
+                        done.push((at, compile_job(job, (manifest, files), places)));
                     }
                     done
                 })
@@ -1192,13 +1335,20 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
 fn compile_job(
     job: &Job<'_>,
     (manifest, files): (&PackManifest, &PackFiles),
-    (work, engine, written, sources): (&Path, &Path, &[(String, String)], &str),
+    (work, engine, written, sources, keep): (&Path, &Path, &[(String, String)], &str, Option<&Path>),
 ) -> Result<Arc<[u8]>> {
     let named: Vec<String> = job.files.iter().map(|(name, text)| format!("{name}\n{text}")).collect();
     let module = job.engine_module.unwrap_or_default();
     let hash = stable_hash(&[&named.join("\n"), module, &job.defines.join(" "), sources]);
     if let Some(spirv) = compiled_before().lock().expect("not poisoned").get(&hash) {
         return Ok(spirv.clone());
+    }
+    if let Some(spirv) = keep.and_then(|folder| cached_in(folder, hash)).or_else(|| cached(hash)) {
+        compiled_before().lock().expect("not poisoned").insert(hash, spirv.clone());
+        if let Some(folder) = keep {
+            keep_in(folder, hash, &spirv, u64::MAX);
+        }
+        return Ok(spirv);
     }
     // A folder of its own, as the same pack may compile on two threads at once.
     let dir = work.join(format!("{hash:016x}-{}", GENERATIONS.fetch_add(1, Ordering::Relaxed)));
@@ -1223,6 +1373,10 @@ fn compile_job(
         .with_context(|| job.label.clone())?;
     let spirv: Arc<[u8]> = spirv.into();
     compiled_before().lock().expect("not poisoned").insert(hash, spirv.clone());
+    match keep {
+        Some(folder) => keep_in(folder, hash, &spirv, u64::MAX),
+        None => self::keep(hash, &spirv),
+    }
     let _ = std::fs::remove_dir_all(&dir);
     Ok(spirv)
 }
@@ -1971,6 +2125,33 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         let settings = PackManifest::parse("[shadows]\nsoftness = 0.0\nleaves = true\n").unwrap();
         assert!(settings.engine_modules().is_empty() && settings.shadows.leaves);
         assert!(!manifest.shadows.leaves, "leaves let nothing through unless the pack says so");
+    }
+
+    #[test]
+    fn compiled_programs_are_kept_on_disk_whole_and_the_least_used_go_first_past_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = |words: u32| {
+            let mut spirv = vec![0x03, 0x02, 0x23, 0x07];
+            spirv.resize(words as usize * 4, 0);
+            spirv
+        };
+        keep_in(dir.path(), 1, &program(100), 1000);
+        assert_eq!(cached_in(dir.path(), 1).map(|spirv| spirv.len()), Some(400));
+        assert!(cached_in(dir.path(), 2).is_none());
+        // One cut short, or not SPIR-V at all, is not read, and goes.
+        std::fs::write(dir.path().join(format!("{:016x}.spv", 3u64)), [0x03, 0x02, 0x23]).unwrap();
+        assert!(cached_in(dir.path(), 3).is_none() && !dir.path().join(format!("{:016x}.spv", 3u64)).exists());
+        // Past the limit, what was used least lately goes: the first, read again, stays.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        keep_in(dir.path(), 4, &program(100), 1000);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(cached_in(dir.path(), 1).is_some());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        keep_in(dir.path(), 5, &program(100), 1000);
+        assert!(cached_in(dir.path(), 1).is_some() && cached_in(dir.path(), 5).is_some());
+        assert!(cached_in(dir.path(), 4).is_none(), "the one used least lately went");
+        let parts = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok());
+        assert!(parts.into_iter().all(|e| e.path().extension().is_some_and(|x| x == "spv")), "no half-written file");
     }
 
     #[test]

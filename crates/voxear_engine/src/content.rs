@@ -944,6 +944,15 @@ impl Content {
         &self.shaders
     }
 
+    /// The folders of built content its build compiled the game's shader
+    /// packs into, topmost first; none for content read from the project's
+    /// folder.
+    pub fn built_shader_packs(&self) -> Vec<std::path::PathBuf> {
+        let Source::Bundles(_, layers) = &self.source else { return Vec::new() };
+        let folders = layers.iter().rev().map(|(dir, _)| dir.join(crate::content_build::SHADER_PACKS_FOLDER));
+        folders.filter(|dir| dir.is_dir()).collect()
+    }
+
     /// The modules the content build compiled the custom shaders into, by
     /// name, from the topmost layer of built content that has them; `None`
     /// for content read from the project's folder, or built without any.

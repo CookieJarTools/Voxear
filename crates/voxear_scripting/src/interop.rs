@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 93;
+pub(crate) const API_VERSION: u32 = 94;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -605,6 +605,24 @@ pub(crate) struct NativeApi {
     pub foliage_motion: unsafe extern "C" fn(which: i32) -> f32,
     /// Sets one of `Foliage`'s numbers.
     pub set_foliage_motion: unsafe extern "C" fn(which: i32, value: f32),
+    /// `ShaderPacks.Use`: wears the shader pack a reference names from the next frame, compiled on a thread, or with
+    /// none, takes off the one worn; and, with `remember`, keeps the choice beside the saves for the game's next run.
+    pub shader_pack_wear: unsafe extern "C" fn(reference: *const u8, len: i32, remember: i32),
+    /// `ShaderPacks.SetOption`: sets one of the worn pack's options by its name, a toggle 0 or 1, a choice its place
+    /// among the choices; with `remember`, kept beside the saves with the pack.
+    pub shader_pack_set_option: unsafe extern "C" fn(name: *const u8, len: i32, value: f32, remember: i32),
+    /// `ShaderPacks`: every shader pack there is to wear, which is worn, how its compile stands, its options and
+    /// where a player keeps their own, as JSON; its length, or -1 when there is none.
+    pub shader_packs_info: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+}
+
+/// What scripts asked of shader packs, for the engine to do after the frame.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShaderPackRequest {
+    /// Wear the pack a reference names, an empty one for none; and keep the choice for the game's next run.
+    Wear { reference: String, remember: bool },
+    /// Set an option of the pack worn, by its name; and keep it with the pack.
+    SetOption { name: String, value: f32, remember: bool },
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1294,6 +1312,7 @@ thread_local! {
     static LIGHTING_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static LOOK_PACK_REQUESTS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
     static TEXTURE_PACK_REQUESTS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
+    static SHADER_PACK_REQUESTS: RefCell<Vec<ShaderPackRequest>> = const { RefCell::new(Vec::new()) };
     /// The level's time of year, as `Seasons.TimeOfYear` reads it: NaN
     /// without Seasons. Scripts setting it change it here at once, and the
     /// engine takes what they set after the frame.
@@ -1364,6 +1383,10 @@ pub(crate) fn take_look_pack_requests() -> Vec<(String, bool)> {
 
 pub(crate) fn take_texture_pack_requests() -> Vec<(String, bool)> {
     TEXTURE_PACK_REQUESTS.take()
+}
+
+pub(crate) fn take_shader_pack_requests() -> Vec<ShaderPackRequest> {
+    SHADER_PACK_REQUESTS.take()
 }
 
 /// The level's weather as scripts read it: its kind, by its place among the kinds; what it adds this moment
@@ -1651,6 +1674,17 @@ unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
 unsafe extern "C" fn look_pack_wear(reference: *const u8, len: i32, remember: i32) {
     let reference = unsafe { utf8(reference, len) }.into_owned();
     LOOK_PACK_REQUESTS.with_borrow_mut(|r| r.push((reference, remember != 0)));
+}
+
+unsafe extern "C" fn shader_pack_wear(reference: *const u8, len: i32, remember: i32) {
+    let reference = unsafe { utf8(reference, len) }.into_owned();
+    SHADER_PACK_REQUESTS.with_borrow_mut(|r| r.push(ShaderPackRequest::Wear { reference, remember: remember != 0 }));
+}
+
+unsafe extern "C" fn shader_pack_set_option(name: *const u8, len: i32, value: f32, remember: i32) {
+    let name = unsafe { utf8(name, len) }.into_owned();
+    let request = ShaderPackRequest::SetOption { name, value, remember: remember != 0 };
+    SHADER_PACK_REQUESTS.with_borrow_mut(|r| r.push(request));
 }
 
 unsafe extern "C" fn texture_pack_wear(reference: *const u8, len: i32, remember: i32) {
@@ -2273,6 +2307,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         dungeons_info: crate::services::dungeons_info,
         foliage_motion: crate::plants::foliage_motion,
         set_foliage_motion: crate::plants::set_foliage_motion,
+        shader_pack_wear,
+        shader_pack_set_option,
+        shader_packs_info: crate::services::shader_packs_info,
     }
 }
 

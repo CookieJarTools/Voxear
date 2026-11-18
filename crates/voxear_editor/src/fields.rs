@@ -591,6 +591,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("LightingSettings") => Some(AssetKind::Lighting),
         Some("LookPack") => Some(AssetKind::LookPack),
         Some("TexturePack") => Some(AssetKind::TexturePack),
+        Some("ShaderPack") => Some(AssetKind::ShaderPack),
         Some("MotionSet") => Some(AssetKind::MotionSet),
         Some("Block") => Some(AssetKind::Block),
         Some("Biome") => Some(AssetKind::Biome),

@@ -26,6 +26,48 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 
 The rays show when the camera looks towards the sun. They are worked out at half size, forty steps a pixel, and cost about half a millisecond a frame at 1440p on an RTX 3070; the whole pack's passes, looking into the sun, about 0.8 ms. Facing away from the sun the rays cost nothing.
 
+## Letting players choose
+
+`ShaderPackScreen.Open()` shows a ready-made menu: a row for each pack with what it looks like, the one worn marked, and **None** at the top; under them, the options of the pack worn, a slider, toggle or dropdown each with its tooltip, and a line saying when it is compiling or why it did not compile. It sits down the left of the screen so the game shows beside it. A click wears a pack: it compiles on a thread the first time, a few seconds, the game drawn as it was meanwhile, and after that it is worn at once.
+
+```csharp
+public sealed class PauseMenu : Behaviour
+{
+	protected override void Update()
+	{
+		if (Keyboard.WasPressed(Key.K))
+		{
+			ShaderPackScreen.Open("Shaders");
+		}
+	}
+}
+```
+
+The pack chosen and the options set are kept beside the game's saves, in `ShaderPack.toml`, and the game starts in them again; a pack that is no longer there is forgotten. Its compiled programs are kept beside the saves too, in `ShaderPacks/Compiled`, up to 256 MB, those used least lately going first.
+
+For a menu of your own, `ShaderPacks` does what the screen does:
+
+```csharp
+ShaderPacks.Use(ShaderPack.Evening);
+ShaderPacks.SetOption("warmth", 0.9f);
+ShaderPacks.SetOption("rays", false);
+ShaderPacks.SetOption("curve", "Filmic");
+```
+
+| | |
+| --- | --- |
+| `ShaderPacks.All` | Every pack there is to wear: Voxear's own, then your project's, then the player's, each by name |
+| `ShaderPacks.Current` | The pack worn, or `ShaderPack.None` |
+| `ShaderPacks.Use(pack)` | Wears a pack from the next frame, compiled on a thread, and keeps the choice for the game's next run. Pass `remember: false` to try one without keeping it |
+| `ShaderPacks.UseNone()` | Takes the pack off: every level as the engine draws it |
+| `ShaderPacks.Options` | The options of the pack worn, each with its label, tooltip, kind, range or choices, and value |
+| `ShaderPacks.SetOption(name, value)` | Sets an option by its name: a number, `true` or `false`, or a choice by its name. Kept with the pack unless `remember: false` |
+| `ShaderPacks.Standing`, `ShaderPacks.Error` | Whether the pack worn is compiling, drawn or failed, and Slang's message when it failed |
+| `ShaderPacks.Folder` | Where a player puts packs of their own |
+| `ShaderPacks.Changed` | An event: the pack worn changed |
+
+A `ShaderPack` field of a script picks one of your project's packs in the Inspector, as `ShaderPack.Evening` names Voxear's own.
+
 ## Seeing a level under a pack
 
 On the **Lighting** page, **Shader pack** shows the Scene view and the game under any pack, as a player who picked it would see it. Nothing of it is saved with the scene. Playing keeps the pack on.
@@ -368,4 +410,6 @@ A pack is named as `builtin:` and its name, a pack of the project's by its `pack
 
 ## In a built game
 
-A game's packs ship with it, their programs beside their manifests, and are compiled the first time one is worn, with the Slang compiler Voxear ships beside the game. A player's pack is a folder in the game's `ShaderPacks` folder, beside its saves, named `file:` and its path; it reads nothing outside its own folder.
+A game's packs ship with it, their programs beside their manifests, and are compiled when the game is built, into a `ShaderPacks` folder beside its `Shaders`: a pack that does not compile fails the build, with Slang's message. A player wearing one of them reads what the build compiled, and compiles nothing. Voxear's own packs and the player's are compiled the first time they are worn, with the Slang compiler Voxear ships beside the game, and kept beside the saves for the next run.
+
+A player's pack is a folder in the game's `ShaderPacks` folder, beside its saves, named `file:` and its path; it reads nothing outside its own folder. In a built game a pack's programs are read by the names its `pack.toml` gives them, so a program that includes another file of the pack's compiles in the editor but not yet in a built game.

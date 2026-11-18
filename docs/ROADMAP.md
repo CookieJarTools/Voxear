@@ -3801,8 +3801,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     uses too; `vox mcp` reaches them as it reaches every call. Tests: a tool finding a way over a Block World,
     reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
     ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
-  - [ ] Project Settings ▸ Navigation: budgets (how many searches agents begin a step, how many places one looks
-    at), now set in code; areas, costs and agent types are there (see below)
+  - [x] **Project Settings ▸ Navigation ▸ Budgets** (`navigation::NavBudgets`): Searches a step (64), Done in the
+    step (8) and Places a search looks at (60,000), which agents spend from each step. Test: a crowd of twenty sent
+    off at once beginning every search in the first step, or two of them with a budget of two, and all arriving.
   - [x] **Baked nav meshes for levels of models** (`voxear_nav::mesh`): every still collider's triangles
     (`navigation::bake_triangles`, from the level's real middle) laid into a grid of columns 0.3 m across, each
     triangle clipped to each column so walls count as well as floors; a span's top walkable where its triangles

@@ -109,6 +109,7 @@ pub fn settle(world: &mut World) {
 /// agent_1_height = 3.2
 /// agent_1_radius = 0.9
 /// agent_1_water_cost = 8.0 # 0 for the project's own cost
+/// searches_a_step = 64     # how many ways agents begin to look for each step
 /// ```
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -125,6 +126,13 @@ pub struct NavigationSettings {
     pub custom_3_cost: f32,
     pub custom_4_name: String,
     pub custom_4_cost: f32,
+    /// How many searches agents may begin each step, a crowd sent off at
+    /// once having its ways found over the next few; how many of those no
+    /// thread has begun by the step after may be done in the step itself;
+    /// and how many places one search may look at before it gives up.
+    pub searches_a_step: u32,
+    pub searches_here: u32,
+    pub most_looked_at: u32,
     /// What the Default agent type is baked for: how tall, how wide round
     /// its middle, how high a step and how steep a slope, in metres and
     /// degrees.
@@ -186,6 +194,9 @@ impl Default for NavigationSettings {
             custom_3_cost: 1.0,
             custom_4_name: String::new(),
             custom_4_cost: 1.0,
+            searches_a_step: 64,
+            searches_here: 8,
+            most_looked_at: 60_000,
             agent_height: 1.8,
             agent_radius: 0.35,
             agent_step: 0.45,
@@ -255,6 +266,16 @@ impl NavigationSettings {
     pub fn put(&self, world: &mut World) {
         world.insert_resource(NavCosts(self.costs()));
         world.insert_resource(NavAgentTypes(self.agent_types().to_vec()));
+        world.insert_resource(self.budgets());
+    }
+
+    /// What agents may spend on searches, by these settings.
+    pub fn budgets(&self) -> NavBudgets {
+        NavBudgets {
+            searches_a_step: self.searches_a_step.clamp(1, 100_000) as usize,
+            searches_here: self.searches_here.min(100_000) as usize,
+            most_looked_at: self.most_looked_at.clamp(100, 10_000_000) as usize,
+        }
     }
 
     /// Each agent type by its slot: the Default one, then the project's
@@ -312,6 +333,27 @@ impl NavigationSettings {
         }
         types
     }
+}
+
+/// What agents may spend on searches (see
+/// [`NavigationSettings::searches_a_step`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NavBudgets {
+    pub searches_a_step: usize,
+    pub searches_here: usize,
+    pub most_looked_at: usize,
+}
+
+impl Default for NavBudgets {
+    fn default() -> Self {
+        NavigationSettings::default().budgets()
+    }
+}
+
+/// What agents may spend on searches in `world`: the project's, or the
+/// defaults.
+pub fn budgets(world: &World) -> NavBudgets {
+    world.resource::<NavBudgets>().copied().unwrap_or_default()
 }
 
 /// What each area costs in `world`: the project's, or the defaults.

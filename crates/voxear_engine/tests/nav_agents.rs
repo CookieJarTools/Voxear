@@ -487,3 +487,37 @@ fn an_agent_two_blocks_wide_goes_round_by_a_gap_it_fits_through_by_its_controlle
         }
     }
 }
+
+#[test]
+fn a_crowd_sent_off_at_once_begins_its_searches_as_the_projects_budget_allows() {
+    let mut begun = Vec::new();
+    for budget in [None, Some(2)] {
+        let (_dir, mut game, _) = game(32);
+        if let Some(budget) = budget {
+            game.project.file.navigation.searches_a_step = budget;
+        }
+        let settings = game.project.file.navigation.clone();
+        settings.put(&mut game.engine.world);
+        let crowd: Vec<Entity> =
+            (0..20).map(|n| agent(&mut game, 2.5 + n as f32, 4.5, NavMoves::AlongTheNav)).collect();
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        for (n, walker) in crowd.iter().enumerate() {
+            game.engine.world.get_mut::<NavAgent>(*walker).unwrap().go_to(Vec3::new(2.5 + n as f32, 6.0, 26.5));
+        }
+        voxear_engine::nav_agent::step_agents(&mut game.engine.world, FRAME);
+        let asked = crowd
+            .iter()
+            .filter(|walker| game.engine.world.get::<NavAgentState>(**walker).is_some_and(|state| state.pending()))
+            .count();
+        begun.push(asked);
+        // And all of them get there in the end.
+        for _ in 0..900 {
+            game.tick(FRAME, None);
+        }
+        let there = crowd.iter().filter(|walker| arrived(&game, **walker)).count();
+        assert_eq!(there, crowd.len(), "budget {budget:?}: every one arrived");
+    }
+    assert_eq!(begun, [20, 2], "every search begun in the first step, or two of them");
+}

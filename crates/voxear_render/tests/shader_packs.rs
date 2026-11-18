@@ -1,5 +1,5 @@
 //! Shader packs' passes drawn on a real GPU, offscreen: a pass at each of
-//! the four points of the frame, a pack's own targets, kept from frame to
+//! the five points of the frame, a pack's own targets, kept from frame to
 //! frame or not, the normals and last frame's colour a pass reads, what a
 //! program that does not compile says, and the built-in Evening pack over
 //! a world of blocks. Each test skips itself (with a note) on machines
@@ -179,6 +179,95 @@ fn a_final_pass_works_on_the_finished_picture_as_shown() {
             assert!((sum - 1.0).abs() < 0.03, "at {x}, {y}: {before:?} and {after:?} add up to {sum}");
         }
     }
+}
+
+#[test]
+fn a_pass_at_the_tonemap_draws_the_picture_in_the_composites_place() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = cube_world(&mut renderer, false, false);
+    let plain = render(&mut renderer, &world, 3);
+    // The engine's own curve, as the composite has it with nothing else on, draws the same picture.
+    let same = "float4 run(PassInput input)\n{\n    float3 light = sceneColor(input.uv).rgb * frame()->exposure;\n    \
+                return float4(tonemapSoft(light), 1.0);\n}\n";
+    wear(&mut world, one_pass("tonemap", "\"color\"", same));
+    let copied = render(&mut renderer, &world, 3);
+    for (x, y) in [CUBE, SKY, (WIDTH - 20, HEIGHT - 20)] {
+        let (before, after) = (rgb_at(&plain, x, y), rgb_at(&copied, x, y));
+        for c in 0..3 {
+            assert!((before[c] - after[c]).abs() <= 2, "at {x}, {y}: {before:?} became {after:?}");
+        }
+    }
+    // A curve of its own, with the glow round what is bright read apart.
+    let mut post = world.resource::<PostProcess>().unwrap().clone();
+    post.bloom.enabled = true;
+    world.insert_resource(post);
+    let own = "float4 run(PassInput input)\n{\n    float3 light = sceneColor(input.uv).rgb * frame()->exposure;\n    \
+               return float4(tonemapFilmic(light).bgr + sceneBloom(input.uv) * 0.0, 1.0);\n}\n";
+    wear(&mut world, one_pass("tonemap", "\"color\", \"bloom\"", own));
+    let swapped = render(&mut renderer, &world, 3);
+    keep_image("pack tonemap.png", &swapped, (WIDTH, HEIGHT));
+    let (before, after) = (rgb_at(&plain, SKY.0, SKY.1), rgb_at(&swapped, SKY.0, SKY.1));
+    assert!(before[2] > before[0] + 20, "the sky is blue: {before:?}");
+    assert!(after[0] > after[2] + 20, "the pack's curve swaps blue for red: {after:?}");
+    // The glow read on its own and shown as the engine would is the picture blurred: as bright where it is smooth.
+    let glow = "float4 run(PassInput input)\n{\n    \
+                return float4(tonemapSoft(sceneBloom(input.uv) * frame()->exposure), 1.0);\n}\n";
+    wear(&mut world, one_pass("tonemap", "\"bloom\"", glow));
+    let glowing = render(&mut renderer, &world, 3);
+    keep_image("pack tonemap bloom.png", &glowing, (WIDTH, HEIGHT));
+    for (x, y) in [(WIDTH / 2, 20), (WIDTH - 20, HEIGHT - 20)] {
+        let (before, after) = (rgb_at(&plain, x, y), rgb_at(&glowing, x, y));
+        for c in 0..3 {
+            assert!((before[c] - after[c]).abs() <= 25, "at {x}, {y}: the glow {after:?} against {before:?}");
+        }
+    }
+    // A pack that reads the glow before the tonemap is told where it can.
+    let manifest = "[[pass]]\nname = \"Early\"\nprogram = \"test.slang\"\nat = \"after_taa\"\nreads = [\"bloom\"]\n";
+    let error = PackManifest::parse(manifest).expect_err("bloom before the tonemap");
+    assert!(format!("{error:#}").contains("tonemap"), "{error:#}");
+}
+
+#[test]
+fn a_sky_program_draws_the_sky_behind_everything_and_is_given_the_engines_by_its_parts() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = cube_world(&mut renderer, false, false);
+    let plain = render(&mut renderer, &world, 3);
+    // Red above the horizon, the engine's sky below it.
+    let red = "float3 run(SkySurface surface, SkyLighting light)\n{\n    \
+               return surface.direction.y > 0.0 ? float3(0.5 / frame()->exposure, 0.0, 0.0) : light.engine;\n}\n";
+    wear(&mut world, surfaces("sky = \"sky.slang\"", &[("sky.slang", red)]));
+    let reddened = render(&mut renderer, &world, 3);
+    keep_image("pack sky.png", &reddened, (WIDTH, HEIGHT));
+    let above = rgb_at(&reddened, SKY.0, SKY.1);
+    assert!(above[0] > above[2] + 60 && above[0] > above[1] + 60, "above the horizon the sky is red: {above:?}");
+    for (x, y) in [CUBE, (12, HEIGHT - 12)] {
+        let (before, after) = (rgb_at(&plain, x, y), rgb_at(&reddened, x, y));
+        for c in 0..3 {
+            assert!((before[c] - after[c]).abs() <= 2, "at {x}, {y}: {before:?} became {after:?}");
+        }
+    }
+    // Its parts laid as the engine lays them come to the engine's sky: the difference, made large, adds nothing to a
+    // picture of where each pixel is.
+    let program = |difference: &str| {
+        format!(
+            "float3 run(SkySurface surface, SkyLighting light)\n{{\n    \
+             float3 laid = skyLayered(light.sky + light.disc + light.stars, light.clouds, light.weather, \
+             surface.underClouds);\n    \
+             return {difference} + float3(0.0, surface.uv.y * 0.5 / frame()->exposure, 0.0);\n}}\n"
+        )
+    };
+    let with = program("abs(laid - light.engine) * 1000.0");
+    wear(&mut world, surfaces("sky = \"sky.slang\"", &[("sky.slang", &with)]));
+    let difference = render(&mut renderer, &world, 3);
+    let without = program("float3(0.0)");
+    wear(&mut world, surfaces("sky = \"sky.slang\"", &[("sky.slang", &without)]));
+    let places = render(&mut renderer, &world, 3);
+    for (x, y) in [SKY, (SKY.0, HEIGHT - 12), (WIDTH - 12, HEIGHT / 3)] {
+        let (exact, laid) = (rgb_at(&places, x, y), rgb_at(&difference, x, y));
+        assert!(exact.iter().zip(laid).all(|(a, b)| (a - b).abs() <= 1), "at {x}, {y}: {laid:?} against {exact:?}");
+    }
+    let (top, bottom) = (rgb_at(&places, SKY.0, SKY.1), rgb_at(&places, SKY.0, HEIGHT - 12));
+    assert!(bottom[1] > top[1] + 60, "uv goes from 0 at the top to 1 at the bottom: {top:?}, {bottom:?}");
 }
 
 #[test]
@@ -420,7 +509,7 @@ fn the_evening_pack_warms_a_world_of_blocks_and_lays_rays_through_its_leaves() {
         None => PackFiles::Embedded(shader_packs::builtin_files("evening").unwrap()),
     };
     let evening = Arc::new(shader_packs::compile(&manifest, &files).unwrap());
-    assert_eq!(evening.modules.len(), 2, "its programs for block faces and for water, beside its passes");
+    assert_eq!(evening.modules.len(), 3, "its programs for block faces, water and the sky, beside its passes");
     world.insert_resource(WornShaderPack::new(evening.clone()));
     let worn = render(&mut renderer, &world, 24);
     // The same, without the rays.

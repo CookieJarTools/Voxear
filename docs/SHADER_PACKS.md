@@ -155,7 +155,7 @@ passes took the same with and without it. The plan's estimates, before it was bu
 2. **Surface programs for block faces, leaves and water**, with the block's kind and its sky light and block light.
    This is where a pack changes how blocks are lit, not only how the picture is finished. ✅ Built.
 3. **The final pass and the sky:** a pack's own tonemap and grade in place of the engine's and the look shader, and
-   its own sky and clouds.
+   its own sky and clouds. ✅ Built.
 4. **Shadows:** a pack's shadow settings and filter, then coloured shadows through leaves and glass, then a pack's
    own cascade pass.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
@@ -218,6 +218,31 @@ Programs that light block faces, leaves and water. Settled on the way:
   engine's; lava is never water's. The water shader is large: compiling it with a pack's program takes about a minute.
 - **Not yet:** models and the sky (stage 3); what the GI's rays and reflection probes see of blocks and water is still
   the engine's lighting.
+
+## What stage 3 built
+
+A pack's own tonemap, and a program for the sky. Settled on the way:
+
+- **A fifth point, `tonemap`,** stands in the composite's place: a pass there that writes the colour is given the
+  scene's light after TAA, before exposure, and returns the picture as shown, in place of the engine's bloom,
+  exposure, white balance, grading, tonemap, lift, gamma and gain, its table, vignette and a look pack's shader. The
+  `final` point stays as it was, over whichever drew the picture. At most one pass at the tonemap writes the colour;
+  others there may write targets for it.
+- **What it is given:** `bloom`, a new read from the tonemap on, is the engine's glow round what is bright, as bright
+  as what glows (`sceneBloom(uv)`, `bloomDrawn()`), where the Post Process's bloom is on; `frame()->exposure` is what
+  the engine multiplies the light by, its compensation and last frame's auto exposure in it; `displayPeak` says how
+  far above 1 an HDR display shows. The engine's curves are there to call: `tonemapSoft` (the engine's default, with
+  its contrast and saturation), `tonemapFilmic` and `tonemapNeutral`. A pack that tonemaps for itself does without
+  the engine's night vision and an HDR display's highlight gain unless it does them itself.
+- **The sky** is a surface program: `[surface] sky` names `float3 run(SkySurface surface, SkyLighting light)`,
+  compiled into the engine's `sky.slang` with `VOXEAR_PACK_SKY`. It is given the way through the pixel, its place in
+  the picture and whether the camera is under the clouds, and the engine's sky by its parts: the sky's own colour,
+  the sun's or the moon's disc, the stars, the clouds and the far weather (each with how much shows through), and all
+  of it laid together. `skyLayered` lays a sky of the pack's own under the engine's clouds and weather in the order the
+  camera sees them. What the sky moves as, for TAA, stays the engine's.
+- **Evening** tonemaps for itself, with a choice of curve, a little glow and a vignette, and turns a low sun's sky
+  and the clouds on its side gold.
+- **Not yet:** models' surface programs; reflections, the sea's mirror and the GI still see the engine's sky.
 
 ## Questions to settle
 

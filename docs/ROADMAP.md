@@ -3955,7 +3955,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
 
 Programs that replace how a game is lit and finished, chosen by whoever plays, as look and texture packs are: a
 pack's own full-screen passes over the engine's buffers first, then its lighting of block faces, leaves and water
-with their sky light and block light, its sky and final pass, and its shadows. The plan, the stages, what every
+with their sky light and block light, its sky and its own tonemap, and its shadows. The plan, the stages, what every
 program reads, how it fits the frame graph, live reload, builds and costs: [SHADER_PACKS.md](SHADER_PACKS.md).
 
 Done:
@@ -3983,8 +3983,14 @@ Done:
   `faces.slang`: warm sun, cool shade, warm torchlight, leaves glowing against a low sun. `[surface] water`,
   `float3 run(WaterSurface surface, WaterLighting light)`, for the sea, Pools, Streams and block water, with the
   engine's colour with and without its foam; Evening's `water.slang` lays a golden path of sun on it.
-  - Not yet: its own tonemap and sky (3), shadows (4), and players' menu and C# (5); pictures of a pack's own (noise,
-    a grade's table).
+- **Its own tonemap and sky** (stage 3). A fifth point, `tonemap`, in the composite's place: a pass there is given
+  the light before exposure and the glow (`bloom`), the exposure and an HDR display's peak, and the engine's curves to
+  call, and draws the picture as shown in place of the engine's grade, tonemap, vignette and look shader.
+  `[surface] sky`, `float3 run(SkySurface surface, SkyLighting light)`, compiled into the sky shader: the engine's
+  sky by its parts (sky, disc, stars, clouds, far weather) and `skyLayered` to lay clouds over a sky of its own.
+  Evening tonemaps for itself (a choice of curve, glow, vignette) and turns a low sun's sky and clouds gold.
+  - Not yet: shadows (4), and players' menu and C# (5); models' programs; reflections still see the engine's sky;
+    pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

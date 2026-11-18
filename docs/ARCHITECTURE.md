@@ -1464,10 +1464,10 @@ left on the GPU first. A game's pack names pictures that are assets; a player's 
 
 **Shader packs** (`voxear_render::shader_packs`, `voxear_engine::shader_packs`) are programs of a pack's own run
 over the frame, the player's to choose as the other packs are; the plan and its stages are in
-[SHADER_PACKS.md](SHADER_PACKS.md), of which the first is built. A pack is a `Name.shaderpack` folder: its
+[SHADER_PACKS.md](SHADER_PACKS.md), of which the first three are built. A pack is a `Name.shaderpack` folder: its
 `pack.toml` (an asset of kind `ShaderPack`; its `.slang` programs ship beside it as companions) lists options and
-`[[pass]]`es, each at one of four points of a view's frame (after the opaque surfaces and the sky are lit, after the
-fog, after TAA, over the finished picture) reading the frame's images it lists and writing the colour or a target of
+`[[pass]]`es, each at one of five points of a view's frame (after the opaque surfaces and the sky are lit, after the
+fog, after TAA, in the composite's place, over the finished picture) reading the frame's images it lists and writing the colour or a target of
 its own. `PackManifest::parse` checks it; `compile` wraps each program in a file that defines what its pass reads
 (`#define PACK_READS_…`, so a function it does not list is not there), the pack's `Options` and targets, and the
 fragment shader that calls its `run`, against `shaders/shader_pack.slang`, which has nothing of the engine's own
@@ -1489,7 +1489,12 @@ again from its shaders with that module in place (`pack_modules`), and back with
 (`terrainKind` from `terrainShading` says what it is), to the pack, which reads its `PackFrame` through
 `Buffers::packFrame`, written for every view. A `water` program is compiled the same way into `water.slang` with
 `VOXEAR_PACK_WATER` (`project_pack_water.slang`, `packWaterColor`), handed the water by `waterFragment` and
-`blockWaterLit` before the air's haze (`SURFACE_MODULES` lists the modules).
+`blockWaterLit` before the air's haze; a `sky` program into `sky.slang` with `VOXEAR_PACK_SKY` (`packSkyColor`),
+handed the sky by `skyFragment` by its parts, the disc and the stars apart, before its colour is written
+(`SURFACE_MODULES` lists the modules). A pass at the `tonemap` point that writes the colour is recorded by
+`post_passes::record` in the Composite pass's place, into the same image, reading the light after TAA and, if it
+lists `bloom`, the bloom chain's top level (`bloomScale` in `PackFrame` normalises its sum); the Finish pass then
+runs to dither, as for a final pass.
 
 **Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
 five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps

@@ -4,9 +4,13 @@
 //
 //     float3 run(BlockSurface surface, BlockLighting light)
 //
-// and a water program
+// a water program
 //
 //     float3 run(WaterSurface surface, WaterLighting light)
+//
+// and a sky program
+//
+//     float3 run(SkySurface surface, SkyLighting light)
 //
 // each returning the light leaving the surface towards the camera, before the air's haze and the clouds in front of
 // it. Voxear compiles them into its own shaders that draw block faces (blocks.slang, with VOXEAR_PACK_BLOCKS defined)
@@ -143,6 +147,40 @@ struct WaterLighting
     float3 clear;
     float3 engine;
 };
+
+// The sky a sky program draws, at one pixel.
+struct SkySurface
+{
+    // The way from the camera through the pixel, in the world.
+    float3 direction;
+    // Where it shows in the picture, from 0 to 1 across and down, and in pixels.
+    float2 uv;
+    float2 pixel;
+    // Whether the camera is under the clouds' base, so that the clouds are in front of the far weather, not behind.
+    bool underClouds;
+};
+
+// The sky as the engine draws it that way, part by part, and the whole of it.
+struct SkyLighting
+{
+    // The sky's own colour, without the sun's or the moon's disc, which is apart, and the stars.
+    float3 sky;
+    float3 disc;
+    float3 stars;
+    // The clouds in front of it and the weather hanging far off: what each adds, and in alpha how much of what is
+    // behind shows through.
+    float4 clouds;
+    float4 weather;
+    // All of it as the engine lays it: skyLayered(sky + disc + stars, clouds, weather, underClouds).
+    float3 engine;
+};
+
+// A sky of a program's own with clouds and far weather laid in front of it, in the order the camera sees them.
+float3 skyLayered(float3 behind, float4 clouds, float4 weather, bool underClouds)
+{
+    return underClouds ? (behind * clouds.a + clouds.rgb) * weather.a + weather.rgb
+        : (behind * weather.a + weather.rgb) * clouds.a + clouds.rgb;
+}
 
 // The frame as every program of the pack sees it.
 PackFrame* frame()

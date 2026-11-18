@@ -109,7 +109,7 @@ impl Seen {
         }
     }
 
-    fn dimension(&self, number: u16) -> Option<DimensionId> {
+    pub(super) fn dimension(&self, number: u16) -> Option<DimensionId> {
         match number {
             0 => Some(DimensionId::LEVEL),
             _ => self.numbers.iter().find(|(_, (n, _))| *n == number).map(|(id, _)| *id),
@@ -174,7 +174,7 @@ impl Dims {
     }
 
     /// The server's number for one of this machine's dimensions.
-    fn number_of(&self, local: DimensionId) -> Option<u16> {
+    pub(super) fn number_of(&self, local: DimensionId) -> Option<u16> {
         match local.is_level() {
             true => Some(0),
             false => self.held.iter().find(|(_, held)| held.local == Some(local)).map(|(number, _)| *number),

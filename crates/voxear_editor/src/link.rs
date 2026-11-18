@@ -600,6 +600,11 @@ pub const CALLS: &[CallInfo] = &[
         args: &[
             arg("obj", ArgKind::Obj, "The Obj with the Nav Agent."),
             maybe("to", ArgKind::Vector, "Where to go, in metres; it stands where it is when left out."),
+            maybe(
+                "dimension",
+                ArgKind::Value,
+                "The dimension `to` is in, by its number as `dimension.list` gives it or its `.dimension` file once made, where it is not the agent's own: it walks to a Portal into it and through.",
+            ),
         ],
         changes: true,
         returns: "{}",

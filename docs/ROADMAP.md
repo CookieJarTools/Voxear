@@ -3840,7 +3840,29 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     carving only once still; one that never carves gone round; a tool's crate shutting a gap once the game runs;
     the C# API with no engine. Manual: Nav Obstacles.
   - [ ] bake settings per agent type; terrain heightfields in the bake
-  - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
+  - [x] **Co-op, Portals and dimensions.** Agents move only where their Obj has authority; a player's script
+    setting `Destination`, `SetDestination`, `Stop` or `Resume` on one the server moves sends `Message::NavGo`
+    (`net::ask_nav`), which the server takes for an Obj no player owns or the player's own (`net::take_nav_asked`,
+    applied before agents step). Every open Portal is a way (`portals::nav_portals`: from 0.5 m in front of its
+    opening to 0.3 m through, and where that comes out): within a dimension a link of its own kind, in worlds of
+    blocks and now on nav meshes, whose search takes links (`NavMesh::find_path_linked`, so Nav Links work on
+    levels of models too); an agent reaching one walks into its opening and the Portal takes it through, as it
+    takes Nav Agents of every way of moving. An agent sent into another dimension (`NavAgent::go_to_in`; C#
+    `SetDestination(point, dimension)`, `DestinationDimension`; `nav_agent.set_destination` with `dimension`)
+    walks to the Portal into it making the shortest way in a straight line, through, and on; one into no
+    dimension a Portal leads to stands. One that walked into a Portal that did not take it finds its way again.
+    The gizmo draws each Portal's way in. Tests: a mob sent from a player's machine reaching the server, and
+    stopped; Portal pairs past a wall with no way round, in a world of blocks and on a mesh, by both ways of
+    moving; an agent sent into a dungeon's caves through its Gate, by both; a mesh link taken only where shorter;
+    the message read back as sent. Manual: Portals and Dimensions; Nav Agents (Playing over the network).
+  - [x] **Portals two dimensions away, layers, and links between worlds.** An agent sent into a dimension goes
+    through Portals one after another (the shortest chain in straight lines, from each Portal's far side to the
+    next); a Portal's `passes` layers are heeded by searches and by the choice of Portal, for the agent's own
+    `Layer`; a Nav Link or Portal with one end in each of two worlds of blocks of one dimension is taken as a hop
+    from one world's search into the other's (`nav_agent::link_between`), the agent keeping the world it set off
+    from until it lands. Tests: an agent through two Portals into a dimension two away; a Portal for one layer
+    only; an agent over a plank from one field of blocks into another, by both ways of moving.
+  - [ ] walking from one world of blocks into another where they touch, with no link
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

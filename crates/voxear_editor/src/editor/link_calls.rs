@@ -342,9 +342,11 @@ impl Editor {
             "nav_agent.set_destination" => {
                 let entity = self.obj_arg(args)?;
                 let to = opt_vector(args, "to")?.map(Vec3::from_array);
+                let into = if args.get("dimension").is_some() { Some(self.dimension_arg(args)?) } else { None };
                 let agent = self.game.engine.world.get_mut::<voxear_engine::nav_agent::NavAgent>(entity);
                 let agent = agent.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Nav Agent"))?;
-                (agent.destination, agent.stopped) = (to, false);
+                (agent.destination, agent.destination_dimension, agent.stopped) = (to, into, false);
+                voxear_engine::nav_agent::direct(&mut self.game.engine.world, entity);
                 done(json!({}))
             }
             "reflection_probe.capture" => {

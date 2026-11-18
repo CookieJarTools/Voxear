@@ -19,6 +19,7 @@ mod authority;
 mod dimensions;
 mod inputs;
 mod messages;
+mod nav;
 mod prediction;
 mod replication;
 mod rewind;
@@ -50,6 +51,7 @@ pub(crate) use dimensions::{needed as dimensions_needed, player_places};
 use inputs::{InputBuffer, Latch};
 pub use messages::Command;
 pub use messages::DimensionWhat;
+pub use nav::{NavAsked, ask_nav, take_nav_asked};
 pub use prediction::{Correction, Predicting, begin_replay, corrections, end_replay, mark_predicting, record, replay_tick};
 pub use rewind::{MOST_REWIND, raycast_as_seen_by};
 pub use rpcs::{Rpc, RpcTarget};
@@ -280,6 +282,8 @@ pub struct NetSession {
     /// Which dimensions each player has, and on a client what the server
     /// named and the edits that came for them.
     dims: dimensions::Dims,
+    /// What players asked of the server's Nav Agents (see `nav`).
+    nav_asked: Vec<nav::NavAsked>,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -322,6 +326,7 @@ impl NetSession {
             commands: VecDeque::new(),
             storms: storms::StormSync::default(),
             dims: dimensions::Dims::default(),
+            nav_asked: Vec::new(),
         }
     }
 
@@ -495,13 +500,17 @@ impl NetSession {
                         self.rpcs.incoming.push_back(rpc);
                     }
                     message @ (Message::Ready(_) | Message::Crossed { .. }) => heard.push((player, message)),
+                    message @ Message::NavGo { .. } if self.rpcs.allow(player, self.now) => heard.push((player, message)),
                     // Anything else from a client is dropped.
                     _ => {}
                 }
             }
         }
         for (player, message) in heard {
-            dimensions::heard(self, player, message);
+            match message {
+                Message::NavGo { .. } => nav::heard(self, player, message),
+                _ => dimensions::heard(self, player, message),
+            }
         }
     }
 

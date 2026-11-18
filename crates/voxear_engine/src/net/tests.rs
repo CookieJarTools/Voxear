@@ -288,6 +288,45 @@ fn rpcs_reach_the_server_from_a_player_and_players_from_the_server() {
     assert_eq!(take_rpc(&mut clients[1]), None, "not for them");
 }
 
+#[test]
+fn a_players_script_sending_a_mob_the_server_moves_reaches_the_server() {
+    use crate::nav_agent::{NavAgent, direct};
+    use voxear_core::math::Vec3;
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::AVERAGE);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let mob = shared(&mut server, Vec3::ZERO, NetObject::default());
+    server.insert(mob, NavAgent::default());
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    let on_client = entity_of(&clients[0], NetId(1)).unwrap();
+    assert!(!has_authority(&clients[0], on_client), "the server moves it");
+    clients[0].insert(on_client, NavAgent { destination: Some(Vec3::new(20.5, 6.0, -3.25)), ..NavAgent::default() });
+    direct(&mut clients[0], on_client);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let asked = take_nav_asked(&mut server);
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0].entity, mob);
+    let (to, dimension) = asked[0].to.expect("somewhere to go");
+    assert!(to.distance(Vec3::new(20.5, 6.0, -3.25)) < 0.01 && dimension.is_level(), "{to}");
+    assert_eq!(asked[0].player, session_of(&clients[0]).local_player().unwrap());
+    // Stopped, it is told so; the server's own word is no request.
+    clients[0].get_mut::<NavAgent>(on_client).unwrap().stopped = true;
+    direct(&mut clients[0], on_client);
+    direct(&mut server, mob);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let asked = take_nav_asked(&mut server);
+    assert_eq!(asked.iter().map(|asked| asked.stopped).collect::<Vec<_>>(), [true]);
+}
+
 /// Moves a ball a centimetre along x, as a `[Predicted]` behaviour would each tick.
 fn roll(world: &mut World, ball: voxear_ecs::Entity) {
     if let Some(transform) = world.get_mut::<voxear_scene::Transform>(ball) {

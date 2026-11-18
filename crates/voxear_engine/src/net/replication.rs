@@ -210,7 +210,7 @@ fn quantize_position(p: Vec3) -> [i64; 3] {
 /// middle by adding `origin`, this machine's, then a bit for whether it is
 /// far out, then each axis in steps, and for one far out how many 16 km
 /// beyond those steps it is.
-fn write_position(w: &mut BitWriter, position: Vec3, root: bool, origin: I64Vec3) {
+pub(super) fn write_position(w: &mut BitWriter, position: Vec3, root: bool, origin: I64Vec3) {
     let from = if root { origin.as_dvec3() } else { DVec3::ZERO };
     let half = 1i64 << (POSITION_BITS - 1);
     let steps = (position.as_dvec3() + from).to_array().map(|v| (v * STEPS).round() as i64 + half);
@@ -231,7 +231,7 @@ fn write_position(w: &mut BitWriter, position: Vec3, root: bool, origin: I64Vec3
 
 /// Reads a position written by [`write_position`], in this machine's world
 /// with `origin`, and whether it is a root's.
-fn read_position(r: &mut BitReader, origin: I64Vec3) -> Option<(Vec3, bool)> {
+pub(super) fn read_position(r: &mut BitReader, origin: I64Vec3) -> Option<(Vec3, bool)> {
     let (root, far) = (r.read_bool()?, r.read_bool()?);
     let mut steps = [0i64; 3];
     for s in &mut steps {

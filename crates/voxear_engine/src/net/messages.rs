@@ -5,7 +5,10 @@ use voxear_input::ActionState;
 use voxear_net::{BitReader, BitWriter};
 
 use super::PlayerId;
-use super::replication::{FIELDS, Fields, NetId, ObjState, Origin, read_fields, read_state, write_fields, write_state};
+use super::replication::{
+    FIELDS, Fields, NetId, ObjState, Origin, read_fields, read_position, read_state, write_fields, write_position,
+    write_state,
+};
 
 /// A client's input on one tick: every action, by its place in the
 /// project's input actions, with what went down or up since the tick before.
@@ -102,6 +105,10 @@ pub enum Message {
     EditsDone(u16),
     /// To the server: a dimension's edits are in, so the player may go in.
     Ready(u16),
+    /// To the server: a player's script sending a Nav Agent the server
+    /// moves somewhere, or stopping it: where to, in a dimension by its
+    /// number on this connection, and whether it stands where it is.
+    NavGo { id: NetId, to: Option<(voxear_core::math::Vec3, u16)>, stopped: bool },
 }
 
 /// What a dimension a server names to a client is, for the client to find
@@ -150,6 +157,7 @@ const CROSSED: u32 = 16;
 const EDITS: u32 = 17;
 const EDITS_DONE: u32 = 18;
 const READY: u32 = 19;
+const NAV_GO: u32 = 20;
 /// The most bytes one message of a dimension's edits takes.
 pub const MOST_EDIT_BYTES: usize = 65536;
 /// The most bytes a message of storms takes.
@@ -279,6 +287,16 @@ impl Message {
             Message::Ready(number) => {
                 w.write_bits(READY, KIND_BITS);
                 w.write_varint(u64::from(*number));
+            }
+            Message::NavGo { id, to, stopped } => {
+                w.write_bits(NAV_GO, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+                w.write_bool(*stopped);
+                w.write_bool(to.is_some());
+                if let Some((point, dimension)) = to {
+                    write_position(&mut w, *point, true, world_origin);
+                    w.write_varint(u64::from(*dimension));
+                }
             }
             Message::Snapshot { tick, entries } => {
                 w.write_bits(SNAPSHOT, KIND_BITS);
@@ -422,6 +440,15 @@ impl Message {
             }
             EDITS_DONE => Message::EditsDone(read_number(&mut r)?),
             READY => Message::Ready(read_number(&mut r)?),
+            NAV_GO => {
+                let id = NetId(r.read_varint()? as u32);
+                let stopped = r.read_bool()?;
+                let to = match r.read_bool()? {
+                    true => Some((read_position(&mut r, world_origin)?.0, read_number(&mut r)?)),
+                    false => None,
+                };
+                Message::NavGo { id, to, stopped }
+            }
             SNAPSHOT => {
                 let tick = r.read_varint()?;
                 let mut entries = Vec::new();
@@ -541,6 +568,12 @@ mod tests {
             Message::Edits { dimension: 4, world: 0, numbered: vec![(40, "abc".into(), 2)], bytes: vec![9; 300] },
             Message::EditsDone(4),
             Message::Ready(4),
+            Message::NavGo {
+                id: NetId(6),
+                to: Some((voxear_core::math::Vec3::new(12.5, 3.0, -40.25), 2)),
+                stopped: false,
+            },
+            Message::NavGo { id: NetId(6), to: None, stopped: true },
         ];
         for message in messages {
             let sent = message.encode(I64Vec3::ZERO);

@@ -132,6 +132,54 @@ fn ways(world: &World) -> Vec<Way> {
         .collect()
 }
 
+/// An open Portal as things finding their way take it: where to stand in
+/// front of it, a point just through its opening that walking to crosses
+/// it, where that point comes out, and the dimensions it joins.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavPortal {
+    pub portal: Entity,
+    pub approach: Vec3,
+    pub through: Vec3,
+    pub exit: Vec3,
+    pub from: voxear_scene::DimensionId,
+    pub into: voxear_scene::DimensionId,
+    /// Which layers' Objs it lets through, a bit a layer.
+    pub passes: u32,
+}
+
+impl NavPortal {
+    /// Whether it lets an Obj of `layer` through.
+    pub fn passes(&self, layer: u8) -> bool {
+        self.passes & (1 << (layer & 31)) != 0
+    }
+}
+
+/// How far in front of a Portal's opening the way into it begins, and how
+/// far past it the way through ends, in metres.
+const NAV_APPROACH: f32 = 0.5;
+const NAV_THROUGH: f32 = 0.3;
+
+/// Every Portal an Obj can go through now, as things finding their way
+/// take it: in at its front, at the foot of its opening's middle.
+pub fn nav_portals(world: &World) -> Vec<NavPortal> {
+    ways(world)
+        .into_iter()
+        .map(|way| {
+            let front = way.pose.front();
+            let through = way.pose.position - front * NAV_THROUGH;
+            NavPortal {
+                portal: way.entity,
+                approach: way.pose.position + front * NAV_APPROACH,
+                through,
+                exit: way.carry.point(through),
+                from: way.from,
+                into: way.into,
+                passes: way.portal.passes,
+            }
+        })
+        .collect()
+}
+
 /// Where an Obj is in the world.
 fn place(world: &World, entity: Entity) -> Vec3 {
     voxear_scene::world_matrix(world, entity).w_axis.truncate()
@@ -511,13 +559,24 @@ pub(crate) fn begin_frame(world: &mut World) {
 /// Every Obj that goes through Portals, with its layer.
 fn travellers(world: &World) -> Vec<(Entity, u8)> {
     world
-        .query_ref::<(Entity, &Transform, Option<&CharacterController>, Option<&Rigidbody>, Option<&PortalTraveller>, Option<&Layer>)>()
+        .query_ref::<(
+            Entity,
+            &Transform,
+            Option<&CharacterController>,
+            Option<&Rigidbody>,
+            Option<&PortalTraveller>,
+            Option<&Layer>,
+            Option<&crate::nav_agent::NavAgent>,
+        )>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(_, _, character, body, traveller, _)| character.is_some() || body.is_some() || traveller.is_some())
+        // A Nav Agent goes through as it walks, whatever moves it.
+        .filter(|(_, _, character, body, traveller, _, agent)| {
+            character.is_some() || body.is_some() || traveller.is_some() || agent.is_some()
+        })
         // A networked Obj another machine moves goes where it says.
         .filter(|(entity, ..)| crate::net::moves_here(world, *entity))
-        .map(|(entity, .., layer)| (entity, layer.map_or(0, |layer| layer.0)))
+        .map(|(entity, .., layer, _)| (entity, layer.map_or(0, |layer| layer.0)))
         .collect()
 }
 

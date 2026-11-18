@@ -103,7 +103,8 @@ struct PackFrame
     float2 windDirection;
     // What the engine multiplies the scene's light by to show it, as last frame's exposure left it.
     float exposure;
-    float pad0;
+    // What the bloom's sum is multiplied by, to be as bright as what glows (sceneBloom).
+    float bloomScale;
     // The pack's options, in the order its pack.toml lists them: a number as it is, a toggle 0 or 1, a choice its
     // place among the choices.
     float4 options[PACK_OPTIONS / 4];
@@ -120,5 +121,8 @@ struct PackFrame
     // The block light window; null where the camera is in no world of blocks lit by it.
     PackLightWindow* lightWindow;
     uint* lightBytes;
-    uint64_t pad1;
+    // How much brighter than paper white the display shows its brightest, 1 where it is not an HDR display: a pass at
+    // the tonemap may leave highlights above 1, up to it.
+    float displayPeak;
+    uint pad1;
 };

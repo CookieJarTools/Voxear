@@ -83,6 +83,7 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 1] = [(
         ("grade.slang", include_str!("../shader_packs/evening.shaderpack/grade.slang")),
         ("faces.slang", include_str!("../shader_packs/evening.shaderpack/faces.slang")),
         ("water.slang", include_str!("../shader_packs/evening.shaderpack/water.slang")),
+        ("sky.slang", include_str!("../shader_packs/evening.shaderpack/sky.slang")),
     ],
 )];
 
@@ -93,7 +94,7 @@ pub fn builtin_folder(name: &str) -> Option<PathBuf> {
     folder.join(MANIFEST).is_file().then_some(folder)
 }
 
-/// One of the four points of the frame a pass runs at.
+/// One of the points of the frame a pass runs at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackPoint {
@@ -105,6 +106,11 @@ pub enum PackPoint {
     /// Once TAA has resolved the frame, before bloom and exposure, at the
     /// size the picture is shown.
     AfterTaa,
+    /// In place of the engine's tonemap, its grade and a look pack's
+    /// shader: a pass that writes the colour here reads the scene's light
+    /// after TAA, and the glow (`bloom`), and writes the picture as shown,
+    /// from 0 to 1.
+    Tonemap,
     /// Over the finished picture, after the tonemap, the grade and a look
     /// pack's shader, before sharpening and the UI: its colours are as
     /// shown, from 0 to 1.
@@ -112,7 +118,7 @@ pub enum PackPoint {
 }
 
 impl PackPoint {
-    pub const ALL: [Self; 4] = [Self::AfterLighting, Self::AfterFog, Self::AfterTaa, Self::Final];
+    pub const ALL: [Self; 5] = [Self::AfterLighting, Self::AfterFog, Self::AfterTaa, Self::Tonemap, Self::Final];
 
     /// As a manifest writes it.
     pub fn key(self) -> &'static str {
@@ -120,6 +126,7 @@ impl PackPoint {
             Self::AfterLighting => "after_lighting",
             Self::AfterFog => "after_fog",
             Self::AfterTaa => "after_taa",
+            Self::Tonemap => "tonemap",
             Self::Final => "final",
         }
     }
@@ -130,6 +137,7 @@ impl PackPoint {
             Self::AfterLighting => "After lighting",
             Self::AfterFog => "After fog",
             Self::AfterTaa => "After TAA",
+            Self::Tonemap => "Tonemap",
             Self::Final => "Final",
         }
     }
@@ -219,24 +227,28 @@ pub struct PassReads {
     pub history: bool,
     /// The sky light and block light round the camera, in a world of blocks.
     pub block_light: bool,
+    /// The glow of bright light, as the engine's bloom has worked it out:
+    /// at the tonemap and after.
+    pub bloom: bool,
     /// The pack's own targets, by their place among [`PackManifest::targets`].
     pub targets: Vec<usize>,
 }
 
 /// The engine's images, as `reads` names them, and which part of
 /// [`PassReads`] each is, with the functions a program reads it by.
-const ENGINE_READS: [(&str, &str, &[&str]); 6] = [
+const ENGINE_READS: [(&str, &str, &[&str]); 7] = [
     ("color", "PACK_READS_COLOR", &["sceneColor", "sceneColorAt", "colorSize"]),
     ("depth", "PACK_READS_DEPTH", &["sceneDepth", "isSky", "sceneDistance", "scenePosition"]),
     ("normals", "PACK_READS_NORMALS", &["sceneNormal", "sceneRoughness"]),
     ("motion", "PACK_READS_MOTION", &["sceneMotion", "lastUv"]),
     ("history", "PACK_READS_HISTORY", &["lastColor"]),
     ("block_light", "PACK_READS_BLOCK_LIGHT", &["lightAround", "hasBlockLight", "blockGlow"]),
+    ("bloom", "PACK_READS_BLOOM", &["sceneBloom"]),
 ];
 
 impl PassReads {
-    fn engine(&self) -> [bool; 6] {
-        [self.color, self.depth, self.normals, self.motion, self.history, self.block_light]
+    fn engine(&self) -> [bool; 7] {
+        [self.color, self.depth, self.normals, self.motion, self.history, self.block_light, self.bloom]
     }
 
     /// The names `reads` gives them, for the Inspector.
@@ -361,12 +373,16 @@ pub struct PackSurfaces {
     /// program defines `float3 run(WaterSurface surface, WaterLighting
     /// light)`.
     pub water: Option<String>,
+    /// The sky seen behind everything, and the clouds and far weather in
+    /// front of it; its program defines `float3 run(SkySurface surface,
+    /// SkyLighting light)`.
+    pub sky: Option<String>,
 }
 
 impl PackSurfaces {
     /// Its programs, as the manifest names them.
     pub fn named(&self) -> Vec<(&'static str, &str)> {
-        let named = [("blocks", &self.blocks), ("leaves", &self.leaves), ("water", &self.water)];
+        let named = [("blocks", &self.blocks), ("leaves", &self.leaves), ("water", &self.water), ("sky", &self.sky)];
         named.into_iter().filter_map(|(key, program)| program.as_deref().map(|program| (key, program))).collect()
     }
 }
@@ -525,16 +541,15 @@ impl PackManifest {
         let file: ManifestFile = toml::from_str(text)?;
         ensure!(file.format <= PACK_FORMAT, "written by a newer Voxear (format {})", file.format);
         let surface = &file.surface;
-        for (key, program) in [("models", &surface.models), ("sky", &surface.sky)] {
-            ensure!(
-                program.is_none(),
-                "[surface] {key}: programs that light the {key} are not drawn yet, only blocks'"
-            );
-        }
+        ensure!(
+            surface.models.is_none(),
+            "[surface] models: programs that light models are not drawn yet, only blocks', water and the sky"
+        );
         let surfaces = PackSurfaces {
             blocks: surface.blocks.clone(),
             leaves: surface.leaves.clone(),
             water: surface.water.clone(),
+            sky: surface.sky.clone(),
         };
         for (key, program) in surfaces.named() {
             check_program(program).with_context(|| format!("[surface] {key}"))?;
@@ -588,11 +603,19 @@ impl PackManifest {
                     "motion" => reads.motion = true,
                     "history" => reads.history = true,
                     "block_light" => reads.block_light = true,
+                    "bloom" => {
+                        ensure!(
+                            pass.at >= PackPoint::Tonemap,
+                            "the pass `{}` reads `bloom`, which is there from the tonemap on",
+                            pass.name
+                        );
+                        reads.bloom = true;
+                    }
                     name => {
                         let Some(target) = targets.iter().position(|target| target.name == name) else {
                             bail!(
                                 "the pass `{}` reads `{name}`, which is neither one of the frame's images (color, \
-                                 depth, normals, motion, history, block_light) nor a target a pass writes",
+                                 depth, normals, motion, history, block_light, bloom) nor a target a pass writes",
                                 pass.name
                             );
                         };
@@ -615,6 +638,9 @@ impl PackManifest {
             }
             passes.push(PackPass { name: pass.name, program: pass.program, point: pass.at, reads, writes });
         }
+        let tonemaps =
+            passes.iter().filter(|pass| pass.point == PackPoint::Tonemap && pass.writes == PassWrites::Color);
+        ensure!(tonemaps.count() <= 1, "two passes write the colour at the tonemap; one takes the engine's place");
         Ok(Self { description: file.description, options, passes, targets, surfaces })
     }
 
@@ -757,9 +783,10 @@ fn options_code(manifest: &PackManifest) -> String {
 /// The engine's shader modules a pack's surface programs are compiled
 /// into: each module's name, what it is compiled with defined, and the file
 /// it then includes, which [`surface_wrapper`] writes.
-pub const SURFACE_MODULES: [(&str, &str, &str); 2] = [
+pub const SURFACE_MODULES: [(&str, &str, &str); 3] = [
     ("blocks", "VOXEAR_PACK_BLOCKS", "project_pack_blocks.slang"),
     ("water", "VOXEAR_PACK_WATER", "project_pack_water.slang"),
+    ("sky", "VOXEAR_PACK_SKY", "project_pack_sky.slang"),
 ];
 
 impl PackSurfaces {
@@ -768,6 +795,7 @@ impl PackSurfaces {
         match module {
             "blocks" => self.blocks.is_some() || self.leaves.is_some(),
             "water" => self.water.is_some(),
+            "sky" => self.sky.is_some(),
             _ => false,
         }
     }
@@ -776,12 +804,13 @@ impl PackSurfaces {
 /// The file Voxear compiles into its own shader `module` for a pack's
 /// surface programs (`shaders/shading.slang` includes it for block faces
 /// as `project_pack_blocks.slang`, `shaders/water.slang` for water as
-/// `project_pack_water.slang`): the pack's options, each program in a
+/// `project_pack_water.slang`, `shaders/sky.slang` for the sky as
+/// `project_pack_sky.slang`): the pack's options, each program in a
 /// namespace of its own by its file's place as `place` gives it, and the
 /// function the engine calls. For block faces, `packBlockColor` lights a
 /// face with the leaves' program where it is leaves and there is one, else
 /// the blocks' program, else as the engine does; for water,
-/// `packWaterColor`.
+/// `packWaterColor`; for the sky, `packSkyColor`.
 pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&str) -> PathBuf) -> String {
     let included = |program: &str| place(program).to_string_lossy().replace('\\', "/");
     let surfaces = &manifest.surfaces;
@@ -790,6 +819,7 @@ pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&st
     code.push_str(&options_code(manifest));
     let programs = match module {
         "water" => vec![("pack_water", &surfaces.water)],
+        "sky" => vec![("pack_sky", &surfaces.sky)],
         _ => vec![("pack_blocks", &surfaces.blocks), ("pack_leaves", &surfaces.leaves)],
     };
     for (space, program) in programs {
@@ -798,11 +828,17 @@ pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&st
         }
     }
     let unworn = "    if (frame() == nullptr)\n    {\n        return light.engine;\n    }\n";
-    if module == "water" {
-        code.push_str("float3 packWaterColor(WaterSurface surface, WaterLighting light)\n{\n");
-        code.push_str(unworn);
-        code.push_str("    return pack_water::run(surface, light);\n}\n");
-        return code;
+    let others = [
+        ("water", "packWaterColor", "WaterSurface surface, WaterLighting light", "pack_water"),
+        ("sky", "packSkyColor", "SkySurface surface, SkyLighting light", "pack_sky"),
+    ];
+    for (named, function, types, space) in others {
+        if module == named {
+            code.push_str(&format!("float3 {function}({types})\n{{\n"));
+            code.push_str(unworn);
+            code.push_str(&format!("    return {space}::run(surface, light);\n}}\n"));
+            return code;
+        }
     }
     code.push_str("float3 packBlockColor(BlockSurface surface, BlockLighting light)\n{\n");
     code.push_str(unworn);
@@ -1096,7 +1132,7 @@ pub(crate) struct GpuPackFrame {
     pub snow_cover: f32,
     pub wind_direction: [f32; 2],
     pub exposure: f32,
-    pub pad0: f32,
+    pub bloom_scale: f32,
     pub options: [f32; MAX_OPTIONS],
     pub depth_texture: u32,
     pub surface_texture: u32,
@@ -1107,7 +1143,8 @@ pub(crate) struct GpuPackFrame {
     pub sky_light: u64,
     pub light_window: u64,
     pub light_bytes: u64,
-    pub pad1: u64,
+    pub display_peak: f32,
+    pub pad1: u32,
 }
 
 /// What a view's frame gives a pack's frame beyond the engine's own.
@@ -1165,6 +1202,7 @@ impl GpuPackFrame {
             snow_cover: ground.snow,
             wind_direction: frame.wind.direction,
             exposure: facts.exposure,
+            display_peak: frame.post.display_peak.max(1.0),
             sky_light: facts.addresses[0],
             light_window: facts.addresses[1],
             light_bytes: facts.addresses[2],
@@ -1206,7 +1244,7 @@ impl PackPipelines {
             let made = (|| {
                 let module = voxear_rhi::ShaderModule::new(gpu, &format!("{}.slang", pass.name), spirv)?;
                 let format = match pass.writes {
-                    PassWrites::Color if pass.point == PackPoint::Final => LDR_FORMAT,
+                    PassWrites::Color if pass.point >= PackPoint::Tonemap => LDR_FORMAT,
                     PassWrites::Color => HDR_FORMAT,
                     PassWrites::Target(target) => pack.manifest.targets[target].format.vk(),
                 };
@@ -1306,7 +1344,7 @@ impl PackRecorder {
         let size_at = |point: PackPoint| match point {
             PackPoint::AfterLighting | PackPoint::AfterFog => images.drawn,
             PackPoint::AfterTaa => images.resolved,
-            PackPoint::Final => images.shown,
+            PackPoint::Tonemap | PackPoint::Final => images.shown,
         };
         let which = (images.frame_index % 2) as usize;
         let mut targets = Vec::new();
@@ -1402,10 +1440,25 @@ impl PackRecorder {
         self.draw.pack.manifest.runs_at(point)
     }
 
+    /// Whether a pass at `point` writes the colour: at the tonemap, in place
+    /// of the engine's.
+    pub fn writes_color_at(&self, point: PackPoint) -> bool {
+        let manifest = &self.draw.pack.manifest;
+        manifest.passes.iter().any(|pass| pass.point == point && pass.writes == PassWrites::Color)
+    }
+
     /// Records the pack's passes at `point` over `color`, the frame's colour
     /// there; returns the colour after them, which at a point whose colour
-    /// is written in place is `color` itself.
-    pub fn record(&self, fg: &mut FrameGraph<'_>, point: PackPoint, color: ImageId) -> ImageId {
+    /// is written in place is `color` itself. `bloom` is the engine's glow,
+    /// from the tonemap on; at the tonemap, `shown` is the image a pass that
+    /// writes the colour writes the picture into.
+    pub fn record(
+        &self,
+        fg: &mut FrameGraph<'_>,
+        point: PackPoint,
+        color: ImageId,
+        (bloom, shown): (Option<ImageId>, Option<ImageId>),
+    ) -> ImageId {
         if point == PackPoint::AfterTaa
             && let Some((current, _)) = self.history
         {
@@ -1423,6 +1476,9 @@ impl PackRecorder {
                     let copy = self.copy.expect("made for a pass that writes the colour in place");
                     copy_image(fg, "Pack colour copy", color, copy);
                     (copy, color)
+                }
+                PassWrites::Color if point == PackPoint::Tonemap => {
+                    (color, shown.expect("given the image the picture is written into at the tonemap"))
                 }
                 PassWrites::Color => {
                     let pair = match point {
@@ -1459,6 +1515,11 @@ impl PackRecorder {
             {
                 sampled(last);
             }
+            if pass.reads.bloom
+                && let Some(bloom) = bloom
+            {
+                sampled(bloom);
+            }
             for &read in &pass.reads.targets {
                 let (current, last) = self.targets[read];
                 if PassWrites::Target(read) != pass.writes {
@@ -1470,10 +1531,12 @@ impl PackRecorder {
             }
             let source_texture = if pass.reads.color { fg.texture(source).0 } else { NO_TEXTURE };
             let extent = fg.image_desc(target).extent();
+            let bloom_texture = bloom.filter(|_| pass.reads.bloom).map_or(NO_TEXTURE, |bloom| fg.texture(bloom).0);
             let push = Push {
                 texture: source_texture,
                 max_draws: index as u32,
                 size: [extent.width, extent.height],
+                textures: [bloom_texture, 0, 0, 0],
                 ..self.push
             };
             fg.add_pass(&pass.name, &images, &[], move |ctx| {
@@ -1583,7 +1646,12 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         fails(&pass.replace("a.slang", "../a.slang"), "not a file in the pack's folder");
         fails(&pass.replace("a.slang", "a.hlsl"), "not a .slang file");
         fails(&pass.replace("final", "after_sky"), "unknown variant");
-        fails(&format!("[surface]\nsky = \"s.slang\"\n{pass}"), "[surface] sky");
+        fails(&format!("[surface]\nmodels = \"m.slang\"\n{pass}"), "[surface] models");
+        fails("[surface]\nsky = \"../s.slang\"", "[surface] sky");
+        let tonemap = pass.replace("final", "tonemap");
+        let second = tonemap.replace("\"A\"", "\"B\"");
+        fails(&format!("{tonemap}{second}"), "two passes write the colour at the tonemap");
+        fails(&format!("{}reads = [\"bloom\"]\n", pass.replace("final", "after_taa")), "from the tonemap on");
         fails("[surface]\nblocks = \"../b.slang\"", "not a file in the pack's folder");
         fails("[surface]\nshadows = \"s.slang\"", "unknown field");
         fails(&format!("[options]\nx = {{ kind = \"number\", range = [1.0, 0.0], default = 0.5 }}\n{pass}"), "range");

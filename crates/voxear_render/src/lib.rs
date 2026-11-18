@@ -4119,6 +4119,9 @@ impl View {
                     addresses: [sky_light, light_window, light_bytes],
                 };
                 let mut pack_frame = shader_packs::GpuPackFrame::of(&frame_data, facts);
+                // What the bloom's sum is multiplied by to be as bright as what glows, as the composite has it.
+                let scatter = extracted.post.bloom.scatter.clamp(0.0, 0.999);
+                pack_frame.bloom_scale = (1.0 - scatter) / (1.0 - scatter.powi(6));
                 let mut recorder =
                     shader_packs::PackRecorder::prepare(fg, (gpu, bindless), draw.clone(), &images, &mut pack_frame)?;
                 let written = buffers.pack_frame.as_ref().expect("made for the pack");
@@ -4265,7 +4268,7 @@ impl View {
         // The pack's passes once the opaque surfaces and the sky are lit.
         let mut lit = |fg: &mut FrameGraph<'_>| {
             if let Some(pack) = &pack {
-                pack.record(fg, shader_packs::PackPoint::AfterLighting, hdr);
+                pack.record(fg, shader_packs::PackPoint::AfterLighting, hdr, (None, None));
             }
         };
         let (under_water, particles, smoke) =

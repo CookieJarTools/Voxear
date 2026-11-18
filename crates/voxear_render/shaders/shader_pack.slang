@@ -267,6 +267,69 @@ float2 lastUv(float2 uv)
 }
 #endif
 
+#if PACK_READS_BLOOM
+// The glow round bright light, as the engine's bloom works it out, as bright as what glows: added to the scene's
+// light, a little of it, before a tonemap.
+float3 sceneBloom(float2 uv)
+{
+    return sampleImage(push.textures.x, uv).rgb * frame()->bloomScale;
+}
+
+// Whether there is a glow: the Post Process's bloom is on.
+bool bloomDrawn()
+{
+    return push.textures.x != PACK_NO_TEXTURE;
+}
+#endif
+
+// The engine's tonemap curves, for a pass at the tonemap: light, exposed, to the picture as shown, from 0 to 1.
+// A fit of the filmic curve films are graded to.
+float3 tonemapFilmic(float3 x)
+{
+    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+}
+
+// A curve that keeps colours as they are up to the highlights.
+float3 tonemapNeutral(float3 color)
+{
+    static const float START = 0.76;
+    static const float DESATURATION = 0.15;
+    float x = min(color.r, min(color.g, color.b));
+    color -= x < 0.08 ? x - 6.25 * x * x : 0.04;
+    float peak = max(color.r, max(color.g, color.b));
+    if (peak < START)
+    {
+        return saturate(color);
+    }
+    float d = 1.0 - START;
+    float newPeak = 1.0 - d * d / (peak + d - START);
+    color *= newPeak / peak;
+    float g = 1.0 - 1.0 / (DESATURATION * (peak - newPeak) + 1.0);
+    return saturate(lerp(color, float3(newPeak), g));
+}
+
+// The engine's default: bright colours go towards white as film's do, with `contrast` and `saturation` 1 as it has
+// them.
+float3 tonemapSoft(float3 c, float contrast = 1.0, float saturation = 1.0)
+{
+    float3 v = float3(0.842479062253094, 0.0423282422610123, 0.0423756549057051) * c.r
+        + float3(0.0784335999999992, 0.878468636469772, 0.0784336) * c.g
+        + float3(0.0792237451477643, 0.0791661274605434, 0.879142973793104) * c.b;
+    static const float LOW = -12.47393;
+    static const float HIGH = 4.026069;
+    v = (clamp(log2(max(v, 1e-10)), LOW, HIGH) - LOW) / (HIGH - LOW);
+    float3 v2 = v * v;
+    float3 v4 = v2 * v2;
+    v = 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;
+    v = pow(max(v, 0.0), contrast);
+    float l = luminance(v);
+    v = l + saturation * (v - l);
+    float3 o = float3(1.19687900512017, -0.0528968517574562, -0.0529716355144438) * v.r
+        + float3(-0.0980208811401368, 1.15190312990417, -0.0980434501171241) * v.g
+        + float3(-0.0990297440797205, -0.0989611768448433, 1.15107367264116) * v.b;
+    return pow(max(o, 0.0), 2.2);
+}
+
 #if PACK_READS_HISTORY
 // Last frame's colour, as it was after TAA: light, before exposure.
 float4 lastColor(float2 uv)

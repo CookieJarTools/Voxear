@@ -101,7 +101,7 @@ fn the_engines_the_projects_and_a_players_packs_are_listed_and_worn() {
     }
     let evening = game.engine.world.resource::<WornShaderPack>().unwrap().pack.clone();
     assert_eq!(evening.passes.len(), 3, "rays, the light they give, and the grade");
-    assert_eq!(evening.modules.len(), 2, "and the programs that light its block faces and its water");
+    assert_eq!(evening.modules.len(), 3, "and the programs that light its block faces and its water and draw its sky");
     shader_packs::wear(&mut game.engine.world, &mut game.content, "").unwrap();
     game.tick(1.0 / 60.0, None);
     assert!(drawn(&game).is_none() && shader_packs::worn(&game.engine.world).is_none());

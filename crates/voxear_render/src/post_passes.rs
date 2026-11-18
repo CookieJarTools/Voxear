@@ -131,7 +131,7 @@ pub fn record(
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
     }
     if let Some(pack) = &input.pack {
-        pack.record(fg, PackPoint::AfterFog, hdr);
+        pack.record(fg, PackPoint::AfterFog, hdr, (None, None));
     }
     // FSR's reactive mask is made from the scene before and after what is drawn over it.
     let fsr_chosen = input.fsr3.is_some()
@@ -205,7 +205,7 @@ pub fn record(
     }
 
     if let Some(pack) = &input.pack {
-        scene = pack.record(fg, PackPoint::AfterTaa, scene);
+        scene = pack.record(fg, PackPoint::AfterTaa, scene, (None, None));
     }
 
     let bloom = settings.bloom.enabled && settings.bloom.intensity > 0.0;
@@ -247,8 +247,11 @@ pub fn record(
     // Sharpening and FXAA need the finished image, so they get a pass of their own, as a shader pack's passes over
     // the finished picture do.
     let pack_final = input.pack.as_ref().filter(|pack| pack.runs_at(PackPoint::Final));
+    // A pack's pass that writes the colour at the tonemap takes the composite's place.
+    let pack_tonemap = input.pack.as_ref().filter(|pack| pack.runs_at(PackPoint::Tonemap));
+    let tonemapped = pack_tonemap.is_some_and(|pack| pack.writes_color_at(PackPoint::Tonemap));
     let sharpened = settings.anti_aliasing.mode == AntiAliasingMode::Fxaa || settings.anti_aliasing.sharpness > 0.0;
-    let finish = sharpened || input.keep_ldr || pack_final.is_some();
+    let finish = sharpened || input.keep_ldr || pack_final.is_some() || tonemapped;
     let composited = if finish { fg.create_image(gpu, bindless, "ldr", full(LDR_FORMAT))? } else { input.output };
     let bloom_texture = if bloom { fg.texture(levels[0].0).0 } else { NO_TEXTURE };
     let push = Push { textures: [fg.texture(scene).0, bloom_texture, 0, 0], output: u32::from(!finish), ..push };
@@ -268,18 +271,24 @@ pub fn record(
     let composite_rect = if composited == input.output { rect } else { None };
     let origin = |rect: Option<vk::Rect2D>| rect.map_or([0, 0], |r| [r.offset.x as u32, r.offset.y as u32]);
     let push = Push { size: origin(composite_rect), ..push };
-    fg.add_pass("Composite", &images, &buffers, move |ctx| {
-        draw_into(ctx, composite, &push, composited, composite_rect)
-    });
+    let glow = bloom.then(|| levels[0].0);
+    if let Some(pack) = pack_tonemap {
+        pack.record(fg, PackPoint::Tonemap, scene, (glow, Some(composited)));
+    }
+    if !tonemapped {
+        fg.add_pass("Composite", &images, &buffers, move |ctx| {
+            draw_into(ctx, composite, &push, composited, composite_rect)
+        });
+    }
 
     let finished = match pack_final {
-        Some(pack) => pack.record(fg, PackPoint::Final, composited),
+        Some(pack) => pack.record(fg, PackPoint::Final, composited, (glow, None)),
         None => composited,
     };
     if finish {
         let output = input.output;
         // Over a pack's picture with neither FXAA nor sharpening, only dithered.
-        let level = u32::from(pack_final.is_some() && !sharpened);
+        let level = u32::from((pack_final.is_some() || tonemapped) && !sharpened);
         let push = Push { textures: [fg.texture(finished).0, 0, 0, 0], size: origin(rect), level, ..push };
         let images = [(finished, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
         fg.add_pass("Finish", &images, &[], move |ctx| draw_into(ctx, pipelines.finish, &push, output, rect));

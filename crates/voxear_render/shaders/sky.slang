@@ -5,6 +5,12 @@
 
 #include "atmosphere.slang"
 
+#ifdef VOXEAR_PACK_SKY
+// A worn shader pack's sky program, as src/shader_packs.rs's `surface_wrapper` writes it: it defines packSkyColor,
+// which draws the sky in place of the engine.
+#include "project_pack_sky.slang"
+#endif
+
 struct SkyOut
 {
     float4 position : SV_Position;
@@ -161,10 +167,12 @@ float3 pictureSky(Frame* frame, float3 direction)
     return textures[NonUniformResourceIndex(frame->lighting.skyPicture - 1)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0).rgb;
 }
 
-float3 atmosphereSky(Frame* frame, float3 direction)
+// The sky that way, and apart from it the sun's or the moon's disc in front of it.
+float3 atmosphereSky(Frame* frame, float3 direction, out float3 disc)
 {
     Atmosphere atmosphere = frame->lighting.atmosphere;
     float3 color = skyToward(frame, direction) * skyLook(frame);
+    disc = 0.0;
     float3 origin = cameraInAtmosphere(frame);
     float height = length(origin);
     float toSun = dot(direction, towardsSun(frame));
@@ -173,7 +181,7 @@ float3 atmosphereSky(Frame* frame, float3 direction)
         if (raySphere(origin, direction, atmosphere.bottomRadius) < 0.0)
         {
             float3 through = transmittanceToSpace(frame->lighting, height, dot(direction, origin / height));
-            color += moonDisc(frame, direction, towardsSun(frame)) * through;
+            disc = moonDisc(frame, direction, towardsSun(frame)) * through;
         }
         return color;
     }
@@ -182,7 +190,7 @@ float3 atmosphereSky(Frame* frame, float3 direction)
         // Antialiased over the disc's last tenth, and dimmed through the air as its light is.
         float edge = saturate((toSun - atmosphere.sunCosRadius) / max((1.0 - atmosphere.sunCosRadius) * 0.2, 1e-7));
         float3 through = transmittanceToSpace(frame->lighting, height, dot(direction, origin / height));
-        color += frame->sunColor * through * SUN_DISC_BRIGHTNESS * edge;
+        disc = frame->sunColor * through * SUN_DISC_BRIGHTNESS * edge;
     }
     return color;
 }
@@ -195,9 +203,13 @@ SkyFragmentOut skyFragment(SkyOut input)
     float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
     SkyFragmentOut o;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
-    float3 color = atmosphere ? atmosphereSky(frame, direction)
+    float3 disc = 0.0;
+    float3 color = atmosphere ? atmosphereSky(frame, direction, disc)
         : frame->lighting.skyPicture != 0 ? pictureSky(frame, direction)
         : gradientSky(frame, direction);
+    float3 behind = color;
+    color += disc;
+    float3 starLight = 0.0;
     if (frame->stars > 0.0 && direction.y > 0.0)
     {
         // Dimmed through the air as everything beyond it is: faint near the horizon.
@@ -209,7 +221,8 @@ SkyFragmentOut skyFragment(SkyOut input)
         // why stars go by day: each shows only as far as it outshines that, and then as the eye sees it.
         float3 stars = starField(direction, length(fwidth(direction))) * through;
         float3 seen = saturate((stars - color * STAR_CONTRAST) / max(stars, 1e-9));
-        color += stars / STAR_BRIGHTNESS * seen * STARS_ON_SCREEN / exposureScale(frame) * frame->stars;
+        starLight = stars / STAR_BRIGHTNESS * seen * STARS_ON_SCREEN / exposureScale(frame) * frame->stars;
+        color += starLight;
     }
     Clouds clouds = frame->lighting.clouds;
     // The clouds in front of all of it: what they add, and how much of the sky behind shows through.
@@ -220,7 +233,8 @@ SkyFragmentOut skyFragment(SkyOut input)
     // What falls from weather far off hangs under its cloud: in front of the clouds seen from under them, and behind
     // them seen from above.
     float4 curtain = weatherCurtain(frame, direction, 1.0e5, input.ndc * 0.5 + 0.5);
-    if (levelHeight(frame, frame->cameraPosition) < clouds.base)
+    bool underClouds = levelHeight(frame, frame->cameraPosition) < clouds.base;
+    if (underClouds)
     {
         color = (color * seen.a + seen.rgb) * curtain.a + curtain.rgb;
     }
@@ -228,6 +242,23 @@ SkyFragmentOut skyFragment(SkyOut input)
     {
         color = (color * curtain.a + curtain.rgb) * seen.a + seen.rgb;
     }
+#ifdef VOXEAR_PACK_SKY
+    {
+        SkySurface surface;
+        surface.direction = direction;
+        surface.uv = input.position.xy / float2(frame->viewport);
+        surface.pixel = input.position.xy;
+        surface.underClouds = underClouds;
+        SkyLighting light;
+        light.sky = behind;
+        light.disc = disc;
+        light.stars = starLight;
+        light.clouds = seen;
+        light.weather = curtain;
+        light.engine = color;
+        color = packSkyColor(surface, light);
+    }
+#endif
     o.color = float4(color, 1.0);
     o.velocity = skyMotion(frame, direction);
     // Where clouds cover it, the sky moves as they do, for TAA to find last frame's of them where they were: the

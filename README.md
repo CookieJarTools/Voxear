@@ -44,7 +44,7 @@ in the Inspector, and the Blocks panel below.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/roadmap-dark.svg">
-  <img alt="Voxear's roadmap. Done: the foundation, the rendering core, content, scenes and levels, packages, input, localization, audio and physics, lighting, vegetation and water. In progress: the editor and Voxear UI, animation, gameplay kits with heat and cold, materials and particles, terrain, navigation, cameras and Timeline, 2D and networking, and shader packs. Planned: modding and platform services, shipping, and virtualised geometry." src="docs/images/roadmap-light.svg">
+  <img alt="Voxear's roadmap. Done: the foundation, the rendering core, content, scenes and levels, packages, input, localization, audio and physics, lighting, vegetation, water and shader packs. In progress: the editor and Voxear UI, animation, gameplay kits with heat and cold, materials and particles, terrain, navigation, cameras and Timeline, and 2D and networking. Planned: modding and platform services, shipping, and virtualised geometry." src="docs/images/roadmap-light.svg">
 </picture>
 
 - [Roadmap](docs/ROADMAP.md): each milestone in full, and open questions.

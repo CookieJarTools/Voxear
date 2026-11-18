@@ -767,14 +767,21 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        // A shader pack's programs, beside its manifest in its folder, compiled as the pack is worn.
+        // A shader pack's programs, beside its manifest in its folder and the folders in it, which the game reads
+        // as the pack's programs include them.
         AssetKind::ShaderPack => {
             let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
             let mut programs = Vec::new();
-            for entry in std::fs::read_dir(db.file(folder))? {
-                let name = entry?.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".slang") {
-                    programs.push(format!("{folder}/{name}"));
+            let mut waiting = vec![folder.to_string()];
+            while let Some(inside) = waiting.pop() {
+                for entry in std::fs::read_dir(db.file(&inside))? {
+                    let entry = entry?;
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if entry.file_type()?.is_dir() {
+                        waiting.push(format!("{inside}/{name}"));
+                    } else if name.ends_with(".slang") {
+                        programs.push(format!("{inside}/{name}"));
+                    }
                 }
             }
             programs.sort();

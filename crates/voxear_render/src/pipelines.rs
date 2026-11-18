@@ -26,6 +26,10 @@ pub const AO_FORMAT: vk::Format = vk::Format::R8_UNORM;
 /// mirror's reflection. Alpha is 0 where two LODs crossfade, so ambient
 /// occlusion knows its depth is from either.
 pub const SURFACE_FORMAT: vk::Format = vk::Format::A2B10G10R10_UNORM_PACK32;
+/// What each pixel's surface is, beside it, for a shader pack's passes that
+/// read it: its kind in the top bits and what of it below, the bits held as
+/// a float's (`depthFragment` in `shaders/occlusion.slang`), 0 for the sky.
+pub const SURFACE_ID_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
 /// Its history, which blends a tenth of each frame in, so eight bits would
 /// stop short of the value it is heading for.
 pub const AO_HISTORY_FORMAT: vk::Format = vk::Format::R16_SFLOAT;
@@ -55,6 +59,9 @@ pub struct MeshPipelines {
 
 #[derive(Clone, Copy)]
 pub struct Pipelines {
+    /// The depth passes write each pixel's surface id beside its normal
+    /// (`SURFACE_ID_FORMAT`), as a worn shader pack that reads them wants.
+    pub surface_ids: bool,
     pub clusters: vk::Pipeline,
     pub cull: vk::Pipeline,
     /// Turns each instance draw into draws of its meshlets that survive culling.
@@ -392,7 +399,7 @@ impl Pipelines {
             Some(_) => Some(module("ddgi")?),
             None => None,
         };
-        let made = Self::make_all(gpu, layout, (&modules, &meshlets, &ddgi), formats, progress);
+        let made = Self::make_all(gpu, layout, (&modules, &meshlets, &ddgi), (formats, shaders.surface_ids), progress);
         for module in modules.into_iter().chain(meshlets.into_iter().flatten()).chain(ddgi) {
             module.destroy(gpu);
         }
@@ -406,11 +413,11 @@ impl Pipelines {
         gpu: &Gpu,
         layout: vk::PipelineLayout,
         modules: Modules,
-        formats: (vk::Format, vk::Format),
+        (formats, surface_ids): ((vk::Format, vk::Format), bool),
         progress: &mut dyn FnMut(usize, usize),
     ) -> Result<Self> {
         let noting = Maker::Noting(layout, RefCell::new(Vec::new()));
-        Self::make(&noting, modules, formats)?;
+        Self::make(&noting, modules, formats, surface_ids)?;
         let Maker::Noting(_, jobs) = noting else { unreachable!("made noting") };
         let jobs = jobs.into_inner();
         let threads = pipeline_threads();
@@ -435,7 +442,7 @@ impl Pipelines {
         tracing::info!("made {} pipelines in {took:.1} s on {threads} threads", jobs.len());
         let names = jobs.iter().map(|job| job.name().to_string());
         let handing = Maker::Handing(RefCell::new(names.zip(made).collect::<Vec<_>>().into_iter()));
-        let mut pipelines = Self::make(&handing, modules, formats)?;
+        let mut pipelines = Self::make(&handing, modules, formats, surface_ids)?;
         if let Maker::Handing(left) = &handing {
             ensure!(left.borrow().len() == 0, "fewer pipelines were asked for than were made");
         }
@@ -448,7 +455,11 @@ impl Pipelines {
         maker: &Maker,
         (modules, meshlets, ddgi): Modules,
         (output_format, window_format): (vk::Format, vk::Format),
+        surface_ids: bool,
     ) -> Result<Self> {
+        // The depth passes' targets: each pixel's normal and roughness, and its surface id where a pack reads them.
+        let surface_formats: &[vk::Format] =
+            if surface_ids { &[SURFACE_FORMAT, SURFACE_ID_FORMAT] } else { &[SURFACE_FORMAT] };
         let [
             cull,
             pyramid,
@@ -518,6 +529,7 @@ impl Pipelines {
         let output = &[output_format];
 
         Ok(Self {
+            surface_ids,
             clusters: maker.compute("Light clusters", clusters, c"clusterMain")?,
             cull: maker.compute("Cull", cull, c"cullMain")?,
             meshlet_cull: maker.compute("Meshlets", cull, c"meshletMain")?,
@@ -597,7 +609,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
             })?,
             depth: graphics(&GraphicsPipelineDesc {
-                color_formats: &[SURFACE_FORMAT],
+                color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -618,7 +630,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (two-sided)", forward, c"vertexMain", c"fragmentMain")
             })?,
             depth_two_sided: graphics(&GraphicsPipelineDesc {
-                color_formats: &[SURFACE_FORMAT],
+                color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -883,7 +895,7 @@ impl Pipelines {
             skinning: maker.compute("Skinning", skinning, c"skinMain")?,
             dice_patch: maker.compute("Dice (pieces)", dice, c"dicePatchMain")?,
             depth_diced: graphics(&GraphicsPipelineDesc {
-                color_formats: &[SURFACE_FORMAT],
+                color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -916,7 +928,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (terrain)", terrain, c"terrainVertex", c"fragmentMain")
             })?,
             terrain_depth: graphics(&GraphicsPipelineDesc {
-                color_formats: &[SURFACE_FORMAT],
+                color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -965,7 +977,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
             block_depth: graphics(&GraphicsPipelineDesc {
-                color_formats: &[SURFACE_FORMAT],
+                color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -1019,7 +1031,7 @@ impl Pipelines {
             grass_clamp: maker.compute("Grass clamp", grass, c"grassClamp")?,
             // Blades are thin cards and tufts, seen from both sides.
             grass_depth: graphics(&GraphicsPipelineDesc {
-                color_formats: &[SURFACE_FORMAT],
+                color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
@@ -1202,7 +1214,10 @@ impl Pipelines {
                     c"portalDepthNearerFragment",
                 )
             })?,
-            mesh: meshlets.as_ref().map(|modules| mesh_pipelines(maker, modules, scene_formats)).transpose()?,
+            mesh: meshlets
+                .as_ref()
+                .map(|modules| mesh_pipelines(maker, modules, (scene_formats, surface_formats)))
+                .transpose()?,
             ddgi_software: [
                 maker.compute("DDGI rays", ddgi_software, c"ddgiRaysMain")?,
                 maker.compute("DDGI update", ddgi_software, c"ddgiUpdateMain")?,
@@ -1404,7 +1419,7 @@ impl Pipelines {
 fn mesh_pipelines(
     maker: &Maker,
     [task, forward, shadow]: &[ShaderModule; 3],
-    scene_formats: &[vk::Format],
+    (scene_formats, surface_formats): (&[vk::Format], &[vk::Format]),
 ) -> Result<MeshPipelines> {
     let graphics = |desc: &GraphicsPipelineDesc| maker.graphics(desc);
     let task = (task, c"meshletTask");
@@ -1459,7 +1474,7 @@ fn mesh_pipelines(
             ..GraphicsPipelineDesc::mesh("Opaque", task, forward, Some(c"fragmentMain"))
         })?,
         depth: graphics(&GraphicsPipelineDesc {
-            color_formats: &[SURFACE_FORMAT],
+            color_formats: surface_formats,
             depth_format: Some(DEPTH_FORMAT),
             depth_write: true,
             depth_compare: vk::CompareOp::GREATER_OR_EQUAL,

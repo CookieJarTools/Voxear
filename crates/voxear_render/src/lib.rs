@@ -639,6 +639,8 @@ pub struct Renderer {
     /// into, drawn in place of its own, and the compile they are of.
     pack_modules: Vec<(String, Vec<u8>)>,
     pack_modules_of: u64,
+    /// The depth pipelines write each pixel's surface id, for the pack worn.
+    pack_surface_ids: bool,
     /// The shaders the pipelines are made from, as built in or as hot
     /// reload compiled them, before a project's custom shaders.
     shaders: ShaderSet,
@@ -804,6 +806,7 @@ impl Renderer {
             shader_pack_failed: 0,
             pack_modules: Vec::new(),
             pack_modules_of: 0,
+            pack_surface_ids: false,
             shaders,
             custom: CustomShaders::default(),
             views: vec![first],
@@ -1075,7 +1078,7 @@ impl Renderer {
             return Ok(());
         }
         self.gpu.wait_idle();
-        let shaders = self.shaders.replaced(&self.pack_modules);
+        let shaders = self.shaders.replaced(&self.pack_modules).with_surface_ids(self.pack_surface_ids);
         let pipelines = Pipelines::new(&self.gpu, &self.bindless, (wanted, self.window_format), &shaders)?;
         self.pipelines.destroy(&self.gpu);
         self.pipelines = pipelines;
@@ -1645,19 +1648,28 @@ impl Renderer {
         let wanted: Vec<(String, Vec<u8>)> = worn
             .map(|worn| worn.pack.modules.iter().map(|(name, spirv)| (name.clone(), spirv.to_vec())).collect())
             .unwrap_or_default();
-        if wanted.is_empty() && self.pack_modules.is_empty() {
+        // A pass that reads what each pixel's surface is has the depth pipelines write it.
+        let ids = worn.is_some_and(|worn| worn.pack.manifest.passes.iter().any(|pass| pass.reads.surface_ids));
+        if wanted.is_empty() && self.pack_modules.is_empty() && ids == self.pack_surface_ids {
             return;
         }
-        let shaders = self.shaders.replaced(&wanted);
+        let shaders = self.shaders.replaced(&wanted).with_surface_ids(ids);
         self.gpu.wait_idle();
         match Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders) {
             Ok(pipelines) => {
                 self.pipelines.destroy(&self.gpu);
                 self.pipelines = pipelines;
                 self.pack_modules = wanted;
+                self.pack_surface_ids = ids;
             }
             Err(error) => tracing::error!("the shader pack's surface programs cannot be drawn: {error:#}"),
         }
+    }
+
+    /// Whether the depth passes write each pixel's surface id, for a worn
+    /// pack's pass that reads them.
+    pub fn surface_ids_drawn(&self) -> bool {
+        self.pipelines.surface_ids
     }
 
     /// Whether block faces are drawn with a worn pack's surface programs.
@@ -1730,7 +1742,7 @@ impl Renderer {
     pub fn use_custom_modules(&mut self, modules: &[(String, Vec<u8>)]) -> Result<()> {
         let shaders = self.shaders.replaced(modules);
         self.gpu.wait_idle();
-        let drawn = shaders.replaced(&self.pack_modules);
+        let drawn = shaders.replaced(&self.pack_modules).with_surface_ids(self.pack_surface_ids);
         let pipelines = Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &drawn)?;
         self.pipelines.destroy(&self.gpu);
         self.pipelines = pipelines;
@@ -1755,7 +1767,7 @@ impl Renderer {
         let made = compiled.and_then(|modules| {
             let shaders = self.shaders.replaced(&modules);
             self.gpu.wait_idle();
-            let drawn = shaders.replaced(&self.pack_modules);
+            let drawn = shaders.replaced(&self.pack_modules).with_surface_ids(self.pack_surface_ids);
             Ok((Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &drawn)?, shaders))
         });
         match made {
@@ -3505,6 +3517,11 @@ impl View {
         // A view through a Portal draws its depth first too, so each pixel of its opening is shaded once.
         // A shader pack's pass that reads normals has them written too.
         let pack_normals = portal.is_none() && setup.pack.as_ref().is_some_and(shader_packs::PackDraw::reads_normals);
+        // And one that reads what each pixel's surface is, beside it, once the pipelines write it.
+        let pack_ids = portal.is_none()
+            && pipelines.surface_ids
+            && setup.pack.as_ref().is_some_and(shader_packs::PackDraw::reads_surface_ids);
+        let pack_normals = pack_normals || pack_ids;
         let depth_first =
             ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || pack_normals;
         let surface = match depth_first || portal.is_some() {
@@ -3514,6 +3531,14 @@ impl View {
                 let surface = fg.create_image(gpu, bindless, "surface", desc)?;
                 frame_data.post.surface_texture = fg.texture(surface).0;
                 Some(surface)
+            }
+            false => None,
+        };
+        let surface_ids = match pack_ids && surface.is_some() {
+            true => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let desc = ImageDesc::new(extent.width, extent.height, pipelines::SURFACE_ID_FORMAT, usage);
+                Some(fg.create_image(gpu, bindless, "surface ids", desc)?)
             }
             false => None,
         };
@@ -4130,6 +4155,7 @@ impl View {
                     depth,
                     motion: velocity,
                     surface,
+                    surface_ids,
                     drawn: extent,
                     resolved,
                     shown: output_extent,
@@ -4262,6 +4288,7 @@ impl View {
             ambient_occlusion,
             contact_shadows,
             surface,
+            surface_ids,
             reflections,
             reflection_pyramid,
             atmosphere,

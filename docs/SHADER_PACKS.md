@@ -160,7 +160,7 @@ passes took the same with and without it. The plan's estimates, before it was bu
    own cascade pass. ✅ Built: the settings and filter, light through leaves and glass, and the cascades' layout in
    place of a pass of a pack's own.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
-   surface id image for passes that want it. Built, but for the surface id image.
+   surface id image for passes that want it. ✅ Built.
 
 ## What stage 1 built
 
@@ -306,9 +306,19 @@ Players' packs, from C# and a ready-made menu. Settled on the way:
 - **A game's packs are compiled when it is built**, into `ShaderPacks` beside `Shaders`, read by the game before it
   compiles anything; programs no pack has any more are taken out. A built game now reads every program a pack names,
   its surface programs and shadow filter too, not only its passes'.
-- **Not yet:** the surface id image (an attachment of its own in every depth pipeline, and a variant of each without
-  it); and a program that includes a file its manifest does not name compiles in the editor but not in a built
-  game, which reads a pack's programs by name.
+- **The surface id image:** a pass that reads `surface_id` gets each pixel's surface id (`sceneSurfaceId`): its kind
+  in the top four bits (a model, a block face, a terrain, or 0 for the sky) and below them a model's material's
+  number, or a block face's look and what it is (`surfaceKind`, `surfaceMaterial`, `surfaceBlockLook`,
+  `surfaceBlockKind`). `depthFragment` writes it always, to a second target the depth pipelines have only while a
+  worn pack reads ids (`ShaderSet::surface_ids`, so the pipelines are made again as for surface programs); a target
+  a pipeline lacks drops what is written there, so without such a pack nothing changes. It is `R32_SFLOAT` holding
+  the id's bits, as the textures a pass reads are float; the kind in the top bits keeps every id a normal number.
+  4 bytes a pixel, the image made only for such a pack's frames. Whether a block face glows is not in it: the depth
+  passes do not know.
+- **A pack's own includes:** a program may include files of its pack's, in folders of it too. The compile is hashed
+  by the programs the manifest names and what they include of the pack's, as deep as they go (`program_files`), and a
+  built game reads the same files from its bundles, the build shipping every `.slang` under the pack's folder; so
+  the game finds what its build compiled whichever files the folder holds.
 
 ## Questions to settle
 

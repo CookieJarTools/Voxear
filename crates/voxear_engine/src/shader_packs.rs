@@ -113,13 +113,14 @@ pub fn load(content: &mut Content, reference: &str, live: bool) -> Result<(PackM
         Some(file) => Ok((manifest, PackFiles::Folder(file.parent().unwrap_or(Path::new(".")).to_path_buf()))),
         None => {
             let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
-            // Every program it names: its passes', its surface programs and its shadow filter.
-            let mut programs: Vec<(String, String)> = Vec::new();
+            // Every program it names (its passes', its surface programs and its shadow filter), and the files of its
+            // own they include.
             for program in manifest.programs() {
                 let named = format!("{folder}/{program}");
-                let text = content.read_text(&named).with_context(|| format!("reading {named}"))?;
-                programs.push((program.to_string(), text));
+                content.read_text(&named).with_context(|| format!("reading {named}"))?;
             }
+            let programs =
+                packs::program_files(&manifest, &mut |name| content.read_text(&format!("{folder}/{name}")).ok());
             Ok((manifest, PackFiles::Files(programs.into())))
         }
     }

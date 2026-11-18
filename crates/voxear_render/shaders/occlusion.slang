@@ -41,9 +41,16 @@ Occlusion ambientOcclusion(Frame* frame, float2 pixel, float nv, float roughness
 // pixel's normal, folded flat, and roughness beside it, so reflections pass
 // over what is too rough to show them and trace from the surface's own
 // smooth normal, and in alpha 0 where two LODs crossfade, 1 elsewhere
-// (SURFACE_FORMAT in src/pipelines.rs).
+// (SURFACE_FORMAT in src/pipelines.rs). Beside them, what the surface is, for a shader pack's passes that read it
+// (packSurfaceId), held as a float's bits (SURFACE_ID_FORMAT): written only where the pipeline has that target.
+struct DepthOut
+{
+    float4 surface : SV_Target0;
+    float id : SV_Target1;
+};
+
 [shader("fragment")]
-float4 depthFragment(VertexOut input, bool frontFacing : SV_IsFrontFace) : SV_Target0
+DepthOut depthFragment(VertexOut input, bool frontFacing : SV_IsFrontFace)
 {
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
@@ -93,7 +100,18 @@ float4 depthFragment(VertexOut input, bool frontFacing : SV_IsFrontFace) : SV_Ta
     roughness = smoothedRoughness(push.frame, normal, roughness);
     // Marked while its LODs crossfade, as the depth then is either one's, pixel by pixel (ambient_occlusion.slang).
     float settled = input.fade == 0 ? 1.0 : 0.0;
-    return float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), settled);
+    DepthOut o;
+    o.surface = float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), settled);
+#if defined(BLOCK_FACES)
+    // What the face is, and its look's number in its world.
+    uint id = packSurfaceId(PACK_SURFACE_BLOCK, ((terrainKind & 0xFFF) << 16) | (input.lod & 0xFF));
+#elif defined(TERRAIN_SHADING)
+    uint id = packSurfaceId(PACK_SURFACE_TERRAIN, 0);
+#else
+    uint id = packSurfaceId(PACK_SURFACE_MODEL, input.material);
+#endif
+    o.id = asfloat(id);
+    return o;
 }
 
 // Whether the contact shadows pass found something between a pixel and the

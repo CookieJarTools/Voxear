@@ -3989,7 +3989,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   generator graph and the Model window by call rather than by file; pointer and key input; events pushed to
   tools.
 
-## Shader packs (in progress)
+## Shader packs (done)
 
 Programs that replace how a game is lit and finished, chosen by whoever plays, as look and texture packs are: a
 pack's own full-screen passes over the engine's buffers first, then its lighting of block faces, leaves and water
@@ -4040,7 +4040,10 @@ Done:
 - **Players' packs** (stage 5). C# `ShaderPacks` and `ShaderPack`; `ShaderPackScreen`, a ready-made menu of packs and
   the worn one's options; the choice and options kept beside the saves and worn again at start; compiled programs
   kept on disk by a hash that is the same on any machine; a game's packs compiled when it is built.
-  - Not yet: the surface id image for passes
+- **What each pixel's surface is, and packs' own includes in a built game.** `reads = ["surface_id"]`: the depth
+  passes write each pixel's surface id beside its normal (a model's material, a block face's look and what it is, a
+  terrain's), only while a worn pack reads them, the depth pipelines made again with the target. A built game reads
+  the files a pack's programs include of its own, as deep as they go.
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)

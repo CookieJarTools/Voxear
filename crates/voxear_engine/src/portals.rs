@@ -143,6 +143,15 @@ pub struct NavPortal {
     pub exit: Vec3,
     pub from: voxear_scene::DimensionId,
     pub into: voxear_scene::DimensionId,
+    /// Which layers' Objs it lets through, a bit a layer.
+    pub passes: u32,
+}
+
+impl NavPortal {
+    /// Whether it lets an Obj of `layer` through.
+    pub fn passes(&self, layer: u8) -> bool {
+        self.passes & (1 << (layer & 31)) != 0
+    }
 }
 
 /// How far in front of a Portal's opening the way into it begins, and how
@@ -165,6 +174,7 @@ pub fn nav_portals(world: &World) -> Vec<NavPortal> {
                 exit: way.carry.point(through),
                 from: way.from,
                 into: way.into,
+                passes: way.portal.passes,
             }
         })
         .collect()

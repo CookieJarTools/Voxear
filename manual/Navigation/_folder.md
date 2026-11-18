@@ -28,5 +28,4 @@ Choose **Gizmos ▸ Navigation** in the Scene view's header. Every place somethi
 
 - Climbing vines and ropes without a Nav Link.
 - Agent sizes in Project Settings, and costs of ground set per agent.
-- Going through two Portals one after the other, into a dimension two away.
-- Portals that let only some layers through: searches take them for every agent.
+- Walking from one world of blocks into another where they touch, with no Nav Link between them.

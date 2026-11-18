@@ -213,3 +213,131 @@ fn an_agent_sent_into_a_dimension_walks_to_the_gate_into_it_through_and_on() {
         game.engine.world.despawn(walker);
     }
 }
+
+#[test]
+fn a_portal_that_lets_only_one_layer_through_is_a_way_for_agents_of_that_layer_alone() {
+    let (_dir, mut game) = field();
+    let (near, far) = portals(&mut game, Vec3::new(12.0, 6.0, 20.5), Vec3::new(21.0, 6.0, 20.5));
+    for portal in [near, far] {
+        game.engine.world.get_mut::<Portal>(portal).unwrap().passes = 1 << 3;
+    }
+    game.tick(FRAME, None);
+    let (from, to) = (Vec3::new(4.5, 6.0, 6.5), Vec3::new(28.5, 6.0, 6.5));
+    assert_eq!(find_way(&mut game.engine.world, from, to, 1.8).0, PathStatus::Partial, "not for the Default layer");
+    for (layer, through) in [(0, false), (3, true)] {
+        let agent = NavAgent { moves: NavMoves::AlongTheNav, speed: 4.0, ..NavAgent::default() };
+        let walker = game.engine.world.spawn((Transform::from_position(from), agent, voxear_scene::Layer(layer)));
+        game.tick(FRAME, None);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        for _ in 0..900 {
+            game.tick(FRAME, None);
+        }
+        let now = at(&game, walker);
+        assert_eq!((now - to).length() < 0.6, through, "layer {layer}: at {now}");
+        game.engine.world.despawn(walker);
+    }
+}
+
+/// A field of blocks 32 across and six deep in `dimension`.
+fn field_in(game: &mut Game, dimension: DimensionId, corner: Vec3) -> Entity {
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 6;
+    let (map, faces) = (file.make_ground(None), file.faces().1);
+    let world = game.engine.world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::from_position(corner)));
+    voxear_scene::set_dimension(&mut game.engine.world, world, dimension);
+    world
+}
+
+/// A Portal standing at `at` facing -z, in `from`, leading to one facing
+/// +z at `out` in `into`.
+fn portal_into(game: &mut Game, at: Vec3, from: DimensionId, out: Vec3, into: DimensionId) {
+    let world = &mut game.engine.world;
+    let far = world.spawn((Portal::default(), Transform::from_position(out)));
+    voxear_scene::set_dimension(world, far, into);
+    let near = world.spawn((
+        Portal::to(Vec2::new(2.0, 3.0), far),
+        Transform::new(at, Quat::from_rotation_y(std::f32::consts::PI), Vec3::ONE),
+    ));
+    voxear_scene::set_dimension(world, near, from);
+}
+
+#[test]
+fn an_agent_sent_two_dimensions_away_goes_through_one_portal_and_then_the_next() {
+    let (_dir, mut game) = project(&[
+        ("voxear.toml", "[project]\nname = \"Chain\"\nstart_level = \"Levels/Main.level\"\n".into()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Main.scene\"\n".into()),
+        ("Scenes/Main.scene", "format = 1\n".into()),
+    ]);
+    // Made in the open level: one made in another is let go as the level changes.
+    let made = |game: &mut Game| {
+        let level = game.levels.current().map(str::to_string);
+        let settings = dimensions::DimensionSettings::default();
+        dimensions::make_empty(&mut game.engine.world, settings, None, level.as_deref()).unwrap()
+    };
+    let (first, second) = (made(&mut game), made(&mut game));
+    for dimension in [DimensionId::LEVEL, first, second] {
+        field_in(&mut game, dimension, Vec3::ZERO);
+    }
+    // From the level into the first, and from the first into the second, at the other end of its field.
+    portal_into(&mut game, Vec3::new(16.0, 6.0, 12.0), DimensionId::LEVEL, Vec3::new(8.0, 6.0, 4.0), first);
+    portal_into(&mut game, Vec3::new(24.0, 6.0, 26.0), first, Vec3::new(16.0, 6.0, 4.0), second);
+    let agent = NavAgent { moves: NavMoves::AlongTheNav, speed: 4.0, ..NavAgent::default() };
+    let walker = game.engine.world.spawn((Transform::from_position(Vec3::new(16.5, 6.0, 2.5)), agent));
+    for _ in 0..10 {
+        game.tick(FRAME, None);
+    }
+    let to = Vec3::new(16.5, 6.0, 24.5);
+    game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to_in(to, second);
+    let (mut frames, mut passed) = (0, Vec::new());
+    while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+        game.tick(FRAME, None);
+        frames += 1;
+        let events = game.engine.world.resource::<PortalEvents>();
+        passed.extend(
+            events
+                .into_iter()
+                .flat_map(|events| events.passed.iter().filter(|p| p.obj == walker).map(|p| p.dimensions)),
+        );
+    }
+    let now = at(&game, walker);
+    assert_eq!(passed, [[DimensionId::LEVEL, first], [first, second]], "through one and then the next, at {now}");
+    assert_eq!(dimensions::dimension_of(&game.engine.world, walker), second);
+    assert!((now - to).length() < 0.6, "on to where it was sent: {now} after {frames} frames");
+}
+
+#[test]
+fn an_agent_crosses_a_nav_link_from_one_world_of_blocks_into_another() {
+    use voxear_engine::navigation::{NavLink, NavLinkKind};
+    let (_dir, mut game) = project(&[
+        ("voxear.toml", "[project]\nname = \"Two\"\nstart_level = \"Levels/Main.level\"\n".into()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Main.scene\"\n".into()),
+        ("Scenes/Main.scene", "format = 1\n".into()),
+    ]);
+    // Two fields with eight metres of nothing between them, and a plank across it.
+    field_in(&mut game, DimensionId::LEVEL, Vec3::ZERO);
+    field_in(&mut game, DimensionId::LEVEL, Vec3::new(40.0, 0.0, 0.0));
+    let plank = NavLink { end: [9.0, 0.0, 0.0], kind: NavLinkKind::Walk, both_ways: true, cost: 0.0 };
+    game.engine.world.spawn((Transform::from_position(Vec3::new(31.5, 6.0, 16.5)), plank));
+    for moves in [NavMoves::AlongTheNav, NavMoves::CharacterController] {
+        let agent = NavAgent { moves, speed: 4.0, ..NavAgent::default() };
+        let start = Transform::from_position(Vec3::new(6.5, 6.0, 6.5));
+        let walker = match moves {
+            NavMoves::CharacterController => game.engine.world.spawn((start, agent, CharacterController::default())),
+            _ => game.engine.world.spawn((start, agent)),
+        };
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        let to = Vec3::new(60.5, 6.0, 6.5);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let mut frames = 0;
+        while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+        }
+        let now = at(&game, walker);
+        assert!((now - to).length() < 0.6, "{moves:?}: over the plank and on: {now} after {frames} frames");
+        game.engine.world.despawn(walker);
+    }
+}

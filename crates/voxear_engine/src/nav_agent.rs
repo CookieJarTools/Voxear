@@ -212,8 +212,8 @@ pub struct NavAgentState {
     mesh_seen: usize,
     /// The Portal into its destination's dimension the way asked for leads
     /// to, and the one it heads for now.
-    asked_portal: Option<NavPortal>,
-    pub(crate) portal: Option<NavPortal>,
+    asked_portal: Option<Hop>,
+    pub(crate) portal: Option<Hop>,
 }
 
 impl Component for NavAgentState {}
@@ -283,7 +283,8 @@ struct Walked {
     /// What each area costs, and the Nav Areas' boxes over it.
     costs: voxear_nav::AreaCosts,
     boxes: Vec<voxear_nav::AreaBox>,
-    links: Vec<voxear_nav::Link>,
+    /// Its Nav Links and Portals, each with the layers it lets along.
+    links: Vec<(voxear_nav::Link, u32)>,
     /// The Nav Obstacles carved in it, and what changed in them last.
     obstacles: Vec<voxear_nav::AreaBox>,
     cuts: crate::nav_obstacle::CutChanges,
@@ -332,6 +333,49 @@ fn walked_of(world: &mut World, entity: Entity, corner: Vec3, size: f32, blocks:
         obstacles: crate::nav_obstacle::block_boxes(world, corner, size, dimension),
         cuts: crate::nav_obstacle::changes(world, dimension),
     })
+}
+
+/// A way an agent's search cannot see past, taken as one step at its end:
+/// a Portal into another dimension, or a link into another world of blocks.
+/// Where it begins, where it comes out, and how it is crossed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Hop {
+    pub approach: Vec3,
+    pub exit: Vec3,
+    pub kind: u8,
+}
+
+impl Hop {
+    fn through(portal: &NavPortal) -> Self {
+        Self { approach: portal.approach, exit: portal.exit, kind: PORTAL_LINK }
+    }
+}
+
+/// The link from world of blocks `from` into `into`, both of one
+/// dimension, that makes the shortest way from `at` to `destination` in
+/// straight lines, for an Obj `height` metres tall of `layer`: a Nav Link
+/// whose one end is in each, or a Portal from one to the other.
+fn link_between(from: &Walked, into: &Walked, at: Vec3, destination: Vec3, height: f32, layer: u8) -> Option<Hop> {
+    let ends = |link: &voxear_nav::Link| {
+        let (a, b) = (from.world(link.from), from.world(link.to));
+        let mut ways = vec![(a, b)];
+        if link.both_ways {
+            ways.push((b, a));
+        }
+        ways
+    };
+    crate::navigation::heeded(&from.links, layer)
+        .iter()
+        .flat_map(|link| ends(link).into_iter().map(move |(a, b)| (a, b, link.kind)))
+        .filter(|(a, b, _)| {
+            from.standing(*a, from.walker(height), 1.5).is_some()
+                && into.standing(*b, into.walker(height), 1.5).is_some()
+        })
+        .min_by(|x, y| {
+            let along = |(a, b, _): &(Vec3, Vec3, u8)| at.distance(*a) + b.distance(destination);
+            along(x).total_cmp(&along(y))
+        })
+        .map(|(approach, exit, kind)| Hop { approach, exit, kind })
 }
 
 /// What one agent steps with this step.
@@ -406,13 +450,34 @@ pub fn step_agents(world: &mut World, delta: f32) {
         // The world it walks: of its own dimension, the one it stands in, or else the first there is.
         let dimension = dimension_of(world, entity);
         let ours = |walked: &&Walked| walked.dimension == dimension;
-        let index = walked
-            .iter()
-            .position(|walked| ours(&walked) && walked.standing(at, walked.walker(height), 2.0).is_some())
-            .or_else(|| walked.iter().position(|walked| ours(&walked)));
+        // Crossing a link, it keeps the world it set off from until it lands: over a gap it stands in none.
+        let index = match state.crossing_link {
+            true => walked.iter().position(|walked| Some(walked.entity) == state.world),
+            false => walked
+                .iter()
+                .position(|walked| ours(&walked) && walked.standing(at, walked.walker(height), 2.0).is_some())
+                .or_else(|| walked.iter().position(|walked| ours(&walked))),
+        };
         state.world = index.map(|index| walked[index].entity);
-        state.portal = match portal_toward(&portals, &agent, at, dimension) {
-            Ok(portal) => portal,
+        if state.crossing_link {
+            steps.push(Stepping { entity, agent, state, at, dimension, walked: index, controller });
+            continue;
+        }
+        // Its layer, which Portals may not let through.
+        let layer = world.get::<voxear_scene::Layer>(entity).map_or(0, |layer| layer.0);
+        state.portal = match portal_toward(&portals, &agent, at, dimension, layer) {
+            Ok(Some(portal)) => Some(Hop::through(&portal)),
+            // Sent to another world of blocks of its own dimension: by a link into it.
+            Ok(None) => agent.destination.filter(|_| !agent.stopped).and_then(|destination| {
+                let here = &walked[index?];
+                let there = walked.iter().find(|walked| {
+                    ours(walked)
+                        && walked.entity != here.entity
+                        && walked.standing(destination, walked.walker(height), 2.0).is_some()
+                        && here.standing(destination, here.walker(height), 2.0).is_none()
+                })?;
+                link_between(here, there, at, destination, height, layer)
+            }),
             // Sent into a dimension no Portal here leads into: nowhere to go.
             Err(()) => {
                 state.corners.clear();
@@ -422,10 +487,10 @@ pub fn step_agents(world: &mut World, delta: f32) {
             }
         };
         if let Some(walked) = index.map(|index| &walked[index]) {
-            plan(world, &agent, &mut state, walked, &portals, at, height, delta, &mut budget);
+            plan(world, &agent, &mut state, walked, &portals, layer, at, height, delta, &mut budget);
         } else if let Some((mesh, offset)) = &level_mesh {
             // No world of blocks under it: the level's nav mesh, where it has one.
-            plan_mesh(world, &agent, &mut state, mesh, *offset, dimension, &portals, at, delta, &mut budget);
+            plan_mesh(world, &agent, &mut state, mesh, *offset, dimension, &portals, layer, at, delta, &mut budget);
         } else {
             state.wanted = Vec3::ZERO;
         }
@@ -555,27 +620,49 @@ fn takes_off(state: &NavAgentState, at: Vec3, size: f32) -> bool {
             .is_some_and(|edge| (steer::flat(*edge) - steer::flat(at)).length() < 0.6 * size)
 }
 
-/// The Portal an agent at `at` in `dimension` heads for to reach its
-/// destination's dimension: `None` where that is its own, the nearest by
-/// the way it makes in a straight line, or `Err` where no Portal leads
-/// there.
+/// The Portal an agent at `at` in `dimension`, of `layer`, heads for to
+/// reach its destination's dimension: `None` where that is its own, or the
+/// first of the Portals one after another that make the shortest way there
+/// in straight lines, from one Portal's far side to the next; `Err` where
+/// no Portals lead there.
 fn portal_toward(
     portals: &[NavPortal],
     agent: &NavAgent,
     at: Vec3,
     dimension: DimensionId,
+    layer: u8,
 ) -> Result<Option<NavPortal>, ()> {
     let (Some(into), Some(destination)) = (agent.destination_dimension, agent.destination) else { return Ok(None) };
     if into == dimension {
         return Ok(None);
     }
-    let along = |way: &&NavPortal| at.distance(way.approach) + way.exit.distance(destination);
-    portals
+    // Each Portal into another dimension: how far it is by the shortest way to it, and the first Portal of that way.
+    let ways: Vec<&NavPortal> = portals.iter().filter(|way| way.from != way.into && way.passes(layer)).collect();
+    let mut far: Vec<(f32, usize)> = ways
         .iter()
-        .filter(|way| way.from == dimension && way.into == into)
-        .min_by(|a, b| along(a).total_cmp(&along(b)))
-        .copied()
-        .map(Some)
+        .enumerate()
+        .map(|(n, way)| if way.from == dimension { (at.distance(way.approach), n) } else { (f32::INFINITY, n) })
+        .collect();
+    let mut done = vec![false; ways.len()];
+    while let Some(next) =
+        (0..ways.len()).filter(|n| !done[*n] && far[*n].0.is_finite()).min_by(|a, b| far[*a].0.total_cmp(&far[*b].0))
+    {
+        done[next] = true;
+        let (here, first) = far[next];
+        for (n, way) in ways.iter().enumerate() {
+            let through = here + ways[next].exit.distance(way.approach);
+            if !done[n] && way.from == ways[next].into && through < far[n].0 {
+                far[n] = (through, first);
+            }
+        }
+    }
+    (0..ways.len())
+        .filter(|n| ways[*n].into == into && far[*n].0.is_finite())
+        .min_by(|a, b| {
+            let whole = |n: usize| far[n].0 + ways[n].exit.distance(destination);
+            whole(*a).total_cmp(&whole(*b))
+        })
+        .map(|n| Some(*ways[far[n].1]))
         .ok_or(())
 }
 
@@ -593,13 +680,13 @@ fn left_at_portal(state: &NavAgentState, portals: &[NavPortal], at: Vec3) -> boo
     }
 }
 
-/// The far side of the Portal `state` heads for, put on the end of a way
-/// found up to it, as one link more.
-fn through_portal(state: &mut NavAgentState, portal: Option<NavPortal>) {
-    if let Some(portal) = portal.filter(|_| state.status == PathStatus::Complete && !state.corners.is_empty()) {
-        state.corners.push(portal.exit);
+/// The far side of the Portal or link `state` heads for, put on the end of
+/// a way found up to it, as one link more.
+fn through_portal(state: &mut NavAgentState, hop: Option<Hop>) {
+    if let Some(hop) = hop.filter(|_| state.status == PathStatus::Complete && !state.corners.is_empty()) {
+        state.corners.push(hop.exit);
         state.links.resize(state.corners.len() - 1, None);
-        state.links.push(Some(PORTAL_LINK));
+        state.links.push(Some(hop.kind));
         state.jumps.resize(state.corners.len(), false);
     }
 }
@@ -613,6 +700,7 @@ fn plan(
     state: &mut NavAgentState,
     walked: &Walked,
     portals: &[NavPortal],
+    layer: u8,
     at: Vec3,
     height: f32,
     delta: f32,
@@ -666,7 +754,7 @@ fn plan(
     let remaining = &state.corners[state.next.saturating_sub(1).min(state.corners.len())..];
     let stale = stale || walked.cuts.crosses(state.cut_seen, remaining, radius, height);
     let stale = stale || left_at_portal(state, portals, at);
-    let moved_portal = state.asked_portal.map(|way| way.portal) != crossing.map(|way| way.portal);
+    let moved_portal = state.asked_portal != crossing;
     let stale = stale || moved_portal && state.asked.is_none();
     if walked.cuts.version != state.cut_seen && !stale {
         state.cut_seen = walked.cuts.version;
@@ -679,7 +767,8 @@ fn plan(
         budget.asked -= 1;
         let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
         let mut ask = PathAsk::new(from, walked.local(destination), walker);
-        (ask.costs, ask.boxes, ask.links) = (walked.costs, walked.boxes.clone(), walked.links.clone());
+        (ask.costs, ask.boxes) = (walked.costs, walked.boxes.clone());
+        ask.links = crate::navigation::heeded(&walked.links, layer);
         ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
         (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
         (state.cut_seen, state.asked_portal) = (walked.cuts.version, crossing);
@@ -737,6 +826,7 @@ fn plan_mesh(
     offset: Vec3,
     dimension: DimensionId,
     portals: &[NavPortal],
+    layer: u8,
     at: Vec3,
     delta: f32,
     budget: &mut Budget,
@@ -759,7 +849,7 @@ fn plan_mesh(
     if wanted && !state.crossing_link && budget.asked > 0 {
         budget.asked -= 1;
         state.mesh_seen = mesh_at;
-        let (links, kinds) = crate::navigation::mesh_links(world, offset, dimension);
+        let (links, kinds) = crate::navigation::mesh_links(world, offset, dimension, layer);
         let found = mesh.find_path_linked(at + offset, destination + offset, 2.0, &links);
         state.corners = found.corners.iter().map(|corner| *corner - offset).collect();
         state.next = 1.min(state.corners.len().saturating_sub(1));
@@ -1262,7 +1352,7 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
     if walked_at(world, from, height).is_none()
         && let Some((mesh, offset)) = crate::navigation::level_nav(world)
     {
-        let (links, _) = crate::navigation::mesh_links(world, offset, voxear_scene::CurrentDimension::of(world));
+        let (links, _) = crate::navigation::mesh_links(world, offset, voxear_scene::CurrentDimension::of(world), 0);
         let found = mesh.find_path_linked(from + offset, to + offset, 2.0, &links);
         let corners: Vec<Vec3> = found.corners.iter().map(|corner| *corner - offset).collect();
         let length = corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
@@ -1276,7 +1366,8 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
     let found = walked_at(world, from, height).map(|walked| {
         let walker = walked.walker_of(&NavAgent::default(), height);
         let mut ask = PathAsk::new(walked.local(from), walked.local(to), walker);
-        (ask.costs, ask.boxes, ask.links) = (walked.costs, walked.boxes.clone(), walked.links.clone());
+        (ask.costs, ask.boxes) = (walked.costs, walked.boxes.clone());
+        ask.links = crate::navigation::heeded(&walked.links, 0);
         ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
         let found = find_path(&walked.nav, &ask);
         (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)

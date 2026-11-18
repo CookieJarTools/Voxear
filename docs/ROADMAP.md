@@ -3855,7 +3855,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     stopped; Portal pairs past a wall with no way round, in a world of blocks and on a mesh, by both ways of
     moving; an agent sent into a dungeon's caves through its Gate, by both; a mesh link taken only where shorter;
     the message read back as sent. Manual: Portals and Dimensions; Nav Agents (Playing over the network).
-  - [ ] Portals two dimensions away; links between two worlds of blocks of one dimension
+  - [x] **Portals two dimensions away, layers, and links between worlds.** An agent sent into a dimension goes
+    through Portals one after another (the shortest chain in straight lines, from each Portal's far side to the
+    next); a Portal's `passes` layers are heeded by searches and by the choice of Portal, for the agent's own
+    `Layer`; a Nav Link or Portal with one end in each of two worlds of blocks of one dimension is taken as a hop
+    from one world's search into the other's (`nav_agent::link_between`), the agent keeping the world it set off
+    from until it lands. Tests: an agent through two Portals into a dimension two away; a Portal for one layer
+    only; an agent over a plank from one field of blocks into another, by both ways of moving.
+  - [ ] walking from one world of blocks into another where they touch, with no link
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

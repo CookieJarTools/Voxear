@@ -289,56 +289,68 @@ const PORTAL_COST: f32 = 0.5;
 
 /// Every Nav Link of dimension `dimension`, and every Portal within it, in
 /// blocks from the corner of a world of blocks at `corner` whose blocks are
-/// `size` metres a side.
+/// `size` metres a side, each with the layers whose Objs go along it, a
+/// bit a layer: every layer for a Nav Link, those a Portal lets through.
 pub fn links(
     world: &World,
     corner: voxear_core::math::Vec3,
     size: f32,
     dimension: voxear_scene::DimensionId,
-) -> Vec<voxear_nav::Link> {
+) -> Vec<(voxear_nav::Link, u32)> {
     let local = |at: voxear_core::math::Vec3| ((at - corner) / size.max(1e-3)).to_array();
     let portals =
         crate::portals::nav_portals(world).into_iter().filter(|way| way.from == dimension && way.into == dimension);
-    let portals: Vec<voxear_nav::Link> = portals
-        .map(|way| voxear_nav::Link {
-            from: local(way.approach),
-            to: local(way.exit),
-            both_ways: false,
-            cost: PORTAL_COST / size.max(1e-3),
-            kind: PORTAL_LINK,
+    let portals: Vec<(voxear_nav::Link, u32)> = portals
+        .map(|way| {
+            let link = voxear_nav::Link {
+                from: local(way.approach),
+                to: local(way.exit),
+                both_ways: false,
+                cost: PORTAL_COST / size.max(1e-3),
+                kind: PORTAL_LINK,
+            };
+            (link, way.passes)
         })
         .collect();
-    let mut links: Vec<voxear_nav::Link> = world
+    let mut links: Vec<(voxear_nav::Link, u32)> = world
         .query_ref::<(Entity, &NavLink)>()
         .without::<voxear_scene::Destroying>()
         .into_iter()
         .filter(|(entity, _)| voxear_scene::dimension_of(world, *entity) == dimension)
         .filter_map(|(entity, link)| {
             let (from, to) = link_ends(world, entity, link)?;
-            Some(voxear_nav::Link {
+            let link = voxear_nav::Link {
                 from: local(from),
                 to: local(to),
                 both_ways: link.both_ways,
                 cost: link.cost.max(0.0) / size.max(1e-3),
                 kind: link.kind.number(),
-            })
+            };
+            Some((link, u32::MAX))
         })
         .collect();
     links.extend(portals);
     links
 }
 
+/// Those of `links` an Obj of `layer` goes along.
+pub fn heeded(links: &[(voxear_nav::Link, u32)], layer: u8) -> Vec<voxear_nav::Link> {
+    links.iter().filter(|(_, passes)| passes & (1 << (layer & 31)) != 0).map(|(link, _)| *link).collect()
+}
+
 /// Every Nav Link of dimension `dimension`, and every Portal within it, as
-/// a level's nav mesh takes them: each way it goes, in metres from the
-/// mesh's origin, `offset` from the world's; and the kind of each.
+/// a level's nav mesh takes them for an Obj of `layer`: each way it goes,
+/// in metres from the mesh's origin, `offset` from the world's; and the
+/// kind of each.
 pub fn mesh_links(
     world: &World,
     offset: voxear_core::math::Vec3,
     dimension: voxear_scene::DimensionId,
+    layer: u8,
 ) -> (Vec<voxear_nav::mesh::MeshLink>, Vec<u8>) {
     let mut links = Vec::new();
     let mut kinds = Vec::new();
-    for link in self::links(world, voxear_core::math::Vec3::ZERO, 1.0, dimension) {
+    for link in heeded(&self::links(world, voxear_core::math::Vec3::ZERO, 1.0, dimension), layer) {
         let (from, to) = (voxear_core::math::Vec3::from_array(link.from), voxear_core::math::Vec3::from_array(link.to));
         let ways: &[(voxear_core::math::Vec3, voxear_core::math::Vec3)] =
             if link.both_ways { &[(from, to), (to, from)] } else { &[(from, to)] };

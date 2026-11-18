@@ -2859,6 +2859,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     // As saved: where a game sent it is not part of the scene.
     obj.nav_agent = world.get::<crate::nav_agent::NavAgent>(entity).map(|agent| crate::nav_agent::NavAgent {
         destination: None,
+        destination_dimension: None,
         stopped: false,
         ..agent.clone()
     });

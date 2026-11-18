@@ -34,8 +34,9 @@ public sealed class Shepherd : SystemBase
 			var agent = sheep.AddNavAgent();
 			agent.Speed = 4f;
 			agent.Moves = NavMoves.AlongTheNav;
-			agent.Destination = new Vector3(20.5f, 6f, 4.5f);
+			agent.SetDestination(new Vector3(20.5f, 6f, 4.5f), Dimension.Current);
 			Log.Info($"added: {agent.IsValid} {agent.Speed} {agent.Moves} {agent.Destination}");
+			Log.Info($"into: {agent.DestinationDimension.IsLevel}");
 			var way = Navigation.FindPath(new Vector3(2.5f, 6f, 2.5f), new Vector3(20.5f, 6f, 4.5f));
 			Log.Info($"way: {way.Status} {way.Corners.Length} {way.Length:0}");
 			Log.Info($"nearest: {Navigation.Nearest(new Vector3(5.5f, 7.2f, 5.5f))}");
@@ -107,6 +108,7 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     let said = lines(&log);
     assert!(said.iter().any(|l| l == "before: False True"), "{said:#?}");
     assert!(said.iter().any(|l| l == "added: True 4 AlongTheNav <20.5, 6, 4.5>"), "{said:#?}");
+    assert!(said.iter().any(|l| l == "into: True"), "sent within the level's own dimension: {said:#?}");
     assert!(said.iter().any(|l| l == "way: Complete 2 18"), "straight across: {said:#?}");
     assert!(said.iter().any(|l| l == "nearest: <5.5, 6, 5.5>"), "{said:#?}");
     assert!(said.iter().any(|l| l == "reachable: True"), "{said:#?}");
@@ -116,6 +118,7 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     let agent = game.engine.world.get::<NavAgent>(sheep).expect("the script gave it a Nav Agent");
     assert_eq!((agent.speed, agent.moves), (4.0, NavMoves::AlongTheNav));
     assert_eq!(agent.destination, Some(Vec3::new(20.5, 6.0, 4.5)));
+    assert_eq!(agent.destination_dimension, Some(voxear_scene::DimensionId::LEVEL));
 
     for _ in 0..31 {
         game.tick(1.0 / 60.0, None);

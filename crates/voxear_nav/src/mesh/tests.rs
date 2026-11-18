@@ -180,12 +180,7 @@ fn a_box_cut_out_of_a_floor_is_gone_round_as_one_baked_in_is_and_taking_it_away_
     let mut walled = floor(20.0);
     walled.extend(boxed(crate_box[0], crate_box[1]));
     let baked = bake(&walled, settings).unwrap().find_path(from, to, 1.0);
-    assert!(
-        (length(&round) - length(&baked)).abs() < 0.6,
-        "cut {} against baked {}",
-        length(&round),
-        length(&baked)
-    );
+    assert!((length(&round) - length(&baked)).abs() < 0.6, "cut {} against baked {}", length(&round), length(&baked));
     // Under the box there is nowhere to stand now.
     assert!(cut.locate(Vec3::new(10.0, 0.0, 10.0), 0.5).is_none());
     assert_eq!(open.cut(&[]), open);
@@ -260,4 +255,32 @@ fn obstacles_cut_out_of_a_level_two_hundred_metres_square_take_a_few_millisecond
         }
     }
     assert!(least < 15.0 * slack, "{least:.2} ms");
+}
+
+#[test]
+fn a_link_joins_two_floors_walking_does_not_and_is_taken_only_where_it_is_shorter() {
+    let settings = BakeSettings::default();
+    // Two floors side by side with a wall between them, and one far round.
+    let mut triangles = floor(30.0);
+    triangles.extend(boxed(Vec3::new(14.0, 0.0, 0.0), Vec3::new(16.0, 3.0, 26.0)));
+    let mesh = bake(&triangles, settings).unwrap();
+    let (from, to) = (Vec3::new(5.0, 0.0, 5.0), Vec3::new(25.0, 0.0, 5.0));
+    let round = mesh.find_path(from, to, 0.5);
+    assert_eq!(round.status, MeshPathStatus::Complete);
+    assert!(round.links.iter().all(Option::is_none));
+    // A door through the wall that takes you to its far side at once.
+    let door = MeshLink { from: Vec3::new(13.0, 0.0, 6.0), to: Vec3::new(17.0, 0.0, 6.0), cost: 0.5 };
+    let through = mesh.find_path_linked(from, to, 0.5, &[door]);
+    assert_eq!(through.status, MeshPathStatus::Complete);
+    assert!(length(&through) < length(&round) - 20.0, "{} against {}", length(&through), length(&round));
+    let taken = through.links.iter().position(|link| *link == Some(0)).expect("the door is taken");
+    assert!(through.corners[taken].distance(door.to) < 0.5 && through.corners[taken - 1].distance(door.from) < 0.5);
+    assert_eq!(through.links.len(), through.corners.len());
+    // One far down the wall's other end costs more than going round: left.
+    let far = MeshLink { from: Vec3::new(13.0, 0.0, 25.0), to: Vec3::new(17.0, 0.0, 25.0), cost: 40.0 };
+    assert!(mesh.find_path_linked(from, to, 0.5, &[far]).links.iter().all(Option::is_none));
+    // A link up onto a box nothing walks up to reaches it.
+    let up = MeshLink { from: Vec3::new(10.0, 0.0, 28.0), to: Vec3::new(15.0, 3.0, 20.0), cost: 1.0 };
+    let onto = mesh.find_path_linked(from, Vec3::new(15.0, 3.0, 10.0), 0.5, &[up]);
+    assert_eq!(onto.status, MeshPathStatus::Complete, "{:?}", onto.corners);
 }

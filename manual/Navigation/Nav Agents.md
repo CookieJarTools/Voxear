@@ -92,3 +92,5 @@ else
 ## Playing over the network
 
 Only the machine that has authority over an Obj moves its Nav Agent: the server, for the creatures of a game. Other players see it move as it is sent over the network, and its Mob Motion walks it as it goes.
+
+A player's script can still send one. Setting `Destination`, calling `SetDestination`, `Stop` or `Resume` on an agent the server moves sends the request to the server, which finds the way and walks it. The server takes such a request for an Obj no player owns, or for the player's own, and drops it for another player's.

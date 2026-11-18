@@ -387,13 +387,34 @@ pub enum MeshPathStatus {
     Partial,
 }
 
-/// A way over a nav mesh: its corners in the world, how it ends, and how
-/// many polygons were looked at.
+/// A way over a nav mesh: its corners in the world, for each the link it is
+/// reached by where it is one's end (by its place among those given), how
+/// it ends, and how many polygons were looked at.
 #[derive(Clone, Debug, Default)]
 pub struct MeshPath {
     pub status: MeshPathStatus,
     pub corners: Vec<Vec3>,
+    pub links: Vec<Option<usize>>,
     pub looked: usize,
+}
+
+/// A way over a nav mesh that walking does not take: from one point to
+/// another in one step, costing as far as it is to its start and `cost`
+/// more.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeshLink {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub cost: f32,
+}
+
+/// How a search came into a polygon: where it began, over an edge, or by a
+/// link.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Via {
+    Start,
+    Edge(u32),
+    Link(usize),
 }
 
 /// Twice the area of the triangle `a`, `b`, `c` on the ground: which side of
@@ -452,16 +473,40 @@ impl NavMesh {
 
     /// The way from `from` to `to`, each within `reach` metres of the mesh.
     pub fn find_path(&self, from: Vec3, to: Vec3, reach: f32) -> MeshPath {
+        self.find_path_linked(from, to, reach, &[])
+    }
+
+    /// The way from `from` to `to`, each within `reach` metres of the mesh,
+    /// taking `links` where they make it shorter: a ladder, a gap, a
+    /// Portal, each one step from the polygon under its start to the one
+    /// under its end.
+    pub fn find_path_linked(&self, from: Vec3, to: Vec3, reach: f32, links: &[MeshLink]) -> MeshPath {
         let Some((start, from)) = self.locate(from, reach.max(self.settings.cell * 2.0)) else {
             return MeshPath::default();
         };
         let goal = self.locate(to, reach);
         let target = goal.map_or(to, |(_, at)| at);
-        // An A* over polygons, each entered at the middle of the edge crossed into it.
+        // Each link's ends on the mesh, by the polygon it leaves from.
+        let ends: Vec<Option<(u32, u32, Vec3, Vec3)>> = links
+            .iter()
+            .map(|link| {
+                let near = self.settings.cell * 4.0 + 0.5;
+                let (a, at_a) = self.locate(link.from, near)?;
+                let (b, at_b) = self.locate(link.to, near)?;
+                Some((a, b, at_a, at_b))
+            })
+            .collect();
+        let mut leaving: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+        for (n, end) in ends.iter().enumerate() {
+            if let Some((a, ..)) = end {
+                leaving.entry(*a).or_default().push(n);
+            }
+        }
+        // An A* over polygons, each entered at the middle of the edge crossed into it, or at a link's end.
         let count = self.polys.len();
         let mut g = vec![f32::INFINITY; count];
         let mut parent = vec![u32::MAX; count];
-        let mut via = vec![u32::MAX; count];
+        let mut via = vec![Via::Start; count];
         let mut entry = vec![Vec3::ZERO; count];
         let mut closed = vec![false; count];
         let mut open = BinaryHeap::new();
@@ -482,23 +527,31 @@ impl NavMesh {
                 best = (0.0, at);
                 break;
             }
-            let here = entry[at as usize];
+            let (here, base) = (entry[at as usize], g[at as usize]);
+            let mut step = |to: u32, cost: f32, by: Via, into: Vec3| {
+                let to_index = to as usize;
+                if closed[to_index] || cost >= g[to_index] {
+                    return;
+                }
+                (g[to_index], parent[to_index], via[to_index], entry[to_index]) = (cost, at, by, into);
+                let ahead = into.distance(target);
+                if ahead < best.0 {
+                    best = (ahead, to);
+                }
+                open.push(Reverse(((cost + ahead).to_bits(), to)));
+            };
             for (n, edge) in self.edges_of(at).iter().enumerate() {
                 let middle = (edge.a + edge.b) * 0.5;
-                let cost = g[at as usize] + here.distance(middle);
-                let to = edge.to as usize;
-                if closed[to] || cost >= g[to] {
-                    continue;
-                }
-                (g[to], parent[to], via[to], entry[to]) = (cost, at, self.polys[at as usize].edges + n as u32, middle);
-                let ahead = middle.distance(target);
-                if ahead < best.0 {
-                    best = (ahead, edge.to);
-                }
-                open.push(Reverse(((cost + ahead).to_bits(), edge.to)));
+                let edge_at = self.polys[at as usize].edges + n as u32;
+                step(edge.to, base + here.distance(middle), Via::Edge(edge_at), middle);
+            }
+            for &n in leaving.get(&at).into_iter().flatten() {
+                let Some((_, b, a_at, b_at)) = ends[n] else { continue };
+                let cost = base + here.distance(a_at) + links[n].cost.max(0.0);
+                step(b, cost, Via::Link(n), b_at);
             }
         }
-        // The edges crossed, in turn, each as its left and right ends as the way goes.
+        // The polygons gone through, in turn.
         let mut chain = vec![best.1];
         while let Some(&last) = chain.last() {
             match parent[last as usize] {
@@ -508,18 +561,43 @@ impl NavMesh {
         }
         chain.reverse();
         let end = if reached { target } else { self.nearest_in(best.1, target) };
+        // Pulled tight a stretch at a time: each walked stretch through the edges it crosses, a link between two.
+        let mut corners: Vec<Vec3> = Vec::new();
+        let mut taken: Vec<Option<usize>> = Vec::new();
         let mut portals: Vec<(Vec3, Vec3)> = vec![(from, from)];
+        let put =
+            |portals: &mut Vec<(Vec3, Vec3)>, last: Vec3, corners: &mut Vec<Vec3>, taken: &mut Vec<Option<usize>>| {
+                portals.push((last, last));
+                for corner in funnel(portals) {
+                    if corners.last() != Some(&corner) {
+                        corners.push(corner);
+                        taken.push(None);
+                    }
+                }
+            };
         for pair in chain.windows(2) {
-            let edge = self.edges[via[pair[1] as usize] as usize];
-            let (centre, next) = (self.polys[pair[0] as usize].middle(), self.polys[pair[1] as usize].middle());
-            // Facing from one polygon to the next, the edge's end on the left first.
-            let (left, right) = if area2(centre, next, edge.a) < 0.0 { (edge.a, edge.b) } else { (edge.b, edge.a) };
-            portals.push((left, right));
+            match via[pair[1] as usize] {
+                Via::Link(n) => {
+                    let (_, _, a_at, b_at) = ends[n].expect("taken, so found");
+                    put(&mut portals, a_at, &mut corners, &mut taken);
+                    corners.push(b_at);
+                    taken.push(Some(n));
+                    portals = vec![(b_at, b_at)];
+                }
+                Via::Edge(edge) => {
+                    let edge = self.edges[edge as usize];
+                    let (centre, next) = (self.polys[pair[0] as usize].middle(), self.polys[pair[1] as usize].middle());
+                    // Facing from one polygon to the next, the edge's end on the left first.
+                    let (left, right) =
+                        if area2(centre, next, edge.a) < 0.0 { (edge.a, edge.b) } else { (edge.b, edge.a) };
+                    portals.push((left, right));
+                }
+                Via::Start => {}
+            }
         }
-        portals.push((end, end));
-        let corners = funnel(&portals);
+        put(&mut portals, end, &mut corners, &mut taken);
         let status = if reached { MeshPathStatus::Complete } else { MeshPathStatus::Partial };
-        MeshPath { status, corners, looked }
+        MeshPath { status, corners, links: taken, looked }
     }
 
     /// The point of polygon `poly` nearest `to`, on its floor.

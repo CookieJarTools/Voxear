@@ -51,6 +51,7 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	private const int CornerValue = 31;
 	private const int OpensDoorsValue = 33;
 	private const int JumpsValue = 34;
+	private const int DestinationDimensionValue = 35;
 
 	public static readonly NavAgent None = default;
 
@@ -217,6 +218,26 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	public void SetDestination(Vector3 point)
 	{
 		Destination = point;
+	}
+
+	/// <summary>The dimension its destination is in: its own, unless sent into another with SetDestination.</summary>
+	public DimensionInstance DestinationDimension
+	{
+		get
+		{
+			var found = NativeComponent.Get(NativeComponent.NavAgent, Obj, DestinationDimensionValue, out var value);
+			return found && value.Y != 0f ? new DimensionInstance(BitConverter.SingleToUInt32Bits(value.X)) : DimensionInstance.Level;
+		}
+	}
+
+	/// <summary>
+	/// Sends it to a point in a dimension. Into another than its own, it walks to the nearest Portal into that
+	/// dimension, goes through, and on from where it comes out, as a companion following the players into a dungeon.
+	/// </summary>
+	public void SetDestination(Vector3 point, DimensionInstance dimension)
+	{
+		Destination = point;
+		Write(DestinationDimensionValue, new Vector4(BitConverter.UInt32BitsToSingle(dimension.Handle), 1f, 0f, 0f));
 	}
 
 	/// <summary>Stands where it is, keeping its destination for Resume.</summary>

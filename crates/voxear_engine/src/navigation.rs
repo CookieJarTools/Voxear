@@ -281,8 +281,15 @@ pub fn link_ends(world: &World, entity: Entity, link: &NavLink) -> Option<(voxea
     Some((placed.w_axis.truncate(), placed.transform_point3(end)))
 }
 
-/// Every Nav Link of dimension `dimension`, in blocks from the corner of a
-/// world of blocks at `corner` whose blocks are `size` metres a side.
+/// The kind of link a Portal is to a search: in at its front, out of the
+/// one it leads to; and what going through costs more than walking as far,
+/// in metres.
+pub const PORTAL_LINK: u8 = 4;
+const PORTAL_COST: f32 = 0.5;
+
+/// Every Nav Link of dimension `dimension`, and every Portal within it, in
+/// blocks from the corner of a world of blocks at `corner` whose blocks are
+/// `size` metres a side.
 pub fn links(
     world: &World,
     corner: voxear_core::math::Vec3,
@@ -290,7 +297,18 @@ pub fn links(
     dimension: voxear_scene::DimensionId,
 ) -> Vec<voxear_nav::Link> {
     let local = |at: voxear_core::math::Vec3| ((at - corner) / size.max(1e-3)).to_array();
-    world
+    let portals =
+        crate::portals::nav_portals(world).into_iter().filter(|way| way.from == dimension && way.into == dimension);
+    let portals: Vec<voxear_nav::Link> = portals
+        .map(|way| voxear_nav::Link {
+            from: local(way.approach),
+            to: local(way.exit),
+            both_ways: false,
+            cost: PORTAL_COST / size.max(1e-3),
+            kind: PORTAL_LINK,
+        })
+        .collect();
+    let mut links: Vec<voxear_nav::Link> = world
         .query_ref::<(Entity, &NavLink)>()
         .without::<voxear_scene::Destroying>()
         .into_iter()
@@ -305,7 +323,31 @@ pub fn links(
                 kind: link.kind.number(),
             })
         })
-        .collect()
+        .collect();
+    links.extend(portals);
+    links
+}
+
+/// Every Nav Link of dimension `dimension`, and every Portal within it, as
+/// a level's nav mesh takes them: each way it goes, in metres from the
+/// mesh's origin, `offset` from the world's; and the kind of each.
+pub fn mesh_links(
+    world: &World,
+    offset: voxear_core::math::Vec3,
+    dimension: voxear_scene::DimensionId,
+) -> (Vec<voxear_nav::mesh::MeshLink>, Vec<u8>) {
+    let mut links = Vec::new();
+    let mut kinds = Vec::new();
+    for link in self::links(world, voxear_core::math::Vec3::ZERO, 1.0, dimension) {
+        let (from, to) = (voxear_core::math::Vec3::from_array(link.from), voxear_core::math::Vec3::from_array(link.to));
+        let ways: &[(voxear_core::math::Vec3, voxear_core::math::Vec3)] =
+            if link.both_ways { &[(from, to), (to, from)] } else { &[(from, to)] };
+        for (a, b) in ways {
+            links.push(voxear_nav::mesh::MeshLink { from: *a + offset, to: *b + offset, cost: link.cost });
+            kinds.push(link.kind);
+        }
+    }
+    (links, kinds)
 }
 
 /// Where a level's baked nav mesh is kept: beside it, named as it is, as

@@ -10,6 +10,7 @@ Navigation is how characters and creatures find their own way about a level: rou
 4. [[Nav Links]]: ladders, gaps, drops and doors that take you elsewhere, joining places walking does not
 5. [[Levels of Models]]: baking the navigation of a level built from models and colliders
 6. [[Nav Obstacles]]: crates, carts and gates that are gone round, though they were not there when the nav was made
+7. [[Portals and Dimensions]]: Portals walked through as a short way, and agents sent into another dimension, as into a dungeon
 
 In a [[Block Worlds|Block World]] the places to walk are worked out from the blocks themselves, chunk by chunk, as the world streams in and as blocks are placed and dug. There is nothing to bake. [[Block Mobs]] walk on the same places.
 
@@ -27,3 +28,5 @@ Choose **Gizmos ▸ Navigation** in the Scene view's header. Every place somethi
 
 - Climbing vines and ropes without a Nav Link.
 - Agent sizes in Project Settings, and costs of ground set per agent.
+- Going through two Portals one after the other, into a dimension two away.
+- Portals that let only some layers through: searches take them for every agent.

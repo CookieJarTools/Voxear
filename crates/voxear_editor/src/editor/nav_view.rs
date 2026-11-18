@@ -2,7 +2,8 @@
 //! first Scene view's camera, a square on each place's floor coloured by
 //! what it is (ground, a ford, water swum, a shut door), and the way each
 //! Nav Agent and Block Mob is walking, drawn while editing and playing; and
-//! each Nav Obstacle's box, brighter while it is cut out of the nav.
+//! each Nav Obstacle's box, brighter while it is cut out of the nav, and
+//! each Portal's way in.
 
 use voxear_core::{debug_draw, math::Vec3};
 use voxear_ecs::Entity;
@@ -130,6 +131,10 @@ impl Editor {
             if both {
                 debug_draw::arrow(to + Vec3::Y * 0.2, from + Vec3::Y * 0.2, LINK, 0.0, style);
             }
+        }
+        // Each Portal as agents take it: from where they stand in front of it to just through its opening.
+        for way in voxear_engine::portals::nav_portals(world) {
+            debug_draw::arrow(way.approach + Vec3::Y * 0.2, way.through + Vec3::Y * 0.2, LINK, 0.0, style);
         }
         // Each Nav Obstacle's box, turned and scaled with its Obj.
         let obstacles: Vec<(Vec3, Vec3, voxear_core::math::Quat, bool)> = world

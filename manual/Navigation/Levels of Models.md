@@ -25,7 +25,8 @@ Turn on **Gizmos ▸ Navigation** to see what was baked: a green tint on every f
 
 `navigation.bake` bakes the open level and answers with the file and how many polygons it has. `navigation.path` then finds ways over it, as it does over a Block World.
 
+[[Nav Links]] and [[Portals and Dimensions|Portals]] join places on the mesh as they do in a Block World, and [[Nav Obstacles]] cut it while the game runs.
+
 ## Not done yet
 
 - Setting what is baked for, such as a smaller creature or a steeper slope.
-- Mending the mesh where an Obj moves, without baking again.

@@ -4609,7 +4609,8 @@ engine's glue is `voxear_engine::navigation`.
   level, `navigation::LevelNav`, used by agents with no world of blocks under them.)
 - **Project Settings ▸ Navigation**: agent types, areas and their costs, budgets. (The Navigation gizmo and the
   `navigation.*` calls are done: `editor/nav_view.rs`, `nav_agent::{find_way, nearest_place}`.)
-- **Worlds of blocks that touch**: walking from one into the other with no link. (Chains of Portals into far
+- **Worlds of blocks that touch** are done: the places on one's rim with a place a column across in the other
+  are ways across, kept while neither changes (`nav_agent::seams`). (Chains of Portals into far
   dimensions, a Portal's layers, and links from one world of blocks into another are done: an agent's `Hop` is the
   first Portal of the shortest chain, or a link between worlds, taken at the end of its way. Co-op requests and
   Portals are done: `net::ask_nav` sends a client's word on a server's agent as `Message::NavGo`;

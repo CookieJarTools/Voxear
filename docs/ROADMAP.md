@@ -3883,7 +3883,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     from one world's search into the other's (`nav_agent::link_between`), the agent keeping the world it set off
     from until it lands. Tests: an agent through two Portals into a dimension two away; a Portal for one layer
     only; an agent over a plank from one field of blocks into another, by both ways of moving.
-  - [ ] walking from one world of blocks into another where they touch, with no link
+  - [x] **Worlds of blocks that touch**: each place on a world's rim (`BlockNav::rim`, a chunk's side with no
+    chunk beyond) with a place a column across in another world of the dimension, a block up or down at most, is
+    a way across (`nav_agent::seams`, found when an agent needs one and kept while neither world changes), taken
+    as a hop as a Nav Link between worlds is. Test: an agent walking from one field into another a block higher,
+    edge to edge, by both ways of moving.
   - [x] **Terrain in the bake, and climbing.** A heightmap terrain of a set size is baked with the level's colliders
     (`navigation::bake_grounds`, `mesh::bake_ground`): a span a column from its heights, solid below, walkable where
     no steeper than the slope, its holes left out, with no triangles made. Nav meshes no longer keep every cell:

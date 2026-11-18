@@ -18,10 +18,15 @@
 //! each at the middle of the edge crossed into it, and then the funnel:
 //! the way pulled tight through the edges it crosses, so its corners are
 //! only where it must turn.
+//!
+//! **Cuts** ([`NavMesh::cut`]) take boxes out of a baked mesh while the
+//! game runs, for obstacles that come and go.
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
 use voxear_core::math::Vec3;
+
+mod cut;
 
 /// How a nav mesh is baked: how fine its grid, and what walks on it.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -61,6 +61,7 @@ pub(super) enum Copied {
     NavAgent(voxear_engine::nav_agent::NavAgent),
     NavArea(voxear_engine::navigation::NavArea),
     NavLink(voxear_engine::navigation::NavLink),
+    NavObstacle(voxear_engine::nav_obstacle::NavObstacle),
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
     BoneAttachment(Box<voxear_engine::animation::BoneAttachment>),
     FirstPersonView(Box<voxear_engine::first_person::FirstPersonView>),
@@ -134,6 +135,7 @@ impl Copied {
             Part::NavAgent => Self::NavAgent(world.get::<voxear_engine::nav_agent::NavAgent>(entity)?.clone()),
             Part::NavArea => Self::NavArea(*world.get::<voxear_engine::navigation::NavArea>(entity)?),
             Part::NavLink => Self::NavLink(*world.get::<voxear_engine::navigation::NavLink>(entity)?),
+            Part::NavObstacle => Self::NavObstacle(*world.get::<voxear_engine::nav_obstacle::NavObstacle>(entity)?),
             Part::Gun => Self::Gun(Box::new(world.get::<voxear_engine::guns::Gun>(entity)?.clone())),
             Part::GunHolder => Self::GunHolder(Box::new(world.get::<voxear_engine::guns::GunHolder>(entity)?.clone())),
             Part::GunPart => {
@@ -200,6 +202,7 @@ impl Copied {
             Self::NavAgent(agent) => drop(world.insert(entity, agent.clone())),
             Self::NavArea(area) => drop(world.insert(entity, *area)),
             Self::NavLink(link) => drop(world.insert(entity, *link)),
+            Self::NavObstacle(obstacle) => drop(world.insert(entity, *obstacle)),
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),
             Self::BoneAttachment(attachment) => drop(world.insert(entity, (**attachment).clone())),
             Self::FirstPersonView(view) => drop(world.insert(entity, (**view).clone())),

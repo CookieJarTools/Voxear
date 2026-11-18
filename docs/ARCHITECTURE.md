@@ -4565,6 +4565,18 @@ engine's glue is `voxear_engine::navigation`.
   walks as an agent made of its own settings, or by the Obj's own Nav Agent where it has one.
 - **Scripts** reach agents through `ComponentKind::NavAgent` and ways through `ComponentKind::Navigation`, four
   numbers at a time: a way's corners are read one by one after it is found, so nothing crosses as text.
+- **Nav Obstacles** (`nav_obstacle`) are followed in the fixed step just before the agents. `NavCuts` keeps each
+  one's box as it last stood still, how long it has, and the box it carves; a set of boxes carved or let go bumps
+  a version and keeps what changed, so an agent asks again only when what is left of its way crosses a changed
+  box (or it missed a version). In a world of blocks the carved boxes join the Nav Areas' as Not Walkable
+  `AreaBox`es, widened half a block and lowered by each walker's height as a search is asked. On a mesh,
+  `NavMesh::cut` takes each box's footprint, widened by the bake's radius to whole cells, out of the rectangles
+  under it whose floors it stands in the way of: the rest of each is up to four rectangles, on its floor, and the
+  edges of the pieces are found again against each other and the rectangles beside, clipped to the baked edge;
+  untouched rectangles and edges are copied. The cut is always made from the mesh as baked (kept in `NavCuts`,
+  taken for a fresh bake when `LevelNav` is no longer the mesh last put there), on a nav thread, and replaces
+  `LevelNav` whole; mesh agents search again when the mesh they found their way on is gone. Obstacles not carved
+  join avoidance as movers that do not avoid.
 
 ### Planned
 
@@ -4573,8 +4585,8 @@ engine's glue is `voxear_engine::navigation`.
   crossed by agents along their line or arc. Jumps, swimming and doors are done, and areas:
   a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
   to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
-- **Mesh levels**: run-time cutting for Nav Obstacles, terrain heightfields in the bake, and bake settings per
-  agent type. (The baked nav mesh is done: `voxear_nav::mesh::bake` lays still colliders' triangles into a grid
+- **Mesh levels**: terrain heightfields in the bake, and bake settings per agent type. (Run-time cutting for Nav
+  Obstacles is done, above. The baked nav mesh is done: `voxear_nav::mesh::bake` lays still colliders' triangles into a grid
   of spans, keeps the walkable tops with room over them, shrinks them by the walker's radius and gathers them
   into rectangles joined by shared edges; searches are an A* over rectangles and the funnel; `.nav` beside the
   level, `navigation::LevelNav`, used by agents with no world of blocks under them.)

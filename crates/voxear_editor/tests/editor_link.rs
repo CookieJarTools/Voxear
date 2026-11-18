@@ -556,6 +556,14 @@ fn a_tool_finds_ways_over_a_block_world_and_sends_a_nav_agent() {
 #[test]
 fn a_tool_bakes_a_levels_nav_mesh_from_its_colliders_and_finds_a_way_over_it() {
     let dir = hello_copy();
+    // A level of its own, empty, with no behaviours to play.
+    let write = |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+    write("Scenes/Yard.scene", "format = 1\n");
+    write("Scenes/Yard.scene.meta", "guid = \"2d2c9f3a4b5c6d7e8f9a0b1c2d3e4f5a\"\n");
+    write("Levels/Yard.level", "format = 1\n\n[[scene]]\nscene = \"Scenes/Yard.scene\"\n");
+    let settings = dir.path().join("voxear.toml");
+    let project = std::fs::read_to_string(&settings).unwrap();
+    std::fs::write(&settings, project.replace("Levels/Day.level", "Levels/Yard.level")).unwrap();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
     // A floor 40 metres square and a wall across it, its gap at one end.
     for (name, position, size) in [("Floor", [0.0, -0.5, 0.0], [40.0, 1.0, 40.0]), ("Wall", [0.0, 1.5, -3.0], [1.0, 3.0, 34.0])] {
@@ -563,6 +571,13 @@ fn a_tool_bakes_a_levels_nav_mesh_from_its_colliders_and_finds_a_way_over_it() {
         let obj = made["obj"].clone();
         done(&mut editor, &mut renderer, "component.add", json!({ "obj": obj, "component": "collider" }));
         done(&mut editor, &mut renderer, "field.set", json!({ "obj": obj, "component": "collider", "field": "size", "value": size }));
+    }
+    // A crate in the gap, a Nav Obstacle: left out of the bake, it shuts the gap once the game runs.
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Crate", "position": [0.0, 0.75, 17.0] }));
+    let crate_obj = made["obj"].clone();
+    for (component, size) in [("collider", [1.5, 1.5, 6.0]), ("nav_obstacle", [1.5, 1.5, 6.0])] {
+        done(&mut editor, &mut renderer, "component.add", json!({ "obj": crate_obj, "component": component }));
+        done(&mut editor, &mut renderer, "field.set", json!({ "obj": crate_obj, "component": component, "field": "size", "value": size }));
     }
     done(&mut editor, &mut renderer, "save", json!({}));
     let baked = done(&mut editor, &mut renderer, "navigation.bake", json!({}));
@@ -589,6 +604,22 @@ fn a_tool_bakes_a_levels_nav_mesh_from_its_colliders_and_finds_a_way_over_it() {
     let on = picture(&mut editor, &mut renderer, "nav-mesh-gizmo-on.png");
     let tinted = off.pixels().zip(on.pixels()).filter(|(a, b)| (0..3).any(|c| a.0[c].abs_diff(b.0[c]) > 24)).count();
     assert!(tinted > (on.width() * on.height()) as usize / 10, "the floor is tinted: {tinted} pixels");
+
+    // Playing, the crate carves: the way through the gap is shut.
+    done(&mut editor, &mut renderer, "play", json!({}));
+    let began = Instant::now();
+    let shut = loop {
+        frames(&mut editor, &mut renderer, 2);
+        let way = done(&mut editor, &mut renderer, "navigation.path", json!({ "from": [-8.0, 0.0, 5.0], "to": [8.0, 0.0, 5.0] }));
+        if way["status"] != "Complete" || began.elapsed() > Duration::from_secs(10) {
+            break way;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(shut["status"], "Partial", "{shut}");
+    let status = done(&mut editor, &mut renderer, "navigation.status", json!({}));
+    assert_eq!((status["obstacles"].clone(), status["carving"].clone()), (json!(1), json!(1)), "{status}");
+    editor.stop(&mut renderer);
 }
 
 #[test]

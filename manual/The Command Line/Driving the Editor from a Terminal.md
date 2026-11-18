@@ -189,7 +189,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts`, `dungeon.open` | Make the starter temple dungeon for a Block World, read the dungeons its generator lays out near a point, and open a dungeon's own dimension to look round |
 | `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`, `obj.move_to_dimension` | List the dimensions made, show one in the Scene view, make a `.dimension` file of a kind, open or let go of one, and move an Obj into another |
-| `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, and what every Nav Agent and Block Mob is doing |
+| `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, how many Nav Obstacles there are and carve, and what every Nav Agent and Block Mob is doing |
 | `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
 | `nav_agent.set_destination` | Send an Obj's Nav Agent somewhere, or stop it |

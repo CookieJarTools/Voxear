@@ -1,7 +1,8 @@
 //! The Navigation gizmo: where things can walk in each Block World near the
 //! first Scene view's camera, a square on each place's floor coloured by
 //! what it is (ground, a ford, water swum, a shut door), and the way each
-//! Nav Agent and Block Mob is walking, drawn while editing and playing.
+//! Nav Agent and Block Mob is walking, drawn while editing and playing; and
+//! each Nav Obstacle's box, brighter while it is cut out of the nav.
 
 use voxear_core::{debug_draw, math::Vec3};
 use voxear_ecs::Entity;
@@ -25,6 +26,9 @@ const DOOR: [f32; 4] = [1.0, 0.6, 0.2, 0.55];
 const WAY: [f32; 4] = [1.0, 0.85, 0.25, 1.0];
 /// How a Nav Link is drawn.
 const LINK: [f32; 4] = [0.85, 0.45, 1.0, 1.0];
+/// How a Nav Obstacle is drawn: carving, and gone round as it moves.
+const CARVING: [f32; 4] = [1.0, 0.3, 0.25, 1.0];
+const MOVING: [f32; 4] = [1.0, 0.3, 0.25, 0.45];
 
 impl Editor {
     /// Draws the Navigation gizmo where it is switched on.
@@ -126,6 +130,23 @@ impl Editor {
             if both {
                 debug_draw::arrow(to + Vec3::Y * 0.2, from + Vec3::Y * 0.2, LINK, 0.0, style);
             }
+        }
+        // Each Nav Obstacle's box, turned and scaled with its Obj.
+        let obstacles: Vec<(Vec3, Vec3, voxear_core::math::Quat, bool)> = world
+            .query_ref::<(Entity, &voxear_engine::nav_obstacle::NavObstacle, &Transform, Option<&WorldTransform>)>()
+            .without::<Destroying>()
+            .into_iter()
+            .map(|(entity, obstacle, local, placed)| {
+                let (scale, rotation, middle) = match placed {
+                    Some(placed) => placed.0.to_scale_rotation_translation(),
+                    None => (local.scale, local.rotation, local.position),
+                };
+                let half = Vec3::from_array(obstacle.size).abs() * scale.abs() * 0.5;
+                (middle, half, rotation, voxear_engine::nav_obstacle::is_carving(world, entity))
+            })
+            .collect();
+        for (middle, half, rotation, carving) in obstacles {
+            debug_draw::wire_box(middle, half, rotation, if carving { CARVING } else { MOVING }, 0.0, style);
         }
         // Each agent's way, corner to corner, a little over the floor.
         let lift = Vec3::Y * 0.1;

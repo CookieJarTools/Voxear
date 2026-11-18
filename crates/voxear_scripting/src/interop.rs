@@ -672,6 +672,8 @@ pub enum ComponentKind {
     /// How an Obj stirs the water it moves through: its wake's size, how
     /// hard it stirs and how much foam it leaves.
     WaterWake = 37,
+    /// A box agents go round, cut out of the nav where it stands still.
+    NavObstacle = 38,
 }
 
 /// The most kinds `kind_value` answers.

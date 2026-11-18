@@ -369,6 +369,9 @@ pub struct ObjData {
     /// Joins its Obj to a point that walking does not reach, for navigation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_link: Option<crate::navigation::NavLink>,
+    /// A box agents go round, cut out of the nav where it stands still.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
     /// Animates the Obj's model by motion matching over its clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
@@ -524,6 +527,7 @@ impl ObjData {
             nav_agent: None,
             nav_area: None,
             nav_link: None,
+            nav_obstacle: None,
             motion_matcher: None,
             bone_attachment: None,
             first_person: None,
@@ -2240,6 +2244,9 @@ fn capture_instance(
     if root.nav_link.is_some() && root.nav_link != prefab_root.nav_link {
         instance.nav_link = root.nav_link;
     }
+    if root.nav_obstacle.is_some() && root.nav_obstacle != prefab_root.nav_obstacle {
+        instance.nav_obstacle = root.nav_obstacle;
+    }
     if root.motion_matcher.is_some() && root.motion_matcher != prefab_root.motion_matcher {
         instance.motion_matcher = root.motion_matcher.clone();
     }
@@ -2506,6 +2513,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(link) = actual.nav_link.as_ref().filter(|l| Some(*l) != expected.nav_link.as_ref()) {
         put("nav_link", whole(link, &crate::navigation::NavLink::default())?);
+    }
+    if let Some(obstacle) = actual.nav_obstacle.as_ref().filter(|o| Some(*o) != expected.nav_obstacle.as_ref()) {
+        put("nav_obstacle", whole(obstacle, &crate::nav_obstacle::NavObstacle::default())?);
     }
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
@@ -2845,6 +2855,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     });
     obj.nav_area = world.get::<crate::navigation::NavArea>(entity).copied();
     obj.nav_link = world.get::<crate::navigation::NavLink>(entity).copied();
+    obj.nav_obstacle = world.get::<crate::nav_obstacle::NavObstacle>(entity).copied();
     // As saved: where a game sent it is not part of the scene.
     obj.nav_agent = world.get::<crate::nav_agent::NavAgent>(entity).map(|agent| crate::nav_agent::NavAgent {
         destination: None,

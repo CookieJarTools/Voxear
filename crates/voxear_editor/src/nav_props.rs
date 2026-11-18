@@ -424,3 +424,100 @@ pub fn link_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
         parts.push(Part::NavLink);
     }
 }
+
+/// A value the Nav Obstacle component shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NavObstacleField {
+    Size,
+    Carve,
+    MoveThreshold,
+    StillTime,
+}
+
+use voxear_engine::nav_obstacle::NavObstacle;
+
+const OBSTACLE_FIELDS: [NavObstacleField; 4] =
+    [NavObstacleField::Size, NavObstacleField::Carve, NavObstacleField::MoveThreshold, NavObstacleField::StillTime];
+
+pub fn obstacle_props() -> Vec<Prop> {
+    OBSTACLE_FIELDS.into_iter().map(Prop::NavObstacle).collect()
+}
+
+pub fn obstacle_label(field: NavObstacleField) -> String {
+    match field {
+        NavObstacleField::Size => "Size",
+        NavObstacleField::Carve => "Carve",
+        NavObstacleField::MoveThreshold => "Move Threshold",
+        NavObstacleField::StillTime => "Still Time",
+    }
+    .into()
+}
+
+pub fn obstacle_tooltip(field: NavObstacleField) -> &'static str {
+    match field {
+        NavObstacleField::Size => {
+            "How wide, high and long the box agents keep off is, in metres, centred on the Obj and turned and \
+             scaled with it. Default: 1, 1, 1."
+        }
+        NavObstacleField::Carve => {
+            "Whether it is cut out of the nav where it stands still, so ways are found round it, or stop short where \
+             it shuts the only one. Off, it is only gone round as agents go round each other. A carving obstacle's \
+             own colliders are left out of a nav mesh bake. Default: on."
+        }
+        NavObstacleField::MoveThreshold => {
+            "How far it moves, in metres, before it counts as moving: its cut is let go, and agents go round it as \
+             it comes. Default: 0.1."
+        }
+        NavObstacleField::StillTime => {
+            "How long it stands still, in seconds, before it carves where it stopped. Default: 0.5."
+        }
+    }
+}
+
+pub fn obstacle_key(field: NavObstacleField) -> &'static str {
+    match field {
+        NavObstacleField::Size => "size",
+        NavObstacleField::Carve => "carve",
+        NavObstacleField::MoveThreshold => "move_threshold",
+        NavObstacleField::StillTime => "still_time",
+    }
+}
+
+pub fn obstacle_get(game: &Game, entity: Entity, field: NavObstacleField) -> Option<Value> {
+    let obstacle = game.engine.world.get::<NavObstacle>(entity)?;
+    Some(match field {
+        NavObstacleField::Size => Value::Vector(obstacle.size.to_vec()),
+        NavObstacleField::Carve => Value::Toggle(obstacle.carve),
+        NavObstacleField::MoveThreshold => Value::Number(obstacle.move_threshold),
+        NavObstacleField::StillTime => Value::Number(obstacle.still_time),
+    })
+}
+
+pub fn obstacle_set(game: &mut Game, entity: Entity, field: NavObstacleField, value: Value) -> bool {
+    let Some(obstacle) = game.engine.world.get_mut::<NavObstacle>(entity) else { return false };
+    match (field, value) {
+        (NavObstacleField::Size, Value::Vector(size)) if size.len() == 3 => {
+            obstacle.size = [0, 1, 2].map(|axis| size[axis].clamp(0.0, 10_000.0));
+        }
+        (NavObstacleField::Carve, Value::Toggle(on)) => obstacle.carve = on,
+        (NavObstacleField::MoveThreshold, Value::Number(far)) => obstacle.move_threshold = far.clamp(0.0, 100.0),
+        (NavObstacleField::StillTime, Value::Number(time)) => obstacle.still_time = time.clamp(0.0, 60.0),
+        _ => return false,
+    }
+    true
+}
+
+pub fn obstacle_add(world: &mut World, entity: Entity) {
+    world.insert(entity, NavObstacle::default());
+}
+
+pub fn obstacle_remove(world: &mut World, entity: Entity) {
+    world.remove::<NavObstacle>(entity);
+}
+
+/// Adds the Nav Obstacle part where `entity` has the component.
+pub fn obstacle_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
+    if world.has::<NavObstacle>(entity) {
+        parts.push(Part::NavObstacle);
+    }
+}

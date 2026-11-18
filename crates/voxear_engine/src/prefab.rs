@@ -436,6 +436,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.nav_agent = instance.nav_agent.clone().or(root.nav_agent.clone());
     root.nav_area = instance.nav_area.or(root.nav_area);
     root.nav_link = instance.nav_link.or(root.nav_link);
+    root.nav_obstacle = instance.nav_obstacle.or(root.nav_obstacle);
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
     root.first_person = instance.first_person.clone().or(root.first_person.clone());
@@ -539,6 +540,7 @@ pub struct TemplateObj {
     pub nav_agent: Option<crate::nav_agent::NavAgent>,
     pub nav_area: Option<crate::navigation::NavArea>,
     pub nav_link: Option<crate::navigation::NavLink>,
+    pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
     pub first_person: Option<crate::first_person::FirstPersonView>,
@@ -770,6 +772,9 @@ impl Template {
             }
             if let Some(link) = obj.nav_link {
                 world.insert(entity, link);
+            }
+            if let Some(obstacle) = obj.nav_obstacle {
+                world.insert(entity, obstacle);
             }
             if let Some(matcher) = obj.motion_matcher.clone() {
                 world.insert(entity, matcher);
@@ -1426,6 +1431,7 @@ pub(crate) fn resolve_obj(
         nav_agent: data.nav_agent.clone(),
         nav_area: data.nav_area,
         nav_link: data.nav_link,
+        nav_obstacle: data.nav_obstacle,
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),
         first_person: data.first_person.clone(),

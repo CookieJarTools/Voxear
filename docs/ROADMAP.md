@@ -1966,7 +1966,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Streams meeting:** a Stream of water ending in another that runs on past it eases into it as a tributary, the
   river churning white below the join; two ending in each other meet head on, fading into each other, both churning.
 - **Bilges:** a Dry Area's Bilge is water standing in it, level as its hull rocks: a Pool over the box round it
-  that keeps to the Dry Area's inside, with no walls.
+  that keeps to the Dry Area's inside, with no walls. Scripts reach it through `Obj.DryArea`: its Bilge set as a
+  depth or a share of the hold each frame, as a hold floods, and switched off and on; what floats in another Obj's
+  Dry Area floats on its Bilge, a boat still on the sea round its own; a shallow Bilge lies clear on its floor, its
+  ripples calming as it thins, with no surf.
 - **Indoors:** the sea's floor counts ground only up to 4 m over its surface, so it runs on under roofs and arches;
   walls, drawn as lines from straight above as they show edge on, stop its waves and the blur of its depth; over flat
   shallows, which the waves broke before reaching, as a flooded floor, it lies near still; and it mirrors what is on

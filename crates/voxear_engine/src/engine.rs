@@ -88,6 +88,7 @@ impl Engine {
         crate::dimension_scripts::register();
         crate::reflection_probes::register();
         crate::water_trails::register();
+        crate::dry_areas::register();
         crate::reverb_probes::register();
         crate::lightmaps::register();
         crate::ui_panels::register();

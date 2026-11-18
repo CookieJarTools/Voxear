@@ -283,6 +283,9 @@ pub struct ExtractedFrame {
     pub sun_own: [f32; 4],
     /// How the sun's shadows are drawn, as the scene's lighting says.
     pub sun_shadows: crate::SunShadows,
+    /// A worn shader pack has leaves draw the colour the sun takes through
+    /// them into the glass shadow atlas.
+    pub leaf_light: bool,
     /// How lamps' shadows are drawn, as the scene's lighting says.
     pub lamp_shadows: crate::LampShadows,
     /// Each slot of the local shadow atlas, in its list's order: its first
@@ -1180,6 +1183,7 @@ pub fn extract(
         sun_own,
         local_shadows: Vec::new(),
         shadow_lights,
+        leaf_light: pack_shadows.leaves,
         sun_shadows: options
             .sun_shadows
             .or(pack_shadows.maps)

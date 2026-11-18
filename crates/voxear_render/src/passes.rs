@@ -61,6 +61,9 @@ pub struct Targets {
     /// The glass shadow atlas and the panes drawn into it, when glass is in
     /// view and the sun or a local light casts shadows.
     pub glass_shadows: Option<(glass::Shadows, Vec<glass::Pane>)>,
+    /// The colour the sun takes through leaves, from its cascades, and the
+    /// blocks drawn into it, for a shader pack that lets the sun through.
+    pub leaf_light: Option<(ImageId, crate::blocks::ViewBlocks)>,
 }
 
 /// What a view's virtual shadow maps draw into and read (see `vsm`): the
@@ -583,9 +586,20 @@ pub fn record(
     let kept_atlas = targets.local_shadows.as_ref().and_then(|local| local.kept);
     let lamp_pool = targets.local_shadows.as_ref().and_then(|local| local.pages.as_ref().map(|pages| pages.pool));
     let glass_maps = targets.glass_shadows.as_ref().map(|(maps, _)| maps.images());
+    if let Some((image, view)) = targets.leaf_light.clone() {
+        crate::shader_packs::record_leaf_light(fg, (pipelines, push), image, view);
+    }
+    let leaf_light = targets.leaf_light.as_ref().map(|(image, _)| *image);
     // What lights pass lamps' shadows and glass through, beside the sun's shadows.
-    let shadow_maps: Vec<ImageId> =
-        local_atlas.into_iter().chain(kept_atlas).chain(lamp_pool).chain(pool).chain(moving_pool).chain(glass_maps.into_iter().flatten()).collect();
+    let shadow_maps: Vec<ImageId> = local_atlas
+        .into_iter()
+        .chain(kept_atlas)
+        .chain(lamp_pool)
+        .chain(pool)
+        .chain(moving_pool)
+        .chain(glass_maps.into_iter().flatten())
+        .chain(leaf_light)
+        .collect();
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;

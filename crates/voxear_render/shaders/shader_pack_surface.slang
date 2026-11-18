@@ -208,6 +208,11 @@ struct ShadowLighting
     float hard;
     // The clouds' shadow alone.
     float clouds;
+    // The colour the glass between the point and the sun lets its light through, and with `[shadows] leaves` the
+    // leaves too, their colour at its full brightness and halfway to white: white where there is none. Glass casts no dark shadow;
+    // leaves do, and the sun a filter lets through them, which it says with lightThroughLeaves, lights blocks, models,
+    // terrain and grass in their colour.
+    float3 through;
 };
 
 // A shadow filter reads the sun's shadow map itself with these (shaders/shading.slang has them):
@@ -217,6 +222,7 @@ struct ShadowLighting
 //     float shadowLit(SunShadowMap map, float2 offset)               1 lit, 0 in shade, `offset` metres across
 //     float shadowCaster(SunShadowMap map, float2 offset)            metres up to what casts the shadow there, or 0
 //     float2 shadowDisc(uint index, uint count, float turn)          points spread over a disc, for taps
+//     void lightThroughLeaves(float amount)                          that much of what it returns came through leaves
 
 // The frame as every program of the pack sees it.
 PackFrame* frame()

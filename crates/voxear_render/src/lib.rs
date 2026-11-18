@@ -3370,11 +3370,13 @@ impl View {
         )
         .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
+        // The cascades' cut-out faces are drawn for a shader pack's leaf light, whatever draws the shadows.
+        let cascade_lists = sun_shadows && (cascades || extracted.leaf_light);
         let mut view_blocks = blocks::gather(
             &seen_blocks,
             &extracted,
             &buffers.blocks,
-            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows && cascades, portal.is_none()),
+            (offset, Some(through.map_or(camera, |t| t.window)), cascade_lists, portal.is_none()),
             &lamps,
             &sun_pages,
         );
@@ -3675,6 +3677,11 @@ impl View {
         let glass_shadows = match !panes.is_empty() && (sunlit_glass || local_shadows.is_some()) {
             true => Some((glass::Shadows::new(fg, (gpu, bindless))?, panes.clone())),
             false => None,
+        };
+        // The colour the sun takes through leaves, for a shader pack that lets it through them.
+        let leaf_light = match view_blocks.clone().filter(|view| extracted.leaf_light && sunlit_glass && view.shadows) {
+            Some(view) => Some((shader_packs::leaf_light_image(fg, (gpu, bindless))?, view)),
+            None => None,
         };
         if let Some((maps, _)) = &glass_shadows {
             frame_data.glass_shadow = maps.frame_field(fg);
@@ -4122,6 +4129,9 @@ impl View {
                 // What the bloom's sum is multiplied by to be as bright as what glows, as the composite has it.
                 let scatter = extracted.post.bloom.scatter.clamp(0.0, 0.999);
                 pack_frame.bloom_scale = (1.0 - scatter) / (1.0 - scatter.powi(6));
+                if let Some((image, _)) = &leaf_light {
+                    pack_frame.leaf_light = fg.texture(*image).0;
+                }
                 let mut recorder =
                     shader_packs::PackRecorder::prepare(fg, (gpu, bindless), draw.clone(), &images, &mut pack_frame)?;
                 let written = buffers.pack_frame.as_ref().expect("made for the pack");
@@ -4180,6 +4190,7 @@ impl View {
                 pages: lamp_pages,
             }),
             glass_shadows,
+            leaf_light: leaf_light.clone(),
         };
         let draws = passes::Draws {
             draws: fg.import_buffer(&buffers.draws),

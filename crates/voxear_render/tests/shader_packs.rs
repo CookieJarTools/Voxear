@@ -701,6 +701,55 @@ fn a_shadow_filter_reads_the_suns_shadow_as_the_engine_does_or_its_own_way() {
 }
 
 #[test]
+fn leaves_let_the_sun_a_filter_lets_through_them_tinted_their_colour() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    // `level` 0 the engine's shadow; 1 some of the sun through the leaves, said to come through them; 2 as much, not.
+    let filter = "float run(ShadowSurface surface, ShadowLighting light)
+{
+    float level = options().level;
+    float3 through = light.through;
+    float leaves = saturate((1.0 - min(min(through.r, through.g), through.b)) * 8.0);
+    float leak = (light.clouds - light.engine) * leaves * min(level, 1.0);
+    if (level < 1.5)
+    {
+        lightThroughLeaves(leak);
+    }
+    return light.engine + leak;
+}
+";
+    let manifest = "[options]\nlevel = { kind = \"number\", range = [0.0, 2.0], default = 0.0 }\n\
+                    [shadows]\nfilter = \"shadows.slang\"\nleaves = true\n";
+    let compiled = pack(manifest, &[("shadows.slang", filter)]).unwrap_or_else(|error| panic!("{error:#}"));
+    wear(&mut world, compiled);
+    let shaded = render(&mut renderer, &world, 6);
+    set_level(&mut world, 1.0);
+    let through = render(&mut renderer, &world, 6);
+    keep_image("shadows through leaves.png", &through, (WIDTH, HEIGHT));
+    set_level(&mut world, 2.0);
+    let white = render(&mut renderer, &world, 6);
+    // The ground in front, much of it in the crowns' shade: lighter where the leaves let the sun through, and lit in
+    // their colour, which keeps green and takes away red and blue.
+    let ground = |pixels: &[u8]| {
+        let rows = &pixels[((HEIGHT - 40) * WIDTH * 4) as usize..];
+        let mean = |c: usize| rows.chunks(4).map(|p| f32::from(p[c])).sum::<f32>() / (rows.len() / 4) as f32;
+        [mean(0), mean(1), mean(2)]
+    };
+    let (before, after, plain) = (ground(&shaded), ground(&through), ground(&white));
+    eprintln!("the ground under the crowns from {before:?} to {after:?}, and {plain:?} lit white");
+    assert!(after[1] > before[1] + 4.0, "lighter where the leaves let the sun through: {before:?} to {after:?}");
+    let taken = |c: usize| plain[c] - after[c];
+    assert!(taken(0) > taken(1) + 2.0 && taken(2) > taken(1) + 2.0, "lit green: {after:?} against {plain:?}");
+    // What the sun lit already is as it was: only the light let through takes the leaves' colour.
+    let sunlit: Vec<usize> = (0..(WIDTH * HEIGHT) as usize)
+        .filter(|&i| shaded[i * 4..i * 4 + 3].iter().map(|&c| u32::from(c)).sum::<u32>() > 3 * 170)
+        .collect();
+    let moved = |&&i: &&usize| (0..3).any(|c| shaded[i * 4 + c].abs_diff(through[i * 4 + c]) > 4);
+    let changed = sunlit.iter().filter(moved).count();
+    assert!(!sunlit.is_empty() && changed * 50 < sunlit.len(), "{changed} of {} sunlit pixels changed", sunlit.len());
+}
+
+#[test]
 fn a_packs_shadow_settings_set_the_suns_width_and_maps() {
     let Some(mut renderer) = renderer() else { return };
     let mut world = trees_plain(&mut renderer);

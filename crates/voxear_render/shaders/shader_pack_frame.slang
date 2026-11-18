@@ -124,5 +124,7 @@ struct PackFrame
     // How much brighter than paper white the display shows its brightest, 1 where it is not an HDR display: a pass at
     // the tonemap may leave highlights above 1, up to it.
     float displayPeak;
-    uint pad1;
+    // The colour the sun takes through the leaves over a point, from its cascades, and the nearest's depth, for a
+    // pack whose `[shadows] leaves` lets some of the sun through them; PACK_NO_TEXTURE without.
+    uint leafLight;
 };

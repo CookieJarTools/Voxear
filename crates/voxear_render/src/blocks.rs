@@ -2551,6 +2551,14 @@ pub(crate) fn record_shadows(
     });
 }
 
+/// The faces `cascade` of the sun's sees, solid and cut out from their
+/// pictures, with whatever pipeline is bound: the glass shadow pass draws
+/// leaves' light with them, leaves with a picture and without.
+pub(crate) fn draw_for_cascade(ctx: &PassContext, view: &ViewBlocks, push: &Push, cascade: u32) {
+    draw_runs_from(ctx, view, push, (LIST_SHADOW + cascade, LIST_SHADOW + cascade));
+    draw_runs_from(ctx, view, push, (SHADOW_CUT + cascade, LIST_SHADOW + cascade));
+}
+
 /// **Depth (blocks)**: the faces in view as depth alone, with each pixel's
 /// normal and roughness, over what the depth pass drew.
 pub(crate) fn record_depth(

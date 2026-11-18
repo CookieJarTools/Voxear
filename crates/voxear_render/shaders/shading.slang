@@ -705,6 +705,19 @@ float shadowCaster(SunShadowMap map, float2 offset)
     return found < map.depth ? (map.depth - found) * map.depthMetres : 0.0;
 }
 
+// The colour the sun is tinted at the point last given to sunShadow, where a pack's filter has let some of it through
+// leaves (lightThroughLeaves): that light takes their colour. The shading multiplies the sun by it.
+static float3 packSunTint = float3(1.0, 1.0, 1.0);
+static float packLeafShare = 0.0;
+
+// Says that `amount` of the sun a shadow filter returns comes through the leaves over the point: where blocks, models,
+// terrain and grass are lit, that much takes the leaves' colour (`light.through` with `[shadows] leaves`). The rest
+// of what it returns is the sun's own colour.
+void lightThroughLeaves(float amount)
+{
+    packLeafShare += max(amount, 0.0);
+}
+
 // The `index`th of `count` points spread evenly over a disc of radius 1, turned by `turn`: where to tap round a point.
 float2 shadowDisc(uint index, uint count, float turn)
 {
@@ -712,6 +725,56 @@ float2 shadowDisc(uint index, uint count, float turn)
 }
 
 #include "project_pack_shadows.slang"
+#endif
+
+#ifdef VOXEAR_PACK_SHADOWS
+// The leaf light's size (LEAF_LIGHT_SIZE in src/shader_packs.rs).
+static const uint LEAF_LIGHT_SIZE = 1024;
+
+// What the glass or the leaves between a point and the sun let its light through, for a pack's shadow filter: one look
+// at an atlas laid out as the sun's cascades are (the glass shadow atlas's sun square, or the leaf light), `size`
+// texels across, white where nothing nearer the sun is drawn there. The shading's own glassSun spreads glass's light as
+// rough glass does; a filter only needs to know what is there.
+float3 packAtlasThrough(Frame* frame, ShadowLookup lookup, uint texture, float2 scale, float size)
+{
+    float2 tile = CASCADE_TILES[lookup.cascade] * scale;
+    float shadowTexel = frame->cascadeTexel[lookup.cascade];
+    float texelMetres = shadowTexel * CASCADE_RESOLUTION / (0.5 * size);
+    float depthMetres = shadowTexel * CASCADE_RESOLUTION;
+    float2 uv = clamp(lookup.uv * scale, tile, tile + 0.5 * scale);
+    float4 found = textures[NonUniformResourceIndex(texture)].SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], uv, 0.0);
+    // A little nearer the sun than the point, so leaves do not tint the light on their own faces.
+    return found.a < lookup.depth - 2.0 * texelMetres / depthMetres ? found.rgb : 1.0;
+}
+
+// What the leaves over a point let the sun through, white where none: the leaf light a pack's `[shadows] leaves` has
+// drawn.
+float3 packLeavesThrough(Frame* frame, ShadowLookup lookup)
+{
+    PackFrame* pack = buffers()->packFrame;
+    if (pack == nullptr || pack->leafLight == NO_TEXTURE || !lookup.found)
+    {
+        return 1.0;
+    }
+    // Leaves one behind another multiply their colours: as bright as the brightest of it again, and halfway to white,
+    // so the light under a deep crown is its leaves' colour, not ever deeper.
+    float3 through = packAtlasThrough(frame, lookup, pack->leafLight, 1.0, float(LEAF_LIGHT_SIZE));
+    through /= max(max(through.r, through.g), max(through.b, 1e-3));
+    return lerp(1.0, through, 0.5);
+}
+
+// What glass and leaves between a point and the sun let its light through, for a pack's shadow filter.
+float3 packThrough(Frame* frame, ShadowLookup lookup)
+{
+    float3 through = packLeavesThrough(frame, lookup);
+    if (frame->glassShadow.x != 0 && lookup.found)
+    {
+        float2 scale = float2(1.0, float(GLASS_SUN_SIZE) / float(GLASS_SHADOW_ATLAS.y));
+        through *= packAtlasThrough(frame, lookup, frame->glassShadow.x - 1, scale, float(GLASS_SUN_SIZE));
+    }
+    return through;
+}
+
 #endif
 
 // The sun's shadow at a point: 1 lit, 0 in shade, the clouds' shadow in it. A worn shader pack's shadow filter has
@@ -730,7 +793,15 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
     light.clouds = cloudShadowAt(frame, position);
     light.hard = sunShadowHard(frame, position, normal);
     light.engine = engineSunShadow(frame, position, normal);
-    return saturate(packSunShadow(surface, light));
+    ShadowLookup lookup = shadowLookup(frame, position, normal);
+    light.through = packThrough(frame, lookup);
+    packLeafShare = 0.0;
+    float lit = saturate(packSunShadow(surface, light));
+    // What the filter says came through leaves takes their colour.
+    float share = min(packLeafShare, lit);
+    float3 leaves = share > 0.0 ? packLeavesThrough(frame, lookup) : 1.0;
+    packSunTint = share > 0.0 ? (lit - share + share * leaves) / lit : 1.0;
+    return lit;
 #else
     return engineSunShadow(frame, position, normal);
 #endif
@@ -1484,6 +1555,10 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
     sunThrough *= glassSun(frame, input.worldPosition, s.normal);
+#ifdef VOXEAR_PACK_SHADOWS
+    // The light a pack's shadow filter lets through leaves, their colour.
+    sunThrough *= facingSun ? packSunTint : 1.0;
+#endif
     if (ownLightmap && frame->bake.sunMode == LIGHT_MODE_BAKED)
     {
         sunThrough = 0.0;

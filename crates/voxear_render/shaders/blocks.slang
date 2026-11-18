@@ -1006,6 +1006,73 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID, uint runStart : SV
     return o;
 }
 
+// A vertex of a face in a sun cascade's view, as blockShadowVertex places it, for the leaf light: a face that is not
+// leaves, nor a sheet of leaves or of a vine, is put out of view, so the GPU drops it before drawing anything of it.
+[shader("vertex")]
+BlockShadowOut blockLeafLightVertex(uint vertexId : SV_VertexID, uint runStart : SV_StartInstanceLocation)
+{
+    BlockShadowOut o = blockShadowVertex(vertexId, runStart);
+    BlockWorld world = buffers()->blockWorlds[o.world];
+    bool sheet = ((o.surface >> 8) & 3) != 0;
+    uint surface = min(o.surface & 0xFF, max(world.surfaceCount, 1u) - 1);
+    bool leafy = world.surfaceCount > 0 && (world.surfaces[surface].flags & TERRAIN_SURFACE_LEAFY) != 0;
+    if (!sheet && !leafy)
+    {
+        o.position = float4(2.0, 2.0, 2.0, 1.0);
+    }
+    return o;
+}
+
+// A face of leaves, or a sheet of leaves or of a vine, drawn into the leaf light from the sun's cascades for a shader
+// pack that lets the sun through leaves (`[shadows] leaves`): the colour light takes through it, at its full brightness,
+// which blending multiplies by the leaves' before it, and its depth, of which the nearest is kept. How much of the sun
+// comes through is the pack's shadow filter's to say; the shading then tints what comes through by this.
+[shader("fragment")]
+float4 blockLeafLightFragment(BlockShadowOut input) : SV_Target0
+{
+    BlockWorld world = buffers()->blockWorlds[input.world];
+    if (world.surfaceCount == 0 || (world.flags & BLOCKS_SMOOTH) != 0)
+    {
+        discard;
+    }
+    float3 color;
+    if (((input.surface >> 8) & 3) != 0)
+    {
+        float high = input.place.y / world.blockSize;
+        float4 look = blockSheetLook(world, input.surface, input.across, ddx(input.across), ddy(input.across), high);
+        if (look.a < 0.5)
+        {
+            discard;
+        }
+        color = look.rgb;
+    }
+    else
+    {
+        uint surface = input.surface & 0xFF;
+        TerrainSurface leaf = world.surfaces[min(surface, world.surfaceCount - 1)];
+        if ((leaf.flags & TERRAIN_SURFACE_LEAFY) == 0)
+        {
+            discard;
+        }
+        float cutoff = buffers()->materials[leaf.material].alphaCutoff;
+        TerrainSpot spot;
+        spot.place = input.place;
+        spot.dx = ddx(spot.place);
+        spot.dy = ddy(spot.place);
+        float3 normal = normalize(input.normal);
+        float4 tangent = float4(normalizeOr(float3(normal.y, -normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
+        spot = blockJoined(world, surface, spot, normal, input.surface >> 24, (input.surface >> 20) & 7);
+        float4 base = blockLayer(world, surface, spot, normal, tangent).base;
+        if (cutoff > 0.0 && base.a < cutoff)
+        {
+            discard;
+        }
+        color = base.rgb;
+    }
+    float brightest = max(max(color.r, color.g), max(color.b, 1e-3));
+    return float4(saturate(color / brightest), input.position.z);
+}
+
 // A face whose material is cut out, as leaves are, casts its picture's shadow: the sun passes where it is clear.
 [shader("fragment")]
 void blockShadowFragment(BlockShadowOut input)

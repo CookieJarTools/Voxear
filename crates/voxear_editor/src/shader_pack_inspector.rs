@@ -140,6 +140,10 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
         if let Some([r, g, b]) = shadows.tint {
             row_of("Tint", format!("{r}, {g}, {b}"), "The colour shade is lifted by, as the sky's light fills it");
         }
+        if shadows.leaves {
+            let about = "Leaves let the sun through, tinted their colour, as much as the filter says";
+            row_of("Leaves", "Let light through".to_string(), about);
+        }
         if let Some(maps) = shadows.maps {
             let name = match maps {
                 SunShadows::Virtual => "Virtual",

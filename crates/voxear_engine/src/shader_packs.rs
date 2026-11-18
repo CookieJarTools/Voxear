@@ -555,6 +555,9 @@ fn shadows_json(shadows: &packs::PackShadows) -> serde_json::Value {
     if let Some(maps) = shadows.maps {
         json.insert("maps".into(), maps.name().into());
     }
+    if shadows.leaves {
+        json.insert("leaves".into(), true.into());
+    }
     json.into()
 }
 

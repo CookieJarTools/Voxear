@@ -1495,7 +1495,11 @@ handed the sky by `skyFragment` by its parts, the disc and the stars apart, befo
 extraction (the sun's width and tint, the cascades' reach, virtual maps or cascades), and its `filter` is compiled
 into every module in `SHADOW_MODULES` with `VOXEAR_PACK_SHADOWS`: `shading.slang`'s `sunShadow` then hands the
 engine's shadow (`engineSunShadow`), its hard one and the clouds' to `packSunShadow`, and `sunShadowMap`,
-`shadowLit` and `shadowCaster` read the virtual pages or the cascades for it. `module_files` writes what each module
+`shadowLit` and `shadowCaster` read the virtual pages or the cascades for it. With `[shadows] leaves`
+(`ExtractedFrame::leaf_light`) `shader_packs::record_leaf_light` draws the blocks' cascade lists, picked for it
+whatever draws the sun's shadows, into a leaf light of their own with `block_leaf_light` (leaves' colour; other faces
+dropped in its vertex shader), which the shading passes read beside the shadow maps; the filter reads it, and glass,
+as `light.through`, and `sunShadow` leaves `packSunTint` for the shading to tint the light let through. `module_files` writes what each module
 includes (the options once, in `project_pack_options.slang`) and `compile` runs its jobs on a few threads. A pass at
 the `tonemap` point that writes the colour is recorded by
 `post_passes::record` in the Composite pass's place, into the same image, reading the light after TAA and, if it

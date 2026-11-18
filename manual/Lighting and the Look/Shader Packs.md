@@ -8,7 +8,7 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 
 ## The pack Voxear comes with
 
-**Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, a golden path of sun on the water, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, a sky turned gold near the horizon and round a low sun with the clouds on its side gold too, long shadows paled by the evening sky, and a tonemap and grade of its own that warm the light and cool the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
+**Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, a golden path of sun on the water, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, a sky turned gold near the horizon and round a low sun with the clouds on its side gold too, long shadows paled by the evening sky, a little green-gold sun through leaves, and a tonemap and grade of its own that warm the light and cool the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
 
 | Option | What it does |
 | --- | --- |
@@ -22,6 +22,7 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 | **Glow** | How much bright light glows round itself, where the level's bloom is on, 0 to 3 |
 | **Vignette** | How much darker the corners are, 0 to 1 |
 | **Long shadows** | How much paler shadows are the farther they fall from what casts them, 0 to 1 |
+| **Light through leaves** | How much of the sun comes through leaves, tinted their colour, 0 to 2 |
 
 The rays show when the camera looks towards the sun. They are worked out at half size, forty steps a pixel, and cost about half a millisecond a frame at 1440p on an RTX 3070; the whole pack's passes, looking into the sun, about 0.8 ms. Facing away from the sun the rays cost nothing.
 
@@ -301,6 +302,7 @@ softness = 1.5          # how wide the sun is, in degrees: the wider, the softer
 distance = 150.0        # how far from the camera the cascades reach, in metres
 tint = [0.04, 0.05, 0.08]   # the colour shade is lifted by
 maps = "virtual"        # "virtual" shadow maps, or "cascades"
+leaves = true           # leaves let the sun through, tinted their colour, as much as the filter says
 filter = "shadows.slang"
 ```
 
@@ -327,8 +329,20 @@ float run(ShadowSurface surface, ShadowLighting light)
 | `engine` | The engine's soft shadow, under the clouds' shadow |
 | `hard` | The engine's shadow with a hard edge, under the clouds' shadow |
 | `clouds` | The clouds' shadow alone |
+| `through` | The colour the glass between the point and the sun lets its light through, and with `leaves = true` the leaves too, at full brightness; white where there is none |
 
-The easy way in is to change `light.engine`; the full one is to read the shadow map yourself. `sunShadowMap(surface, reach)` finds the map round the point, fine enough to read `reach` metres round it, and then `shadowLit(map, offset)` says whether the sun reaches a point `offset` metres across the sun's view (1 lit, 0 shaded), and `shadowCaster(map, offset)` how far above it, towards the sun, what casts the shadow there is, 0 where nothing does. `shadowDisc(index, count, surface.turn)` spreads taps over a disc of radius 1. A filter is compiled into every shader that lights things in the sun, so a pack with one takes a minute or two to compile the first time it is worn. The fog's light shafts and the GI still read the engine's shadow.
+The easy way in is to change `light.engine`; the full one is to read the shadow map yourself. `sunShadowMap(surface, reach)` finds the map round the point, fine enough to read `reach` metres round it, and then `shadowLit(map, offset)` says whether the sun reaches a point `offset` metres across the sun's view (1 lit, 0 shaded), and `shadowCaster(map, offset)` how far above it, towards the sun, what casts the shadow there is, 0 where nothing does. `shadowDisc(index, count, surface.turn)` spreads taps over a disc of radius 1.
+
+Glass casts no dark shadow; the sun through it is tinted its colour. Leaves do cast one, but with `leaves = true` a filter can let some of the sun through them: it says how much of what it returns came through leaves with `lightThroughLeaves(amount)`, and where blocks, models, terrain and grass are lit that much is tinted the leaves' colour: green light dappling the ground under a crown, pink under blossom. Where `through` is far from white there are leaves above:
+
+```slang
+float leaves = saturate((1.0 - min(min(light.through.r, light.through.g), light.through.b)) * 8.0);
+float leak = (light.clouds - light.engine) * leaves * 0.3;
+lightThroughLeaves(leak);
+return light.engine + leak;
+```
+
+Leaves of worlds of blocks let the light through, near the camera (in the sun's first three cascades); models' leaves do not yet. A filter is compiled into every shader that lights things in the sun, so a pack with one takes a minute or two to compile the first time it is worn. The fog's light shafts and the GI still read the engine's shadow.
 
 ### Things to make
 

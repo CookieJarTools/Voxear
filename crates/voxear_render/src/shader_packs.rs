@@ -381,6 +381,10 @@ pub struct PackShadows {
     pub tint: Option<[f32; 3]>,
     /// Virtual shadow maps or cascades.
     pub maps: Option<crate::shadows::SunShadows>,
+    /// Leaves draw the colour the sun's light takes through them into the
+    /// glass shadow atlas, as `light.through` gives a filter, and the light
+    /// a filter lets through them is tinted by it.
+    pub leaves: bool,
 }
 
 /// The engine's shader modules that read the sun's shadow (`sunShadow` in
@@ -495,6 +499,8 @@ struct ShadowsData {
     tint: Option<[f32; 3]>,
     #[serde(default)]
     maps: Option<String>,
+    #[serde(default)]
+    leaves: bool,
 }
 
 #[derive(Deserialize)]
@@ -599,6 +605,7 @@ fn shadows(data: &ShadowsData) -> Result<PackShadows> {
         distance: data.distance,
         tint: data.tint,
         maps,
+        leaves: data.leaves,
     })
 }
 
@@ -1239,6 +1246,54 @@ fn stable_hash(parts: &[&str]) -> u64 {
     hash
 }
 
+/// The leaf light's format: the colour the sun takes through the leaves
+/// over a point, and the nearest leaf's depth.
+pub const LEAF_LIGHT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+/// The leaf light's size, its four cascades laid out as the sun's shadow
+/// atlas lays them.
+/// (`LEAF_LIGHT_SIZE` in `shaders/shading.slang`).
+pub const LEAF_LIGHT_SIZE: u32 = 1024;
+
+/// An image for the leaf light, this frame.
+pub(crate) fn leaf_light_image(fg: &mut FrameGraph<'_>, (gpu, bindless): (&Gpu, &mut Bindless)) -> Result<ImageId> {
+    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+    let desc = ImageDesc::new(LEAF_LIGHT_SIZE, LEAF_LIGHT_SIZE, LEAF_LIGHT_FORMAT, usage);
+    fg.create_image(gpu, bindless, "leaf light", desc)
+}
+
+/// **Leaf light**: the leaves of worlds of blocks each of the sun's
+/// cascades sees, the colour they let its light through multiplied where
+/// they stand one behind another and the nearest's depth, for a shader pack
+/// whose `[shadows] leaves` lets some of the sun through them.
+pub(crate) fn record_leaf_light(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (crate::pipelines::Pipelines, Push),
+    image: ImageId,
+    view: crate::blocks::ViewBlocks,
+) {
+    let reads: Vec<_> = view.pools.iter().map(|&id| (id, crate::graph::BufferAccess::ShaderRead)).collect();
+    fg.add_pass("Leaf light", &[(image, ImageAccess::ColorAttachment)], &reads, move |ctx| {
+        // Where nothing is drawn, all the light passes, from as far as can be.
+        let clear = vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 1.0, 1.0, 65504.0] } };
+        let target = vk::RenderingAttachmentInfo::default()
+            .image_view(ctx.view(image))
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(clear);
+        let size = vk::Extent2D { width: LEAF_LIGHT_SIZE, height: LEAF_LIGHT_SIZE };
+        crate::passes::begin_rendering(ctx, size, &[target], None);
+        crate::passes::bind(ctx, pipelines.block_leaf_light, vk::PipelineBindPoint::GRAPHICS, &push);
+        let tile = LEAF_LIGHT_SIZE / 2;
+        for cascade in 0..crate::shadows::CASCADES as u32 {
+            let corner = vk::Offset2D { x: (cascade % 2 * tile) as i32, y: (cascade / 2 * tile) as i32 };
+            crate::passes::set_viewport(ctx, corner, vk::Extent2D { width: tile, height: tile });
+            crate::blocks::draw_for_cascade(ctx, &view, &push, cascade);
+        }
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
 /// The shader pack the world wears, as a resource: the renderer draws its
 /// passes from the next frame.
 #[derive(Clone, Debug)]
@@ -1305,7 +1360,8 @@ pub(crate) struct GpuPackFrame {
     pub light_window: u64,
     pub light_bytes: u64,
     pub display_peak: f32,
-    pub pad1: u32,
+    /// The leaf light's texture, `NO_TEXTURE` without one.
+    pub leaf_light: u32,
 }
 
 /// What a view's frame gives a pack's frame beyond the engine's own.
@@ -1364,6 +1420,7 @@ impl GpuPackFrame {
             wind_direction: frame.wind.direction,
             exposure: facts.exposure,
             display_peak: frame.post.display_peak.max(1.0),
+            leaf_light: NO_TEXTURE,
             sky_light: facts.addresses[0],
             light_window: facts.addresses[1],
             light_bytes: facts.addresses[2],
@@ -1889,8 +1946,9 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         assert_eq!(files.len(), 3, "the options, water's and the shadows'");
         assert_eq!(both.engine_modules().iter().filter(|module| **module == "water").count(), 1);
         // Settings alone compile nothing.
-        let settings = PackManifest::parse("[shadows]\nsoftness = 0.0\n").unwrap();
-        assert!(settings.engine_modules().is_empty());
+        let settings = PackManifest::parse("[shadows]\nsoftness = 0.0\nleaves = true\n").unwrap();
+        assert!(settings.engine_modules().is_empty() && settings.shadows.leaves);
+        assert!(!manifest.shadows.leaves, "leaves let nothing through unless the pack says so");
     }
 
     #[test]

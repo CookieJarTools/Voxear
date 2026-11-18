@@ -157,7 +157,7 @@ passes took the same with and without it. The plan's estimates, before it was bu
 3. **The final pass and the sky:** a pack's own tonemap and grade in place of the engine's and the look shader, and
    its own sky and clouds. ✅ Built.
 4. **Shadows:** a pack's shadow settings and filter, then coloured shadows through leaves and glass, then a pack's
-   own cascade pass. The settings and the filter are built.
+   own cascade pass. The settings, the filter and light through leaves and glass are built.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
    surface id image for passes that want it.
 
@@ -262,7 +262,19 @@ The first part: a pack's settings for the sun's shadows and a filter that reads 
   `project_pack_shadows.slang`; a module that takes a surface program too takes both, the pack's options in a
   `project_pack_options.slang` both include. The fog's light shafts, smoke and the GI keep the engine's hard shadow.
   Compiling ten modules, a pack's compiles now run a few at once (half the cores, two to eight) rather than all.
-- **Evening** pales its shadows the farther above the point what casts them is, as an evening sky fills a long shadow.
+- **Coloured shadows:** glass already tints the sun through it (the glass shadow atlas, `glassSun`). With `[shadows]
+  leaves = true` the leaves of worlds of blocks draw a **leaf light** of their own from the sun's cascades, 1024
+  texels square (`blockLeafLightVertex` drops every other face, `blockLeafLightFragment` writes the leaf's colour at
+  full brightness, multiplied where leaves stand one behind another, and the nearest's depth); `PackFrame::leafLight`
+  names it. The filter is given what glass and leaves let through as `light.through`. Leaves still cast their dark
+  shadow; whatever a filter lets through beyond the engine's own shadow takes the leaves' colour where the shading
+  lights blocks, models, terrain and grass (`packSunTint`), and the sun the engine's shadow already lets through is
+  left as it is. Leaves have an image of their own rather than drawing into glass's: there the shading tinted the
+  sunlit gaps beside leaves too, the atlas being coarser than the shadow. The blocks' cascade lists are picked for it
+  under the virtual maps too. About 0.4 ms at 1280×720 in CubeGame. Not yet: models' leaves, and leaves past the
+  third cascade (drawn solid there).
+- **Evening** pales its shadows the farther above the point what casts them is, as an evening sky fills a long
+  shadow, and lets a little of the sun through leaves.
 
 ## Questions to settle
 

@@ -3852,7 +3852,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     what each was baked to. Tests: an ogre too wide for a doorway going round by a wider gap where the Default type
     walks through, both meshes read back from a file, and a crate cutting the ogre's; a tool baking an ogre type;
     meshes kept and read by their numbers.
-  - [ ] walkers wider than a block
+  - [x] **Walkers wider than a block** (`Walker::width`, `blocks::fits`): a place fits one where every column of
+    its footprint, the place its corner, has a floor within half a block with room over the highest; steps,
+    jumps' landings and finding where to stand all ask it; wide walkers do not climb. An agent's width is from its
+    own Radius (the wider of its controller's and its Nav Agent's) over the block size; its corners are its
+    middle (`Walked::anchor`, `centre`). Worlds gather regions for a walker three blocks tall and two wide too,
+    and two wide of four and five blocks tall in blocks under 0.7 m (`navigation::walkers_for`). Timings (test
+    build): a world of 93 chunks built in 27 ms with the wide class, 20 ms without. Tests: a walker two wide by
+    the wide gap, with its own regions and without, and fitting nowhere against a wall; an agent 0.8 m round its
+    middle by the wide gap and one 0.35 m by the narrow, by both ways of moving.
   - [x] **Co-op, Portals and dimensions.** Agents move only where their Obj has authority; a player's script
     setting `Destination`, `SetDestination`, `Stop` or `Resume` on one the server moves sends `Message::NavGo`
     (`net::ask_nav`), which the server takes for an Obj no player owns or the player's own (`net::take_nav_asked`,

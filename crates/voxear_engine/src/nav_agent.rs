@@ -311,15 +311,30 @@ impl Walked {
         Walker::blocks((height / self.size).ceil().clamp(1.0, 64.0) as u16)
     }
 
-    /// The walker `agent` is, `height` metres tall: swimming, opening doors
-    /// and jumping as it does.
-    fn walker_of(&self, agent: &NavAgent, height: f32) -> Walker {
+    /// The walker `agent` is, `height` metres tall and `radius` wide round
+    /// its middle: swimming, opening doors, jumping and climbing as it does,
+    /// as many blocks wide as it needs.
+    fn walker_of(&self, agent: &NavAgent, height: f32, radius: f32) -> Walker {
         let jump = if agent.jumps { voxear_nav::blocks::walking::MOST_JUMP } else { 0 };
-        self.walker(height).with(agent.swims, agent.opens_doors, jump).climbing(agent.climbs)
+        let width = (2.0 * radius / self.size - 0.25).ceil().clamp(1.0, 4.0) as u8;
+        self.walker(height).with(agent.swims, agent.opens_doors, jump).climbing(agent.climbs).wide(width)
+    }
+
+    /// Where `walker`, its middle at `at`, stands in blocks: the corner
+    /// column of what it stands on, for one wider than a block.
+    fn anchor(&self, at: Vec3, walker: Walker) -> [f32; 3] {
+        let [x, y, z] = self.local(at);
+        [x - walker.middle(), y, z - walker.middle()]
+    }
+
+    /// Where `walker`'s middle is in the world, standing at `point` in
+    /// blocks.
+    fn centre(&self, point: [f32; 3], walker: Walker) -> Vec3 {
+        self.world([point[0] + walker.middle(), point[1], point[2] + walker.middle()])
     }
 
     fn standing(&self, at: Vec3, walker: Walker, reach: f32) -> Option<PlaceRef> {
-        self.nav.nearest(self.local(at + Vec3::Y * 0.1 * self.size), walker, 0.0, reach)
+        self.nav.nearest(self.anchor(at + Vec3::Y * 0.1 * self.size, walker), walker, 0.0, reach)
     }
 }
 
@@ -384,6 +399,15 @@ fn link_between(from: &Walked, into: &Walked, at: Vec3, destination: Vec3, heigh
             along(x).total_cmp(&along(y))
         })
         .map(|(approach, exit, kind)| Hop { approach, exit, kind })
+}
+
+/// How tall an agent is and how wide round its middle: as its Character
+/// Controller is, or else as its Nav Agent says.
+fn size_of(agent: &NavAgent, controller: Option<CharacterController>) -> (f32, f32) {
+    match controller {
+        Some(controller) => (controller.height, controller.radius.max(agent.radius)),
+        None => (agent.height, agent.radius),
+    }
 }
 
 /// What one agent steps with this step.
@@ -456,7 +480,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
             ..NavAgentState::default()
         });
         let controller = world.get::<CharacterController>(entity).copied();
-        let height = controller.map_or(agent.height, |controller| controller.height);
+        let (height, radius) = size_of(&agent, controller);
         // The world it walks: the one it stands in, or else the first there is.
         // The world it walks: of its own dimension, the one it stands in, or else the first there is.
         let dimension = dimension_of(world, entity);
@@ -498,7 +522,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
             }
         };
         if let Some(walked) = index.map(|index| &walked[index]) {
-            plan(world, &agent, &mut state, walked, &portals, layer, at, height, delta, &mut budget);
+            plan(world, &agent, &mut state, walked, &portals, layer, at, (height, radius), delta, &mut budget);
         } else if let Some((mesh, offset)) = mesh_of(&agent) {
             // No world of blocks under it: the level's nav mesh, where it has one.
             plan_mesh(world, &agent, &mut state, mesh, *offset, dimension, &portals, layer, at, delta, &mut budget);
@@ -715,11 +739,11 @@ fn plan(
     portals: &[NavPortal],
     layer: u8,
     at: Vec3,
-    height: f32,
+    (height, radius): (f32, f32),
     delta: f32,
     budget: &mut Budget,
 ) {
-    let walker = walked.walker_of(agent, height);
+    let walker = walked.walker_of(agent, height, radius);
     // The way asked for: done by now on a thread, or done here while few are waiting on the threads.
     let taken = state.asked.take().and_then(|Asked(job, waited)| {
         let here = !job.is_done() && !job.is_begun() && budget.taken_here > 0;
@@ -736,7 +760,7 @@ fn plan(
         found
     });
     if let Some(found) = taken {
-        state.corners = found.corners.iter().map(|corner| walked.world(*corner)).collect();
+        state.corners = found.corners.iter().map(|corner| walked.centre(*corner, walker)).collect();
         state.next = 1.min(state.corners.len().saturating_sub(1));
         (state.status, state.cost) = (found.status, found.cost);
         state.found = Some(Found { version: found.version, chunks: found.chunks });
@@ -763,7 +787,7 @@ fn plan(
             })
     });
     // A way crossing an obstacle carved or let go since it was found.
-    let radius = agent.radius.max(0.3 * walked.size);
+    let radius = radius.max(0.3 * walked.size);
     let remaining = &state.corners[state.next.saturating_sub(1).min(state.corners.len())..];
     let stale = stale || walked.cuts.crosses(state.cut_seen, remaining, radius, height);
     let stale = stale || left_at_portal(state, portals, at);
@@ -778,8 +802,8 @@ fn plan(
     let wanted = moved_goal || stale || near_end || state.search_in <= 0.0 && to.is_none();
     if state.asked.is_none() && wanted && budget.asked > 0 {
         budget.asked -= 1;
-        let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
-        let mut ask = PathAsk::new(from, walked.local(destination), walker);
+        let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.anchor(at, walker));
+        let mut ask = PathAsk::new(from, walked.anchor(destination, walker), walker);
         // What each area costs its agent type.
         let costs = crate::navigation::agent_type(world, agent.agent_type).costs;
         (ask.costs, ask.boxes) = (costs, walked.boxes.clone());
@@ -918,6 +942,7 @@ fn finish(
     let flat = steer::accelerate(velocity, chosen, agent.acceleration.max(0.01) * 4.0, delta);
     let walked = step.walked.map(|index| &walked[index]);
     let facing = Vec3::new(flat.x, 0.0, flat.y);
+    let (height, radius) = size_of(agent, step.controller);
     // A Nav Link reached, or one being crossed: along its line, or its arc for a jump, whatever moves the agent. A
     // Portal is walked into, to just through its opening, for it to take the agent through.
     let mut on_link = false;
@@ -958,7 +983,8 @@ fn finish(
             // Far from where the crossing had it: a Portal took it through, or something else moved it.
             if into > 0.0 && (step.at - arc(into)).length() > size.max(1.0) {
                 (state.jumping, state.crossing_link) = (None, false);
-                state.place = walked.and_then(|walked| walked.standing(step.at, walked.walker(agent.height), 1.0));
+                state.place =
+                    walked.and_then(|walked| walked.standing(step.at, walked.walker_of(agent, height, radius), 1.0));
             } else {
                 let into = (into + delta).min(lasts);
                 let next = arc(into);
@@ -967,7 +993,8 @@ fn finish(
                 }
                 if into >= lasts {
                     (state.jumping, state.crossing_link, state.fall) = (None, false, 2.0);
-                    state.place = walked.and_then(|walked| walked.standing(to, walked.walker(agent.height), 1.0));
+                    state.place =
+                        walked.and_then(|walked| walked.standing(to, walked.walker_of(agent, height, radius), 1.0));
                 } else {
                     state.jumping = Some((from, to, into, lasts, high));
                 }
@@ -1033,15 +1060,19 @@ fn finish(
                 }
                 state.jumping = (into < lasts).then_some((from, to, into, lasts, high));
                 if state.jumping.is_none() {
-                    state.place = walked.and_then(|walked| walked.standing(to, walked.walker(agent.height), 1.0));
+                    state.place =
+                        walked.and_then(|walked| walked.standing(to, walked.walker_of(agent, height, radius), 1.0));
                 }
             } else if let (Some(walked), Some(place)) = (walked, state.place) {
-                let walker = walked.walker_of(agent, agent.height);
-                let at = walked.local(step.at);
+                let walker = walked.walker_of(agent, height, radius);
+                let at = walked.anchor(step.at, walker);
                 let by = [facing.x * delta / walked.size, facing.z * delta / walked.size];
-                let (place, moved) = slide(&walked.nav, place, at, by, walker, agent.radius / walked.size);
+                // Its corner column kept clear of walls by what of it reaches past that column's middle.
+                let margin = (radius / walked.size - walker.middle()).max(0.1);
+                let (place, moved) = slide(&walked.nav, place, at, by, walker, margin);
                 state.place = Some(place);
-                let floor = walked.world(moved).y;
+                let moved = walked.centre(moved, walker);
+                let floor = moved.y;
                 let gravity = physics.map_or(9.81, |physics| physics.gravity().length());
                 let mut y = step.at.y;
                 if y > floor + 0.01 {
@@ -1051,7 +1082,7 @@ fn finish(
                     state.fall = 0.0;
                     y = floor;
                 }
-                let next = Vec3::new(walked.world(moved).x, y, walked.world(moved).z);
+                let next = Vec3::new(moved.x, y, moved.z);
                 if let Some(transform) = world.get_mut::<Transform>(step.entity) {
                     transform.position += next - step.at;
                 }
@@ -1386,13 +1417,14 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
         return (status, corners, length);
     }
     let found = walked_at(world, from, height).map(|walked| {
-        let walker = walked.walker_of(&NavAgent::default(), height);
-        let mut ask = PathAsk::new(walked.local(from), walked.local(to), walker);
+        let agent = NavAgent::default();
+        let walker = walked.walker_of(&agent, height, agent.radius);
+        let mut ask = PathAsk::new(walked.anchor(from, walker), walked.anchor(to, walker), walker);
         (ask.costs, ask.boxes) = (walked.costs, walked.boxes.clone());
         ask.links = crate::navigation::heeded(&walked.links, 0);
         ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
         let found = find_path(&walked.nav, &ask);
-        (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
+        (found.status, found.corners.iter().map(|corner| walked.centre(*corner, walker)).collect(), found.cost)
     });
     found.unwrap_or((PathStatus::None, Vec::new(), 0.0))
 }

@@ -39,7 +39,7 @@ Press Play. The guard walks to its post, round anything in the way. Add a [[Mob 
 | Turn Speed | How fast it turns to face the way it goes, in degrees a second |
 | Stopping Distance | How near its destination it stops |
 | Auto Brake | On, it slows down to stop at its destination. Off, it arrives at speed |
-| Radius | How wide it is round its middle: how far other agents keep from it |
+| Radius | How wide it is round its middle: how far other agents keep from it, and in a Block World how many blocks wide a way it needs. With a Character Controller, the wider of the two counts |
 | Height | How tall it is: what it fits under. With a Character Controller, the controller's height counts |
 | Avoidance | How carefully it goes round others: High, Low or None. Others still go round one set to None |
 | Priority | From 0 to 1. Others go round an agent with a higher priority more than it goes round them |

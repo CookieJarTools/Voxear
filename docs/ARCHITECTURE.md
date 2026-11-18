@@ -4585,7 +4585,9 @@ engine's glue is `voxear_engine::navigation`.
 
 ### Planned
 
-- **Moving in block worlds**: wider walkers. (Climbing is done: places of kind Climb on vines, ropes, chains and
+- **Moving in block worlds**: none planned. (Walkers wider than a block are done: `blocks::fits` checks a
+  walker's footprint from its corner column in every step, the engine turning an agent's middle into that corner
+  and back. Climbing is done: places of kind Climb on vines, ropes, chains and
   Climbable blocks, `blocks::climb_step` up and down them in searches and regions, a climb given back as Climb
   links.) (Nav Links are done: `navigation::NavLink`,
   given to each search as `voxear_nav::Link`, one step each in both the coarse and the place-by-place search,

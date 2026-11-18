@@ -125,7 +125,8 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
 /// tall it is, how high it steps up, and how far it drops; and what more it
 /// does: whether it swims across deep water, opens shut doors, jumps gaps
 /// (as many blocks across as `jump`, none for 0), and climbs vines, ropes
-/// and ladders.
+/// and ladders. One `width` blocks wide stands on that many columns each
+/// way, a place being the corner column of what it stands on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Walker {
     pub height: u16,
@@ -135,13 +136,14 @@ pub struct Walker {
     pub doors: bool,
     pub jump: u8,
     pub climbs: bool,
+    pub width: u8,
 }
 
 impl Walker {
     /// A walker `tall` blocks high that steps up a block and drops three,
     /// as mobs walk worlds of blocks, and does nothing more.
     pub const fn blocks(tall: u16) -> Self {
-        Self { height: tall * 16, step: 16, drop: 48, swims: false, doors: false, jump: 0, climbs: false }
+        Self { height: tall * 16, step: 16, drop: 48, swims: false, doors: false, jump: 0, climbs: false, width: 1 }
     }
 
     /// A walker `height` metres tall in a world of blocks `size` metres a
@@ -161,6 +163,17 @@ impl Walker {
     /// The same walker climbing as `climbs` says.
     pub const fn climbing(self, climbs: bool) -> Self {
         Self { climbs, ..self }
+    }
+
+    /// The same walker `width` blocks wide, one at least.
+    pub const fn wide(self, width: u8) -> Self {
+        Self { width: if width == 0 { 1 } else { width }, ..self }
+    }
+
+    /// How far its middle is from the middle of the corner column it stands
+    /// on, along x and along z, in blocks.
+    pub fn middle(self) -> f32 {
+        f32::from(self.width.max(1) - 1) * 0.5
     }
 
     /// The walker whose regions it shares: as tall, stepping and dropping

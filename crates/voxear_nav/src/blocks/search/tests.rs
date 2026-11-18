@@ -418,3 +418,37 @@ fn a_vine_up_a_cliff_is_climbed_by_what_climbs_and_its_top_reached_over_the_ledg
     let down = find_path(&nav, &PathAsk::new(on(to), on(from), climber));
     assert_eq!(down.status, PathStatus::Complete, "{:?}", down.corners);
 }
+
+#[test]
+fn a_walker_two_blocks_wide_goes_round_by_a_gap_it_fits_through_with_its_own_regions_or_without() {
+    // A wall across the floor at x 8: a gap a block wide at z 3, and one three wide at z 11 to 13.
+    let mut blocks = floor();
+    for z in 0..16 {
+        if z == 3 || (11..14).contains(&z) {
+            continue;
+        }
+        for y in 1..4 {
+            blocks.set([8, y, z], STONE);
+        }
+    }
+    let wide = Walker::blocks(2).wide(2);
+    let mut builder = BlockNavBuilder::new(&[crate::blocks::walking::WALKERS[0], wide.class()]);
+    builder.settle(&Arc::new(blocks.clone()), &Arc::from(&FACES[..]));
+    for nav in [nav_of(&blocks), builder.nav().clone()] {
+        let (from, to) = (on([2, 1, 2]), on([13, 1, 2]));
+        let narrow = find_path(&nav, &PathAsk::new(from, to, Walker::blocks(2)));
+        assert_eq!(narrow.status, PathStatus::Complete);
+        assert!(narrow.corners.iter().all(|c| c[2] < 6.0), "a block wide, by the narrow gap: {:?}", narrow.corners);
+        let found = find_path(&nav, &PathAsk::new(from, to, wide));
+        assert_eq!(found.status, PathStatus::Complete, "{:?}", found.corners);
+        let at_wall = found.corners.windows(2).find(|pair| (pair[0][0] - 8.5) * (pair[1][0] - 8.5) <= 0.0).unwrap();
+        let crossing =
+            at_wall[0][2] + (at_wall[1][2] - at_wall[0][2]) * (8.5 - at_wall[0][0]) / (at_wall[1][0] - at_wall[0][0]);
+        assert!(
+            (11.0..=12.5).contains(&crossing),
+            "two wide, by the wide gap, its corner column at 11 or 12: {crossing}"
+        );
+        // Where it stands is the corner of what it stands on: nowhere with the wall in its second column.
+        assert!(nav.standing_at(on([7, 1, 2]), wide, 0.5).is_none(), "against the wall, it does not fit");
+    }
+}

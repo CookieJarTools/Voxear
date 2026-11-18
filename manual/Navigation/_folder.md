@@ -28,5 +28,4 @@ Choose **Gizmos ▸ Navigation** in the Scene view's header. Every place somethi
 
 ## Not done yet
 
-- Agent sizes in Project Settings, and costs of ground set per agent.
 - Walking from one world of blocks into another where they touch, with no Nav Link between them.

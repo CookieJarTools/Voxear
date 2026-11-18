@@ -205,10 +205,13 @@ impl BlockNav {
             let first = chunk.first_of(x, z);
             for (n, place) in chunk.column(x, z).iter().enumerate() {
                 let off = (place.feet(cy) - feet).abs();
-                let fits = place.top(cy) - place.feet(cy) >= i32::from(walker.height);
-                if off <= reach && fits && best.is_none_or(|(kept, _)| off < kept) {
+                let room = place.top(cy) - place.feet(cy) >= i32::from(walker.height);
+                if off <= reach && room && best.is_none_or(|(kept, _)| off < kept) {
                     let index = first + n as u16;
-                    best = Some((off, PlaceRef { slot: slot_at, index, x: x as u8, z: z as u8 }));
+                    let at = PlaceRef { slot: slot_at, index, x: x as u8, z: z as u8 };
+                    if fits(self, at, *place, cy, walker) {
+                        best = Some((off, at));
+                    }
                 }
             }
         }
@@ -372,6 +375,9 @@ fn straight_step<G: Ground>(
             }
             if top >= over && to.top(column.cy) >= over {
                 let at = PlaceRef { slot: column.slot, index: column.first + n as u16, x: x as u8, z: z as u8 };
+                if !fits(ground, at, *to, column.cy, walker) {
+                    continue;
+                }
                 return Some((at, *to, column.cy));
             }
         }
@@ -403,7 +409,7 @@ pub(crate) fn climb_step<G: Ground>(
     up: bool,
     walker: Walker,
 ) -> Option<(PlaceRef, Place, i32)> {
-    if !walker.climbs {
+    if !walker.climbs || walker.width > 1 {
         return None;
     }
     let (place, cy) = ground.place(from);
@@ -425,6 +431,42 @@ pub(crate) fn climb_step<G: Ground>(
         }
     }
     None
+}
+
+/// Whether a walker wider than a block standing at `at`, place `place` of
+/// chunk `cy` up, has a floor under all of it: in each column it stands
+/// on, a place no more than half a block over or under, it may be in, with
+/// room for it over the highest. Always for one a block wide.
+pub(crate) fn fits<G: Ground>(ground: &G, at: PlaceRef, place: Place, cy: i32, walker: Walker) -> bool {
+    let width = i32::from(walker.width);
+    if width <= 1 {
+        return true;
+    }
+    let side = CHUNK as i32;
+    let feet = place.feet(cy);
+    let low = (feet - 8).div_euclid(16).div_euclid(side) - cy;
+    let high = ((feet + 8).div_euclid(16) + 1).div_euclid(side) - cy;
+    (0..width).all(|dz| {
+        (0..width).all(|dx| {
+            if dx == 0 && dz == 0 {
+                return place.top(cy) >= feet + i32::from(walker.height);
+            }
+            let (nx, nz) = (i32::from(at.x) + dx, i32::from(at.z) + dz);
+            let (ox, oz) = (nx.div_euclid(side), nz.div_euclid(side));
+            let (x, z) = (nx.rem_euclid(side) as u32, nz.rem_euclid(side) as u32);
+            (low.max(-1)..=high.min(1)).any(|oy| {
+                ground.column(at.slot, [ox, oy, oz], x, z).is_some_and(|column| {
+                    column.places.iter().any(|beside| {
+                        let beside_feet = beside.feet(column.cy);
+                        (beside_feet - feet).abs() <= 8
+                            && beside.kind != PlaceKind::Climb
+                            && walker_may(walker, beside.kind)
+                            && beside.top(column.cy) >= feet.max(beside_feet) + i32::from(walker.height)
+                    })
+                })
+            })
+        })
+    })
 }
 
 /// Whether `walker` may be in a place of `kind`: water too deep to stand
@@ -467,11 +509,12 @@ pub(crate) fn jump_step<G: Ground>(
         let column = |far: i32| places_across(ground, from, dx * far, dz * far);
         // The landing: a column `across` on with a place near the walker's height.
         if across > 1 {
-            let landing = column(across).into_iter().find(|(_, to, to_cy)| {
+            let landing = column(across).into_iter().find(|(at, to, to_cy)| {
                 let to_feet = to.feet(*to_cy);
                 (feet - 16..=feet + 8).contains(&to_feet)
                     && to.top(*to_cy) >= feet.max(to_feet) + height
                     && matches!(to.kind, PlaceKind::Stand | PlaceKind::Wade)
+                    && fits(ground, *at, *to, *to_cy, walker)
             });
             if let Some((at, to, _)) = landing {
                 return Some((at, to, across));

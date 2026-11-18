@@ -438,3 +438,52 @@ fn an_agent_type_that_keeps_off_water_goes_round_a_ford_the_default_type_wades()
     }
     assert_eq!(crossed, [true, false], "the Default type wades the ford, the horse goes round it");
 }
+
+#[test]
+fn an_agent_two_blocks_wide_goes_round_by_a_gap_it_fits_through_by_its_controller_and_along_the_nav() {
+    for (moves, radius) in [
+        (NavMoves::AlongTheNav, 0.35),
+        (NavMoves::AlongTheNav, 0.8),
+        (NavMoves::CharacterController, 0.35),
+        (NavMoves::CharacterController, 0.8),
+    ] {
+        let (_dir, mut game, field) = game(32);
+        // A wall across the field: a gap a block wide at z 6, and one three wide at z 20 to 22.
+        let mut blocks = Vec::new();
+        for z in (0..32).filter(|z| *z != 6 && !(20..23).contains(z)) {
+            blocks.extend([([16, 6, z], 1), ([16, 7, z], 1)]);
+        }
+        game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(blocks);
+        game.tick(FRAME, None);
+        let at_start = Transform::from_position(Vec3::new(6.5, 6.0, 6.5));
+        let agent = NavAgent { moves, speed: 3.0, radius, ..NavAgent::default() };
+        let walker = match moves {
+            NavMoves::CharacterController => {
+                let controller = CharacterController { radius, ..CharacterController::default() };
+                game.engine.world.spawn((at_start, agent, controller))
+            }
+            _ => game.engine.world.spawn((at_start, agent)),
+        };
+        let to = Vec3::new(26.5, 6.0, 6.5);
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let (mut frames, mut through) = (0, None);
+        while frames < 2400 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+            let now = at(&game, walker);
+            if (16.0..17.0).contains(&now.x) {
+                through = Some(now.z);
+            }
+        }
+        let now = at(&game, walker);
+        assert!((now - to).length() < 0.7, "{moves:?} {radius}: got there: {now} after {frames} frames");
+        let through = through.expect("through the wall");
+        match radius > 0.5 {
+            false => assert!((6.0..7.0).contains(&through), "{moves:?}: a block wide, by the narrow gap: {through}"),
+            true => assert!((20.0..23.0).contains(&through), "{moves:?}: two wide, by the wide gap: {through}"),
+        }
+    }
+}

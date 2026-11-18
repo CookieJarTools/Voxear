@@ -112,6 +112,15 @@ fn a_world_of_land_is_built_and_an_edit_made_into_it_quickly() {
     let mut builder = built.unwrap();
     let (chunks, places) = builder.nav().counts();
     println!("a world of 9 × 9 columns: {chunks} chunks, {places} places, built in {:.1} ms", ms(whole));
+    // With regions for a walker two blocks wide as well, as a game's worlds have them.
+    let mut walkers = WALKERS.to_vec();
+    walkers.push(voxear_nav::Walker::blocks(3).wide(2).class());
+    let wide = least(3, || {
+        let mut builder = BlockNavBuilder::new(&walkers);
+        builder.settle(&Arc::new(blocks.clone()), &faces);
+    });
+    println!("and with regions for a walker two blocks wide: built in {:.1} ms", ms(wide));
+    assert!(ms(wide) < ms(whole) * 2.0 + 5.0, "{:.1} ms against {:.1} ms", ms(wide), ms(whole));
 
     // A block set on the ground in the middle, again and again.
     let mut edited = blocks.clone();

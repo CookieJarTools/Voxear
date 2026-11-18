@@ -52,17 +52,31 @@ pub fn update(world: &mut World) {
 /// small, or begun in the background where it is not.
 pub fn nav_of(world: &mut World, entity: Entity) -> Option<Arc<BlockNav>> {
     let blocks = world.get::<BlockWorld>(entity)?;
-    let (blocks, faces) = (blocks.blocks.clone(), blocks.faces.clone());
+    let (blocks, faces, size) = (blocks.blocks.clone(), blocks.faces.clone(), blocks.block_size);
     if world.resource::<NavWorlds>().is_none() {
         world.insert_resource(NavWorlds::default());
     }
     let navs = world.resource_mut::<NavWorlds>()?;
     let builder = navs.worlds.entry(entity).or_insert_with(|| {
-        let mut builder = BlockNavBuilder::new(&WALKERS);
+        let mut builder = BlockNavBuilder::new(&walkers_for(size));
         builder.update(&blocks, &faces);
         builder
     });
     Some(builder.nav().clone())
+}
+
+/// The walkers a world of blocks `size` metres a side gathers its places
+/// into regions for: those a block wide of each height, and two blocks wide
+/// for what is that big there, as an ogre in blocks a metre across or a
+/// person in blocks half that.
+fn walkers_for(size: f32) -> Vec<voxear_nav::Walker> {
+    let wide = |tall: u16| voxear_nav::Walker::blocks(tall).wide(2).class();
+    let mut walkers = WALKERS.to_vec();
+    walkers.push(wide(3));
+    if size < 0.7 {
+        walkers.extend([wide(4), wide(5)]);
+    }
+    walkers
 }
 
 /// Waits until every kept world's navigation is made from its blocks as

@@ -91,6 +91,16 @@ else
 }
 ```
 
+## What searches may cost
+
+**Project Settings ▸ Navigation ▸ Budgets** says what agents spend finding their ways:
+
+| Setting | What it does |
+| --- | --- |
+| Searches a step | How many ways agents may begin to look for each step, on navigation's own threads. A crowd sent off at once has its ways found over the next few steps. Default 64 |
+| Done in the step | How many searches no thread has begun by the step after are done in the step itself, so an agent sets off then. Default 8 |
+| Places a search looks at | How many places one search may look at before it gives up and walks to the nearest place it reached. Default 60,000 |
+
 ## Playing over the network
 
 Only the machine that has authority over an Obj moves its Nav Agent: the server, for the creatures of a game. Other players see it move as it is sent over the network, and its Mob Motion walks it as it goes.

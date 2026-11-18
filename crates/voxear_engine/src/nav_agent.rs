@@ -44,18 +44,9 @@ const REFINED: u32 = 6;
 const JUMP_HEIGHT: f32 = 1.3;
 /// How near a shut door on its way an agent is when it opens it, in blocks.
 const DOOR_REACH: f32 = 1.8;
-/// How many places one search may look at.
-const MOST_LOOKED_AT: usize = 60_000;
 /// How often an agent going after a point that moves looks again, in
 /// seconds, though nothing on its way changed.
 const SEARCH_EVERY: f32 = 0.75;
-/// How many searches agents may begin in one step: a crowd sent somewhere
-/// at once has its ways found over the next few steps, not all in one.
-const MOST_ASKED: usize = 64;
-/// How many searches no thread has begun by the step after they were asked
-/// for may be done in the step itself: so an agent's way is there the step
-/// after it asked, unless a crowd asked at once.
-const MOST_TAKEN_HERE: usize = 8;
 
 /// How an agent moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -531,7 +522,14 @@ pub fn step_agents(world: &mut World, delta: f32) {
     let portals = crate::portals::nav_portals(world);
     // Each agent: its way taken or asked for, and the velocity it wants.
     let mut steps: Vec<Stepping> = Vec::with_capacity(agents.len());
-    let mut budget = Budget { asked: MOST_ASKED, taken_here: MOST_TAKEN_HERE, doors: Vec::new() };
+    // What searches may cost this step, as Project Settings ▸ Navigation says.
+    let spend = crate::navigation::budgets(world);
+    let mut budget = Budget {
+        asked: spend.searches_a_step,
+        taken_here: spend.searches_here,
+        looked: spend.most_looked_at,
+        doors: Vec::new(),
+    };
     for (entity, agent) in agents {
         let Some(at) = position(world, entity) else { continue };
         let mut state = world.get::<NavAgentState>(entity).cloned().unwrap_or_else(|| NavAgentState {
@@ -693,10 +691,13 @@ fn position(world: &World, entity: Entity) -> Option<Vec3> {
 }
 
 /// How many searches agents may still begin and do themselves this step,
+/// as Project Settings ▸ Navigation's budgets say, how far each may look,
 /// and the doors they are about to go through.
 struct Budget {
     asked: usize,
     taken_here: usize,
+    /// How many places each search may look at.
+    looked: usize,
     doors: Vec<(Entity, [i32; 3])>,
 }
 
@@ -869,7 +870,7 @@ fn plan(
         (ask.costs, ask.boxes) = (costs, walked.boxes.clone());
         ask.links = crate::navigation::heeded(&walked.links, layer);
         ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
-        (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
+        (ask.most, ask.refine) = (budget.looked, Some(REFINED));
         (state.cut_seen, state.asked_portal) = (walked.cuts.version, crossing);
         let nav = walked.nav.clone();
         state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask)), 0));

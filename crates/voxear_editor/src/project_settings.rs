@@ -750,6 +750,28 @@ const FIXED: &[Setting] = &[
         number(0.05, 1000.0, ""),
         "What a block of area 4 costs to cross: plain ground costs 1, under 1 is sought out, over 1 kept off.",
     ),
+    Setting::new(
+        ("Navigation", "Budgets"),
+        "navigation.searches_a_step",
+        "Searches a step",
+        whole(1.0, 100_000.0, ""),
+        "How many ways agents may begin to look for each step, on navigation's threads: a crowd sent off at once has its ways found over the next few steps. More finds a crowd's ways sooner, and costs more threads' time in a step.",
+    ),
+    Setting::new(
+        ("Navigation", "Budgets"),
+        "navigation.searches_here",
+        "Done in the step",
+        whole(0.0, 100_000.0, ""),
+        "How many searches no thread has begun by the step after they were asked for are done in the step itself, so an agent sets off then. More costs the step itself more where many ask at once.",
+    ),
+    Setting::new(
+        ("Navigation", "Budgets"),
+        "navigation.most_looked_at",
+        "Places a search looks at",
+        whole(100.0, 10_000_000.0, ""),
+        "How many places one search may look at before it gives up and takes the nearest it reached: a way through a great maze may need more. More lets a search cost more.",
+    )
+    .advanced(),
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {

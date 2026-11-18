@@ -231,13 +231,16 @@ pub struct PassReads {
     /// The glow of bright light, as the engine's bloom has worked it out:
     /// at the tonemap and after.
     pub bloom: bool,
+    /// What each pixel's surface is, which the depth passes write beside
+    /// its normal when a pass reads them.
+    pub surface_ids: bool,
     /// The pack's own targets, by their place among [`PackManifest::targets`].
     pub targets: Vec<usize>,
 }
 
 /// The engine's images, as `reads` names them, and which part of
 /// [`PassReads`] each is, with the functions a program reads it by.
-const ENGINE_READS: [(&str, &str, &[&str]); 7] = [
+const ENGINE_READS: [(&str, &str, &[&str]); 8] = [
     ("color", "PACK_READS_COLOR", &["sceneColor", "sceneColorAt", "colorSize"]),
     ("depth", "PACK_READS_DEPTH", &["sceneDepth", "isSky", "sceneDistance", "scenePosition"]),
     ("normals", "PACK_READS_NORMALS", &["sceneNormal", "sceneRoughness"]),
@@ -245,11 +248,13 @@ const ENGINE_READS: [(&str, &str, &[&str]); 7] = [
     ("history", "PACK_READS_HISTORY", &["lastColor"]),
     ("block_light", "PACK_READS_BLOCK_LIGHT", &["lightAround", "hasBlockLight", "blockGlow"]),
     ("bloom", "PACK_READS_BLOOM", &["sceneBloom"]),
+    ("surface_id", "PACK_READS_SURFACE_ID", &["sceneSurfaceId"]),
 ];
 
 impl PassReads {
-    fn engine(&self) -> [bool; 7] {
-        [self.color, self.depth, self.normals, self.motion, self.history, self.block_light, self.bloom]
+    fn engine(&self) -> [bool; 8] {
+        let Self { color, depth, normals, motion, history, block_light, bloom, surface_ids, .. } = *self;
+        [color, depth, normals, motion, history, block_light, bloom, surface_ids]
     }
 
     /// The names `reads` gives them, for the Inspector.
@@ -543,13 +548,14 @@ fn full_scale() -> f32 {
 
 /// Words a program cannot take for an option's or a target's name: the
 /// engine's images, and Slang's own words a name might be.
-const RESERVED: [&str; 30] = [
+const RESERVED: [&str; 31] = [
     "color",
     "depth",
     "normals",
     "motion",
     "history",
     "block_light",
+    "surface_id",
     "frame",
     "options",
     "input",
@@ -625,6 +631,34 @@ fn shadows(data: &ShadowsData) -> Result<PackShadows> {
         cascades: data.cascades,
         split: data.split,
     })
+}
+
+/// The pack's programs and the files of its own they include, as many deep
+/// as they go, each by its place in the pack's folder, read by `read`: what
+/// the pack is compiled from, and what a built game reads of it. A file it
+/// includes that `read` has not, as the engine's own, is left to the
+/// compiler.
+pub fn program_files(manifest: &PackManifest, read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    let mut waiting: Vec<String> = manifest.programs().into_iter().map(str::to_string).collect();
+    while let Some(name) = waiting.pop() {
+        if found.iter().any(|(seen, _)| *seen == name) {
+            continue;
+        }
+        let Some(text) = read(&name) else { continue };
+        let beside = name.rsplit_once('/').map_or("", |(folder, _)| folder);
+        for line in text.lines() {
+            let Some(included) = line.trim().strip_prefix("#include") else { continue };
+            let included = included.trim().trim_matches(|c| c == '"' || c == '<' || c == '>');
+            let place = if beside.is_empty() { included.to_string() } else { format!("{beside}/{included}") };
+            if check_program(&place).is_ok() {
+                waiting.push(place);
+            }
+        }
+        found.push((name, text));
+    }
+    found.sort();
+    found
 }
 
 fn check_program(program: &str) -> Result<()> {
@@ -704,6 +738,7 @@ impl PackManifest {
                     "motion" => reads.motion = true,
                     "history" => reads.history = true,
                     "block_light" => reads.block_light = true,
+                    "surface_id" => reads.surface_ids = true,
                     "bloom" => {
                         ensure!(
                             pass.at >= PackPoint::Tonemap,
@@ -716,7 +751,8 @@ impl PackManifest {
                         let Some(target) = targets.iter().position(|target| target.name == name) else {
                             bail!(
                                 "the pass `{}` reads `{name}`, which is neither one of the frame's images (color, \
-                                 depth, normals, motion, history, block_light, bloom) nor a target a pass writes",
+                                 depth, normals, motion, history, block_light, bloom, surface_id) nor a target a \
+                                 pass writes",
                                 pass.name
                             );
                         };
@@ -1249,14 +1285,7 @@ fn compile_with(manifest: &PackManifest, files: &PackFiles, keep: Option<&Path>)
     }
     let mut written: Vec<(String, String)> = Vec::new();
     match files {
-        PackFiles::Folder(folder) => {
-            for entry in std::fs::read_dir(folder).with_context(|| format!("reading {}", folder.display()))? {
-                let path = entry?.path();
-                if path.extension().is_some_and(|e| e == "slang") {
-                    sources.push(format!("{}\n{}", named(&path), std::fs::read_to_string(&path)?));
-                }
-            }
-        }
+        PackFiles::Folder(_) => {}
         PackFiles::Embedded(list) => {
             written.extend(list.iter().map(|(name, text)| (name.to_string(), text.to_string())));
         }
@@ -1267,7 +1296,10 @@ fn compile_with(manifest: &PackManifest, files: &PackFiles, keep: Option<&Path>)
             }
         }
     }
-    sources.extend(written.iter().map(|(name, text)| format!("{name}\n{text}")));
+    // The pack's programs and what they include of its own, wherever they are read from, so a game's build and the
+    // game hash it alike.
+    let programs = program_files(manifest, &mut |name| files.read(name).ok());
+    sources.extend(programs.iter().map(|(name, text)| format!("{name}\n{text}")));
     sources.sort();
     let sources = sources.join("\n");
     let work = std::env::temp_dir().join(format!("voxear-shader-packs-{}", std::process::id()));
@@ -1354,7 +1386,11 @@ fn compile_job(
     let dir = work.join(format!("{hash:016x}-{}", GENERATIONS.fetch_add(1, Ordering::Relaxed)));
     std::fs::create_dir_all(&dir)?;
     for (name, text) in written {
-        std::fs::write(dir.join(name), text)?;
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, text)?;
     }
     let folder = files.folder().map_or_else(|| dir.clone(), Path::to_path_buf);
     let made = match job.engine_module {
@@ -1528,6 +1564,9 @@ pub(crate) struct GpuPackFrame {
     pub last_color_texture: u32,
     pub targets: [u32; MAX_TARGETS],
     pub last_targets: [u32; MAX_TARGETS],
+    /// What each pixel's surface is, for a pass that reads it.
+    pub surface_id_texture: u32,
+    pub pad2: u32,
     pub sky_light: u64,
     pub light_window: u64,
     pub light_bytes: u64,
@@ -1611,6 +1650,7 @@ impl GpuPackFrame {
             day: worn.day,
             depth_texture: NO_TEXTURE,
             surface_texture: NO_TEXTURE,
+            surface_id_texture: NO_TEXTURE,
             motion_texture: NO_TEXTURE,
             last_color_texture: NO_TEXTURE,
             targets: [NO_TEXTURE; MAX_TARGETS],
@@ -1680,6 +1720,12 @@ impl PackDraw {
     pub fn reads_normals(&self) -> bool {
         self.pack.manifest.passes.iter().any(|pass| pass.reads.normals)
     }
+
+    /// Whether a pass reads what each pixel's surface is, which the depth
+    /// passes write only when something asks.
+    pub fn reads_surface_ids(&self) -> bool {
+        self.pack.manifest.passes.iter().any(|pass| pass.reads.surface_ids)
+    }
 }
 
 /// The images a view's frame gives a pack, and the sizes it draws at.
@@ -1687,6 +1733,7 @@ pub(crate) struct PackImages {
     pub depth: ImageId,
     pub motion: ImageId,
     pub surface: Option<ImageId>,
+    pub surface_ids: Option<ImageId>,
     /// The size the scene is drawn at, the size after TAA, and the size the
     /// picture is shown at.
     pub drawn: vk::Extent2D,
@@ -1706,6 +1753,7 @@ pub(crate) struct PackRecorder {
     depth: ImageId,
     motion: ImageId,
     surface: Option<ImageId>,
+    surface_ids: Option<ImageId>,
     /// Each target this frame, and last frame's for those it keeps.
     targets: Vec<(ImageId, Option<ImageId>)>,
     /// Last frame's colour after TAA, and this frame's to copy it into.
@@ -1796,6 +1844,7 @@ impl PackRecorder {
         frame.depth_texture = if reads(|r| r.depth) { fg.texture(images.depth).0 } else { NO_TEXTURE };
         frame.motion_texture = if reads(|r| r.motion) { fg.texture(images.motion).0 } else { NO_TEXTURE };
         frame.surface_texture = if reads(|r| r.normals) { texture(fg, images.surface) } else { NO_TEXTURE };
+        frame.surface_id_texture = if reads(|r| r.surface_ids) { texture(fg, images.surface_ids) } else { NO_TEXTURE };
         frame.last_color_texture = texture(fg, history.and_then(|(_, last)| last));
         frame.targets = [NO_TEXTURE; MAX_TARGETS];
         frame.last_targets = [NO_TEXTURE; MAX_TARGETS];
@@ -1812,6 +1861,7 @@ impl PackRecorder {
             depth: images.depth,
             motion: images.motion,
             surface: images.surface,
+            surface_ids: images.surface_ids,
             targets,
             history,
             copy,
@@ -1899,6 +1949,11 @@ impl PackRecorder {
                 && let Some(surface) = self.surface
             {
                 sampled(surface);
+            }
+            if pass.reads.surface_ids
+                && let Some(ids) = self.surface_ids
+            {
+                sampled(ids);
             }
             if pass.reads.history
                 && let Some((_, Some(last))) = self.history
@@ -2155,9 +2210,33 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
     }
 
     #[test]
+    fn a_packs_programs_are_read_with_the_files_of_its_own_they_include_as_deep_as_they_go() {
+        let manifest = PackManifest::parse(
+            "[surface]\nblocks = \"faces.slang\"\n[[pass]]\nname = \"A\"\nprogram = \"a.slang\"\nat = \"final\"\n",
+        )
+        .unwrap();
+        let files = [
+            ("a.slang", "#include \"lib/b.slang\"\nfloat4 run(PassInput input) { return 0; }"),
+            ("lib/b.slang", "#include \"c.slang\"\n#include \"shader_pack.slang\"\n"),
+            ("lib/c.slang", "// last\n"),
+            ("faces.slang", "#include \"lib/c.slang\"\n#include \"../outside.slang\"\n"),
+            ("unused.slang", "// not included\n"),
+        ];
+        let mut asked = Vec::new();
+        let read = program_files(&manifest, &mut |name| {
+            asked.push(name.to_string());
+            files.iter().find(|(file, _)| *file == name).map(|(_, text)| text.to_string())
+        });
+        let names: Vec<&str> = read.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["a.slang", "faces.slang", "lib/b.slang", "lib/c.slang"], "each once, nothing outside");
+        assert!(asked.contains(&"lib/shader_pack.slang".to_string()), "the engine's own, asked for and left");
+        assert!(!asked.iter().any(|name| name.contains("..")), "nothing outside the pack is asked for");
+    }
+
+    #[test]
     fn the_frame_a_pack_reads_is_laid_out_as_the_shader_has_it() {
         // Five matrices, then ten rows of sixteen bytes, the options, the images and four pointers.
-        assert_eq!(size_of::<GpuPackFrame>(), 5 * 64 + 10 * 16 + 4 * MAX_OPTIONS + 16 + 8 * MAX_TARGETS + 32);
+        assert_eq!(size_of::<GpuPackFrame>(), 5 * 64 + 10 * 16 + 4 * MAX_OPTIONS + 16 + 8 * MAX_TARGETS + 8 + 32);
     }
 
     #[test]

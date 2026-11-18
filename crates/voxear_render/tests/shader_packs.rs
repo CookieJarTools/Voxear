@@ -750,6 +750,57 @@ fn leaves_let_the_sun_a_filter_lets_through_them_tinted_their_colour() {
 }
 
 #[test]
+fn a_pass_reads_what_each_pixels_surface_is_a_model_a_block_face_or_leaves() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = renderer.add_material(&MaterialDesc { base_color: [0.5, 0.5, 0.5, 1.0], ..MaterialDesc::default() });
+    world.spawn((
+        MeshRenderer::new(cube, grey.unwrap()),
+        Transform::new(Vec3::new(28.0, 5.0, 26.0), Quat::IDENTITY, Vec3::splat(1.5)),
+    ));
+    let plain = render(&mut renderer, &world, 3);
+    assert!(!renderer.surface_ids_drawn(), "nothing asks for them");
+    let paint = "float4 run(PassInput input)
+{
+    uint id = sceneSurfaceId(input.uv);
+    uint kind = surfaceKind(id);
+    if (kind == SURFACE_MODEL)
+    {
+        return float4(1.0, 0.0, 0.0, 1.0);
+    }
+    if (kind == SURFACE_BLOCK)
+    {
+        return (surfaceBlockKind(id) & BLOCK_LEAVES) != 0 ? float4(0.0, 0.0, 1.0, 1.0) : float4(0.0, 1.0, 0.0, 1.0);
+    }
+    return sceneColor(input.uv);
+}
+";
+    wear(&mut world, one_pass("after_lighting", "\"color\", \"surface_id\"", paint));
+    let painted = render(&mut renderer, &world, 3);
+    keep_image("surface ids.png", &painted, (WIDTH, HEIGHT));
+    assert!(renderer.surface_ids_drawn(), "the depth passes write them for the pack");
+    // Each colour by the channel that leads it by far, as the tonemap softens pure colours.
+    let count = |lead: usize, rows: std::ops::Range<u32>| {
+        let leads = |c: [i32; 3]| (0..3).all(|other| other == lead || c[lead] > c[other] + 80);
+        rows.flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&(x, y)| leads(rgb_at(&painted, x, y))).count()
+    };
+    let red = count(0, 0..HEIGHT);
+    let leaves = count(2, 0..HEIGHT / 2);
+    let ground = count(1, HEIGHT / 2..HEIGHT);
+    eprintln!("{red} pixels of the model, {leaves} of leaves above, {ground} of other faces below");
+    assert!(red > 400, "the model's: {red}");
+    assert!(leaves > 2000, "the crowns' leaves: {leaves}");
+    assert!(ground > 2000, "the ground's faces: {ground}");
+    let (sky, before) = (rgb_at(&painted, OVER.0, OVER.1), rgb_at(&plain, OVER.0, OVER.1));
+    assert!((0..3).all(|c| (sky[c] - before[c]).abs() <= 2), "the sky as it was: {sky:?} against {before:?}");
+    // Taken off, the depth passes write them no more.
+    world.remove_resource::<WornShaderPack>();
+    render(&mut renderer, &world, 2);
+    assert!(!renderer.surface_ids_drawn());
+}
+
+#[test]
 fn a_packs_shadow_settings_set_the_suns_width_and_maps() {
     let Some(mut renderer) = renderer() else { return };
     let mut world = trees_plain(&mut renderer);

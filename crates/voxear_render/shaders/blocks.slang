@@ -18,6 +18,8 @@
 // triangle's corners may be of three kinds of ground: its fragments blend them by how near each corner they are.
 
 #define TERRAIN_SHADING
+// Faces of worlds of blocks, which the depth pass tells from a terrain's in each pixel's surface id.
+#define BLOCK_FACES
 #include "shading.slang"
 #include "block_quads.slang"
 

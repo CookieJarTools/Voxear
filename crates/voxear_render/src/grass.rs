@@ -297,15 +297,12 @@ pub(crate) fn record_depth(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     grass: &ViewGrass,
-    (depth, surface): (ImageId, ImageId),
+    targets: crate::passes::DepthTargets,
     more: &[(BufferId, BufferAccess)],
 ) {
-    let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
     let grass = grass.clone();
-    fg.add_pass("Depth (grass)", &images, &reads(&grass, more), move |ctx| {
-        let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
-        let rough = [attachment(ctx.view(surface), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
-        begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
+    fg.add_pass("Depth (grass)", &targets.images(), &reads(&grass, more), move |ctx| {
+        targets.begin(ctx);
         bind(ctx, pipelines.grass_depth, vk::PipelineBindPoint::GRAPHICS, &push);
         draw_all(ctx, &grass, &push);
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };

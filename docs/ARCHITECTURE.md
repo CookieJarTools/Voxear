@@ -1510,7 +1510,11 @@ runs to dither, as for a final pass. Players reach packs from C# (`ShaderPacks`,
 keeps the choice and options in `ShaderPack.toml` beside the saves and wears them at start. Compiled programs are
 kept on disk by a hash of the sources' names and texts (`keep_compiles_in`: beside the saves, or the project's
 `.voxear/ShaderPacks`), and a content build compiles the game's packs into `ShaderPacks` beside `Shaders`, which the
-game reads first (`read_compiles_from`).
+game reads first (`read_compiles_from`); a pack is read and hashed as the programs it names and the files of its own
+they include (`program_files`). A pass that reads `surface_id` has the renderer make its pipelines again with
+`ShaderSet::surface_ids`: the depth pipelines then have a second target, `SURFACE_ID_FORMAT`, which
+`depthFragment` (occlusion.slang) fills with each pixel's surface id, and the depth passes draw into it through
+`passes::DepthTargets`.
 
 **Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
 five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps

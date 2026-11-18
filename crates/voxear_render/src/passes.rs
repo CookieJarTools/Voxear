@@ -192,6 +192,9 @@ pub struct Frame {
     /// they run (whenever ambient occlusion, contact shadows or reflections
     /// are on).
     pub surface: Option<ImageId>,
+    /// What each pixel's surface is, written beside its normal by the depth
+    /// passes, for a worn shader pack's passes that read it.
+    pub surface_ids: Option<ImageId>,
     /// Screen-space reflections' image, and last frame's finished picture
     /// they read, when they are on; they need the depth drawn first too.
     pub reflections: Option<(ImageId, ImageId)>,
@@ -685,15 +688,19 @@ pub fn record(
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     };
+    // Only read where the depth passes run, which have a surface image whenever they do.
+    let depth_targets = DepthTargets {
+        depth,
+        surface: frame.surface.unwrap_or(depth),
+        ids: frame.surface_ids.filter(|_| pipelines.surface_ids),
+    };
     let depth_pass = |fg: &mut FrameGraph<'_>, name: &str, list: u32| {
         let pipeline =
             Drawing { pipeline: mesh.map_or(pipelines.depth, |mesh| mesh.depth), two_sided: pipelines.depth_two_sided };
         let push = Push { list, ..draw_push };
-        let surface = frame.surface.expect("the depth passes' surface");
-        let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
-        fg.add_pass(name, &images, &shading_buffers, move |ctx| {
+        fg.add_pass(name, &depth_targets.images(), &shading_buffers, move |ctx| {
             // A view through a Portal draws into the depth opened for it.
-            depth_only(ctx, pipeline, &push, indirect, (depth, surface), list == LIST_EARLY && !through);
+            depth_only(ctx, pipeline, &push, indirect, depth_targets, list == LIST_EARLY && !through);
         });
     };
 
@@ -776,19 +783,17 @@ pub fn record(
     match depth_first {
         true => {
             depth_pass(fg, "Depth (early)", LIST_EARLY);
-            let surface = frame.surface.expect("the depth passes' surface");
-            let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
-            fg.add_pass("Depth (diced)", &images, &diced_buffers, move |ctx| {
-                diced_depth(ctx, pipelines.depth_diced, &draw_push, dice, (depth, surface));
+            fg.add_pass("Depth (diced)", &depth_targets.images(), &diced_buffers, move |ctx| {
+                diced_depth(ctx, pipelines.depth_diced, &draw_push, dice, depth_targets);
             });
             if let Some(terrains) = &frame.terrain {
-                crate::terrain::record_depth(fg, (pipelines, push), terrains, (depth, surface));
+                crate::terrain::record_depth(fg, (pipelines, push), terrains, depth_targets);
             }
             if let Some(blocks) = &frame.blocks {
-                crate::blocks::record_depth(fg, (pipelines, push), blocks, (depth, surface));
+                crate::blocks::record_depth(fg, (pipelines, push), blocks, depth_targets);
             }
             if let Some(grass) = &frame.grass {
-                crate::grass::record_depth(fg, (pipelines, push), grass, (depth, surface), &pushes);
+                crate::grass::record_depth(fg, (pipelines, push), grass, depth_targets, &pushes);
             }
         }
         false => {
@@ -1569,14 +1574,50 @@ fn diced_opaque(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, dice: Di
 }
 
 /// The diced pieces as depth alone, over what the depth pass drew.
-fn diced_depth(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, dice: Dice, targets: (ImageId, ImageId)) {
-    let (depth, surface) = targets;
-    let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
-    let rough = [attachment(ctx.view(surface), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
-    begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
+fn diced_depth(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, dice: Dice, targets: DepthTargets) {
+    targets.begin(ctx);
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     dice.draw(ctx);
     unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+}
+
+/// What the depth passes draw: the depth, each pixel's normal and roughness
+/// beside it, and with a worn shader pack that reads them, what each pixel's
+/// surface is (`SURFACE_ID_FORMAT`), which the depth pipelines then write.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DepthTargets {
+    pub depth: ImageId,
+    pub surface: ImageId,
+    pub ids: Option<ImageId>,
+}
+
+impl DepthTargets {
+    /// How a depth pass uses them, for the frame graph.
+    pub fn images(&self) -> Vec<(ImageId, ImageAccess)> {
+        let mut images = vec![(self.depth, ImageAccess::DepthAttachment), (self.surface, ImageAccess::ColorAttachment)];
+        images.extend(self.ids.map(|ids| (ids, ImageAccess::ColorAttachment)));
+        images
+    }
+
+    /// The depth attachment, cleared with `clear`, or drawn over.
+    pub fn depth_attachment(&self, ctx: &PassContext, clear: bool) -> vk::RenderingAttachmentInfo<'static> {
+        attachment(ctx.view(self.depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)))
+    }
+
+    /// The colour attachments, cleared with `clear`: where nothing is drawn, the sky, as rough as can be, so
+    /// reflections pass it over, and of no surface.
+    pub fn colors(&self, ctx: &PassContext, clear: bool) -> Vec<vk::RenderingAttachmentInfo<'static>> {
+        let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+        let mut colors = vec![attachment(ctx.view(self.surface), layout, clear.then(|| clear_color([1.0; 4])))];
+        colors.extend(self.ids.map(|ids| attachment(ctx.view(ids), layout, clear.then(|| clear_color([0.0; 4])))));
+        colors
+    }
+
+    /// Begins drawing into them, over what is there.
+    pub fn begin(&self, ctx: &PassContext) {
+        let depth = self.depth_attachment(ctx, false);
+        begin_rendering(ctx, ctx.extent(self.depth), &self.colors(ctx, false), Some(&depth));
+    }
 }
 
 /// One opaque list as depth alone, the first clearing it.
@@ -1585,18 +1626,11 @@ fn depth_only(
     pipeline: Drawing,
     push: &Push,
     indirect: Indirect,
-    (depth, surface): (ImageId, ImageId),
+    targets: DepthTargets,
     clear: bool,
 ) {
-    let target =
-        attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, clear.then(|| clear_depth(0.0)));
-    // Where nothing is drawn, the sky, as rough as can be, so reflections pass it over.
-    let rough = [attachment(
-        ctx.view(surface),
-        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        clear.then(|| clear_color([1.0; 4])),
-    )];
-    begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
+    let target = targets.depth_attachment(ctx, clear);
+    begin_rendering(ctx, ctx.extent(targets.depth), &targets.colors(ctx, clear), Some(&target));
     bind(ctx, pipeline.pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     indirect.draw(ctx, push.list);
     indirect.draw_two_sided(ctx, push.list, pipeline.two_sided, push);

@@ -330,6 +330,51 @@ float3 tonemapSoft(float3 c, float contrast = 1.0, float saturation = 1.0)
     return pow(max(o, 0.0), 2.2);
 }
 
+#if PACK_READS_SURFACE_ID
+// What the surface `uv` shows is: its kind in the top four bits (surfaceKind), and what of it below; 0 for the sky.
+uint sceneSurfaceId(float2 uv)
+{
+    return asuint(nearestImage(frame()->surfaceIdTexture, uv).r);
+}
+#endif
+
+// What kind of surface an id is: SURFACE_MODEL, SURFACE_BLOCK, SURFACE_TERRAIN, or 0 for the sky.
+static const uint SURFACE_MODEL = PACK_SURFACE_MODEL;
+static const uint SURFACE_BLOCK = PACK_SURFACE_BLOCK;
+static const uint SURFACE_TERRAIN = PACK_SURFACE_TERRAIN;
+
+uint surfaceKind(uint id)
+{
+    return id >> 28;
+}
+
+// A model's material's number, the same for every surface of that material.
+uint surfaceMaterial(uint id)
+{
+    return id & 0x0FFFFFFF;
+}
+
+// A block face's look's number in its world, as BlockSurface.look has it.
+uint surfaceBlockLook(uint id)
+{
+    return id & 0xFF;
+}
+
+// What a block face is, a bit each, as a surface program's BlockSurface.kind has it.
+static const uint BLOCK_LEAVES = PACK_BLOCK_LEAVES;
+static const uint BLOCK_SHEET = PACK_BLOCK_SHEET;
+static const uint BLOCK_PART = PACK_BLOCK_PART;
+static const uint BLOCK_CUT_OUT = PACK_BLOCK_CUT_OUT;
+static const uint BLOCK_GLOWS = PACK_BLOCK_GLOWS;
+static const uint BLOCK_SMOOTH = PACK_BLOCK_SMOOTH;
+static const uint BLOCK_CUBES = PACK_BLOCK_CUBES;
+
+// What a block face is: BLOCK_LEAVES and the rest, a bit each. Glowing is left out: the depth passes do not know it.
+uint surfaceBlockKind(uint id)
+{
+    return (id >> 16) & 0xFFF;
+}
+
 #if PACK_READS_HISTORY
 // Last frame's colour, as it was after TAA: light, before exposure.
 float4 lastColor(float2 uv)

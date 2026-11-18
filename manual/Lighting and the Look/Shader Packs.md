@@ -139,9 +139,10 @@ A pass can read only what its `reads` lists. Leaving out what it does not need k
 | `history` | `lastColor(uv)`: last frame's colour, after TAA |
 | `block_light` | `lightAround(position)`, the sky light and block light at a point from 0 to 1; `hasBlockLight()`, `blockGlow()` |
 | `bloom` | At the `tonemap` and `final` points: `sceneBloom(uv)`, the glow round what is bright, as bright as what glows; `bloomDrawn()`, whether the level's bloom is on |
+| `surface_id` | `sceneSurfaceId(uv)`, what the surface there is: `surfaceKind(id)` says `SURFACE_MODEL`, `SURFACE_BLOCK`, `SURFACE_TERRAIN`, or 0 for the sky; `surfaceMaterial(id)` a model's material's number; `surfaceBlockLook(id)` and `surfaceBlockKind(id)` a block face's look and what it is (`BLOCK_LEAVES` and the rest) |
 | a target's name | `target.sample(uv)`, `target.load(pixel)`, and for a kept target `target.last(uv)` |
 
-A program that calls a function its pass does not read is told so when it compiles.
+A program that calls a function its pass does not read is told so when it compiles. Reading `normals` or `surface_id` has the engine draw the scene's depth first and write them beside it, which it does only while a pack asks; `surface_id` costs 4 bytes a pixel more.
 
 ### Writing a pass
 
@@ -412,4 +413,4 @@ A pack is named as `builtin:` and its name, a pack of the project's by its `pack
 
 A game's packs ship with it, their programs beside their manifests, and are compiled when the game is built, into a `ShaderPacks` folder beside its `Shaders`: a pack that does not compile fails the build, with Slang's message. A player wearing one of them reads what the build compiled, and compiles nothing. Voxear's own packs and the player's are compiled the first time they are worn, with the Slang compiler Voxear ships beside the game, and kept beside the saves for the next run.
 
-A player's pack is a folder in the game's `ShaderPacks` folder, beside its saves, named `file:` and its path; it reads nothing outside its own folder. In a built game a pack's programs are read by the names its `pack.toml` gives them, so a program that includes another file of the pack's compiles in the editor but not yet in a built game.
+A player's pack is a folder in the game's `ShaderPacks` folder, beside its saves, named `file:` and its path; it reads nothing outside its own folder. A program may include files of the pack's own, `#include "lib/noise.slang"`, in folders of the pack too: a built game ships them and reads them as the programs include them.

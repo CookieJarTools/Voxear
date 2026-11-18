@@ -183,8 +183,13 @@ fn every_built_in_pack_compiles() {
     }
 }
 
-const FACES: &str =
-    "float3 run(BlockSurface surface, BlockLighting light)\n{\n    return light.engine * options().strength;\n}\n";
+const FACES: &str = "#include \"lib/scale.slang\"\n\nfloat3 run(BlockSurface surface, BlockLighting light)\n{\n    \
+                     return scaled(light.engine);\n}\n";
+
+/// A file of the pack's own that FACES includes, in a folder of its own, which includes another.
+const SCALE: &str =
+    "#include \"strength.slang\"\n\nfloat3 scaled(float3 light)\n{\n    return light * strength();\n}\n";
+const STRENGTH: &str = "float strength()\n{\n    return options().strength;\n}\n";
 
 #[test]
 fn a_games_build_compiles_its_packs_and_the_built_game_reads_them_with_every_program() {
@@ -193,6 +198,9 @@ fn a_games_build_compiles_its_packs_and_the_built_game_reads_them_with_every_pro
     let manifest = MANIFEST.replace("[[pass]]", "[surface]\nblocks = \"faces.slang\"\n\n[[pass]]");
     std::fs::write(dir.path().join("Packs/Warm.shaderpack/pack.toml"), &manifest).unwrap();
     std::fs::write(dir.path().join("Packs/Warm.shaderpack/faces.slang"), FACES).unwrap();
+    std::fs::create_dir_all(dir.path().join("Packs/Warm.shaderpack/lib")).unwrap();
+    std::fs::write(dir.path().join("Packs/Warm.shaderpack/lib/scale.slang"), SCALE).unwrap();
+    std::fs::write(dir.path().join("Packs/Warm.shaderpack/lib/strength.slang"), STRENGTH).unwrap();
     let output = dir.path().join("Built");
     let settings = voxear_engine::ContentSettings::default();
     voxear_engine::content_build::build(dir.path(), &output, &settings, &[]).unwrap();
@@ -204,7 +212,7 @@ fn a_games_build_compiles_its_packs_and_the_built_game_reads_them_with_every_pro
     assert_eq!(content.built_shader_packs(), [compiled.clone()]);
     let guid = content.parse("Packs/Warm.shaderpack/pack.toml").unwrap().guid().unwrap().to_string();
     let (manifest, files) = shader_packs::load(&mut content, &guid, false).unwrap();
-    for program in ["grade.slang", "faces.slang"] {
+    for program in ["grade.slang", "faces.slang", "lib/scale.slang", "lib/strength.slang"] {
         assert!(files.read(program).is_ok(), "{program} read from the bundles");
     }
     // What the build compiled is what the game would: named alike wherever the engine and the game are.

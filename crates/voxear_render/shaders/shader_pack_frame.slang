@@ -20,6 +20,19 @@ static const uint PACK_WATER_STREAM = 4;
 static const uint PACK_WATER_BLOCKS = 8;
 static const uint PACK_WATER_FROM_BELOW = 16;
 
+// What a pixel's surface is, in a surface id's top four bits (depthFragment in occlusion.slang writes them): a model's,
+// with its material's number below; a world of blocks' face, with what it is (PACK_BLOCK_*) and its look's number; a
+// terrain's; and 0 for the sky.
+static const uint PACK_SURFACE_MODEL = 1;
+static const uint PACK_SURFACE_BLOCK = 2;
+static const uint PACK_SURFACE_TERRAIN = 3;
+
+// A surface id: the kind in its top four bits and what of it below.
+uint packSurfaceId(uint kind, uint what)
+{
+    return (kind << 28) | (what & 0x0FFFFFFF);
+}
+
 static const uint PACK_TARGETS = 8;
 static const uint PACK_OPTIONS = 32;
 static const float PACK_PI = 3.14159265;
@@ -116,6 +129,9 @@ struct PackFrame
     // The pack's own targets this frame, and last frame's for those it keeps.
     uint targets[PACK_TARGETS];
     uint lastTargets[PACK_TARGETS];
+    // What each pixel's surface is (sceneSurfaceId), PACK_NO_TEXTURE where no pass reads it.
+    uint surfaceIdTexture;
+    uint pad2;
     // The sun's and sky's light under the atmosphere; null under a sky of colours.
     PackSkyLight* skyLight;
     // The block light window; null where the camera is in no world of blocks lit by it.

@@ -2565,18 +2565,15 @@ pub(crate) fn record_depth(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     view: &ViewBlocks,
-    (depth, surface): (ImageId, ImageId),
+    targets: crate::passes::DepthTargets,
 ) {
     if !draws(view, LIST_EARLY) {
         return;
     }
     let reads: Vec<_> = view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
-    let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
     let view = view.clone();
-    fg.add_pass("Depth (blocks)", &images, &reads, move |ctx| {
-        let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
-        let rough = [attachment(ctx.view(surface), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
-        begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
+    fg.add_pass("Depth (blocks)", &targets.images(), &reads, move |ctx| {
+        targets.begin(ctx);
         bind(ctx, pipelines.block_depth, vk::PipelineBindPoint::GRAPHICS, &push);
         draw_runs(ctx, &view, &push, LIST_EARLY);
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };

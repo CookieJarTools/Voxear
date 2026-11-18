@@ -26,6 +26,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Compiled SPIR-V by shader name (`cull`, `forward`, ...).
 pub struct ShaderSet {
     spirv: HashMap<String, Cow<'static, [u8]>>,
+    /// The depth passes write each pixel's surface id too (`SURFACE_ID_FORMAT`), as a worn shader pack's pass that
+    /// reads them wants.
+    pub surface_ids: bool,
 }
 
 impl ShaderSet {
@@ -67,7 +70,8 @@ impl ShaderSet {
             ("portal", include_bytes!(concat!(env!("OUT_DIR"), "/portal.spv"))),
             ("probe_filter", include_bytes!(concat!(env!("OUT_DIR"), "/probe_filter.spv"))),
         ];
-        Self { spirv: embedded.into_iter().map(|(name, bytes)| (name.to_string(), Cow::Borrowed(bytes))).collect() }
+        let spirv = embedded.into_iter().map(|(name, bytes)| (name.to_string(), Cow::Borrowed(bytes))).collect();
+        Self { spirv, surface_ids: false }
     }
 
     pub fn get(&self, name: &str) -> Result<&[u8]> {
@@ -89,7 +93,13 @@ impl ShaderSet {
         for (name, bytes) in modules {
             spirv.insert(name.clone(), Cow::Owned(bytes.clone()));
         }
-        Self { spirv }
+        Self { spirv, surface_ids: self.surface_ids }
+    }
+
+    /// The same shaders, the depth passes writing each pixel's surface id or not.
+    pub fn with_surface_ids(mut self, on: bool) -> Self {
+        self.surface_ids = on;
+        self
     }
 }
 
@@ -279,7 +289,7 @@ impl ShaderWatcher {
         });
         let spirv =
             compiled.into_iter().map(|r| r.map(|(stem, bytes)| (stem, Cow::Owned(bytes)))).collect::<Result<_>>()?;
-        Ok(ShaderSet { spirv })
+        Ok(ShaderSet { spirv, surface_ids: false })
     }
 
     fn compile_one(&self, stem: &str, path: &Path) -> Result<(String, Vec<u8>)> {

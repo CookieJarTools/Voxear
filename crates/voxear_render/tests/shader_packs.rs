@@ -772,6 +772,17 @@ fn a_packs_shadow_settings_set_the_suns_width_and_maps() {
     keep_image("shadows cascades.png", &cascades, (WIDTH, HEIGHT));
     let (off, _) = alike(&sharp, &cascades);
     assert!(off < (WIDTH * HEIGHT / 10) as usize, "the cascades' shadows where the pages have them: {off} off");
+    // Fewer cascades, sharing the distance: the same shadows, less finely, and the rest of the atlas drawn into not
+    // at all.
+    for (count, split) in [(1, 0.0), (2, 0.5)] {
+        let layout = format!("[shadows]\nsoftness = 0.0\nmaps = \"cascades\"\ncascades = {count}\nsplit = {split}\n");
+        wear(&mut world, settings(&layout));
+        let fewer = render(&mut renderer, &world, 8);
+        keep_image(&format!("shadows {count} cascades.png"), &fewer, (WIDTH, HEIGHT));
+        let (off, mean) = alike(&cascades, &fewer);
+        eprintln!("{count} cascades: {off} pixels off four, {mean:.2} on average");
+        assert!(off < (WIDTH * HEIGHT / 10) as usize, "{count} cascades: the shadows where four have them, {off} off");
+    }
 }
 
 #[test]

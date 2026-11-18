@@ -166,6 +166,19 @@ pub fn local_views(light: &LocalLight) -> Vec<Mat4> {
 /// to `distance` from the camera, split between them as `split` says (see
 /// `SHADOW_SPLIT`).
 pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -> [Cascade; CASCADES] {
+    cascades_in(view, light_direction, (distance, split), CASCADES)
+}
+
+/// As [`cascades`], with `count` of them sharing the distance, 1 to
+/// [`CASCADES`]; those past them take in nothing, so nothing is drawn into
+/// their tiles of the atlas and no point is in them.
+pub fn cascades_in(
+    view: &View,
+    light_direction: Vec3,
+    (distance, split): (f32, f32),
+    count: usize,
+) -> [Cascade; CASCADES] {
+    let count = count.clamp(1, CASCADES);
     let forward = view.rotation * Vec3::Z;
     let right = view.rotation * Vec3::X;
     let up = view.rotation * Vec3::Y;
@@ -179,8 +192,13 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
     // distance, not from in front of its nose.
     let start = view.near.max(SPLIT_NEAR);
     let mut near = view.near;
+    let mut last = None;
     std::array::from_fn(|i| {
-        let far = split_at(start, i + 1, distance, split);
+        if i >= count {
+            let used: Cascade = last.expect("the first is always made");
+            return Cascade { far: f32::MIN, planes: [[0.0, 0.0, 0.0, -1.0e9]; 6], ..used };
+        }
+        let far = split_at(start, (i + 1, count), distance, split);
         let corners = [near, far].into_iter().flat_map(|d| {
             [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
                 .map(|(sx, sy)| view.position + forward * d + right * (sx * d * tan_h) + up * (sy * d * tan_v))
@@ -233,6 +251,7 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
             ],
         };
         near = far;
+        last = Some(cascade);
         cascade
     })
 }
@@ -242,9 +261,9 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
 /// The nearest a camera's cascades split from, in metres.
 const SPLIT_NEAR: f32 = 0.1;
 
-fn split_at(near: f32, index: usize, distance: f32, split: f32) -> f32 {
+fn split_at(near: f32, (index, count): (usize, usize), distance: f32, split: f32) -> f32 {
     let distance = distance.max(near * 2.0);
-    let t = index as f32 / CASCADES as f32;
+    let t = index as f32 / count as f32;
     let log = near * (distance / near).powf(t);
     let even = near + (distance - near) * t;
     let split = split.clamp(0.0, 1.0);
@@ -289,6 +308,21 @@ mod tests {
         let (even, logarithmic) = (cascades(&view(), sun, 80.0, 0.0), cascades(&view(), sun, 80.0, 1.0));
         assert!((even[0].far - 20.0).abs() < 0.1, "even splits share the distance alike: {}", even[0].far);
         assert!(logarithmic[0].far < 1.0, "logarithmic ones keep the first cascade small: {}", logarithmic[0].far);
+    }
+
+    #[test]
+    fn fewer_cascades_share_the_distance_and_the_rest_take_in_nothing() {
+        let sun = Vec3::new(0.3, -1.0, 0.4);
+        let two = cascades_in(&view(), sun, (80.0, 0.5), 2);
+        let four = cascades(&view(), sun, 80.0, 0.5);
+        assert!((two[1].far - 80.0).abs() < 1e-3, "the second reaches the whole distance: {}", two[1].far);
+        assert!(two[0].far > four[0].far && two[0].texel > four[0].texel, "each takes in more, less finely");
+        for unused in &two[2..] {
+            assert!(unused.far < 0.0, "no point is in it");
+            assert!(!inside(&unused.planes, view().position), "nothing is drawn into it");
+        }
+        let one = cascades_in(&view(), sun, (80.0, 0.5), 1);
+        assert!((one[0].far - 80.0).abs() < 1e-3 && one[1].far < 0.0);
     }
 
     #[test]

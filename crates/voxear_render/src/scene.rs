@@ -1059,10 +1059,12 @@ pub fn extract(
             (look.shadow_distance, look.shadow_split)
         });
         let distance = pack_shadows.distance.unwrap_or(distance);
+        let split = pack_shadows.split.unwrap_or(split);
         // Through a Portal the sun's shadows reach only a little way past the opening: the far side is seen through a
         // small part of the screen, and what is further off in it casts none.
         let distance = if through.is_some() { distance.min(PORTAL_SHADOW_REACH) } else { distance };
-        let cascades = shadows::cascades(&view, Vec3::from(frame.sun_direction), distance, split);
+        let count = pack_shadows.cascades.map_or(CASCADES, |count| count as usize);
+        let cascades = shadows::cascades_in(&view, Vec3::from(frame.sun_direction), (distance, split), count);
         for (i, cascade) in cascades.iter().enumerate().take(CASCADES) {
             frame.cascade_view_proj[i] = cols(cascade.view_proj);
             frame.cascade_planes[i] = cascade.planes;

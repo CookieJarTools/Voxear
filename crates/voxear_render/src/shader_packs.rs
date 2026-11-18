@@ -381,6 +381,12 @@ pub struct PackShadows {
     pub tint: Option<[f32; 3]>,
     /// Virtual shadow maps or cascades.
     pub maps: Option<crate::shadows::SunShadows>,
+    /// How many cascades share the distance, 1 to 4: fewer draw less, each
+    /// less finely.
+    pub cascades: Option<u32>,
+    /// How the cascades share it, from 0, alike, to 1, each twice the one
+    /// before, the nearest small and sharp.
+    pub split: Option<f32>,
     /// Leaves draw the colour the sun's light takes through them into the
     /// glass shadow atlas, as `light.through` gives a filter, and the light
     /// a filter lets through them is tinted by it.
@@ -501,6 +507,10 @@ struct ShadowsData {
     maps: Option<String>,
     #[serde(default)]
     leaves: bool,
+    #[serde(default)]
+    cascades: Option<u32>,
+    #[serde(default)]
+    split: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -592,6 +602,12 @@ fn shadows(data: &ShadowsData) -> Result<PackShadows> {
     if let Some(tint) = data.tint {
         ensure!(tint.iter().all(|c| c.is_finite() && *c >= 0.0), "tint: a colour of three numbers from 0");
     }
+    if let Some(count) = data.cascades {
+        ensure!((1..=4).contains(&count), "cascades: from 1 to 4, not {count}");
+    }
+    if let Some(split) = data.split {
+        ensure!((0.0..=1.0).contains(&split), "split: from 0 to 1, not {split}");
+    }
     let maps = match &data.maps {
         Some(name) => {
             let maps = crate::shadows::SunShadows::named(name);
@@ -606,6 +622,8 @@ fn shadows(data: &ShadowsData) -> Result<PackShadows> {
         tint: data.tint,
         maps,
         leaves: data.leaves,
+        cascades: data.cascades,
+        split: data.split,
     })
 }
 
@@ -1877,6 +1895,8 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         fails("[shadows]\ndistance = 2.0", "5 to 1000 metres");
         fails("[shadows]\ntint = [-1.0, 0.0, 0.0]", "tint");
         fails("[shadows]\nmaps = \"many\"", "`virtual` or `cascades`");
+        fails("[shadows]\ncascades = 5", "from 1 to 4");
+        fails("[shadows]\nsplit = 1.5", "from 0 to 1");
         fails("[shadows]\nblur = 1.0", "unknown field");
         fails(&format!("[options]\nx = {{ kind = \"number\", range = [1.0, 0.0], default = 0.5 }}\n{pass}"), "range");
         fails(
@@ -1933,6 +1953,8 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         assert_eq!(shadows.filter.as_deref(), Some("soft.slang"));
         assert_eq!((shadows.softness, shadows.distance, shadows.tint), (Some(2.0), Some(150.0), Some([0.1, 0.1, 0.2])));
         assert_eq!(shadows.maps, Some(crate::shadows::SunShadows::Cascades));
+        let layout = PackManifest::parse("[shadows]\ncascades = 2\nsplit = 0.4\n").unwrap();
+        assert_eq!((layout.shadows.cascades, layout.shadows.split), (Some(2), Some(0.4)));
         assert_eq!(manifest.engine_modules(), SHADOW_MODULES);
         let (files, defines) = module_files(&manifest, "water", &|program| Path::new("/p").join(program));
         assert_eq!(defines, ["VOXEAR_PACK_SHADOWS"]);

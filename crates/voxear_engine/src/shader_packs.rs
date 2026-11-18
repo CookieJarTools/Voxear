@@ -558,6 +558,12 @@ fn shadows_json(shadows: &packs::PackShadows) -> serde_json::Value {
     if shadows.leaves {
         json.insert("leaves".into(), true.into());
     }
+    if let Some(count) = shadows.cascades {
+        json.insert("cascades".into(), count.into());
+    }
+    if let Some(split) = shadows.split {
+        json.insert("split".into(), split.into());
+    }
     json.into()
 }
 

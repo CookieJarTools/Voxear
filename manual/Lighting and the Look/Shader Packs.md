@@ -302,6 +302,8 @@ softness = 1.5          # how wide the sun is, in degrees: the wider, the softer
 distance = 150.0        # how far from the camera the cascades reach, in metres
 tint = [0.04, 0.05, 0.08]   # the colour shade is lifted by
 maps = "virtual"        # "virtual" shadow maps, or "cascades"
+cascades = 2            # with "cascades": how many share the distance, 1 to 4; fewer draw less, each less finely
+split = 0.5             # how they share it, from 0, alike, to 1, the nearest small and sharp
 leaves = true           # leaves let the sun through, tinted their colour, as much as the filter says
 filter = "shadows.slang"
 ```

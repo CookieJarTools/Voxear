@@ -4022,7 +4022,9 @@ Done:
 - **Coloured light through leaves and glass** (stage 4, second part). `[shadows] leaves = true`: block leaves draw
   their colour into the glass shadow atlas, the filter is given what glass and leaves let through, and the sun it
   lets through leaves is tinted their colour. Evening lets a little green-gold light through crowns.
-  - Not yet: a pack's own cascade pass (4), and players' menu and C#
+- **The cascades' layout set by a pack** (stage 4, last part): `[shadows] cascades` (1 to 4) and `split`. A pack's own
+  warped map was tried: the warp bends merged block faces, so it was left out.
+  - Not yet: players' menu and C# (5)
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)

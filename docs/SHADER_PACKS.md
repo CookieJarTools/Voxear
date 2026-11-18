@@ -157,7 +157,8 @@ passes took the same with and without it. The plan's estimates, before it was bu
 3. **The final pass and the sky:** a pack's own tonemap and grade in place of the engine's and the look shader, and
    its own sky and clouds. ✅ Built.
 4. **Shadows:** a pack's shadow settings and filter, then coloured shadows through leaves and glass, then a pack's
-   own cascade pass. The settings, the filter and light through leaves and glass are built.
+   own cascade pass. ✅ Built: the settings and filter, light through leaves and glass, and the cascades' layout in
+   place of a pass of a pack's own.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
    surface id image for passes that want it.
 
@@ -244,7 +245,7 @@ A pack's own tonemap, and a program for the sky. Settled on the way:
   and the clouds on its side gold.
 - **Not yet:** models' surface programs; reflections, the sea's mirror and the GI still see the engine's sky.
 
-## What stage 4 has built
+## What stage 4 built
 
 The first part: a pack's settings for the sun's shadows and a filter that reads them. Settled on the way:
 
@@ -273,6 +274,14 @@ The first part: a pack's settings for the sun's shadows and a filter that reads 
   sunlit gaps beside leaves too, the atlas being coarser than the shadow. The blocks' cascade lists are picked for it
   under the virtual maps too. About 0.4 ms at 1280×720 in CubeGame. Not yet: models' leaves, and leaves past the
   third cascade (drawn solid there).
+- **The cascades' layout** stands in for a pack's own cascade pass: `cascades` (1 to 4) share the distance as `split`
+  says (`shadows::cascades_in`), and those past the count take in nothing, so nothing is drawn into their tiles and no
+  point reads them. One cascade at 80 m is coarser at its edges than four; two nearly as fine.
+- **A warped map was tried and left out.** A pack's warp of one map round the camera (finest texels by it, as
+  block-game shader packs often draw the sun's shadow) moves only the vertices it is given, and a triangle's inside
+  stays straight between them. Here block faces are merged into long quads and the ground's own top faces, warped at
+  their corners only, shaded the ground itself. Warping would need block quads cut small in the shadow pass; the
+  cascades' layout does the job without that.
 - **Evening** pales its shadows the farther above the point what casts them is, as an evening sky fills a long
   shadow, and lets a little of the sun through leaves.
 

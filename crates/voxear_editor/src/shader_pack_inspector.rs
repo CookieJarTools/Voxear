@@ -140,6 +140,14 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
         if let Some([r, g, b]) = shadows.tint {
             row_of("Tint", format!("{r}, {g}, {b}"), "The colour shade is lifted by, as the sky's light fills it");
         }
+        if let Some(count) = shadows.cascades {
+            let about = "How many cascades share the distance: fewer draw less, each less finely";
+            row_of("Cascades", count.to_string(), about);
+        }
+        if let Some(split) = shadows.split {
+            let about = "How the cascades share the distance, from 0, alike, to 1, the nearest small and sharp";
+            row_of("Split", split.to_string(), about);
+        }
         if shadows.leaves {
             let about = "Leaves let the sun through, tinted their colour, as much as the filter says";
             row_of("Leaves", "Let light through".to_string(), about);

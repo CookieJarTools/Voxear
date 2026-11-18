@@ -157,3 +157,107 @@ fn a_level_two_hundred_metres_square_bakes_in_seconds_and_a_long_way_over_it_is_
     assert_eq!(found.status, MeshPathStatus::Complete);
     assert!(least < 0.5 * slack * 2.0, "{least:.3} ms");
 }
+
+#[test]
+fn a_box_cut_out_of_a_floor_is_gone_round_as_one_baked_in_is_and_taking_it_away_leaves_the_floor_as_baked() {
+    let settings = BakeSettings::default();
+    let open = bake(&floor(20.0), settings).unwrap();
+    let (from, to) = (Vec3::new(2.0, 0.0, 10.0), Vec3::new(18.0, 0.0, 10.0));
+    let crate_box = [Vec3::new(9.0, 0.0, 4.0), Vec3::new(11.0, 3.0, 16.0)];
+    let cut = open.cut(&[crate_box]);
+    let round = cut.find_path(from, to, 1.0);
+    assert_eq!(round.status, MeshPathStatus::Complete);
+    assert!(round.corners.len() >= 3, "round the box: {:?}", round.corners);
+    for pair in round.corners.windows(2) {
+        // Every point along the way, not only its corners, kept off the box by the radius.
+        for step in 0..=40 {
+            let at = pair[0].lerp(pair[1], step as f32 / 40.0);
+            let inside = (9.0 - settings.radius + 0.01..=11.0 + settings.radius - 0.01).contains(&at.x)
+                && (4.0 - settings.radius + 0.01..=16.0 + settings.radius - 0.01).contains(&at.z);
+            assert!(!inside, "kept off the box by its radius: {at}");
+        }
+    }
+    let mut walled = floor(20.0);
+    walled.extend(boxed(crate_box[0], crate_box[1]));
+    let baked = bake(&walled, settings).unwrap().find_path(from, to, 1.0);
+    assert!(
+        (length(&round) - length(&baked)).abs() < 0.6,
+        "cut {} against baked {}",
+        length(&round),
+        length(&baked)
+    );
+    // Under the box there is nowhere to stand now.
+    assert!(cut.locate(Vec3::new(10.0, 0.0, 10.0), 0.5).is_none());
+    assert_eq!(open.cut(&[]), open);
+    let straight = open.cut(&[]).find_path(from, to, 1.0);
+    assert_eq!(straight.corners.len(), 2);
+}
+
+#[test]
+fn a_box_across_a_corridor_shuts_it_and_one_over_heads_or_on_another_floor_does_not() {
+    let settings = BakeSettings::default();
+    // A corridor 3 metres wide along x, walls either side, and an upper floor over its far half.
+    let mut triangles = boxed(Vec3::new(0.0, -0.5, 0.0), Vec3::new(30.0, 0.0, 3.0));
+    triangles.extend(boxed(Vec3::new(0.0, 0.0, -1.0), Vec3::new(30.0, 3.0, 0.0)));
+    triangles.extend(boxed(Vec3::new(0.0, 0.0, 3.0), Vec3::new(30.0, 3.0, 4.0)));
+    triangles.extend(boxed(Vec3::new(15.0, 6.0, -1.0), Vec3::new(30.0, 6.2, 4.0)));
+    let mesh = bake(&triangles, settings).unwrap();
+    let (from, to) = (Vec3::new(1.0, 0.0, 1.5), Vec3::new(28.0, 0.0, 1.5));
+    assert_eq!(mesh.find_path(from, to, 0.5).status, MeshPathStatus::Complete);
+    let across = [Vec3::new(10.0, 0.0, -0.5), Vec3::new(11.0, 1.0, 3.5)];
+    let shut = mesh.cut(&[across]);
+    let way = shut.find_path(from, to, 0.5);
+    assert_eq!(way.status, MeshPathStatus::Partial);
+    assert!(way.corners.last().unwrap().x < 10.0, "stops short of the box: {:?}", way.corners);
+    // A beam high over heads, and a box on the upper floor, leave the corridor open.
+    let beam = [Vec3::new(10.0, 2.2, -0.5), Vec3::new(11.0, 2.6, 3.5)];
+    let upstairs = [Vec3::new(20.0, 6.2, -0.5), Vec3::new(21.0, 7.2, 4.5)];
+    let open = mesh.cut(&[beam, upstairs]);
+    assert_eq!(open.find_path(from, to, 0.5).status, MeshPathStatus::Complete);
+    let up = Vec3::new(20.5, 6.2, 1.5);
+    assert!(mesh.locate(up, 0.5).is_some() && open.locate(up, 0.5).is_none(), "the upper floor is cut there");
+    // The same box twice, or two overlapping, cut as one does.
+    let twice = mesh.cut(&[across, across]);
+    assert_eq!(twice.find_path(from, to, 0.5).status, MeshPathStatus::Partial);
+}
+
+#[test]
+fn obstacles_cut_out_of_a_level_two_hundred_metres_square_take_a_few_milliseconds() {
+    let slack = if cfg!(debug_assertions) { 4.0 } else { 1.0 };
+    let mut triangles = floor(200.0);
+    for x in 0..12 {
+        for z in 0..12 {
+            let (px, pz) = (8.0 + x as f32 * 16.0, 8.0 + z as f32 * 16.0);
+            triangles.extend(boxed(Vec3::new(px, 0.0, pz), Vec3::new(px + 6.0, 4.0, pz + 3.0)));
+        }
+    }
+    let mesh = bake(&triangles, BakeSettings::default()).unwrap();
+    // Forty carts left in the streets between the blocks.
+    let boxes: Vec<[Vec3; 2]> = (0..40)
+        .map(|n| {
+            let (x, z) = (4.0 + (n % 8) as f32 * 24.0, 5.0 + (n / 8) as f32 * 37.0);
+            [Vec3::new(x, 0.0, z), Vec3::new(x + 1.5, 1.2, z + 2.5)]
+        })
+        .collect();
+    let mut cut = NavMesh::default();
+    let least = (0..10)
+        .map(|_| {
+            let began = Instant::now();
+            cut = mesh.cut(&boxes);
+            began.elapsed().as_secs_f64() * 1000.0
+        })
+        .fold(f64::INFINITY, f64::min);
+    println!("cut round {} boxes: {} polygons from {}, {least:.2} ms", boxes.len(), cut.polys.len(), mesh.polys.len());
+    let way = cut.find_path(Vec3::new(2.0, 0.0, 2.0), Vec3::new(198.0, 0.0, 197.0), 1.0);
+    assert_eq!(way.status, MeshPathStatus::Complete);
+    for [low, high] in &boxes {
+        for pair in way.corners.windows(2) {
+            for step in 0..=50 {
+                let at = pair[0].lerp(pair[1], step as f32 / 50.0);
+                let inside = at.x > low.x && at.x < high.x && at.z > low.z && at.z < high.z;
+                assert!(!inside, "through a cart at {at}");
+            }
+        }
+    }
+    assert!(least < 15.0 * slack, "{least:.2} ms");
+}

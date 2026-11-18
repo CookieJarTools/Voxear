@@ -194,6 +194,10 @@ pub struct NavAgentState {
     /// is; and whether the jump under way is a link being crossed.
     links: Vec<Option<u8>>,
     crossing_link: bool,
+    /// The carved obstacles its way was found among, and the nav mesh it
+    /// was found on, to notice a change.
+    cut_seen: u64,
+    mesh_seen: usize,
 }
 
 impl Component for NavAgentState {}
@@ -264,6 +268,9 @@ struct Walked {
     costs: voxear_nav::AreaCosts,
     boxes: Vec<voxear_nav::AreaBox>,
     links: Vec<voxear_nav::Link>,
+    /// The Nav Obstacles carved in it, and what changed in them last.
+    obstacles: Vec<voxear_nav::AreaBox>,
+    cuts: crate::nav_obstacle::CutChanges,
 }
 
 impl Walked {
@@ -289,6 +296,26 @@ impl Walked {
     fn standing(&self, at: Vec3, walker: Walker, reach: f32) -> Option<PlaceRef> {
         self.nav.nearest(self.local(at + Vec3::Y * 0.1 * self.size), walker, 0.0, reach)
     }
+}
+
+/// World of blocks `entity` as agents walk it: its corner at `corner`, its
+/// blocks `size` metres a side.
+fn walked_of(world: &mut World, entity: Entity, corner: Vec3, size: f32, blocks: BlockWorld) -> Option<Walked> {
+    let nav = crate::navigation::nav_of(world, entity)?;
+    let dimension = dimension_of(world, entity);
+    Some(Walked {
+        entity,
+        corner,
+        size,
+        nav,
+        blocks,
+        dimension,
+        costs: crate::navigation::costs(world),
+        boxes: crate::navigation::area_boxes(world, corner, size, dimension),
+        links: crate::navigation::links(world, corner, size, dimension),
+        obstacles: crate::nav_obstacle::block_boxes(world, corner, size, dimension),
+        cuts: crate::nav_obstacle::changes(world, dimension),
+    })
 }
 
 /// What one agent steps with this step.
@@ -342,18 +369,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
         .collect();
     let walked: Vec<Walked> = worlds
         .into_iter()
-        .filter_map(|(entity, corner, size, blocks)| {
-            let nav = crate::navigation::nav_of(world, entity)?;
-            {
-                let dimension = dimension_of(world, entity);
-                let (costs, boxes) =
-                    (crate::navigation::costs(world), crate::navigation::area_boxes(world, corner, size, dimension));
-                {
-                    let links = crate::navigation::links(world, corner, size, dimension);
-                    Some(Walked { entity, corner, size, nav, blocks, dimension, costs, boxes, links })
-                }
-            }
-        })
+        .filter_map(|(entity, corner, size, blocks)| walked_of(world, entity, corner, size, blocks))
         .collect();
 
     let level_mesh = crate::navigation::level_nav(world);
@@ -396,7 +412,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
         world.resource_mut::<DoorsToOpen>().expect("put in above").0.append(&mut budget.doors);
     }
     // All of them together: each velocity chosen avoiding the rest, and every other character, of its own dimension.
-    let others: Vec<(DimensionId, Mover)> = world
+    let mut others: Vec<(DimensionId, Mover)> = world
         .query_ref::<(Entity, &CharacterController)>()
         .without::<NavAgent>()
         .without::<BlockMob>()
@@ -419,6 +435,19 @@ pub fn step_agents(world: &mut World, delta: f32) {
             Some((dimension_of(world, entity), mover))
         })
         .collect();
+    // Obstacles not carved, moving or never carving, are gone round as they come.
+    others.extend(crate::nav_obstacle::movers(world).into_iter().map(|(dimension, at, velocity, radius)| {
+        let mover = Mover {
+            position: steer::flat(at),
+            velocity: steer::flat(velocity),
+            wanted: steer::flat(velocity),
+            radius,
+            speed: steer::flat(velocity).length(),
+            priority: 1.0,
+            avoids: false,
+        };
+        (dimension, mover)
+    }));
     let movers: Vec<Mover> = steps
         .iter()
         .map(|step| {
@@ -550,6 +579,13 @@ fn plan(
                 nav.slot_of(*key).and_then(|slot| nav.slot(slot)).is_none_or(|slot| slot.changed > found.version)
             })
     });
+    // A way crossing an obstacle carved or let go since it was found.
+    let radius = agent.radius.max(0.3 * walked.size);
+    let remaining = &state.corners[state.next.saturating_sub(1).min(state.corners.len())..];
+    let stale = stale || walked.cuts.crosses(state.cut_seen, remaining, radius, height);
+    if walked.cuts.version != state.cut_seen && !stale {
+        state.cut_seen = walked.cuts.version;
+    }
     // A way found part of the way is asked for again near its end.
     let near_end = state.status == PathStatus::Continues && state.remaining(at) < 32.0 * walked.size;
     let moved_goal = state.asked_to != to;
@@ -559,7 +595,9 @@ fn plan(
         let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
         let mut ask = PathAsk::new(from, walked.local(destination), walker);
         (ask.costs, ask.boxes, ask.links) = (walked.costs, walked.boxes.clone(), walked.links.clone());
+        ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
         (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
+        state.cut_seen = walked.cuts.version;
         let nav = walked.nav.clone();
         state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask)), 0));
         (state.asked_to, state.search_in) = (to, SEARCH_EVERY);
@@ -620,8 +658,12 @@ fn plan_mesh(
     };
     let key = (destination / 0.25).round().as_ivec3().to_array();
     state.search_in -= delta;
-    if (state.asked_to != Some(key) || state.search_in <= 0.0) && budget.asked > 0 {
+    // A mesh cut afresh round obstacles is searched again at once.
+    let mesh_at = mesh as *const voxear_nav::mesh::NavMesh as usize;
+    let recut = state.mesh_seen != mesh_at;
+    if (state.asked_to != Some(key) || state.search_in <= 0.0 || recut) && budget.asked > 0 {
         budget.asked -= 1;
+        state.mesh_seen = mesh_at;
         let found = mesh.find_path(at + offset, destination + offset, 2.0);
         state.corners = found.corners.iter().map(|corner| *corner - offset).collect();
         state.next = 1.min(state.corners.len().saturating_sub(1));
@@ -1039,18 +1081,7 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
         .collect();
     let walked: Vec<Walked> = worlds
         .into_iter()
-        .filter_map(|(entity, corner, size, blocks)| {
-            let nav = crate::navigation::nav_of(world, entity)?;
-            {
-                let dimension = dimension_of(world, entity);
-                let (costs, boxes) =
-                    (crate::navigation::costs(world), crate::navigation::area_boxes(world, corner, size, dimension));
-                {
-                    let links = crate::navigation::links(world, corner, size, dimension);
-                    Some(Walked { entity, corner, size, nav, blocks, dimension, costs, boxes, links })
-                }
-            }
-        })
+        .filter_map(|(entity, corner, size, blocks)| walked_of(world, entity, corner, size, blocks))
         .collect();
     // Scripts ask in the dimension the game is seen from.
     let current = voxear_scene::CurrentDimension::of(world);
@@ -1082,6 +1113,7 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
         let walker = walked.walker_of(&NavAgent::default(), height);
         let mut ask = PathAsk::new(walked.local(from), walked.local(to), walker);
         (ask.costs, ask.boxes, ask.links) = (walked.costs, walked.boxes.clone(), walked.links.clone());
+        ask.boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
         let found = find_path(&walked.nav, &ask);
         (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
     });
@@ -1101,13 +1133,17 @@ pub fn nearest_place(world: &mut World, at: Vec3, reach: f32) -> Option<Vec3> {
 }
 
 /// The area of ground of the place to stand nearest `at`, no more than
-/// `reach` metres off: as its block or a Nav Area box marks it.
+/// `reach` metres off: as its block or a Nav Area box marks it, or Not
+/// Walkable under a carved Nav Obstacle.
 pub fn area_at(world: &mut World, at: Vec3, reach: f32) -> Option<u8> {
     let walked = walked_at(world, at, 1.8)?;
     let reach = (reach / walked.size).max(0.5);
-    let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
+    let walker = walked.walker(1.8);
+    let place = walked.nav.nearest(walked.local(at), walker, reach, reach)?;
     let point = walked.nav.point(place)?;
-    let boxed = walked.boxes.iter().rev().find(|area_box| area_box.holds(point));
+    let mut boxes = walked.boxes.clone();
+    boxes.extend(crate::nav_obstacle::for_walker(&walked.obstacles, walker));
+    let boxed = boxes.iter().rev().find(|area_box| area_box.holds(point));
     Some(boxed.map_or(walked.nav.place(place)?.0.area, |area_box| area_box.area))
 }
 

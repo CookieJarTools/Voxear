@@ -45,6 +45,7 @@ mod loading;
 pub mod memory;
 pub mod modules;
 pub mod nav_agent;
+pub mod nav_obstacle;
 pub mod navigation;
 pub mod new_project;
 mod obj_hierarchy;

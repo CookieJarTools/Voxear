@@ -592,6 +592,16 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new NavAgent(this);
 	}
 
+	/// <summary>The Obj's Nav Obstacle, a box agents go round. Not valid when it has none.</summary>
+	public NavObstacle NavObstacle => new NavObstacle(this);
+
+	/// <summary>Gives the Obj a Nav Obstacle a metre a side that carves where it stands still, unless it has one, and returns it.</summary>
+	public NavObstacle AddNavObstacle()
+	{
+		NativeComponent.Set(NativeComponent.NavObstacle, this, NativeComponent.Add, Vector4.Zero);
+		return new NavObstacle(this);
+	}
+
 	/// <summary>The Obj's Block Mob, which walks it through a Block World. Not valid when it has none.</summary>
 	public BlockMob BlockMob => new BlockMob(this);
 

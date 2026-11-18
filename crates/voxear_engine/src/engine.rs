@@ -111,6 +111,7 @@ impl Engine {
         crate::animation::register_mob_motion();
         crate::block_mob::register();
         crate::nav_agent::register();
+        crate::nav_obstacle::register();
         voxear_scripting::set_kind_texts(voxear_scripting::ComponentKind::Vehicle, voxear_scripting::vehicle_curve_texts);
         let mut world = World::new();
         register_obj_components(&mut world);
@@ -631,6 +632,7 @@ impl Engine {
             self.flush();
             // What finds its own way takes its step on the tick, before physics, as the network keeps time.
             if !self.edit_mode {
+                crate::nav_obstacle::update(&mut self.world, self.time.fixed_delta);
                 crate::block_mob::set_destinations(&mut self.world, self.time.fixed_delta);
                 crate::nav_agent::step_agents(&mut self.world, self.time.fixed_delta);
             }

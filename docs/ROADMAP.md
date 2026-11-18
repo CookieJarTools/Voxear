@@ -3820,7 +3820,26 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     corner turned on its inside; the file read back the same; the timings; agents walking round a wall on a baked
     mesh by both ways of moving; a tool baking a level and finding a way over it, and the gizmo's picture.
     Manual: Levels of Models.
-  - [ ] cutting nav meshes at run time for Nav Obstacles; bake settings per agent type
+  - [x] **Nav Obstacles** (`voxear_engine::nav_obstacle`, Add Component ▸ Navigation ▸ Nav Obstacle: Size in
+    the Obj's own space, Carve, Move Threshold, Still Time): a box agents go round though it was not there when
+    the nav was made. Standing still for Still Time (at once when first seen) it carves; moved further than Move
+    Threshold its cut is let go, and agents go round it as they go round each other (`avoid`), as they go round
+    one that never carves. In a world of blocks a carved box makes the places under it Not Walkable to every
+    search (`AreaBox`, reaching down by the walker's height). On a level's nav mesh the rectangles under it are
+    cut (`NavMesh::cut`: the footprint widened by the walker's radius to whole cells and taken out, a rectangle
+    less a rectangle being up to four, their floors and shared edges found again), from the mesh as baked each
+    time, on a nav thread, and put in `LevelNav`'s place whole. A carving obstacle's colliders are left out of
+    the bake. Agents whose ways cross a box carved or let go find theirs again; on a mesh, every agent once the
+    cut mesh is in. C#: `NavObstacle` (`Obj.NavObstacle`, `AddNavObstacle`, `IsCarving`), through
+    `ComponentKind::NavObstacle`. `navigation.status` counts obstacles and those carving; the gizmo draws each
+    box. Playing in the editor takes the level's nav mesh into the game as baked, even before it is saved.
+    Timings (test build, least of 10): 40 boxes cut out of a level 200 m square in 2.3 ms. Tests: a box cut
+    out of a floor gone round as one baked in is, and taken away leaving the floor as baked; a box across a
+    corridor shutting it, one over heads or on another floor not; the timing; an agent walking to a wall's gap
+    in a world of blocks and on a mesh stopped short by a crate put in it, and let on once it goes; an obstacle
+    carving only once still; one that never carves gone round; a tool's crate shutting a gap once the game runs;
+    the C# API with no engine. Manual: Nav Obstacles.
+  - [ ] bake settings per agent type; terrain heightfields in the bake
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
@@ -3947,7 +3966,10 @@ can move earlier if it becomes a priority.
 
 The launcher, the equivalent of Unity Hub, lives in its own repository. It covers:
 - installing engine versions side by side
-- updating itself
+- **updating itself:** 0.2.0 checks its updates with the release key built in, so there is nothing to set up. The
+  Launcher Release workflow here builds the AppImage, `.deb`, Windows setup and `voxup`, signs them with the
+  engine release key and publishes them on VoxearReleases. A launcher from before 0.2.0 has no key and has to be
+  replaced by hand once.
 - the project list
 - the new-project flow with templates and default setups
 - **release lists:** the official engine releases with nothing to set up, nightlies when turned on, and custom engine

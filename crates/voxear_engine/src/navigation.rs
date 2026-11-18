@@ -335,10 +335,12 @@ pub fn put_level_nav(levels: &crate::levels::Levels, world: &mut World, content:
 
 /// The triangles a level's nav mesh is baked from: every still collider's
 /// (neither a trigger nor moved by physics), in metres from the level's
-/// real middle.
+/// real middle. Those of Nav Obstacles that carve are left out: they cut
+/// the mesh where they stand while the game runs, and may be moved.
 pub fn bake_triangles(world: &World) -> Vec<[voxear_core::math::Vec3; 3]> {
     let mut triangles = Vec::new();
-    for wall in crate::acoustics::walls(world) {
+    let obstacle = |entity: Entity| world.get::<crate::nav_obstacle::NavObstacle>(entity).is_some_and(|o| o.carve);
+    for wall in crate::acoustics::walls_except(world, obstacle) {
         for [a, b, c] in &wall.triangles {
             let corner = |at: &u32| wall.vertices[*at as usize];
             triangles.push([corner(a), corner(b), corner(c)]);

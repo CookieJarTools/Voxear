@@ -190,6 +190,11 @@ pub fn walls(world: &World) -> Vec<Wall> {
     still_colliders(world).iter().map(wall).collect()
 }
 
+/// [`walls`], less those of the Objs `left_out` says.
+pub fn walls_except(world: &World, left_out: impl Fn(Entity) -> bool) -> Vec<Wall> {
+    still_colliders_except(world, left_out).iter().map(wall).collect()
+}
+
 /// Where a level's baked paths are kept: beside it, named as it is, as
 /// `Levels/Main.level`'s in `Levels/Main.paths`.
 pub fn paths_file(level: &str) -> String {
@@ -231,6 +236,13 @@ fn level_offset(world: &World) -> Vec3 {
 /// each with where it is from the level's real middle and its mesh, for a
 /// Mesh collider.
 fn still_colliders(world: &World) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)> {
+    still_colliders_except(world, |_| false)
+}
+
+fn still_colliders_except(
+    world: &World,
+    left_out: impl Fn(Entity) -> bool,
+) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)> {
     let offset = level_offset(world).extend(0.0);
     // The walls sound meets are those of the dimension it is heard in.
     let switched = Switched::in_dimension(world, crate::dimensions::current(world));
@@ -239,7 +251,9 @@ fn still_colliders(world: &World) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)
         .without::<Rigidbody>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(entity, collider, ..)| !collider.trigger && switched.is_on(world, *entity, Switch::Collider))
+        .filter(|(entity, collider, ..)| {
+            !collider.trigger && switched.is_on(world, *entity, Switch::Collider) && !left_out(*entity)
+        })
         .map(|(_, collider, local, placed, mesh)| {
             let mut matrix = placed.map_or_else(|| local.matrix(), |placed| placed.0);
             matrix.w_axis += offset;

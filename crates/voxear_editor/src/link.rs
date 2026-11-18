@@ -1237,6 +1237,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::NavAgent
             | Part::NavArea
             | Part::NavLink
+            | Part::NavObstacle
             | Part::MotionMatcher
             | Part::BoneAttachment
             | Part::FirstPersonView

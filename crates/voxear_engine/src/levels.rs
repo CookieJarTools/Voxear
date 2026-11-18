@@ -842,6 +842,10 @@ impl Levels {
             let (scene, path) = self.place_of(entity)?;
             copy.entity_at(scene, &path)
         });
+        // The level's nav mesh goes with it, as baked, even before the level is saved.
+        if let Some(nav) = edit.world.resource::<crate::navigation::LevelNav>() {
+            play.world.insert_resource(nav.clone());
+        }
         // The reflection probes' bakes go with them, as baked, even before the level is saved.
         for scene in &self.scenes {
             for (path, entity) in &scene.objs {

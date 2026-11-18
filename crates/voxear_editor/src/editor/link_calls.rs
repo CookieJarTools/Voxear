@@ -1795,7 +1795,8 @@ impl Editor {
         });
         let agents = world.query_ref::<&NavAgent>().into_iter().count();
         let mobs = world.query_ref::<&BlockMob>().into_iter().count();
-        done(json!({ "worlds": worlds, "agents": agents, "mobs": mobs }))
+        let (obstacles, carving) = voxear_engine::nav_obstacle::counts(world);
+        done(json!({ "worlds": worlds, "agents": agents, "mobs": mobs, "obstacles": obstacles, "carving": carving }))
     }
 
     fn navigation_path(&mut self, args: &Json) -> Called {

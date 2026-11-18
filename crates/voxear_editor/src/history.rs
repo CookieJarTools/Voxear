@@ -76,6 +76,7 @@ pub struct ObjState {
     pub nav_agent: Option<Box<voxear_engine::nav_agent::NavAgent>>,
     pub nav_area: Option<voxear_engine::navigation::NavArea>,
     pub nav_link: Option<voxear_engine::navigation::NavLink>,
+    pub nav_obstacle: Option<voxear_engine::nav_obstacle::NavObstacle>,
     pub motion_matcher: Option<Box<voxear_engine::animation::MotionMatcher>>,
     pub bone_attachment: Option<Box<voxear_engine::animation::BoneAttachment>>,
     pub first_person: Option<Box<voxear_engine::first_person::FirstPersonView>>,
@@ -201,6 +202,7 @@ impl ObjState {
             nav_agent: world.get::<voxear_engine::nav_agent::NavAgent>(entity).cloned().map(Box::new),
             nav_area: world.get::<voxear_engine::navigation::NavArea>(entity).copied(),
             nav_link: world.get::<voxear_engine::navigation::NavLink>(entity).copied(),
+            nav_obstacle: world.get::<voxear_engine::nav_obstacle::NavObstacle>(entity).copied(),
             motion_matcher: world.get::<voxear_engine::animation::MotionMatcher>(entity).cloned().map(Box::new),
             bone_attachment: world.get::<voxear_engine::animation::BoneAttachment>(entity).cloned().map(Box::new),
             first_person: world.get::<voxear_engine::first_person::FirstPersonView>(entity).cloned().map(Box::new),
@@ -310,6 +312,7 @@ impl ObjState {
         put(world, entity, self.nav_agent.as_deref().cloned());
         put(world, entity, self.nav_area);
         put(world, entity, self.nav_link);
+        put(world, entity, self.nav_obstacle);
         put(world, entity, self.motion_matcher.as_deref().cloned());
         put(world, entity, self.bone_attachment.as_deref().cloned());
         put(world, entity, self.first_person.as_deref().cloned());

@@ -40,6 +40,7 @@ internal static unsafe class NativeComponent
 	public const int Navigation = 35;
 	public const int Dimension = 36;
 	public const int WaterWake = 37;
+	public const int NavObstacle = 38;
 
 	/// <summary>The value every kind reads as 1 when the Obj has one.</summary>
 	public const int Has = 0;

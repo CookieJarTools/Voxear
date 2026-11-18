@@ -1,6 +1,6 @@
 //! A script gives an Obj a Nav Agent, sends it across a world of blocks
-//! and reads what it is doing, and asks Navigation for a way, the nearest
-//! place to stand and somewhere to wander to. Builds a copy of Hello with
+//! and reads what it is doing, asks Navigation for a way, the nearest
+//! place to stand and somewhere to wander to, and puts a Nav Obstacle down. Builds a copy of Hello with
 //! one more script and a Block World; skips itself without .NET and the
 //! managed build.
 
@@ -43,6 +43,14 @@ public sealed class Shepherd : SystemBase
 			var wander = Navigation.RandomPlace(new Vector3(10.5f, 6f, 10.5f), 5f);
 			Log.Info($"wander: {wander.HasValue && Vector3.Distance(wander.Value, new Vector3(10.5f, 6f, 10.5f)) <= 5.5f}");
 			Log.Info($"area: {Navigation.AreaAt(new Vector3(5.5f, 6f, 5.5f))} {Navigation.AreaAt(new Vector3(20.5f, 6f, 20.5f))}");
+			var post = Obj.Find("Post").AddNavObstacle();
+			post.Size = new Vector3(3f, 2f, 3f);
+			Log.Info($"post: {post.IsValid} {post.Size} {post.Carve} {post.StillTime}");
+		}
+		if (frame == 5)
+		{
+			var post = Obj.Find("Post").NavObstacle;
+			Log.Info($"carving: {post.IsCarving} {Navigation.AreaAt(new Vector3(10.5f, 6f, 10.5f))}");
 		}
 		if (frame == 30)
 		{
@@ -88,6 +96,7 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     let (map, faces) = (file.make_ground(None), file.faces().1);
     game.engine.world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::default()));
     let sheep = game.engine.world.spawn((Name("Sheep".into()), Transform::from_position(Vec3::new(2.5, 6.0, 2.5))));
+    game.engine.world.spawn((Name("Post".into()), Transform::from_position(Vec3::new(10.5, 7.0, 10.5))));
     // A road over one corner of the field.
     let road = voxear_engine::navigation::NavArea { size: [4.0, 2.0, 4.0], area: voxear_terrain::blocks::block::BlockNavArea::Road };
     game.engine.world.spawn((Transform::from_position(Vec3::new(20.5, 6.5, 20.5)), road));
@@ -103,6 +112,7 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     assert!(said.iter().any(|l| l == "reachable: True"), "{said:#?}");
     assert!(said.iter().any(|l| l == "wander: True"), "{said:#?}");
     assert!(said.iter().any(|l| l == "area: Walkable Road"), "{said:#?}");
+    assert!(said.iter().any(|l| l == "post: True <3, 2, 3> True 0.5"), "{said:#?}");
     let agent = game.engine.world.get::<NavAgent>(sheep).expect("the script gave it a Nav Agent");
     assert_eq!((agent.speed, agent.moves), (4.0, NavMoves::AlongTheNav));
     assert_eq!(agent.destination, Some(Vec3::new(20.5, 6.0, 4.5)));
@@ -114,6 +124,7 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     assert!(said.iter().any(|l| l == "walking: True Complete False True True"), "{said:#?}");
     assert!(said.iter().any(|l| l == "stopped: True"), "{said:#?}");
     assert!(said.iter().any(|l| l == "resumed: False"), "{said:#?}");
+    assert!(said.iter().any(|l| l == "carving: True NotWalkable"), "{said:#?}");
     let moved = game.engine.world.get::<Transform>(sheep).unwrap().position;
     assert!(moved.x > 3.5, "it walked: {moved}");
 }

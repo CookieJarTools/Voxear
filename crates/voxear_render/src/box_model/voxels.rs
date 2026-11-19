@@ -22,6 +22,8 @@
 //! voxels = "…"
 //! ```
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result, ensure};
 use voxear_core::math::{Mat4, Vec3};
 
@@ -34,88 +36,246 @@ use crate::{
 /// The most colours a model's palette has, and the most cubes a sculpted
 /// box measures along a side.
 pub const MOST_COLORS: usize = 255;
-pub const LARGEST_GRID: u32 = 64;
+pub const LARGEST_GRID: u32 = 256;
 
 /// The colour cubes get where the box they are made from has no pixels to
 /// take one from.
 const PLAIN: [u8; 4] = [200, 200, 200, 255];
 
 /// A sculpted box's cubes: for each, 0 where there is none, or its colour's
-/// place in the model's palette and one. They run along X, then Y, then Z,
-/// from the box's least corner, as many each way as the box's size.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// place in the palette and one. They are kept in chunks of 16 a side, each
+/// shared until it is changed, so a model copied for a step to undo costs
+/// only the chunks its change touched; a chunk with no cube is not kept at
+/// all. The file has them as one run along X, then Y, then Z, from the
+/// box's least corner, as many each way as the box's size.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Voxels {
-    pub cells: Vec<u8>,
+    size: [u32; 3],
+    chunks: Vec<Option<Arc<Chunk>>>,
 }
+
+/// How many cubes a chunk has along each side, and in all.
+const CHUNK: u32 = 16;
+const CHUNK_CELLS: usize = (CHUNK * CHUNK * CHUNK) as usize;
+type Chunk = [u8; CHUNK_CELLS];
 
 fn count(size: [u32; 3]) -> usize {
     size.iter().map(|side| *side as usize).product()
 }
 
+/// How many chunks a box of `size` has each way.
+fn chunks_of(size: [u32; 3]) -> [u32; 3] {
+    size.map(|side| side.div_ceil(CHUNK))
+}
+
+impl std::fmt::Debug for Voxels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Voxels({} × {} × {}, {} cubes)", self.size[0], self.size[1], self.size[2], self.solid())
+    }
+}
+
 impl Voxels {
     /// Every cube of a box of `size` there, in one colour.
     pub fn filled(size: [u32; 3], color: u8) -> Self {
-        Self { cells: vec![color; count(size)] }
+        let full = (color != 0).then(|| Arc::new([color; CHUNK_CELLS]));
+        let mut voxels = Self { size, chunks: vec![full; count(chunks_of(size))] };
+        // Chunks over the box's far sides hold no cubes past them.
+        if color != 0 && size.iter().any(|side| side % CHUNK != 0) {
+            voxels.clear_outside();
+        }
+        voxels
+    }
+
+    /// The cubes of a box of `size`, one byte each, as the file has them.
+    pub fn from_cells(size: [u32; 3], cells: &[u8]) -> Self {
+        let mut voxels = Self::filled(size, 0);
+        for (at, &cell) in cells.iter().enumerate().filter(|(_, cell)| **cell != 0) {
+            let x = at % size[0] as usize;
+            let y = (at / size[0] as usize) % size[1] as usize;
+            let z = at / (size[0] as usize * size[1] as usize);
+            voxels.set(size, [x as i32, y as i32, z as i32], cell);
+        }
+        voxels
+    }
+
+    /// The cubes one byte each, as the file has them.
+    pub fn to_cells(&self) -> Vec<u8> {
+        let size = self.size;
+        let mut cells = vec![0; count(size)];
+        self.each(|cell, color| {
+            let at = cell[0] as usize + size[0] as usize * (cell[1] as usize + size[1] as usize * cell[2] as usize);
+            cells[at] = color;
+        });
+        cells
+    }
+
+    /// The size of box its cubes fill.
+    pub fn size(&self) -> [u32; 3] {
+        self.size
+    }
+
+    fn chunk_index(&self, chunk: [u32; 3]) -> usize {
+        let each = chunks_of(self.size);
+        (chunk[0] + each[0] * (chunk[1] + each[1] * chunk[2])) as usize
+    }
+
+    fn place(cell: [u32; 3]) -> usize {
+        let [x, y, z] = cell.map(|at| (at % CHUNK) as usize);
+        x + CHUNK as usize * (y + CHUNK as usize * z)
     }
 
     /// The cube at `cell` of a box of `size`: 0 for none, and for one
     /// outside the box.
     pub fn get(&self, size: [u32; 3], cell: [i32; 3]) -> u8 {
-        if (0..3).any(|axis| cell[axis] < 0 || cell[axis] >= size[axis] as i32) {
+        debug_assert_eq!(size, self.size, "a sculpted box's cubes read as another size");
+        if (0..3).any(|axis| cell[axis] < 0 || cell[axis] >= self.size[axis] as i32) {
             return 0;
         }
-        let at = cell[0] as usize + size[0] as usize * (cell[1] as usize + size[1] as usize * cell[2] as usize);
-        self.cells.get(at).copied().unwrap_or(0)
+        let cell = cell.map(|at| at as u32);
+        match &self.chunks[self.chunk_index(cell.map(|at| at / CHUNK))] {
+            Some(chunk) => chunk[Self::place(cell)],
+            None => 0,
+        }
     }
 
-    /// Colours the cube at `cell`, or with 0 takes it out; one outside the
-    /// box is left.
     pub fn set(&mut self, size: [u32; 3], cell: [i32; 3], color: u8) {
-        if (0..3).any(|axis| cell[axis] < 0 || cell[axis] >= size[axis] as i32) {
+        debug_assert_eq!(size, self.size, "a sculpted box's cubes changed as another size");
+        if (0..3).any(|axis| cell[axis] < 0 || cell[axis] >= self.size[axis] as i32) {
             return;
         }
-        let at = cell[0] as usize + size[0] as usize * (cell[1] as usize + size[1] as usize * cell[2] as usize);
-        if let Some(slot) = self.cells.get_mut(at) {
-            *slot = color;
+        let cell = cell.map(|at| at as u32);
+        let index = self.chunk_index(cell.map(|at| at / CHUNK));
+        let slot = &mut self.chunks[index];
+        match slot {
+            None if color == 0 => {}
+            None => {
+                let mut chunk = [0; CHUNK_CELLS];
+                chunk[Self::place(cell)] = color;
+                *slot = Some(Arc::new(chunk));
+            }
+            Some(chunk) => {
+                Arc::make_mut(chunk)[Self::place(cell)] = color;
+                // A chunk left with no cube is not kept, so two boxes with the same cubes are equal.
+                if color == 0 && chunk.iter().all(|cell| *cell == 0) {
+                    *slot = None;
+                }
+            }
+        }
+    }
+
+    /// Calls `with` for every cube there is, with where it is and its colour.
+    pub fn each(&self, mut with: impl FnMut([u32; 3], u8)) {
+        let each = chunks_of(self.size);
+        for (index, chunk) in self.chunks.iter().enumerate() {
+            let Some(chunk) = chunk else { continue };
+            let index = index as u32;
+            let origin =
+                [index % each[0], (index / each[0]) % each[1], index / (each[0] * each[1])].map(|at| at * CHUNK);
+            for (place, &color) in chunk.iter().enumerate().filter(|(_, color)| **color != 0) {
+                let place = place as u32;
+                let cell = [place % CHUNK, (place / CHUNK) % CHUNK, place / (CHUNK * CHUNK)];
+                with(std::array::from_fn(|axis| origin[axis] + cell[axis]), color);
+            }
+        }
+    }
+
+    /// Every cube's colour, those there are.
+    pub fn colors(&self) -> impl Iterator<Item = u8> + '_ {
+        self.chunks.iter().flatten().flat_map(|chunk| chunk.iter().copied().filter(|color| *color != 0))
+    }
+
+    /// Gives every cube the colour `now` has at its own.
+    pub fn recolor(&mut self, now: &[u8; 256]) {
+        for slot in &mut self.chunks {
+            if let Some(chunk) = slot {
+                if chunk.iter().all(|cell| now[usize::from(*cell)] == *cell) {
+                    continue;
+                }
+                Arc::make_mut(chunk).iter_mut().for_each(|cell| *cell = now[usize::from(*cell)]);
+                if chunk.iter().all(|cell| *cell == 0) {
+                    *slot = None;
+                }
+            }
+        }
+    }
+
+    /// For each chunk, by its place, whether it holds any cube and whether
+    /// every place of it within the box does, which building its faces
+    /// skips by.
+    fn chunk_fill(&self) -> (Vec<bool>, Vec<bool>) {
+        let each = chunks_of(self.size);
+        let mut full = vec![false; self.chunks.len()];
+        for z in 0..each[2] {
+            for y in 0..each[1] {
+                for x in 0..each[0] {
+                    let index = self.chunk_index([x, y, z]);
+                    full[index] = self.chunk_full([x, y, z]);
+                }
+            }
+        }
+        (self.chunks.iter().map(Option::is_some).collect(), full)
+    }
+
+    /// Whether every place of a chunk within the box holds a cube.
+    fn chunk_full(&self, chunk: [u32; 3]) -> bool {
+        let Some(cubes) = &self.chunks[self.chunk_index(chunk)] else { return false };
+        let ends: [u32; 3] = std::array::from_fn(|axis| (self.size[axis] - chunk[axis] * CHUNK).min(CHUNK));
+        (0..ends[2]).all(|z| (0..ends[1]).all(|y| (0..ends[0]).all(|x| cubes[Self::place([x, y, z])] != 0)))
+    }
+
+    fn clear_outside(&mut self) {
+        let size = self.size;
+        let each = chunks_of(size);
+        for z in 0..each[2] {
+            for y in 0..each[1] {
+                for x in 0..each[0] {
+                    let chunk = [x, y, z];
+                    if (0..3).all(|axis| (chunk[axis] + 1) * CHUNK <= size[axis]) {
+                        continue;
+                    }
+                    let index = self.chunk_index(chunk);
+                    let Some(cubes) = &mut self.chunks[index] else { continue };
+                    let cubes = Arc::make_mut(cubes);
+                    for place in 0..CHUNK_CELLS as u32 {
+                        let cell = [place % CHUNK, (place / CHUNK) % CHUNK, place / (CHUNK * CHUNK)];
+                        if (0..3).any(|axis| chunk[axis] * CHUNK + cell[axis] >= size[axis]) {
+                            cubes[place as usize] = 0;
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// How many cubes there are.
     pub fn solid(&self) -> usize {
-        self.cells.iter().filter(|cell| **cell != 0).count()
+        self.colors().count()
     }
 
     /// The cubes of a box of `size` as those of one of `to`, each `shift`
     /// cubes further along; what falls outside is lost.
     pub fn resized(&self, size: [u32; 3], to: [u32; 3], shift: [i32; 3]) -> Self {
+        debug_assert_eq!(size, self.size);
         let mut made = Self::filled(to, 0);
-        for z in 0..to[2] as i32 {
-            for y in 0..to[1] as i32 {
-                for x in 0..to[0] as i32 {
-                    let from = [x - shift[0], y - shift[1], z - shift[2]];
-                    made.set(to, [x, y, z], self.get(size, from));
-                }
-            }
-        }
+        self.each(|cell, color| {
+            made.set(to, std::array::from_fn(|axis| cell[axis] as i32 + shift[axis]), color);
+        });
         made
     }
 
     /// The cubes turned over from left to right.
     pub fn mirrored(&self, size: [u32; 3]) -> Self {
+        debug_assert_eq!(size, self.size);
         let mut made = Self::filled(size, 0);
-        for z in 0..size[2] as i32 {
-            for y in 0..size[1] as i32 {
-                for x in 0..size[0] as i32 {
-                    made.set(size, [size[0] as i32 - 1 - x, y, z], self.get(size, [x, y, z]));
-                }
-            }
-        }
+        self.each(|[x, y, z], color| {
+            made.set(size, [size[0] as i32 - 1 - x as i32, y as i32, z as i32], color);
+        });
         made
     }
 
     /// The cubes as the file keeps them: compressed, as base64.
     pub fn to_text(&self) -> String {
-        base64::encode(lz4_flex::compress_prepend_size(&self.cells))
+        base64::encode(lz4_flex::compress_prepend_size(&self.to_cells()))
     }
 
     /// The cubes of a box of `size` from [`to_text`](Self::to_text)'s text.
@@ -130,7 +290,7 @@ impl Voxels {
         let packed = base64::decode(text.trim()).context("the cubes are not base64")?;
         let cells = lz4_flex::decompress_size_prepended(&packed).context("the cubes could not be unpacked")?;
         ensure!(cells.len() == count(size), "{} cubes for a box of {}", cells.len(), count(size));
-        Ok(Self { cells })
+        Ok(Self::from_cells(size, &cells))
     }
 }
 
@@ -196,7 +356,7 @@ impl BoxModel {
         let mut used = [false; 256];
         for bone in &self.bones {
             for voxels in bone.boxes.iter().filter_map(|model_box| model_box.voxels.as_ref()) {
-                voxels.cells.iter().for_each(|cell| used[usize::from(*cell)] = true);
+                voxels.colors().for_each(|cell| used[usize::from(cell)] = true);
             }
         }
         if (1..=self.palette.len()).all(|cell| used[cell]) {
@@ -211,7 +371,7 @@ impl BoxModel {
         self.palette = kept;
         for bone in &mut self.bones {
             for voxels in bone.boxes.iter_mut().filter_map(|model_box| model_box.voxels.as_mut()) {
-                voxels.cells.iter_mut().for_each(|cell| *cell = now[usize::from(*cell)]);
+                voxels.recolor(&now);
             }
         }
     }
@@ -370,6 +530,10 @@ pub(super) struct Onto {
 /// past the corners of the faces beside it, and gaps would open there.
 pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox, voxels: &Voxels, on: &Onto) {
     let size = model_box.size;
+    // Only chunks with cubes are read, and a full chunk's faces are hidden but where it meets one that is not.
+    let (has, full) = voxels.chunk_fill();
+    let each_chunk = chunks_of(size);
+    let index = |chunk: [u32; 3]| (chunk[0] + each_chunk[0] * (chunk[1] + each_chunk[1] * chunk[2])) as usize;
     let each = on.reach * 2.0 / Vec3::from(size.map(|side| side.max(1) as f32));
     let joins = |way: Vec3| model.wind_bend <= 0.0 || on.place.transform_vector3(way).y.abs() < 1e-4;
     for face in Face::ALL {
@@ -381,20 +545,51 @@ pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox,
         let (wide_joins, tall_joins) = (joins(across), joins(down));
         let out = normal[n] as i32;
         let world_normal = on.place.transform_vector3(normal).normalize_or_zero();
+        let (wide, tall) = (size[u] as usize, size[v] as usize);
+        let mut shown = vec![0u8; wide * tall];
         for layer in 0..size[n] as i32 {
-            // The colour of each cube of this layer whose face this way shows.
-            let (wide, tall) = (size[u] as usize, size[v] as usize);
-            let mut shown = vec![0u8; wide * tall];
-            for b in 0..tall {
-                for a in 0..wide {
-                    let mut cell = [0i32; 3];
-                    (cell[n], cell[u], cell[v]) = (layer, a as i32, b as i32);
-                    let color = voxels.get(size, cell);
-                    cell[n] += out;
-                    if color != 0 && voxels.get(size, cell) == 0 {
-                        shown[a + wide * b] = color;
+            // The colour of each cube of this layer whose face this way shows, chunk by chunk.
+            let along = layer as u32 / CHUNK;
+            let edge = match out > 0 {
+                true => layer as u32 % CHUNK == CHUNK - 1 || layer as u32 + 1 == size[n],
+                false => layer as u32 % CHUNK == 0,
+            };
+            let mut any = false;
+            for across_chunk in 0..each_chunk[u] {
+                for down_chunk in 0..each_chunk[v] {
+                    let mut chunk = [0u32; 3];
+                    (chunk[n], chunk[u], chunk[v]) = (along, across_chunk, down_chunk);
+                    if !has[index(chunk)] {
+                        continue;
+                    }
+                    if full[index(chunk)] {
+                        let next = along as i32 + out;
+                        let beyond = (0..each_chunk[n] as i32).contains(&next).then(|| {
+                            let mut next_chunk = chunk;
+                            next_chunk[n] = next as u32;
+                            full[index(next_chunk)]
+                        });
+                        if !edge || beyond == Some(true) {
+                            continue;
+                        }
+                    }
+                    let (a_from, b_from) = ((across_chunk * CHUNK) as usize, (down_chunk * CHUNK) as usize);
+                    for b in b_from..(b_from + CHUNK as usize).min(tall) {
+                        for a in a_from..(a_from + CHUNK as usize).min(wide) {
+                            let mut cell = [0i32; 3];
+                            (cell[n], cell[u], cell[v]) = (layer, a as i32, b as i32);
+                            let color = voxels.get(size, cell);
+                            cell[n] += out;
+                            if color != 0 && voxels.get(size, cell) == 0 {
+                                shown[a + wide * b] = color;
+                                any = true;
+                            }
+                        }
                     }
                 }
+            }
+            if !any {
+                continue;
             }
             // Each as wide a run of one colour as there is, then as tall as that run goes on.
             for b in 0..tall {
@@ -674,5 +869,62 @@ mod tests {
         let bad = text.replace("palette = [\"c8c8c8\", \"e25454\"]", "palette = [\"c8c8c8\"]");
         let error = format!("{:#}", BoxModel::parse(&bad).unwrap_err());
         assert!(error.contains("a colour the palette has not"), "{error}");
+    }
+
+    #[test]
+    fn a_box_of_the_largest_size_is_kept_in_shared_chunks_and_built_in_good_time() {
+        let side = LARGEST_GRID;
+        assert_eq!(side, 256);
+        let size = [side; 3];
+        let mut model = boxed(size);
+        let started = std::time::Instant::now();
+        assert!(model.to_voxels(0, 0));
+        let sculpted = started.elapsed();
+        // A ball of red with a blue band round it, the rest taken out.
+        let (red, blue) = (model.color_index(RED), model.color_index(BLUE));
+        let mut ball = Voxels::filled(size, 0);
+        let middle = side as f32 * 0.5;
+        for z in 0..side as i32 {
+            for y in 0..side as i32 {
+                for x in 0..side as i32 {
+                    let at = Vec3::new(x as f32, y as f32, z as f32) + 0.5 - middle;
+                    if at.length() < middle - 2.0 {
+                        ball.set(size, [x, y, z], if at.y.abs() < 8.0 { blue } else { red });
+                    }
+                }
+            }
+        }
+        model.bones[0].boxes[0].voxels = Some(ball.clone());
+        let started = std::time::Instant::now();
+        let mesh = model.mesh();
+        let built = started.elapsed();
+        eprintln!("{side}³: sculpted in {sculpted:?}, built in {built:?}, {} vertices", mesh.vertices.len());
+        assert!(built.as_secs_f32() < 5.0, "{built:?}");
+        // Only the ball's skin shows: far fewer faces than its cubes have.
+        let faces = mesh.indices.len() / 6;
+        assert!(faces > 1_000 && faces < 400_000, "{faces}");
+
+        // Copied for a step to undo and one cube changed, the copy shares every chunk but that one.
+        let mut copy = ball.clone();
+        copy.set(size, [128, 128, 128], red);
+        let shared = ball.chunks.iter().zip(&copy.chunks).filter(|(a, b)| match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        });
+        assert_eq!(shared.count(), ball.chunks.len() - 1);
+        // Inside the ball the chunks are full; outside its corners none is kept.
+        assert!(ball.chunks.iter().filter(|chunk| chunk.is_none()).count() > 0);
+
+        // To the file and back the same, and small: most of the box is empty.
+        let text = ball.to_text();
+        assert!(text.len() < 4 << 20, "{} bytes", text.len());
+        assert_eq!(Voxels::from_text(size, &text).unwrap(), ball);
+        // Taken out cube by cube, a chunk with none left is not kept, so equal to one that never had them.
+        let mut one = Voxels::filled([20, 20, 20], 0);
+        one.set([20, 20, 20], [17, 3, 3], red);
+        one.set([20, 20, 20], [17, 3, 3], 0);
+        assert_eq!(one, Voxels::filled([20, 20, 20], 0));
+        assert!(Voxels::from_text([257, 1, 1], &Voxels::filled([1, 1, 1], 1).to_text()).is_err(), "past the largest");
     }
 }

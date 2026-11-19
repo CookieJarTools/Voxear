@@ -765,7 +765,7 @@ mod tests {
             assert!(stands, "{} has no cube on the ground", plant.name());
             // More than one colour, each of its palette's used.
             assert!(model.palette.len() >= 2, "{}", plant.name());
-            let used = |color: u8| voxels.cells.iter().any(|cell| *cell == color);
+            let used = |color: u8| voxels.colors().any(|cell| cell == color);
             assert!((1..=model.palette.len() as u8).all(used), "{}", plant.name());
             // The same again, and the same from its file.
             assert_eq!(plant.model(), model);

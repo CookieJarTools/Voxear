@@ -724,7 +724,7 @@ impl BoxModel {
         };
         for model_box in self.bones.iter().flat_map(|bone| &bone.boxes) {
             if let Some(voxels) = &model_box.voxels {
-                voxels.cells.iter().filter(|cell| **cell != 0).for_each(|&cell| add(self.voxel_color(cell)));
+                voxels.colors().for_each(|cell| add(self.voxel_color(cell)));
                 continue;
             }
             for [left, top, right, bottom] in Face::ALL.into_iter().filter_map(|face| model_box.face_rect(face)) {
@@ -1058,7 +1058,7 @@ fn read_box(file: FileBox, colors: usize) -> Result<ModelBox> {
     let cubes = match &file.voxels {
         Some(text) => {
             let cubes = Voxels::from_text(file.size, text)?;
-            ensure!(cubes.cells.iter().all(|cell| usize::from(*cell) <= colors), "a cube of a colour the palette has not");
+            ensure!(cubes.colors().all(|cell| usize::from(cell) <= colors), "a cube of a colour the palette has not");
             Some(cubes)
         }
         None => None,
@@ -1148,7 +1148,7 @@ mod tests {
         model.bones = vec![model.bones[body].clone()];
         model.bones[0].boxes.truncate(1);
         model.bones[0].boxes[0].size = [2, 2, 1];
-        model.bones[0].boxes[0].voxels = Some(Voxels { cells: vec![1, 1, 1, 2] });
+        model.bones[0].boxes[0].voxels = Some(Voxels::from_cells([2, 2, 1], &[1, 1, 1, 2]));
         let [r, g, b] = model.average_color().unwrap();
         assert!(r.abs() < 1e-4 && (g - 0.75).abs() < 1e-3 && (b - 0.25).abs() < 1e-3, "{:?}", [r, g, b]);
         // Nothing to show, no colour.

@@ -2139,7 +2139,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     for dropping and for painting a Foliage's plants meet a Block World's ground (`scene_tools::mesh_hits`).
     Tests: cubes from a box's pixels, faces built and merged, growing, the ray, the file, mirroring; a head
     sculpted, coloured, mirrored and undone in the editor; the ground of a Block World found from above.
-    Manual: Box Models, Painting and Cutting Plants. Not done: `.vox` files brought in as boxes of cubes,
+    Manual: Box Models, Painting and Cutting Plants. Since 2026-11-19 a box is up to 256 cubes a side (it was 64):
+    cubes are kept in chunks of 16 shared until changed, so a step to undo copies only what a stroke touched,
+    chunks with no cube are not kept, and building reads only chunks with cubes and skips full ones inside. A
+    256-cube ball builds in about 0.26 s in a test build, with half a million corners. Not done: `.vox` files brought in as boxes of cubes,
     tools that fill or carve many cubes at once, characters made from parts picked at random, plants and trees
     placed by a Block World's generator.
   - ~~**Characters of parts:**~~ done, for a co-op game's character creation: grey parts tinted any colour, put

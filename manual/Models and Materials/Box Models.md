@@ -123,7 +123,9 @@ Click **Sculpt** in the bar, then press on the model.
 
 The first time you sculpt on a plain box it becomes a box of cubes that looks the same: as many cubes as it had pixels each way, each taking the colour painted on the nearest face. From then on its shape is its cubes.
 
-Drag to work along a surface. One stroke adds one layer of cubes or takes one layer away, however long you hold it, so you never dig a hole by mistake. A cube added past the edge of the box makes the box bigger to hold it. The face you are over is marked with a white square.
+Drag to work along a surface. One stroke adds one layer of cubes or takes one layer away, however long you hold it, so you never dig a hole by mistake. A cube added past the edge of the box makes the box bigger to hold it, up to 256 cubes a side. The face you are over is marked with a white square.
+
+A sculpted box can be up to 256 cubes each way, for finely detailed models. Detail costs what it draws: a box shows only its outside faces, those side by side of one colour joined into one, but a rounded shape 256 cubes across still has hundreds of thousands of corners, and an animated model's corners are shared with every other animated model in view. Keep the finest detail for things there are few of, such as a ship or a boss, and smaller boxes for crowds.
 
 The large square in the bar is the colour you sculpt with, and the small squares are the colours the model's cubes already use. **Symmetry** does the same to the other side of the body.
 
@@ -374,7 +376,7 @@ voxels = "…"
 | --- | --- |
 | `palette` | The colours of the model's cubes, each as `rrggbb`, up to 255. Change one here and every cube of that colour changes |
 | `tints` | Which tint each colour of the model's pixels and cubes takes, where it is not the first: `"second"`, `"third"`, or `"none"` to keep its own colour (see [[Tints and Parts]]) |
-| `voxels` | The box's cubes, one for each pixel of its `size`, packed as text. Each side is from 1 to 64 |
+| `voxels` | The box's cubes, one for each pixel of its `size`, packed as text. Each side is from 1 to 256 |
 
 ### Clips
 

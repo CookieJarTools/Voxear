@@ -3978,7 +3978,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     of twenty seen from far off arriving as soon as one seen near, both ways of moving; 2,000 far agents in less
     of the step; Mob Motion posed over threads as each alone. Manual: Navigation ▸ Crowds. Not done: Crowd
     Member from C#; between a far character's poses the GPU does not yet blend.
-  - [ ] Far crowds on clips baked into a texture, played on the GPU; pictures furthest out.
+  - [x] **Far crowds on baked clips** (`voxear_render::baked_clips`). An Obj with a **PlayedClip** (`clip`, `time`,
+    `looping`) in place of a Pose is posed on the GPU from its clip's baked frames: the first time a clip plays on
+    a model it is baked, 30 frames a second, each frame every skin's joints' matrices, into a buffer of their own
+    (`GpuBuffers::baked_matrices`, up to 64 MB), and each pass reads them where it draws (`INSTANCE_BONES_BAKED`;
+    last frame's for motion too). No pose on the CPU and no matrices sent each frame. Animators in a crowd's far
+    tier, looping, with no root motion, nothing settling and nothing hanging from their Obj, play this way: only
+    their time moves on; coming nearer, they are posed again. Profiler: **Posed elsewise** counts them. Timings
+    (66-bone humanoid, each its own place in its clip, least of 60 frames, test build): 5,000 posed on the CPU,
+    10.6 ms animating, 29.3 ms renderer CPU, 10.1 ms GPU frame; played baked, 0.4, 6.1 and 4.6 ms; 1,000 baked, 0.1,
+    1.7 and 2.0 ms. Tests: a bar playing its clip baked drawn as the clip sampled on the CPU, at its end and half
+    way; a far Animator playing on the GPU and not posed, one held and one near posed, and one come near posed
+    again. Not done: pictures for the furthest humanoids; the Motion Matcher's far tier playing its Motion Set's
+    states baked, picked by speed.
   - [ ] Agents beyond the streamed rings kept as records that walk the regions; shared direction fields.
   - [ ] Networked crowds: compact updates, rates by tier, interest by ring.
 - Camera Rig presets, the composable rig API, blends and shakes.

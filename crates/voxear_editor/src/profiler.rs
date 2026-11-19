@@ -532,7 +532,10 @@ impl Profiler {
             ("Posed parts", format!("{} skinned · {} by bones", stats.posed.skinned, stats.posed.by_bones)),
             (
                 "Posed elsewise",
-                format!("{} where drawn · {} unseen · {} shared", stats.posed.weighted, stats.posed.unseen, stats.posed.shared),
+                format!(
+                    "{} where drawn · {} unseen · {} shared · {} baked",
+                    stats.posed.weighted, stats.posed.unseen, stats.posed.shared, stats.posed.baked
+                ),
             ),
             ("Posed at rest", stats.posed.at_rest.to_string()),
             ("Model vertices", millions(pool.model_vertices)),

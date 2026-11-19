@@ -123,15 +123,19 @@ pub(crate) struct Posed {
 }
 
 /// A part posed by its bones where it is drawn: where its matrices start
-/// in this frame's buffer, and in last frame's (`None` when it was not
-/// posed then), where its mesh's skin starts, and whether its vertices are
-/// weighed between up to four bones rather than bound whole to one.
+/// in this frame's buffer, or among the baked clips' when `baked`, and
+/// where they started last frame (`None` when it was not posed then), in
+/// last frame's buffer or the baked clips' when `before_baked`; where its
+/// mesh's skin starts, and whether its vertices are weighed between up to
+/// four bones rather than bound whole to one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ByBones {
     pub matrices: u32,
     pub before: Option<u32>,
     pub skin: u32,
     pub weighted: bool,
+    pub baked: bool,
+    pub before_baked: bool,
 }
 
 impl Posed {
@@ -144,7 +148,9 @@ impl Posed {
                 instance.bones = bones.matrices + 1;
                 instance.bones_before = bones.before.map_or(0, |before| before + 1);
                 instance.skin = bones.skin;
-                instance.bones_weighted = u32::from(bones.weighted);
+                instance.bones_flags = u32::from(bones.weighted)
+                    | u32::from(bones.baked) << 1
+                    | u32::from(bones.before_baked) << 2;
             }
             None => (instance.posed, instance.posed_before) = (self.now + 1, self.before + 1),
         }
@@ -292,6 +298,8 @@ pub(crate) struct Skinning {
     slot: usize,
     counts: crate::PosedCounts,
     warned: bool,
+    /// Clips baked for Objs that play them on the GPU.
+    baked: crate::baked_clips::BakedClips,
 }
 
 /// A part's pose this frame, by its mesh, its pose and its skin: Objs
@@ -329,13 +337,45 @@ impl Skinning {
         let query = world.query_ref::<(
             Entity,
             &ModelRenderer,
-            &Pose,
+            Option<&Pose>,
+            Option<&crate::baked_clips::PlayedClip>,
             Option<&HiddenBones>,
             Option<&BonesOff>,
             Option<&WorldTransform>,
         )>();
-        for (entity, model, pose, hidden, off, placed) in query.without::<Destroying>() {
+        for (entity, model, pose, played, hidden, off, placed) in query.without::<Destroying>() {
             let Some(animation) = &model.animation else { continue };
+            // Playing a baked clip, each skinned part reads its matrices from the clip's frame.
+            if let Some(played) = played
+                && let Some(baked) = self.baked.get(animation, &played.clip)
+            {
+                let frame = baked.frame(&played.clip, played.time, played.looping);
+                for (index, part) in model.parts.iter().enumerate() {
+                    let Some(skin_index) = part.skin else { continue };
+                    let (Some(skin), Some(&start)) =
+                        (animation.skins.get(skin_index as usize), baked.skins.get(skin_index as usize))
+                    else {
+                        continue;
+                    };
+                    let mesh = *meshes.entry(part.mesh).or_insert_with(|| {
+                        let ((skin, count), source) = (assets.skin_of(part.mesh)?, assets.vertices_of(part.mesh)?);
+                        let (centre, radius) = assets.mesh_sphere(part.mesh).unwrap_or((Vec3::ZERO, 0.0));
+                        Some(MeshSkin { skin, count, source, rigid: assets.is_rigid_skin(part.mesh), centre, radius })
+                    });
+                    let Some(mesh) = mesh else { continue };
+                    let owner = Owner { entity, plant: None, part: Some(index as u32), far_side: false };
+                    let matrices = start + frame * skin.joints.len() as u32;
+                    let was = last.get(&owner).and_then(|posed| posed.by_bones).filter(|_| was_last);
+                    let (before, before_baked) = (was.map(|bones| bones.matrices), was.is_some_and(|b| b.baked));
+                    let reach = (baked.reach + mesh.centre.length() + FLESH - mesh.radius).max(0.0);
+                    let by_bones =
+                        ByBones { matrices, before, skin: mesh.skin, weighted: !mesh.rigid, baked: true, before_baked };
+                    posed.insert(owner, Posed { now: 0, before: 0, reach, by_bones: Some(by_bones) });
+                    counts.baked += 1;
+                }
+                continue;
+            }
+            let Some(pose) = pose else { continue };
             // Hidden or switched-off bones make its pose its own.
             let alone = hidden.is_some() || off.is_some();
             let hidden = |joint: usize| hidden.is_some_and(|hidden| hidden.bones.get(joint).copied().unwrap_or(false));
@@ -389,11 +429,10 @@ impl Skinning {
                 }
                 let reach = (far + FLESH - mesh.radius).max(0.0);
                 let by_bones = |weighted: bool| {
-                    let before = match was_last {
-                        true => last.get(&owner).and_then(|posed| posed.by_bones).map(|bones| bones.matrices),
-                        false => None,
-                    };
-                    Posed { now: 0, before: 0, reach, by_bones: Some(ByBones { matrices, before, skin: mesh.skin, weighted }) }
+                    let was = last.get(&owner).and_then(|posed| posed.by_bones).filter(|_| was_last);
+                    let (before, before_baked) = (was.map(|bones| bones.matrices), was.is_some_and(|b| b.baked));
+                    let by_bones = ByBones { matrices, before, skin: mesh.skin, weighted, baked: false, before_baked };
+                    Posed { now: 0, before: 0, reach, by_bones: Some(by_bones) }
                 };
                 let chosen = if mesh.rigid {
                     counts.by_bones += 1;
@@ -441,6 +480,7 @@ impl Skinning {
             }
         }
         self.last_rows = rows.len();
+        self.baked.upload(gpu)?;
         self.make_room(gpu, slot, (rows.len() / 4).max(1))?;
         let kept = &self.matrices[slot];
         kept.matrices.write(0, &rows);
@@ -587,6 +627,11 @@ impl Skinning {
         self.pool.as_ref().map_or(0, |pool| pool.vertices.address)
     }
 
+    /// Where baked clips' matrices are, for the passes that draw.
+    pub fn baked_matrices(&self) -> u64 {
+        self.baked.address()
+    }
+
     /// Records this frame's skinning, before anything draws: one dispatch,
     /// a thread group for each 64 vertices of every part.
     pub fn record(&self, fg: &mut FrameGraph<'_>, pipelines: Pipelines, slot: usize) {
@@ -621,6 +666,7 @@ impl Skinning {
         if let Some(pool) = self.pool.take() {
             gpu.destroy_buffer(pool.vertices);
         }
+        self.baked.destroy(gpu);
     }
 }
 

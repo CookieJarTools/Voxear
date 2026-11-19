@@ -3516,7 +3516,9 @@ one mesh. The frame's bone matrices grow to what it needs (`voxear_render::skinn
 posed vertices have a pool of their own, sized in Project Settings, and a part with no room in it is posed by up to
 four bones where it is drawn; every part is skinned in one dispatch; a part no camera may see is not skinned again
 until one may; and Objs whose poses are one `Arc` are skinned once and share their posed vertices, as Animators far
-off in a crowd share poses by their clip and the nearest fifteenth of a second.
+off in a crowd share poses by their clip and the nearest fifteenth of a second. Furthest off, an Animator is not
+posed at all: its Obj's `PlayedClip` names the clip and how far in, and the passes that draw it read the bones'
+matrices from the clip's frames, baked once for each model it plays on (`voxear_render::baked_clips`).
 
 **State machines.**
 - Layers, avatar masks and blend trees (1D, 2D and direct).

@@ -198,9 +198,11 @@ pub struct GpuInstance {
     pub bones: u32,
     pub bones_before: u32,
     pub skin: u32,
-    /// 1 where its vertices are weighed between up to four bones, 0 where
-    /// each is bound whole to one.
-    pub bones_weighted: u32,
+    /// Its bit 1 where its vertices are weighed between up to four bones,
+    /// clear where each is bound whole to one; 2 where its matrices this
+    /// frame are baked clips' (see `baked_clips`), and 4 where last frame's
+    /// were.
+    pub bones_flags: u32,
 }
 
 impl GpuInstance {
@@ -1310,6 +1312,8 @@ pub struct GpuBuffers {
     pub posed_vertices: u64,
     pub skin_jobs: u64,
     pub skin_groups: u64,
+    /// Every baked clip's matrices (see `baked_clips`).
+    pub baked_matrices: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1750,7 +1754,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 79 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 80 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
         assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);

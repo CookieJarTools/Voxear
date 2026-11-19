@@ -4,7 +4,8 @@ Research for running hundreds to thousands of animated AI characters in Voxear's
 mesh levels, written 2026-11-19. Nothing here is built yet. It covers what the engine does now and where it
 stops (measured), the techniques that are published and what each costs, and a recommended plan in stages.
 
-**Progress.** Stages 1, 2 and 3 are built (2026-11-19). Skinning now has a pool of its own, poses where drawn
+**Progress.** Stages 1 to 4 are built (2026-11-19). Far Animators play their clips from baked frames on the GPU:
+5,000 humanoids take 0.4 ms animating and 6.1 ms of renderer CPU, against 10.6 and 29.3 ms posed on the CPU. Skinning now has a pool of its own, poses where drawn
 what does not fit, skins in one dispatch, skips what no camera sees and shares poses: 1,000 humanoids posed where
 drawn take 2.0 ms of GPU frame, and sharing 30 poses, 1.7 ms of renderer CPU. Box characters are posed by their bones where they are
 drawn: 5,000 of them take 2.0–2.5 ms of GPU frame and 4.1 ms of renderer CPU, where past 1,638 used to be drawn

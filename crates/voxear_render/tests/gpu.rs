@@ -8874,3 +8874,63 @@ fn objs_sharing_a_pose_are_skinned_once_and_what_no_camera_sees_is_not_skinned_a
     let (_, counts) = weighed_bars(None, &[Vec3::ZERO, Vec3::new(0.0, 0.0, 60.0)], false).unwrap();
     assert_eq!((counts.skinned, counts.unseen), (1, 1), "the one behind is left as it was: {counts:?}");
 }
+
+/// The bent bar playing its Bend clip `time` seconds in: on the GPU from
+/// its baked frames, or, with `on_the_cpu`, sampled and posed here.
+fn bar_played(time: f32, on_the_cpu: bool) -> Option<(Vec<u8>, voxear_render::PosedCounts)> {
+    use std::sync::Arc;
+    use voxear_render::{ModelPart, ModelRenderer, PlayedClip, Pose, Sky};
+    let mut renderer = renderer()?;
+    let gltf = bent_bar();
+    let model = voxear_render::prepare_model("Bar.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+    let imported = renderer.upload_model(&model).unwrap();
+    let mut world = World::new();
+    let turned = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, 4.0), turned, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let bright = renderer.add_material(&MaterialDesc { emissive: [4.0, 4.0, 4.0], ..MaterialDesc::default() }).unwrap();
+    let parts = imported
+        .nodes
+        .iter()
+        .map(|node| ModelPart {
+            mesh: node.mesh,
+            material: bright,
+            transform: voxear_core::math::Mat4::IDENTITY,
+            node: 0,
+            skin: node.skin.map(|s| s as u32),
+        })
+        .collect();
+    let animation = imported.animation.clone().unwrap();
+    let clip = Arc::new(animation.clips.iter().find(|clip| clip.name == "Bend").unwrap().clone());
+    let drawn = ModelRenderer { animation: Some(animation.clone()), ..ModelRenderer::new(parts) };
+    let bar = world.spawn((drawn, Transform::default()));
+    if on_the_cpu {
+        let mut pose = animation.skeleton.rest();
+        clip.sample(time, false, &mut pose);
+        world.insert(bar, Pose { bones: animation.skeleton.model_matrices(&pose).into() });
+    } else {
+        world.insert(bar, PlayedClip { clip, time, looping: false });
+    }
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(20.0, 20.0, 0.2))));
+    world.insert_resource(steady_post());
+    let stats = run(&mut renderer, &world, &mut 0.0, 4);
+    Some((renderer.read_pixels().unwrap().2, stats.posed))
+}
+
+#[test]
+fn a_clip_played_from_its_baked_frames_poses_as_the_clip_does() {
+    let Some((played, counts)) = bar_played(1.0, false) else { return };
+    assert_eq!(counts, voxear_render::PosedCounts { baked: 1, ..Default::default() }, "played baked: {counts:?}");
+    let (sampled, _) = bar_played(1.0, true).unwrap();
+    keep_image("bar played.png", &played);
+    keep_image("bar sampled.png", &sampled);
+    let differing = differing_pixels(&played, &sampled);
+    assert!(differing < 20, "at the clip's end, as sampled: {differing} pixels differ");
+    // Half way, between baked frames' times as the CPU samples them, and still the same.
+    let (half, _) = bar_played(0.5, false).unwrap();
+    let (half_sampled, _) = bar_played(0.5, true).unwrap();
+    assert!(differing_pixels(&half, &half_sampled) < 20, "half way, as sampled");
+    assert!(differing_pixels(&half, &played) > 200, "half way is not the end");
+}

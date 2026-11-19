@@ -59,6 +59,7 @@ mod passes;
 mod dice;
 mod mist;
 mod skeleton;
+mod baked_clips;
 mod skinning;
 mod smoke;
 mod grass;
@@ -136,6 +137,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
+pub use baked_clips::{BAKE_RATE, PlayedClip};
 pub use skinning::{
     BonesOff, DEFAULT_POSED_VERTICES, HiddenBones, MAX_POSED_VERTICES, MIN_POSED_VERTICES, Pose, PosedVertexRoom,
 };
@@ -291,8 +293,8 @@ pub struct RenderStats {
 /// skinned into posed vertices; bound whole to bones and posed by them
 /// where drawn; weighed between bones and posed where drawn, for want of
 /// room for posed vertices; out of sight and left in their last pose;
-/// posed as another Obj's part and sharing its; and left at rest for want
-/// of room for their bones.
+/// posed as another Obj's part and sharing its; playing a baked clip; and
+/// left at rest for want of room for their bones.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct PosedCounts {
     pub skinned: u32,
@@ -300,6 +302,7 @@ pub struct PosedCounts {
     pub weighted: u32,
     pub unseen: u32,
     pub shared: u32,
+    pub baked: u32,
     pub at_rest: u32,
 }
 
@@ -2052,6 +2055,7 @@ impl Renderer {
                 posed: skinning.posed.clone(),
                 skin_matrices: skinning.matrices(),
                 posed_vertices: skinning.posed_vertices(),
+                baked_matrices: skinning.baked_matrices(),
                 simulated: (particle_sim.placed.clone(), particle_sim.pool_address(), particle_pool),
                 particle_step,
                 panels: panel_textures.clone(),
@@ -2589,8 +2593,9 @@ struct ViewSetup {
     /// Where this frame's and last frame's bones' matrices are, for what is
     /// posed by its bones where it is drawn.
     skin_matrices: (u64, u64),
-    /// Where posed vertices are.
+    /// Where posed vertices are, and baked clips' matrices.
     posed_vertices: u64,
+    baked_matrices: u64,
     /// This frame's simulated Particle Systems with particles out, the pool
     /// their particles are in, and the pool as the graph knows it.
     simulated: (std::sync::Arc<particles::PlacedSystems>, u64, Option<graph::BufferId>),
@@ -3991,6 +3996,7 @@ impl View {
                 posed_vertices: setup.posed_vertices,
                 skin_jobs: 0,
                 skin_groups: 0,
+                baked_matrices: setup.baked_matrices,
                 ui_panels: buffers.ui_panels.address,
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],

@@ -103,7 +103,10 @@ pub const SHARED_POSE_RATE: f32 = 15.0;
 /// with no root motion and no change of clip settling, is posed as its clip
 /// stands at the nearest fifteenth of a second, and every such Obj playing
 /// the same clip of the same model there shares that one pose: the renderer
-/// skins it once for all of them.
+/// skins it once for all of them. In the far tier, where nothing hangs from
+/// its Obj to follow its bones, it is not posed at all: its time moves on,
+/// and the renderer plays the clip from its baked frames
+/// (`voxear_render::PlayedClip`).
 pub fn animate(world: &mut World, delta: f32) {
     let animators: Vec<(Entity, Animator, Arc<ModelAnimation>)> = world
         .query_ref::<(Entity, &Animator, &ModelRenderer)>()
@@ -114,9 +117,34 @@ pub fn animate(world: &mut World, delta: f32) {
         .collect();
     let mut shared: std::collections::HashMap<(usize, String, i64), Arc<[voxear_core::math::Mat4]>> =
         std::collections::HashMap::new();
+    // Objs something hangs from, whose bones it may follow, are always posed.
+    let held: std::collections::HashSet<Entity> = world
+        .query_ref::<&voxear_scene::Parent>()
+        .into_iter()
+        .map(|parent| parent.0)
+        .collect();
     for (entity, animator, animation) in animators {
         let mut state = world.get::<AnimatorState>(entity).cloned().unwrap_or_default();
         let clip = clip_for(world, &animator.clip, &animation);
+        let tier = world.resource::<crate::crowds::CrowdTiers>().map_or_else(Default::default, |tiers| tiers.of(entity));
+        // Far off, playing on as it was with nothing to settle, its clip plays on the GPU.
+        let baked = tier == crate::crowds::CrowdTier::Far
+            && animator.looping
+            && !animator.root_motion
+            && state.settling.is_none()
+            && state.playing.as_deref() == Some(animator.clip.as_str())
+            && !held.contains(&entity)
+            && world.get::<voxear_render::HiddenBones>(entity).is_none();
+        if let (true, Some(clip)) = (baked, clip.as_ref()) {
+            state.time += delta * animator.speed;
+            let played = voxear_render::PlayedClip { clip: clip.clone(), time: state.time, looping: true };
+            world.insert(entity, played);
+            world.insert(entity, state);
+            continue;
+        }
+        if world.has::<voxear_render::PlayedClip>(entity) {
+            world.remove::<voxear_render::PlayedClip>(entity);
+        }
         let wanted = clip.as_ref().map(|clip| (animator.clip.as_str(), clip.as_ref()));
         let travelled = step(&mut state, &animator, &animation, wanted, delta);
         if animator.root_motion && travelled != (Vec3::ZERO, 0.0) {
@@ -126,7 +154,6 @@ pub fn animate(world: &mut World, delta: f32) {
                 transform.rotation = (transform.rotation * Quat::from_rotation_y(turned)).normalize();
             }
         }
-        let tier = world.resource::<crate::crowds::CrowdTiers>().map_or_else(Default::default, |tiers| tiers.of(entity));
         let shares = tier != crate::crowds::CrowdTier::Near
             && animator.looping
             && !animator.root_motion
@@ -311,6 +338,41 @@ mod tests {
         assert!(Arc::ptr_eq(&pose(far[0]), &pose(far[1])), "the far two share one pose");
         assert!(!Arc::ptr_eq(&pose(far[0]), &pose(near)), "the near one has its own");
         assert_eq!(pose(far[0]).len(), 1);
+    }
+
+    /// In the far tier an Animator is not posed but plays its clip on the
+    /// GPU, its time moving on; one something hangs from, and a near one,
+    /// are posed as ever, and one coming near again leaves the GPU's clip.
+    #[test]
+    fn far_animators_play_their_clips_on_the_gpu_unless_something_hangs_from_them() {
+        let mut world = World::new();
+        let model = Arc::new(walker());
+        world.spawn((voxear_render::Camera::default(), Transform::IDENTITY));
+        let walking = |at: Vec3| {
+            let drawn = ModelRenderer { animation: Some(model.clone()), ..ModelRenderer::new(Vec::new()) };
+            (Animator { clip: "Walk".into(), ..Animator::default() }, drawn, Transform::from_position(at))
+        };
+        let far = world.spawn(walking(Vec3::new(400.0, 0.0, 0.0)));
+        let held = world.spawn(walking(Vec3::new(0.0, 0.0, 400.0)));
+        world.spawn((Transform::IDENTITY, voxear_scene::Parent(held)));
+        let near = world.spawn(walking(Vec3::new(2.0, 0.0, 0.0)));
+        crate::crowds::update(&mut world);
+        // Past the first clip's settling in, which is posed.
+        for _ in 0..60 {
+            animate(&mut world, 1.0 / 60.0);
+        }
+        let played = world.get::<voxear_render::PlayedClip>(far).expect("the far one plays on the GPU");
+        assert!((played.time - 1.0).abs() < 0.02, "a second in: {}", played.time);
+        let posed = world.get::<Pose>(far).unwrap().bones.clone();
+        animate(&mut world, 1.0 / 60.0);
+        assert!(Arc::ptr_eq(&posed, &world.get::<Pose>(far).unwrap().bones), "and is not posed");
+        assert!(world.get::<voxear_render::PlayedClip>(held).is_none(), "one held is posed");
+        assert!(world.get::<voxear_render::PlayedClip>(near).is_none(), "and one near");
+        world.get_mut::<Transform>(far).unwrap().position = Vec3::new(1.0, 0.0, 0.0);
+        crate::crowds::update(&mut world);
+        animate(&mut world, 1.0 / 60.0);
+        assert!(world.get::<voxear_render::PlayedClip>(far).is_none(), "come near, posed again");
+        assert!(!Arc::ptr_eq(&posed, &world.get::<Pose>(far).unwrap().bones));
     }
 
     #[test]

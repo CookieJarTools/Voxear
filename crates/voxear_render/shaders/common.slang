@@ -314,12 +314,13 @@ struct Instance
     uint3 tints;
     // For an instance posed by its bones where it is drawn, where its bones' matrices start in Buffers'
     // skinMatrices this frame and in skinMatricesBefore last frame, each plus one, 0 for none; where its mesh's
-    // skin starts in skins; and 1 where its vertices are weighed between up to four bones, 0 where each is bound
-    // whole to one, as a box model's are.
+    // skin starts in skins; and its flags: INSTANCE_BONES_WEIGHED where its vertices are weighed between up to four
+    // bones rather than each bound whole to one, as a box model's are; INSTANCE_BONES_BAKED where its matrices this
+    // frame are in bakedMatrices (src/baked_clips.rs), INSTANCE_BONES_BAKED_BEFORE where last frame's were.
     uint bones;
     uint bonesBefore;
     uint skin;
-    uint bonesWeighted;
+    uint bonesFlags;
 };
 
 // An instance whose place in the list another Obj held last frame.
@@ -2093,7 +2094,13 @@ struct Buffers
     Vertex* posedVertices;
     SkinJob* skinJobs;
     uint* skinGroups;
+    // Every baked clip's matrices, laid out as skinMatrices (src/baked_clips.rs).
+    float4* bakedMatrices;
 };
+
+static const uint INSTANCE_BONES_WEIGHED = 1;
+static const uint INSTANCE_BONES_BAKED = 2;
+static const uint INSTANCE_BONES_BAKED_BEFORE = 4;
 
 struct Push
 {
@@ -2410,7 +2417,7 @@ float3x4 skinnedMatrix(float4* rows, uint first, uint4 skin, out float hidden)
 float3x4 instanceBoneMatrix(Instance instance, float4* rows, uint first, uint index, out float hidden)
 {
     uint4 skin = buffers()->skins[instance.skin + index];
-    if (instance.bonesWeighted != 0)
+    if ((instance.bonesFlags & INSTANCE_BONES_WEIGHED) != 0)
     {
         return skinnedMatrix(rows, first, skin, hidden);
     }
@@ -2431,7 +2438,9 @@ Vertex instanceVertex(Instance instance, Mesh mesh, uint index)
     if (instance.bones != 0)
     {
         float hidden;
-        float3x4 moved = instanceBoneMatrix(instance, buffers()->skinMatrices, instance.bones - 1, index, hidden);
+        bool baked = (instance.bonesFlags & INSTANCE_BONES_BAKED) != 0;
+        float4* rows = baked ? buffers()->bakedMatrices : buffers()->skinMatrices;
+        float3x4 moved = instanceBoneMatrix(instance, rows, instance.bones - 1, index, hidden);
         float3x3 turn = float3x3(moved[0].xyz, moved[1].xyz, moved[2].xyz);
         v.position = mul(moved, float4(v.position, 1.0));
         v.normal = normalizeOr(mul(turn, v.normal), v.normal);
@@ -2456,7 +2465,9 @@ float3 instancePositionBefore(Instance instance, Mesh mesh, uint index, float3 n
     }
     float3 rest = buffers()->vertices[mesh.vertexOffset + index].position;
     float hidden;
-    float3x4 moved = instanceBoneMatrix(instance, buffers()->skinMatricesBefore, instance.bonesBefore - 1, index, hidden);
+    bool baked = (instance.bonesFlags & INSTANCE_BONES_BAKED_BEFORE) != 0;
+    float4* rows = baked ? buffers()->bakedMatrices : buffers()->skinMatricesBefore;
+    float3x4 moved = instanceBoneMatrix(instance, rows, instance.bonesBefore - 1, index, hidden);
     return mul(moved, float4(rest, 1.0));
 }
 

@@ -30,6 +30,7 @@ Characters made of skinned meshes, such as imported humans, are skinned on the G
 - **Room of their own.** Posed vertices have a pool set in **Project Settings ▸ Quality ▸ Characters ▸ Posed vertices**: a million by default, about forty characters of 8,000 vertices. A character there is no room for is posed where it is drawn instead, by its bones, which costs a little more in each pass but is never left standing at rest. At 0 every character is posed that way.
 - **Only what is seen.** A character no camera can see, nor see its shadow, keeps the pose it was last skinned in until one can.
 - **Shared poses.** Beyond the near tier, an **Animator** whose clip loops, with no root motion, plays it at the nearest fifteenth of a second, and every such character on the same clip of the same model shares that one pose: a hundred walkers far off are skinned a handful of times.
+- **Played on the GPU.** In the far tier such an Animator is not posed at all. Its clip is baked the first time it plays on a model, and the GPU poses the character from the baked frames: five thousand walkers far off cost about what a thousand posed ones did. Anything hanging from the character, such as a held sword, keeps it posed as usual, so the sword follows its hand.
 
 ## Setting the tiers
 
@@ -47,4 +48,4 @@ Choose **Add Component ▸ Navigation ▸ Crowd Member** on an Obj to put its ti
 
 ## Seeing it work
 
-The Profiler's counts show **Posed parts**: how many skinned and how many posed by their bones; **Posed elsewise**: how many posed where drawn for want of room, left as they were out of sight, and sharing another's pose; and **Posed at rest**, which should be none.
+The Profiler's counts show **Posed parts**: how many skinned and how many posed by their bones; **Posed elsewise**: how many posed where drawn for want of room, left as they were out of sight, sharing another's pose, and playing a baked clip; and **Posed at rest**, which should be none.

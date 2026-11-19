@@ -92,8 +92,18 @@ pub struct AnimatorState {
 
 impl Component for AnimatorState {}
 
+/// How finely Animators beyond a crowd's near tier share their poses: each
+/// such pose stands for this share of a second of its clip.
+pub const SHARED_POSE_RATE: f32 = 15.0;
+
 /// Plays every Animator `delta` seconds on, and poses its model, but for
 /// Objs a Motion Matcher animates.
+///
+/// Beyond a crowd's near tier (see `crowds`), an Animator whose clip loops,
+/// with no root motion and no change of clip settling, is posed as its clip
+/// stands at the nearest fifteenth of a second, and every such Obj playing
+/// the same clip of the same model there shares that one pose: the renderer
+/// skins it once for all of them.
 pub fn animate(world: &mut World, delta: f32) {
     let animators: Vec<(Entity, Animator, Arc<ModelAnimation>)> = world
         .query_ref::<(Entity, &Animator, &ModelRenderer)>()
@@ -102,6 +112,8 @@ pub fn animate(world: &mut World, delta: f32) {
         .into_iter()
         .filter_map(|(entity, animator, model)| Some((entity, animator.clone(), model.animation.clone()?)))
         .collect();
+    let mut shared: std::collections::HashMap<(usize, String, i64), Arc<[voxear_core::math::Mat4]>> =
+        std::collections::HashMap::new();
     for (entity, animator, animation) in animators {
         let mut state = world.get::<AnimatorState>(entity).cloned().unwrap_or_default();
         let clip = clip_for(world, &animator.clip, &animation);
@@ -114,7 +126,27 @@ pub fn animate(world: &mut World, delta: f32) {
                 transform.rotation = (transform.rotation * Quat::from_rotation_y(turned)).normalize();
             }
         }
-        let bones = animation.skeleton.model_matrices(&state.shown).into();
+        let tier = world.resource::<crate::crowds::CrowdTiers>().map_or_else(Default::default, |tiers| tiers.of(entity));
+        let shares = tier != crate::crowds::CrowdTier::Near
+            && animator.looping
+            && !animator.root_motion
+            && state.settling.is_none()
+            && world.get::<voxear_render::HiddenBones>(entity).is_none();
+        let bones = match (clip.as_ref(), shares) {
+            (Some(clip), true) if clip.duration() > 0.0 => {
+                let slice = (state.time.rem_euclid(clip.duration()) * SHARED_POSE_RATE).floor();
+                let key = (Arc::as_ptr(&animation) as usize, animator.clip.clone(), slice as i64);
+                shared
+                    .entry(key)
+                    .or_insert_with(|| {
+                        let mut pose = animation.skeleton.rest();
+                        clip.sample(slice / SHARED_POSE_RATE, true, &mut pose);
+                        animation.skeleton.model_matrices(&pose).into()
+                    })
+                    .clone()
+            }
+            _ => animation.skeleton.model_matrices(&state.shown).into(),
+        };
         world.insert(entity, Pose { bones });
         world.insert(entity, state);
     }
@@ -254,6 +286,31 @@ mod tests {
             step(&mut state, &animator, &animation, Some(("Still", &animation.clips[0])), dt);
         }
         assert!(state.shown[0].translation.z.abs() < 0.01, "settled into the new clip");
+    }
+
+    /// Beyond the near tier, Animators playing the same clip at about the
+    /// same time share one pose; a near one keeps its own.
+    #[test]
+    fn far_animators_on_the_same_clip_share_a_pose() {
+        let mut world = World::new();
+        let model = Arc::new(walker());
+        let camera = voxear_render::Camera::default();
+        world.spawn((camera, Transform::IDENTITY));
+        let walking = |at: Vec3| {
+            let drawn = ModelRenderer { animation: Some(model.clone()), ..ModelRenderer::new(Vec::new()) };
+            (Animator { clip: "Walk".into(), ..Animator::default() }, drawn, Transform::from_position(at))
+        };
+        let far = [world.spawn(walking(Vec3::new(100.0, 0.0, 0.0))), world.spawn(walking(Vec3::new(0.0, 0.0, 120.0)))];
+        let near = world.spawn(walking(Vec3::new(2.0, 0.0, 0.0)));
+        crate::crowds::update(&mut world);
+        // Past the first clip's settling in, which is each one's own, eight half-lives of half its blend.
+        for _ in 0..60 {
+            animate(&mut world, 1.0 / 60.0);
+        }
+        let pose = |entity: Entity| world.get::<Pose>(entity).unwrap().bones.clone();
+        assert!(Arc::ptr_eq(&pose(far[0]), &pose(far[1])), "the far two share one pose");
+        assert!(!Arc::ptr_eq(&pose(far[0]), &pose(near)), "the near one has its own");
+        assert_eq!(pose(far[0]).len(), 1);
     }
 
     #[test]

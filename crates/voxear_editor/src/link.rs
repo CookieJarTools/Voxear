@@ -898,7 +898,7 @@ pub const CALLS: &[CallInfo] = &[
             maybe("limit", ArgKind::Whole, "The most frames, the latest; 120 when left out."),
         ],
         changes: false,
-        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, gpu_frame_ms, blocks: { draws, triangles, shadow_draws }, mesh_pool: { … as mesh_pool.get }, posed: { skinned, by_bones, at_rest }, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
+        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, gpu_frame_ms, blocks: { draws, triangles, shadow_draws }, mesh_pool: { … as mesh_pool.get }, posed: { skinned, by_bones, weighted, unseen, shared, at_rest }, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
     },
     CallInfo {
         name: "mesh_pool.get",

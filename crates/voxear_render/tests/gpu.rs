@@ -7163,6 +7163,12 @@ fn differing_pixels_by(a: &[u8], b: &[u8], by: u8) -> usize {
 /// drawn bright before a dark wall: at rest, or with its tip's bone turned
 /// a quarter about Z, and a cooked copy too.
 fn bent_bar() -> Vec<u8> {
+    bent_bar_weighed(false)
+}
+
+/// [`bent_bar`], with its tip's corners, where `weighed`, bound three
+/// quarters to the tip's bone and a quarter to the root's, so it is skinned.
+fn bent_bar_weighed(weighed: bool) -> Vec<u8> {
     let mut buffer = Vec::new();
     let mut put = |values: &[f32]| values.iter().for_each(|v| buffer.extend_from_slice(&v.to_le_bytes()));
     put(&[-0.1, 0.0, 0.0, 0.1, 0.0, 0.0, 0.1, 2.0, 0.0, -0.1, 2.0, 0.0]);
@@ -7175,7 +7181,10 @@ fn bent_bar() -> Vec<u8> {
     }
     buffer.extend(rest);
     let mut put = |values: &[f32]| values.iter().for_each(|v| buffer.extend_from_slice(&v.to_le_bytes()));
-    put(&[1.0, 0.0, 0.0, 0.0].repeat(4));
+    match weighed {
+        true => put(&[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.75, 0.25, 0.0, 0.0, 0.75, 0.25, 0.0, 0.0]),
+        false => put(&[1.0, 0.0, 0.0, 0.0].repeat(4)),
+    }
     put(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
     put(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0]);
     put(&[0.0, 1.0]);
@@ -8766,7 +8775,7 @@ fn box_player_render(posed: bool) -> Option<(Vec<u8>, u64)> {
     let stats = run(&mut renderer, &world, &mut 0.0, 4);
     assert!(stats.drawn_early + stats.drawn_late >= 1, "drawn: {stats:?}");
     if posed {
-        let counts = voxear_render::PosedCounts { skinned: 0, by_bones: 1, at_rest: 0 };
+        let counts = voxear_render::PosedCounts { by_bones: 1, ..Default::default() };
         assert_eq!(stats.posed, counts, "posed by its bones, not skinned");
     }
     Some((renderer.read_pixels().unwrap().2, stats.mesh_pool.model_vertices))
@@ -8785,4 +8794,83 @@ fn a_box_model_posed_by_its_bones_where_it_is_drawn_looks_as_posed_on_the_cpu() 
     assert!(lit > 2000, "the player shows: {lit} pixels");
     let differing = differing_pixels(&posed, &still);
     assert!(differing < 20, "{differing} pixels differ");
+}
+
+/// Weighed bars, bent, drawn bright before a dark wall from a camera at
+/// (0, 1, 4) looking along -Z, one at each of `at`; with `room` posed
+/// vertices (none for the project's), and each Obj its own pose or, with
+/// `one_pose`, all of them one. The picture, and what was posed how.
+fn weighed_bars(room: Option<u32>, at: &[Vec3], one_pose: bool) -> Option<(Vec<u8>, voxear_render::PosedCounts)> {
+    use std::sync::Arc;
+    use voxear_render::{ModelPart, ModelRenderer, Pose, PosedVertexRoom, Sky};
+    let mut renderer = renderer()?;
+    let gltf = bent_bar_weighed(true);
+    let model = voxear_render::prepare_model("Bar.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+    let imported = renderer.upload_model(&model).unwrap();
+    let mut world = World::new();
+    let turned = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, 4.0), turned, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    world.insert_resource(steady_post());
+    if let Some(room) = room {
+        world.insert_resource(PosedVertexRoom(room));
+    }
+    let bright = renderer.add_material(&MaterialDesc { emissive: [4.0, 4.0, 4.0], ..MaterialDesc::default() }).unwrap();
+    let parts: Vec<ModelPart> = imported
+        .nodes
+        .iter()
+        .map(|node| ModelPart {
+            mesh: node.mesh,
+            material: bright,
+            transform: voxear_core::math::Mat4::IDENTITY,
+            node: 0,
+            skin: node.skin.map(|s| s as u32),
+        })
+        .collect();
+    let animation = imported.animation.clone().unwrap();
+    let bent = |turn: f32| -> Arc<[voxear_core::math::Mat4]> {
+        let mut pose = animation.skeleton.rest();
+        pose[1].rotation = Quat::from_rotation_z(turn);
+        animation.skeleton.model_matrices(&pose).into()
+    };
+    let shared = bent(std::f32::consts::FRAC_PI_2);
+    for (k, place) in at.iter().enumerate() {
+        let bones = if one_pose { shared.clone() } else { bent(std::f32::consts::FRAC_PI_2 + k as f32 * 1e-4) };
+        let drawn = ModelRenderer { animation: Some(animation.clone()), ..ModelRenderer::new(parts.clone()) };
+        world.spawn((drawn, Pose { bones }, Transform::from_position(*place)));
+    }
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(20.0, 20.0, 0.2))));
+    let stats = run(&mut renderer, &world, &mut 0.0, 4);
+    Some((renderer.read_pixels().unwrap().2, stats.posed))
+}
+
+#[test]
+fn a_weighed_skin_posed_where_it_is_drawn_looks_as_skinned() {
+    let Some((skinned, counts)) = weighed_bars(None, &[Vec3::ZERO], false) else { return };
+    assert_eq!((counts.skinned, counts.weighted, counts.by_bones), (1, 0, 0), "skinned: {counts:?}");
+    let (drawn, counts) = weighed_bars(Some(0), &[Vec3::ZERO], false).unwrap();
+    assert_eq!((counts.skinned, counts.weighted), (0, 1), "with no room, posed where drawn: {counts:?}");
+    keep_image("weighed bar skinned.png", &skinned);
+    keep_image("weighed bar where drawn.png", &drawn);
+    let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let lit = |pixels: &[u8], at: Vec3| rgb_at(pixels, on_screen(eye, ahead, at))[0] > 150;
+    assert!(lit(&skinned, Vec3::new(0.0, 0.05, 0.0)) && !lit(&skinned, Vec3::new(0.0, 1.8, 0.0)), "it bends");
+    let differing = differing_pixels(&skinned, &drawn);
+    assert!(differing < 20, "{differing} pixels differ");
+}
+
+#[test]
+fn objs_sharing_a_pose_are_skinned_once_and_what_no_camera_sees_is_not_skinned_again() {
+    let row = [Vec3::new(-1.0, 0.0, 0.0), Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)];
+    let Some((pixels, counts)) = weighed_bars(None, &row, true) else { return };
+    assert_eq!((counts.skinned, counts.shared), (1, 2), "one skinned for three: {counts:?}");
+    let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    for place in row {
+        assert!(rgb_at(&pixels, on_screen(eye, ahead, place + Vec3::new(0.0, 0.05, 0.0)))[0] > 150, "{place} drawn");
+    }
+    // Far behind the camera, skinned the first frame and not again.
+    let (_, counts) = weighed_bars(None, &[Vec3::ZERO, Vec3::new(0.0, 0.0, 60.0)], false).unwrap();
+    assert_eq!((counts.skinned, counts.unseen), (1, 1), "the one behind is left as it was: {counts:?}");
 }

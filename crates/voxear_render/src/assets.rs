@@ -66,8 +66,8 @@ impl Glow {
 /// UVs: models and worlds of blocks' lighting share it (see
 /// [`MeshPoolUse`]). A world of cubes 900 blocks across takes nearly three
 /// million for its chunks' meshes for rays, each block's face keeping its
-/// corners to itself, and a skinned part takes three times its vertices
-/// for its poses.
+/// corners to itself. Posed vertices have a pool of their own (see
+/// `skinning`).
 const MAX_VERTICES: u64 = 8 * 1024 * 1024;
 /// How much of the shared vertex and index space worlds of blocks' lighting
 /// may hold, in percent, unless the project says otherwise: the rest is kept
@@ -1547,31 +1547,6 @@ impl Assets {
     /// Where a mesh's vertices start in `vertices`.
     pub(crate) fn vertices_of(&self, mesh: MeshHandle) -> Option<u32> {
         self.mesh_ranges.get(&mesh).map(|ranges| ranges.space.vertices.0 as u32)
-    }
-
-    /// Room for `count` posed vertices in `vertices`, which a skinned
-    /// instance's skinning writes each frame; `None` when there is none.
-    pub(crate) fn reserve_posed(&mut self, gpu: &Gpu, count: u64) -> Option<u64> {
-        let sizes = [count, 0, 0, 0, 0];
-        match self.reserve_space(Some(gpu), sizes) {
-            Ok(space) => Some(space.vertices.0),
-            Err(error) => {
-                tracing::warn!("a skinned part is not drawn posed: {error:#}");
-                None
-            }
-        }
-    }
-
-    /// Gives back posed vertices' room once frames in flight are done with it.
-    pub(crate) fn release_posed(&mut self, offset: u64, count: u64, frame: u64) {
-        let space = Space {
-            vertices: (offset, count),
-            indices: (0, 0),
-            meshlets: (0, 0),
-            meshlet_vertices: (0, 0),
-            meshlet_triangles: (0, 0),
-        };
-        self.retire(frame, Retiring::Space(space));
     }
 
     /// Frees a mesh once frames in flight are done with it. Built-in meshes

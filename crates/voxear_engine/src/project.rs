@@ -156,17 +156,22 @@ pub struct InputSettings {
 /// shares worlds of blocks' lighting may take, in percent (see
 /// `voxear_render::BlockLightingShare`): the rest is kept free for models,
 /// and lighting gives back its farthest chunks as models take it.
+/// `posed_vertices` is how many vertices skinned models' poses may hold
+/// between them (see `voxear_render::PosedVertexRoom`): three runs of each
+/// part's; a part there is no room for is posed where it is drawn instead.
 ///
 /// ```toml
 /// [quality]
 /// particles = 250000
 /// block_lighting = 75
+/// posed_vertices = 1048576
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct QualitySettings {
     pub particles: u32,
     pub block_lighting: u32,
+    pub posed_vertices: u32,
 }
 
 impl Default for QualitySettings {
@@ -174,6 +179,7 @@ impl Default for QualitySettings {
         Self {
             particles: voxear_render::DEFAULT_PARTICLE_BUDGET,
             block_lighting: voxear_render::DEFAULT_LIGHTING_SHARE,
+            posed_vertices: voxear_render::DEFAULT_POSED_VERTICES,
         }
     }
 }
@@ -278,6 +284,7 @@ impl QualitySettings {
     pub fn put(&self, world: &mut voxear_ecs::World) {
         world.insert_resource(voxear_render::ParticleBudget(self.particles));
         world.insert_resource(voxear_render::BlockLightingShare(self.block_lighting));
+        world.insert_resource(voxear_render::PosedVertexRoom(self.posed_vertices));
     }
 }
 
@@ -639,8 +646,11 @@ impl Project {
         let share = settings.block_lighting.clamp(voxear_render::MIN_LIGHTING_SHARE, voxear_render::MAX_LIGHTING_SHARE);
         let written = (share != voxear_render::DEFAULT_LIGHTING_SHARE).then(|| toml_edit::value(i64::from(share)));
         set_key(&mut document, "quality", "block_lighting", written);
+        let posed = settings.posed_vertices.clamp(voxear_render::MIN_POSED_VERTICES, voxear_render::MAX_POSED_VERTICES);
+        let written = (posed != voxear_render::DEFAULT_POSED_VERTICES).then(|| toml_edit::value(i64::from(posed)));
+        set_key(&mut document, "quality", "posed_vertices", written);
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
-        self.file.quality = QualitySettings { particles, block_lighting: share };
+        self.file.quality = QualitySettings { particles, block_lighting: share, posed_vertices: posed };
         Ok(())
     }
 

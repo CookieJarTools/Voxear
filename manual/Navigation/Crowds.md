@@ -12,7 +12,7 @@ A world can have hundreds of characters walking about, and most of them are far 
 
 Distances are measured from the game's camera, and on a server from every player too, so a character near any player is near. With no camera at all, as on a server with no players yet, every character is near.
 
-Every Obj with a **Nav Agent**, a **Block Mob**, a **Mob Motion** or a **Motion Matcher** is in a tier. Nothing needs adding.
+Every Obj with a **Nav Agent**, a **Block Mob**, a **Mob Motion**, a **Motion Matcher** or an **Animator** is in a tier. Nothing needs adding.
 
 ## What each tier does less of
 
@@ -22,6 +22,14 @@ Every Obj with a **Nav Agent**, a **Block Mob**, a **Mob Motion** or a **Motion 
 - **Motion matching:** beyond the near tier a Motion Matcher searches less often (its **Search Every** times **Search time ×**), and lets its feet follow its clips rather than holding them where they came down.
 
 Box models are cheap to pose and draw however many there are: each box follows its bone where it is drawn, with no skinning. Mob Motion poses them on several threads.
+
+## Skinned characters
+
+Characters made of skinned meshes, such as imported humans, are skinned on the GPU into **posed vertices**, which every pass then draws. What that costs is kept in bounds:
+
+- **Room of their own.** Posed vertices have a pool set in **Project Settings ▸ Quality ▸ Characters ▸ Posed vertices**: a million by default, about forty characters of 8,000 vertices. A character there is no room for is posed where it is drawn instead, by its bones, which costs a little more in each pass but is never left standing at rest. At 0 every character is posed that way.
+- **Only what is seen.** A character no camera can see, nor see its shadow, keeps the pose it was last skinned in until one can.
+- **Shared poses.** Beyond the near tier, an **Animator** whose clip loops, with no root motion, plays it at the nearest fifteenth of a second, and every such character on the same clip of the same model shares that one pose: a hundred walkers far off are skinned a handful of times.
 
 ## Setting the tiers
 
@@ -39,4 +47,4 @@ Choose **Add Component ▸ Navigation ▸ Crowd Member** on an Obj to put its ti
 
 ## Seeing it work
 
-The Profiler's counts show **Posed parts**: how many skinned, how many posed by their bones, and how many were left at rest for want of room, which should be none.
+The Profiler's counts show **Posed parts**: how many skinned and how many posed by their bones; **Posed elsewise**: how many posed where drawn for want of room, left as they were out of sight, and sharing another's pose; and **Posed at rest**, which should be none.

@@ -3512,7 +3512,11 @@ shape casts and overlaps, and are callable from jobs. Bodies of two dimensions n
 Blend shapes are supported. A mesh whose every vertex is bound whole to one bone, as a box model's are, is not
 skinned at all: its bones' matrices are all it needs, and each pass that draws it moves each vertex by its bone as it
 reads it (`instanceVertex` in `common.slang`), so it keeps no posed vertices and every Obj drawing the model shares
-one mesh. The frame's bone matrices grow to what it needs (`voxear_render::skinning`).
+one mesh. The frame's bone matrices grow to what it needs (`voxear_render::skinning`). Skinning is held to a budget:
+posed vertices have a pool of their own, sized in Project Settings, and a part with no room in it is posed by up to
+four bones where it is drawn; every part is skinned in one dispatch; a part no camera may see is not skinned again
+until one may; and Objs whose poses are one `Arc` are skinned once and share their posed vertices, as Animators far
+off in a crowd share poses by their clip and the nearest fifteenth of a second.
 
 **State machines.**
 - Layers, avatar masks and blend trees (1D, 2D and direct).

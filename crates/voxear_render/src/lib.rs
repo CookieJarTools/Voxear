@@ -136,7 +136,9 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
-pub use skinning::{BonesOff, HiddenBones, Pose};
+pub use skinning::{
+    BonesOff, DEFAULT_POSED_VERTICES, HiddenBones, MAX_POSED_VERTICES, MIN_POSED_VERTICES, Pose, PosedVertexRoom,
+};
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
@@ -285,11 +287,19 @@ pub struct RenderStats {
     pub posed: PosedCounts,
 }
 
-/// The parts of models a pose moved in a frame (see [`RenderStats::posed`]).
+/// The parts of models a pose moved in a frame (see [`RenderStats::posed`]):
+/// skinned into posed vertices; bound whole to bones and posed by them
+/// where drawn; weighed between bones and posed where drawn, for want of
+/// room for posed vertices; out of sight and left in their last pose;
+/// posed as another Obj's part and sharing its; and left at rest for want
+/// of room for their bones.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct PosedCounts {
     pub skinned: u32,
     pub by_bones: u32,
+    pub weighted: u32,
+    pub unseen: u32,
+    pub shared: u32,
     pub at_rest: u32,
 }
 
@@ -1849,7 +1859,13 @@ impl Renderer {
         // Impostors asked for last frame are made, to bake before this frame's views draw them.
         self.impostor_bakes.prepare(assets, &self.gpu, &mut self.bindless)?;
         // Every posed model's skinned parts, for all the views.
-        self.skinning.prepare(&self.gpu, assets, world, self.frame_index, frame.slot)?;
+        // What the views' cameras may see, which is all that is skinned again; anything, through a Portal. Each is
+        // taken as wide as the widest screen.
+        let aspect = 2.5;
+        let cameras: Vec<(Option<voxear_ecs::Entity>, f32)> =
+            self.views.iter().map(|view| (view.options.camera, aspect)).collect();
+        let viewers = skinning::viewers(world, &cameras);
+        self.skinning.prepare(&self.gpu, assets, world, self.frame_index, frame.slot, viewers.as_deref())?;
         self.captures.finish(&self.gpu, frame.slot);
         self.sound_rays.finish(frame.slot);
         // This slot's previous frame has finished, so its counters are final.
@@ -2035,6 +2051,7 @@ impl Renderer {
                 software_rays,
                 posed: skinning.posed.clone(),
                 skin_matrices: skinning.matrices(),
+                posed_vertices: skinning.posed_vertices(),
                 simulated: (particle_sim.placed.clone(), particle_sim.pool_address(), particle_pool),
                 particle_step,
                 panels: panel_textures.clone(),
@@ -2572,6 +2589,8 @@ struct ViewSetup {
     /// Where this frame's and last frame's bones' matrices are, for what is
     /// posed by its bones where it is drawn.
     skin_matrices: (u64, u64),
+    /// Where posed vertices are.
+    posed_vertices: u64,
     /// This frame's simulated Particle Systems with particles out, the pool
     /// their particles are in, and the pool as the graph knows it.
     simulated: (std::sync::Arc<particles::PlacedSystems>, u64, Option<graph::BufferId>),
@@ -3969,6 +3988,9 @@ impl View {
                 skins: assets.skins.address,
                 skin_matrices: setup.skin_matrices.0,
                 skin_matrices_before: setup.skin_matrices.1,
+                posed_vertices: setup.posed_vertices,
+                skin_jobs: 0,
+                skin_groups: 0,
                 ui_panels: buffers.ui_panels.address,
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],

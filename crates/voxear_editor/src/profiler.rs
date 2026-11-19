@@ -530,6 +530,10 @@ impl Profiler {
             ("LOD fades", stats.fade_draws.to_string()),
             ("Lights per cluster", stats.cluster_max_lights.to_string()),
             ("Posed parts", format!("{} skinned · {} by bones", stats.posed.skinned, stats.posed.by_bones)),
+            (
+                "Posed elsewise",
+                format!("{} where drawn · {} unseen · {} shared", stats.posed.weighted, stats.posed.unseen, stats.posed.shared),
+            ),
             ("Posed at rest", stats.posed.at_rest.to_string()),
             ("Model vertices", millions(pool.model_vertices)),
             ("Block light vertices", format!("{} · {} chunks", millions(pool.lighting_vertices), pool.lighting_meshes)),

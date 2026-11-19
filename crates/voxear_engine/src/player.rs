@@ -73,6 +73,9 @@ pub struct PlayerSettings {
     /// blocks' lighting, in percent.
     #[serde(default = "default_block_lighting")]
     pub block_lighting: u32,
+    /// The project's `[quality]` room for skinned models' posed vertices.
+    #[serde(default = "default_posed_vertices")]
+    pub posed_vertices: u32,
     /// The project's `[world]` budget for making worlds of blocks.
     #[serde(default)]
     pub world: voxear_terrain::WorldBudget,
@@ -177,6 +180,10 @@ fn default_particles() -> u32 {
 
 fn default_block_lighting() -> u32 {
     voxear_render::DEFAULT_LIGHTING_SHARE
+}
+
+fn default_posed_vertices() -> u32 {
+    voxear_render::DEFAULT_POSED_VERTICES
 }
 
 impl PlayerSettings {
@@ -328,6 +335,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             quality: crate::project::QualitySettings {
                 particles: settings.particles,
                 block_lighting: settings.block_lighting,
+                posed_vertices: settings.posed_vertices,
             },
             world: settings.world,
             portals: settings.portals,

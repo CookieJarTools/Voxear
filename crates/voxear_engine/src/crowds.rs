@@ -1,8 +1,8 @@
 //! Crowds: how much of the frame each character that finds its way or is
 //! animated gets, by how near it is to whoever is looking.
 //!
-//! Every Obj with a Nav Agent, a Block Mob, a Mob Motion or a Motion
-//! Matcher is in a **tier** each frame, by its distance to the nearest
+//! Every Obj with a Nav Agent, a Block Mob, a Mob Motion, a Motion Matcher
+//! or an Animator is in a **tier** each frame, by its distance to the nearest
 //! viewpoint: the game's camera (or the terrain's viewer), and on a server
 //! each player's Obj too. Near, everything is done every step and frame, as
 //! it always was. In the middle distance an agent plans its way less often
@@ -234,6 +234,11 @@ pub fn update(world: &mut World) {
             .for_each(|(e, _)| add(e));
         world
             .query_ref::<(Entity, &crate::animation::MotionMatcher)>()
+            .without::<Destroying>()
+            .into_iter()
+            .for_each(|(e, _)| add(e));
+        world
+            .query_ref::<(Entity, &crate::animation::Animator)>()
             .without::<Destroying>()
             .into_iter()
             .for_each(|(e, _)| add(e));

@@ -3949,7 +3949,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     CPU (were 1.6 and 4.1 ms); 5,000, 2.0–2.5 ms and 4.1 ms (past 1,638 were drawn at rest); 10,000, 3.8 and
     9.0 ms. Tests: a box model posed by its bones drawn as the same pose made on the CPU, with no posed vertices;
     the skinned bar and hidden-bone tests as they were.
-  - [ ] Skinning held to a budget: one dispatch for all, only what is seen, posed room of its own, shared poses.
+  - [x] **Skinning held to a budget** (`voxear_render::skinning`). Posed vertices have a pool of their own,
+    Project Settings ▸ Quality ▸ Characters ▸ Posed vertices (`[quality] posed_vertices`, 1M by default, 52 bytes
+    each, three runs a part; 0 for none), so skinned characters no longer take block lighting's room. A part
+    there is no room for is posed where it is drawn, by up to four bones a vertex (`GpuInstance::bones_weighted`,
+    `instanceBoneMatrix` in `common.slang`), never drawn at rest. Every part is skinned in one dispatch, a thread
+    group a 64 vertices from a table of jobs (`skinJobs`, `skinGroups`), where each was a dispatch of its own. A
+    part no view's camera may see, nor see its shadow near (12 m round it), keeps the pose it was last skinned in
+    and is not skinned again until one may; anything, while a Portal is about. Objs whose poses are the same
+    `Arc` share one skinning and one run of posed vertices; Animators beyond a crowd's near tier, looping, with no
+    root motion, play their clip at the nearest fifteenth of a second and share that pose with every other on the
+    same clip of the same model (`animation::SHARED_POSE_RATE`; Animators now have crowd tiers too). Profiler:
+    **Posed elsewise** (where drawn, unseen, shared). Timings (66-bone humanoid of about 8,500 vertices, a new pose
+    each frame for every one, least of 60 frames, test build): 1,000 posed where drawn, 2.0 ms GPU frame and 4.9 ms
+    renderer CPU; 1,000 compute-skinned until the pool ran out, 3.3 and 5.1 ms; 1,000 sharing 30 poses, 1.95 and
+    1.7 ms (60 parts skinned). Tests: a weighed bar posed where drawn as it is skinned; three Objs on one pose
+    skinned once; a bar far behind the camera not skinned again; far Animators on one clip sharing a pose.
   - [x] **Tiers** (`voxear_engine::crowds`, Project Settings ▸ Crowds, `[crowds]`): every Obj with a Nav Agent,
     Block Mob, Mob Motion or Motion Matcher is Near (40 m), Middle (150 m) or Far each frame by its distance to
     the game's camera, and on a server to every player's Obj. Middle agents plan their way every 2nd step and are

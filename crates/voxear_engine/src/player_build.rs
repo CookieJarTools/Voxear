@@ -228,6 +228,7 @@ pub fn build(
         floating_origin: project.file.floating_origin.clone(),
         particles: project.file.quality.particles,
         block_lighting: project.file.quality.block_lighting,
+        posed_vertices: project.file.quality.posed_vertices,
         world: project.file.world,
         portals: project.file.portals,
         water_trails: project.file.water_trails,

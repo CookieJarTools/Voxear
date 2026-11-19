@@ -610,6 +610,14 @@ const FIXED: &[Setting] = &[
         "How much of the room every mesh shares a world of blocks' lighting may take. The rest is kept free for models spawned later, and the farthest chunks give theirs back as models take it.",
     )
     .advanced(),
+    Setting::new(
+        ("Quality", "Characters"),
+        "quality.posed_vertices",
+        "Posed vertices",
+        whole(voxear_render::MIN_POSED_VERTICES as f64, voxear_render::MAX_POSED_VERTICES as f64, ""),
+        "How many vertices skinned characters' poses may hold between them, 52 bytes each: three times each part's. A part there is no room for is posed where it is drawn, which costs more in each pass. Box models need none.",
+    )
+    .advanced(),
     // Scripts
     Setting::new(
         ("Scripts", "C#"),

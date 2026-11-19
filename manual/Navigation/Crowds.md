@@ -45,6 +45,17 @@ Choose **Add Component ▸ Navigation ▸ Crowd Member** on an Obj to put its ti
 
 - **Tier:** **By Distance** as the rest, or always **Near**, **Middle** or **Far**. A boss that must never stutter is always Near; a flock of birds overhead can always be Far.
 - **Importance:** scales the distances it is measured by. At 2 it stays near twice as far out; at 0.5, half as far.
+- **Keep as Record:** far beyond the streamed world, its Obj goes and it is kept as a record (see below).
+
+## Characters far away
+
+A world can hold thousands of characters, most of them nowhere near anyone. A Crowd Member with **Keep as Record** on, made from a prefab, becomes a **record** once it is further than **Project Settings ▸ Crowds ▸ Records beyond** (250 m) from the camera and every player: a few numbers saying which prefab it is, where it is, where it was sent and the rest of its way there, and how fast it walks. Its Obj goes.
+
+- **It walks on.** Once a second a record walks along its way, then straight on to where it was sent, and stops there. The ground round it need not be there.
+- **It comes back.** Within Records beyond less 30 m, it is made again from its prefab where it got to, a few a frame, and sent on where it was going.
+- **Saves keep it.** A save of the scene keeps every record, in about 18 bytes each; `CrowdRecords.Capture` and `CrowdRecords.Apply` keep them in a game's own saves.
+
+A record comes back as a new Obj, so a script that held the old one sees it gone: keep what a character is in its prefab, and find it again by what it is rather than holding on to it. Records are kept on the server, or by a game playing alone, and only in the level's own dimension.
 
 ## Seeing it work
 

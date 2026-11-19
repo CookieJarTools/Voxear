@@ -1096,6 +1096,42 @@ impl Game {
         self.engine.instantiate(&template, parent, placement)
     }
 
+    /// Makes records of Crowd Members gone far off and Objs again of records
+    /// come near (see `crowd_records`), each made from its prefab, sent on
+    /// where it was going.
+    fn keep_crowd_records(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        let level = self.levels.current().map(str::to_string);
+        let (changes, gone) = crate::crowd_records::update(&mut self.engine.world, delta, level.as_deref());
+        if !gone.is_empty() {
+            self.engine.destroy_objs(&gone);
+        }
+        for record in changes.make {
+            let prefab = record.prefab.to_string();
+            let (position, rotation) = crate::crowd_records::placement(&self.engine.world, &record);
+            let placed = Some(voxear_scene::Placement { position, rotation });
+            let root = match self.instantiate(&prefab, None, placed, renderer.as_deref_mut()) {
+                Ok(root) => root,
+                Err(error) => {
+                    tracing::warn!("a crowd record's prefab {prefab}: {error:#}");
+                    continue;
+                }
+            };
+            // Kept as a record again when it goes far off, and saved as a copy a script made.
+            let index = self
+                .content
+                .prefab(renderer.as_deref_mut(), &prefab)
+                .and_then(|id| self.content.loaded_template(renderer.as_deref_mut(), id))
+                .ok()
+                .and_then(|template| template.root())
+                .unwrap_or(0) as u32;
+            let world = &mut self.engine.world;
+            world.insert(root, Spawned { prefab: record.prefab, root, index });
+            let member = world.get::<crate::crowds::CrowdMember>(root).copied().unwrap_or_default();
+            world.insert(root, crate::crowds::CrowdMember { keep_as_record: true, ..member });
+            crate::crowd_records::send_on(world, root, &record);
+        }
+    }
+
     /// Makes what Heat Bodies' changes became this frame, each in its Obj's
     /// place under its parent, starting as warm as it was, the Obj taken
     /// away; then tells scripts of every change and every character that
@@ -1358,6 +1394,10 @@ impl Game {
         {
             profile_scope!("Heat and Storms");
             self.make_heat_changes(renderer.as_deref_mut());
+        }
+        if !self.engine.is_edit_mode() {
+            profile_scope!("Crowd Records");
+            self.keep_crowd_records(delta, renderer.as_deref_mut());
         }
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
         {

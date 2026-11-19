@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 94;
+pub(crate) const API_VERSION: u32 = 95;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -614,6 +614,9 @@ pub(crate) struct NativeApi {
     /// `ShaderPacks`: every shader pack there is to wear, which is worn, how its compile stands, its options and
     /// where a player keeps their own, as JSON; its length, or -1 when there is none.
     pub shader_packs_info: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    /// `CrowdRecords.Capture` (`what` 0) and `Apply` (`what` 1): the level's crowd records as bytes, or bytes put
+    /// back in their place; as `storm_state` does storms.
+    pub crowd_records: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2313,6 +2316,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         shader_pack_wear,
         shader_pack_set_option,
         shader_packs_info: crate::services::shader_packs_info,
+        crowd_records: crate::crowds::crowd_records,
     }
 }
 

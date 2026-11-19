@@ -552,11 +552,13 @@ pub fn obstacle_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
 pub enum CrowdMemberField {
     Tier,
     Importance,
+    KeepAsRecord,
 }
 
 use voxear_engine::crowds::{CrowdMember, CrowdTierChoice};
 
-const CROWD_FIELDS: [CrowdMemberField; 2] = [CrowdMemberField::Tier, CrowdMemberField::Importance];
+const CROWD_FIELDS: [CrowdMemberField; 3] =
+    [CrowdMemberField::Tier, CrowdMemberField::Importance, CrowdMemberField::KeepAsRecord];
 const TIER_CHOICES: [CrowdTierChoice; 4] =
     [CrowdTierChoice::ByDistance, CrowdTierChoice::Near, CrowdTierChoice::Middle, CrowdTierChoice::Far];
 
@@ -577,6 +579,7 @@ pub fn crowd_label(field: CrowdMemberField) -> String {
     match field {
         CrowdMemberField::Tier => "Tier",
         CrowdMemberField::Importance => "Importance",
+        CrowdMemberField::KeepAsRecord => "Keep as Record",
     }
     .into()
 }
@@ -592,6 +595,12 @@ pub fn crowd_tooltip(field: CrowdMemberField) -> &'static str {
             "How much it matters, which scales the distances its tier is found by: at 2 it stays near twice as far \
              out, at 0.5 half as far. Default: 1."
         }
+        CrowdMemberField::KeepAsRecord => {
+            "Beyond Project Settings ▸ Crowds ▸ Records beyond, its Obj goes and it is kept as a record: where it is, \
+             where it was sent and its way there, walked on once a second. Coming near again, it is made again from \
+             its prefab and sent on. For an Obj made from a prefab, at the top, in the level's dimension; scripts \
+             holding it see it gone. Saves keep the records. Default: off."
+        }
     }
 }
 
@@ -599,6 +608,7 @@ pub fn crowd_key(field: CrowdMemberField) -> &'static str {
     match field {
         CrowdMemberField::Tier => "tier",
         CrowdMemberField::Importance => "importance",
+        CrowdMemberField::KeepAsRecord => "keep_as_record",
     }
 }
 
@@ -610,6 +620,7 @@ pub fn crowd_get(game: &Game, entity: Entity, field: CrowdMemberField) -> Option
             TIER_CHOICES.iter().map(|tier| tier_name(*tier).to_string()).collect(),
         ),
         CrowdMemberField::Importance => Value::Number(member.importance),
+        CrowdMemberField::KeepAsRecord => Value::Toggle(member.keep_as_record),
     })
 }
 
@@ -618,6 +629,7 @@ pub fn crowd_set(game: &mut Game, entity: Entity, field: CrowdMemberField, value
     match (field, value) {
         (CrowdMemberField::Tier, Value::Choice(at, _)) => member.tier = TIER_CHOICES.get(at).copied().unwrap_or_default(),
         (CrowdMemberField::Importance, Value::Number(importance)) => member.importance = importance.clamp(0.01, 100.0),
+        (CrowdMemberField::KeepAsRecord, Value::Toggle(on)) => member.keep_as_record = on,
         _ => return false,
     }
     true

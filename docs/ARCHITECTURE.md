@@ -4647,7 +4647,7 @@ engine's glue is `voxear_engine::navigation`.
   `LevelNav` whole; mesh agents search again when the mesh they found their way on is gone. Obstacles not carved
   join avoidance as movers that do not avoid.
 
-### Crowds *(tiers implemented; the rest planned, see `docs/research/crowds.md`)*
+### Crowds *(tiers and records implemented; networked crowds planned, see `docs/research/crowds.md`)*
 
 - **Tiers** (`voxear_engine::crowds`). Once a frame, before its fixed steps, every Obj with a Nav Agent, Block Mob,
   Mob Motion or Motion Matcher is put in a tier by its distance to the nearest viewpoint: the game's camera (or
@@ -4661,6 +4661,12 @@ engine's glue is `voxear_engine::navigation`.
   Mob Motion's posing is pure, so it is gathered, posed over threads, and written back.
 - **The full way**: a `CrowdMember` component gives an Obj a tier of its own or an importance that scales its
   distances; `CrowdSettings` (`[crowds]`, Project Settings ▸ Crowds) holds the distances and rates.
+- **Records** (`voxear_engine::crowd_records`). Beyond the streamed world a Crowd Member kept as a record is not an
+  Obj but a `CrowdRecord` in the `CrowdRecords` resource: its prefab, its place from the level's real middle (so it
+  stays put as the world's middle moves), its yaw, destination, the rest of its way and its speed. The game makes
+  records of those gone beyond Records beyond, and Objs again of those come within it less a margin, a few a frame,
+  from their prefabs (`Game::keep_crowd_records`), so it can reach the content; records walk on once a second with
+  no ground. Saves of the scene keep them as small bytes beside the storms' and blocks' edits.
 
 ### Planned
 

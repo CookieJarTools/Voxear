@@ -3991,7 +3991,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     way; a far Animator playing on the GPU and not posed, one held and one near posed, and one come near posed
     again. Not done: pictures for the furthest humanoids; the Motion Matcher's far tier playing its Motion Set's
     states baked, picked by speed.
-  - [ ] Agents beyond the streamed rings kept as records that walk the regions; shared direction fields.
+  - [x] **Crowd records** (`voxear_engine::crowd_records`). A Crowd Member with **Keep as Record** on, a root made from a
+    prefab (`Spawned` or `PrefabInstance`) in the level's dimension, with authority, becomes a `CrowdRecord` beyond
+    Project Settings ▸ Crowds ▸ **Records beyond** (`records_beyond`, 250 m, kept 60 m past the middle tier; 0 for
+    never) from every viewpoint: its prefab, where it is from the level's real middle, its yaw, its destination and
+    the corners of its way it has not passed, and its speed; its Obj is destroyed. Records walk on once a second
+    along their way, then straight to their destination, with no ground needed; within Records beyond less 30 m
+    they are made again from their prefab (`Game::keep_crowd_records`, 16 a frame each way), marked as a script's
+    copy and sent on. A new level starts without them. Saves of the scene keep them (`SceneState`'s `crowds`;
+    `CrowdRecords.Capture` and `Apply` in C#; the `crowd_records` call, API 95), small: each prefab once, then each
+    record's place to a centimetre, its yaw in a byte, its destination and way each from the point before, about
+    18 bytes a record. Timings (test build): 10,000 records 0.1 ms a frame, 0.2 ms on the frame they walk, saved in
+    180 KB. Tests: a walker set off, kept as a record when the camera goes, walking on, made again where it was
+    sent when the camera comes back, and its save put back; a record's walk round a corner; records' bytes round
+    trip to a centimetre and refuse what is not theirs. Not done: shared direction fields for many going to one
+    place; ambient life made from seeds; records walking the regions where their ground is made.
   - [ ] Networked crowds: compact updates, rates by tier, interest by ring.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.

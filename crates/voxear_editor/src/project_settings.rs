@@ -856,6 +856,13 @@ const FIXED: &[Setting] = &[
         whole(1.0, 60.0, "frames"),
         "Frames between a Mob Motion's or Motion Matcher's poses in the far tier.",
     ),
+    Setting::new(
+        ("Crowds", "Records"),
+        "crowds.records_beyond",
+        "Records beyond",
+        number(0.0, 1_000_000.0, "m"),
+        "Beyond this far from the camera and every player, a Crowd Member kept as a record goes and is kept as a few numbers, walked on once a second; within it less 30 m it is made again. Past the middle tier at least. 0 keeps every one an Obj.",
+    ),
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {

@@ -14,6 +14,7 @@ use super::{SeaNow, Storm, StormEvent, StormKind, StormRules, Storms};
 pub(crate) fn register() {
     voxear_scripting::set_storm_call(call);
     voxear_scripting::set_storm_state(state);
+    voxear_scripting::set_crowd_records(crate::crowd_records::state);
 }
 
 /// The storms as a save keeps them, as bytes; or, given bytes, the storms

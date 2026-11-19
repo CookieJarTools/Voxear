@@ -56,6 +56,7 @@ public sealed class SceneState
 			root["terrains"] = SaveNode.Bytes(Terrain.CaptureEdits());
 			root["blocks"] = SaveNode.Bytes(Blocks.CaptureEdits());
 			root["storms"] = SaveNode.Bytes(Storms.CaptureState());
+			root["crowds"] = SaveNode.Bytes(CrowdRecords.Capture());
 			// Each dimension's changes apart, none for one never changed; the dungeons' stages beside their sites;
 			// and the Objs in other dimensions than the level's, to put back there.
 			var dimensions = NativeDimensions.CaptureEdits();
@@ -121,6 +122,12 @@ public sealed class SceneState
 		if (!Root["storms"].IsNull)
 		{
 			Storms.ApplyState(Root["storms"].AsBytes());
+		}
+
+		// The characters kept as records far off, made again as they come near.
+		if (!Root["crowds"].IsNull)
+		{
+			CrowdRecords.Apply(Root["crowds"].AsBytes());
 		}
 
 		// The dungeons' stages before any dungeon is made, and each dimension's changes, put back as it is made.

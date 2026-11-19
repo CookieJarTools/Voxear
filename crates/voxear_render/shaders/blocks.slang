@@ -388,6 +388,41 @@ float blockFringe(BlockWorld world, uint over, TerrainSpot spot, float3 normal, 
     return cover;
 }
 
+// Where the picture of surface `over` is read for its fringe over a face's side, from the `edges` or `corners`
+// blockFringe takes: where it creeps from above or below, mirrored across that edge, so the fringe carries the rows
+// of its picture next to the edge. Read on past the edge, a side's picture would start again from its far side: under
+// grass, the green lip along its top. Along a side, and on tops and bottoms, a picture runs on from block to block.
+TerrainSpot blockFringeSpot(BlockWorld world, uint over, TerrainSpot spot, float3 normal, uint edges, uint corners)
+{
+    if (abs(normal.y) > 0.5)
+    {
+        return spot;
+    }
+    // Down a side's picture (terrainSide): from its top at the whole number.
+    float scale = world.surfaces[min(over, world.surfaceCount - 1)].uvScale;
+    float down = -spot.place.y * scale;
+    float top = floor(down);
+    bool upper = down - top < 0.5;
+    bool fromAbove = edges != 0 ? (edges & 4) != 0 : (corners & 3) != 0;
+    bool fromBelow = edges != 0 ? (edges & 8) != 0 : (corners & 12) != 0;
+    if (upper ? !fromAbove : !fromBelow)
+    {
+        return spot;
+    }
+    float edge = upper ? top : top + 1.0;
+    // Half a pixel in from the edge, so a smoothed picture takes nothing from its far side there either.
+    Material material = buffers()->materials[world.surfaces[min(over, world.surfaceCount - 1)].material];
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    float inset = 0.5 / float(max(height, 1u));
+    float read = upper ? min(2.0 * edge - down, edge - inset) : max(2.0 * edge - down, edge + inset);
+    TerrainSpot mirrored = spot;
+    mirrored.place.y = -read / scale;
+    mirrored.dx.y = -spot.dx.y;
+    mirrored.dy.y = -spot.dy.y;
+    return mirrored;
+}
+
 // A cube's face's surface, or a loose quad's with what its fragments need: which kind it is (1 a sheet of leaves,
 // 2 a vine's), which sheet, how open its block is and its own number.
 uint blockLooseWord(BlockPoint b)
@@ -893,7 +928,9 @@ bool terrainShading(
             uint over = round & 0xFF;
             uint from = (round >> 10) & 15;
             bool corners = ((round >> 9) & 1) != 0;
-            float cover = level == 0 ? blockFringe(world, over, spot, normal, corners ? 0 : from, corners ? from : 0) : 0.0;
+            uint edges = corners ? 0 : from;
+            uint touches = corners ? from : 0;
+            float cover = level == 0 ? blockFringe(world, over, spot, normal, edges, touches) : 0.0;
             // A quad more over a face drawn already (voxear_terrain::blocks::mesh) is there only where its fringe is.
             if (((round >> 8) & 1) != 0 && cover <= 0.0)
             {
@@ -901,7 +938,8 @@ bool terrainShading(
             }
             if (cover > 0.0)
             {
-                blendLayer(layer, blockLayer(world, over, spot, normal, input.tangent), cover);
+                TerrainSpot fringe = blockFringeSpot(world, over, spot, normal, edges, touches);
+                blendLayer(layer, blockLayer(world, over, fringe, normal, input.tangent), cover);
             }
         }
         // A face whose material is cut out, as leaves are, is not there where its picture is clear.

@@ -3912,3 +3912,88 @@ fn a_model_too_large_for_the_space_says_how_full_it_is_and_who_holds_it() {
     assert_eq!(renderer.mesh_pool().lighting_meshes, pool.lighting_meshes);
     assert_eq!(renderer.mesh_pool().given_back_at_once, 0);
 }
+
+/// A wall of dirt with a row of grass along its top, on a field, seen face on from six metres; the grass creeps over
+/// the dirt beside it, and its side's picture is brown with a green lip along its top.
+fn creeping_wall_render() -> Option<Vec<u8>> {
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 4;
+    file.blocks[0].material = Some("grass side".into());
+    file.blocks[0].top = Some("grass top".into());
+    file.blocks[0].overlap = 2;
+    let mut blocks = file.make_ground(None);
+    for x in 8..24 {
+        for y in 4..8 {
+            blocks.set([x, y, 18], 2);
+        }
+        blocks.set([x, 8, 18], 1);
+    }
+    let size = 16u32;
+    let rgba: Vec<u8> =
+        (0..size * size).flat_map(|i| if i / size < 3 { [60, 200, 40, 255] } else { [120, 80, 50, 255] }).collect();
+    let source =
+        voxear_render::TextureSource { name: "grass side", width: size, height: size, rgba: &rgba, srgb: true };
+    let side = renderer.add_texture(&source).unwrap();
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let desc = match look.material.as_deref() {
+                Some("grass side") => MaterialDesc { base_color_texture: Some(side), ..MaterialDesc::default() },
+                _ => MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() },
+            };
+            SurfaceLook {
+                material: renderer.add_material(&MaterialDesc { roughness: 1.0, ..desc }).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: look.mixed,
+                tint: 0,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+        light: Default::default(),
+    };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    world.spawn((Camera::default(), Transform::new(Vec3::new(16.0, 8.0, 12.0), Quat::IDENTITY, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.3, 0.7, -0.6).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    Some(render(&mut renderer, &world, 4))
+}
+
+#[test]
+fn grass_creeping_down_over_the_dirt_under_it_brings_its_sides_foot_not_the_green_lip_along_its_top() {
+    let Some(pixels) = creeping_wall_render() else { return };
+    keep_image("blocks creeping wall.png", &pixels);
+    // Seen face on from six metres, a metre is 52 pixels high on screen; the eye is level with the grass's foot.
+    let half = (30f32).to_radians().tan() * 6.0;
+    let row = |y: f32| ((1.0 - (y - 8.0) / half) * 0.5 * HEIGHT as f32) as u32;
+    let green = |[r, g, b]: [i32; 3]| g > r + 40 && g > b + 40;
+    // The grass's own lip is green.
+    let lip = (200..440).filter(|&x| green(rgb_at(&pixels, x, row(8.95)))).count();
+    assert!(lip > 200, "the grass's lip is green: {lip} of 240");
+    // The dirt just under the grass, where the grass creeps over it, shows no green.
+    for y in [7.97, 7.92, 7.85, 7.75] {
+        let greens = (200..440).filter(|&x| green(rgb_at(&pixels, x, row(y)))).count();
+        assert_eq!(greens, 0, "green on the dirt {:.2} m under the grass", 8.0 - y);
+    }
+}

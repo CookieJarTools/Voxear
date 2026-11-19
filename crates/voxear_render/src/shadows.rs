@@ -85,6 +85,52 @@ impl LampShadows {
     }
 }
 
+/// How the sun's and lamps' shadows are drawn as scripts set them, as a
+/// world resource: laid over the level's lighting, a look pack's and a
+/// shader pack's, and kept through level changes until scripts reset it, as
+/// a game's graphics options do. What it leaves as `None` is the level's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScriptShadows {
+    pub sun: Option<SunShadows>,
+    pub lamps: Option<LampShadows>,
+    /// How far from the camera the sun casts shadows, in metres.
+    pub distance: Option<f32>,
+    /// How the cascades share that distance, from 0, evenly, to 1.
+    pub split: Option<f32>,
+}
+
+/// The sun's and lamps' shadows as a frame draws them, but for a Portal's
+/// view: the level's lighting, or a worn look pack's, under a worn shader
+/// pack's and what scripts set.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowsInEffect {
+    pub sun: SunShadows,
+    pub lamps: LampShadows,
+    pub distance: f32,
+    pub split: f32,
+}
+
+impl ShadowsInEffect {
+    pub fn of(world: &voxear_ecs::World) -> Self {
+        let worn = world.resource::<crate::looks::WornLook>().map(|worn| worn.sun);
+        let look = worn.unwrap_or_else(|| world.resource::<crate::looks::SunLook>().copied());
+        let pack = world
+            .resource::<crate::shader_packs::WornShaderPack>()
+            .map(|worn| worn.pack.manifest.shadows.clone())
+            .unwrap_or_default();
+        let script = world.resource::<ScriptShadows>().copied().unwrap_or_default();
+        Self {
+            sun: script.sun.or(pack.maps).unwrap_or(look.map_or(SunShadows::default(), |look| look.sun_shadows)),
+            lamps: script.lamps.unwrap_or(look.map_or(LampShadows::default(), |look| look.lamp_shadows)),
+            distance: script
+                .distance
+                .or(pack.distance)
+                .unwrap_or(look.map_or(SHADOW_DISTANCE, |look| look.shadow_distance)),
+            split: script.split.or(pack.split).unwrap_or(look.map_or(SHADOW_SPLIT, |look| look.shadow_split)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Cascade {
     pub view_proj: Mat4,

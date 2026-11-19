@@ -48,7 +48,10 @@ pub use interop::{
     ShaderPackRequest, WeatherRequest, WeatherState,
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
-pub use post::{POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PostCall, set_post_call};
+pub use post::{
+    POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PostCall, SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET,
+    set_post_call,
+};
 pub use plants::{FoliageCall, set_foliage_call};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};

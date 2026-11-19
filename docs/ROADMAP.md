@@ -1206,6 +1206,12 @@ Done:
   back to the look's. Built-in sets are read-only with Make a Copy; a scene with none gets New Lighting Settings,
   carrying its own sky and post over. Colours open the colour picker. Editor test: pick an asset, change its
   haze, copy a built-in set, and save the scene naming it.
+- **A scene's own lighting, and shadows from scripts:** a scene that names no lighting settings holds every part they
+  do, `[sun]`, `[lamps]` and `[weather]` beside `[sky]` and `[post]`, and the Lighting page, the scene's Inspector and
+  `lighting.set` change them as steps to undo, saved with the scene. C#: `Lighting.Shadows`, `ChangeShadows` and
+  `ResetShadows` set the sun's shadow method, distance and split and the lamps' shadows over the level's, as a graphics
+  options menu does. Tests: a scene's own sun and weather light it as lighting settings would; the page and
+  `lighting.set` change Hello's own shadows, undo and save them; scripts read, change and reset the shadows.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

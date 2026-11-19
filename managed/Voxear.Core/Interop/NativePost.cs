@@ -9,6 +9,9 @@ internal static unsafe class NativePost
 	public const int Overrides = 1;
 	public const int Set = 2;
 	public const int Reset = 3;
+	public const int ShadowsInEffect = 4;
+	public const int ShadowsSet = 5;
+	public const int ShadowsReset = 6;
 
 	public static bool IsConnected => Native.IsConnected;
 

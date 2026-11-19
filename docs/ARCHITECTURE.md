@@ -1355,7 +1355,22 @@ given new room and starts afresh; a layer stopped keeps its `PlayedEffect` mark,
 takes its Obj away once its last drops have fallen.
 
 Lighting settings carry `[weather]` (`lighting::WeatherData`), and `apply_environment` puts the level in it, or
-in clear weather, whenever lighting settings are applied. Scripts reach it as the seasons are reached: the engine
+in clear weather, whenever lighting settings are applied.
+
+**A scene's own lighting** *(implemented)*. A scene that names no lighting settings holds every part they do:
+`[sky]`, `[post]` (with its look), `[sun]`, `[lamps]` and `[weather]` (`SceneFile::own_sun`, `scene_file::OwnSun`).
+`apply_environment` lays its own sun and lamps over its look's sun, or a plain one, never over the world's, so
+applying it again changes nothing; `SceneSun` keeps them as written for a save. `Levels::own_lighting` and
+`set_own_lighting` read and change them as lighting settings (`scene_file::own_lighting`, `split_own_lighting`) for
+the scene that lights the level: the active scene where it sets any, else the last that does. The Lighting page,
+the scene's Inspector and `lighting.set` change them through `LightingAction::Set` with `SettingsOf::Scene`, a step
+to undo (`Edit::OwnLighting`).
+
+**Shadows from scripts** *(implemented)*. `Lighting.Shadows`, `ChangeShadows` and `ResetShadows` in C# go through
+`Post`'s call (`SHADOWS_IN_EFFECT`, `SHADOWS_SET`, `SHADOWS_RESET`) to `voxear_render::ScriptShadows`, a world
+resource kept through level changes. A frame takes the shadow method, distance and split from the renderer's own
+options, then the script's, then a worn shader pack's, then the level's sun look; `ShadowsInEffect::of` works out
+the same for scripts to read. Scripts reach it as the seasons are reached: the engine
 publishes the weather's state before scripts run, and takes the last `Weather.Set` after the frame. The C# side
 raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
 frame's.

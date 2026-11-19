@@ -73,7 +73,7 @@ use voxear_scene::{
 };
 
 use crate::{
-    lighting::Lighting,
+    lighting::{LampsData, Lighting, LightingFile, SunData, WeatherData},
     audio::{AudioListener, AudioSource, AudioSourceData, audio_source_data},
     content::{Content, MaterialData, MaterialSource, linear, srgb},
     engine::{EditBehaviours, Engine},
@@ -99,14 +99,115 @@ pub struct SceneFile {
     /// A preset and the settings that differ from it, kept as written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post: Option<toml::Table>,
+    /// The sun's look and shadows, as lighting settings write `[sun]`, where
+    /// the scene names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sun: Option<SunData>,
+    /// How lamps cast their shadows, as lighting settings write `[lamps]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lamps: Option<LampsData>,
+    /// The weather the level is in, as lighting settings write `[weather]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weather: Option<toml::Table>,
     #[serde(default, rename = "obj", skip_serializing_if = "Vec::is_empty")]
     pub objs: Vec<ObjData>,
 }
 
 impl Default for SceneFile {
     fn default() -> Self {
-        Self { format: SCENE_FORMAT, lighting: None, sky: None, post: None, objs: Vec::new() }
+        Self {
+            format: SCENE_FORMAT,
+            lighting: None,
+            sky: None,
+            post: None,
+            sun: None,
+            lamps: None,
+            weather: None,
+            objs: Vec::new(),
+        }
     }
+}
+
+impl SceneFile {
+    /// Its own sun, lamps and weather.
+    pub fn own_sun(&self) -> OwnSun {
+        OwnSun { sun: self.sun, lamps: self.lamps, weather: self.weather.clone() }
+    }
+
+    /// Gives it `own` sun, lamps and weather.
+    pub fn set_own_sun(&mut self, own: OwnSun) {
+        (self.sun, self.lamps, self.weather) = (own.sun, own.lamps, own.weather);
+    }
+
+    /// Whether it sets any of the level's lighting: lighting settings it
+    /// names, or a sky, post-processing, sun, lamps or weather of its own.
+    pub fn has_environment(&self) -> bool {
+        self.lighting.is_some() || self.sky.is_some() || self.post.is_some() || !self.own_sun().is_empty()
+    }
+}
+
+/// A scene's own sun, lamps and weather, as lighting settings write them:
+/// what it is lit by, with its own `[sky]` and `[post]`, where it names no
+/// lighting settings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OwnSun {
+    pub sun: Option<SunData>,
+    pub lamps: Option<LampsData>,
+    pub weather: Option<toml::Table>,
+}
+
+impl OwnSun {
+    pub fn is_empty(&self) -> bool {
+        self.sun.is_none() && self.lamps.is_none() && self.weather.is_none()
+    }
+}
+
+/// The sun, lamps and weather the scene lighting the level sets of its own,
+/// as it writes them, so a save writes them back.
+pub struct SceneSun(pub OwnSun);
+
+/// A scene's own sky, post-processing, sun, lamps and weather as lighting
+/// settings write them: the look its `[post]` picks, its `[sky]`, and the
+/// rest of its `[post]`.
+pub fn own_lighting(sky: Option<SkyData>, post: Option<&toml::Table>, own: &OwnSun) -> Result<LightingFile> {
+    let mut post = post.cloned().unwrap_or_default();
+    let look = post.remove("look").and_then(|look| look.as_str().map(str::to_string));
+    Ok(LightingFile {
+        look,
+        sky: sky.map(toml::Table::try_from).transpose().context("writing the scene's sky")?,
+        sun: own.sun,
+        lamps: own.lamps,
+        post: (!post.is_empty()).then_some(post),
+        weather: own.weather.clone(),
+        ..LightingFile::default()
+    })
+}
+
+/// A scene's own settings from lighting settings, as [`own_lighting`] writes
+/// them: its `[sky]`, `[post]` and the rest. A `[sky]` that writes only some
+/// settings is laid over `sky`, the scene's sky before, or its look's.
+pub fn split_own_lighting(
+    file: &LightingFile,
+    sky: Option<SkyData>,
+) -> Result<(Option<SkyData>, Option<toml::Table>, OwnSun)> {
+    let sky = match &file.sky {
+        Some(written) => {
+            let look = file.look.as_deref().map(LookName::parse).transpose()?.map(Look::of);
+            let before = sky.unwrap_or_else(|| sky_data(&look.map_or_else(Sky::default, |look| look.sky)));
+            let mut table = toml::Table::try_from(before).context("writing the scene's sky")?;
+            crate::lighting::merge(&mut table, written);
+            Some(table.try_into().context("reading the scene's [sky]")?)
+        }
+        None => None,
+    };
+    let mut post = file.post.clone().unwrap_or_default();
+    if let Some(look) = &file.look {
+        post.insert("look".into(), toml::Value::String(look.clone()));
+    }
+    let post = (!post.is_empty()).then_some(post);
+    // Checked as lighting settings would be, so a scene is never given one it could not be lit by.
+    file.resolve()?;
+    Ok((sky, post, OwnSun { sun: file.sun, lamps: file.lamps, weather: file.weather.clone() }))
 }
 
 /// The `[post]` table the current post-processing came from, so saving a
@@ -1865,7 +1966,8 @@ pub fn spawn(
         None => None,
     };
     let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
-    apply_environment(engine, Environment { lighting, sky: scene.sky, post: scene.post.as_ref() })?;
+    let own = scene.own_sun();
+    apply_environment(engine, Environment { lighting, sky: scene.sky, post: scene.post.as_ref(), own: Some(&own) })?;
     spawn_objs(engine, content, renderer, scene, skip)
 }
 
@@ -1886,18 +1988,35 @@ pub fn spawn_objs(
 
 /// Sets the level's sky and post-processing from a scene that has them:
 /// the lighting settings it names, which are its lighting whole, or
-/// failing those, its own `[sky]` and `[post]`. What a scene leaves out
-/// stays as it was.
+/// failing those, its own `[sky]`, `[post]`, `[sun]`, `[lamps]` and
+/// `[weather]`. What a scene leaves out stays as it was.
 pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> Result<()> {
-    let Environment { lighting, sky, post } = environment;
+    let Environment { lighting, sky, post, own } = environment;
     let (sky, post) = if lighting.is_some() { (None, None) } else { (sky, post) };
+    let own = own.filter(|own| lighting.is_none() && !own.is_empty());
     // A look, picked in [post], brings its sun, and its sky where the scene has none of its own.
     let look = match post.and_then(|table| table.get("look")).and_then(|value| value.as_str()) {
         Some(name) => Some(Look::of(LookName::parse(name)?)),
         None => None,
     };
     let base_sky = look.map(|look| look.sky).or_else(|| lighting.map(|(_, lit)| lit.sky));
-    let sun = look.map(|look| look.sun).or_else(|| lighting.map(|(_, lit)| lit.sun));
+    let mut sun = look.map(|look| look.sun).or_else(|| lighting.map(|(_, lit)| lit.sun));
+    // The scene's own sun and lamps over its look's, or over a plain sun: never over the world's, which may be
+    // this scene's own already, so applying it again changes nothing.
+    if let Some(own) = own.filter(|own| own.sun.is_some() || own.lamps.is_some()) {
+        let mut base = sun.unwrap_or_else(crate::lighting::plain_sun);
+        if let Some(data) = own.sun {
+            data.lay_over(&mut base);
+        }
+        if let Some(shadows) = own.lamps.and_then(|lamps| lamps.shadows) {
+            base.lamp_shadows = shadows.lamp_shadows();
+        }
+        sun = Some(base);
+    }
+    let weather = match own.and_then(|own| own.weather.clone()) {
+        Some(table) => Some(table.try_into::<WeatherData>().context("reading the scene's [weather]")?.weather()),
+        None => None,
+    };
     // A scene without lighting or [post] leaves the look as it was; one with either and no look drops it, sky and all.
     match (sun, lighting.is_some() || post.is_some()) {
         (Some(sun), _) => drop(engine.world.insert_resource(sun)),
@@ -1916,6 +2035,15 @@ pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> R
     if let Some(sky) = sky {
         engine.world.remove_resource::<SkyFromLook>();
         engine.world.insert_resource(sky_from_data(&sky));
+    }
+    if let Some(weather) = weather {
+        engine.world.insert_resource(weather);
+    }
+    match (lighting, own) {
+        (Some(_), _) => drop(engine.world.remove_resource::<SceneSun>()),
+        (None, Some(own)) => drop(engine.world.insert_resource(SceneSun(own.clone()))),
+        (None, None) if post.is_some() || sky.is_some() => drop(engine.world.remove_resource::<SceneSun>()),
+        (None, None) => {}
     }
     match lighting {
         Some((reference, lit)) => {
@@ -1944,12 +2072,14 @@ pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> R
 }
 
 /// What a scene sets its environment from: its lighting settings, as the
-/// scene names them and worked out, and its own `[sky]` and `[post]`.
+/// scene names them and worked out, and its own `[sky]`, `[post]`, sun,
+/// lamps and weather.
 #[derive(Clone, Copy, Default)]
 pub struct Environment<'a> {
     pub lighting: Option<(&'a str, &'a Lighting)>,
     pub sky: Option<SkyData>,
     pub post: Option<&'a toml::Table>,
+    pub own: Option<&'a OwnSun>,
 }
 
 /// The sky as a scene file writes it, in sRGB.
@@ -2114,7 +2244,11 @@ pub fn capture_scene_with_ids(
     let sky = world.resource::<Sky>().filter(|_| world.resource::<SkyFromLook>().is_none()).map(sky_data);
     let post = world.resource::<PostTable>().map(|table| table.0.clone());
     let lighting = world.resource::<SceneLighting>().map(|lighting| lighting.0.clone());
-    (SceneFile { format: SCENE_FORMAT, lighting, sky, post, objs }, ids)
+    let mut scene = SceneFile { lighting, sky, post, objs, ..SceneFile::default() };
+    if let Some(own) = world.resource::<SceneSun>() {
+        scene.set_own_sun(own.0.clone());
+    }
+    (scene, ids)
 }
 
 /// An instance of `guid` whose root was captured as `root`, with everything
@@ -3287,7 +3421,8 @@ mod tests {
         let lit = file.resolve().unwrap();
         let mut engine = Engine::new();
         let own: toml::Table = toml::from_str("[bloom]\nscatter = 0.5").unwrap();
-        let environment = Environment { lighting: Some(("Lighting/Dusk.lighting", &lit)), sky: None, post: Some(&own) };
+        let environment =
+            Environment { lighting: Some(("Lighting/Dusk.lighting", &lit)), sky: None, post: Some(&own), own: None };
         apply_environment(&mut engine, environment).unwrap();
         assert_eq!(engine.world.resource::<Sky>().map(|sky| sky.haze), Some(2.5), "the lighting's sky");
         assert!(engine.world.resource::<SkyFromLook>().is_some(), "which a save leaves out");
@@ -3300,11 +3435,52 @@ mod tests {
     }
 
     #[test]
+    fn a_scenes_own_sun_lamps_and_weather_light_it_as_lighting_settings_would() {
+        let text = "format = 1\n[post]\nlook = \"storybook\"\n[sun]\nshadows = \"cascades\"\nshadow_distance = 60.0\n\
+                    [lamps]\nshadows = \"atlas\"\n[weather]\nkind = \"rain\"\n";
+        let scene = parse(text, "Own.scene").unwrap();
+        let own = scene.own_sun();
+        let mut engine = Engine::new();
+        let environment = Environment { post: scene.post.as_ref(), own: Some(&own), ..Environment::default() };
+        apply_environment(&mut engine, environment).unwrap();
+
+        // The same as lighting settings that write them.
+        let lit = own_lighting(scene.sky, scene.post.as_ref(), &own).unwrap().resolve().unwrap();
+        let sun = engine.world.resource::<SunLook>().copied().unwrap();
+        assert_eq!(sun, lit.sun, "the look's sun with the scene's own over it");
+        assert_eq!(sun.sun_shadows, voxear_render::SunShadows::Cascades);
+        assert_eq!((sun.shadow_distance, sun.lamp_shadows), (60.0, voxear_render::LampShadows::Atlas));
+        assert_eq!(engine.world.resource::<voxear_render::weather::Weather>().copied(), Some(lit.weather.weather()));
+        assert_eq!(engine.world.resource::<SceneSun>().map(|sun| &sun.0), Some(&own), "kept to save back");
+        assert!(toml::to_string(&scene).unwrap().contains("[sun]"), "and written back as read");
+
+        // Applied again, as the editor does after each change, it is the same, not laid over itself.
+        apply_environment(&mut engine, environment).unwrap();
+        assert_eq!(engine.world.resource::<SunLook>().copied(), Some(sun));
+
+        // Lighting settings named are the scene's lighting whole, and its own sun waits until it names none.
+        let named =
+            Environment { lighting: Some(("builtin:golden_hour", &lit)), own: Some(&own), ..Environment::default() };
+        apply_environment(&mut engine, named).unwrap();
+        assert!(engine.world.resource::<SceneSun>().is_none());
+
+        // A scene's own settings go to lighting settings and back unchanged; a [sky] writing only some is laid over.
+        let mut written = own_lighting(None, scene.post.as_ref(), &own).unwrap();
+        written.sky = Some(toml::from_str("haze = 2.5").unwrap());
+        let (sky, post, back) = split_own_lighting(&written, None).unwrap();
+        assert_eq!((post.as_ref(), &back), (scene.post.as_ref(), &own));
+        let storybook = sky_data(&Look::of(LookName::Storybook).sky);
+        assert_eq!(sky.map(|sky| (sky.haze, sky.zenith)), Some((2.5, storybook.zenith)), "over the look's sky");
+        written.weather = Some(toml::from_str("kind = \"locusts\"").unwrap());
+        assert!(split_own_lighting(&written, None).is_err(), "a scene is never given lighting it could not be lit by");
+    }
+
+    #[test]
     fn a_look_brings_its_sun_and_its_sky_where_the_scene_has_none() {
         let post = |text: &str| toml::from_str::<toml::Table>(text).unwrap();
         let apply = |engine: &mut Engine, sky: Option<SkyData>, text: Option<&str>| {
             let table = text.map(post);
-            apply_environment(engine, Environment { lighting: None, sky, post: table.as_ref() })
+            apply_environment(engine, Environment { lighting: None, sky, post: table.as_ref(), own: None })
         };
         let mut engine = Engine::new();
         apply(&mut engine, None, Some("look = \"storybook\"")).unwrap();

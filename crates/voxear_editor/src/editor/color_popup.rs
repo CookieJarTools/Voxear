@@ -35,7 +35,7 @@ enum Target {
     Setting(&'static str),
     /// A colour of lighting settings, as the Lighting page or a `.lighting`
     /// asset's Inspector shows them: their file, and where it is in it.
-    Lighting(std::path::PathBuf, &'static [&'static str]),
+    Lighting(crate::lighting_panel::SettingsOf, &'static [&'static str]),
 }
 
 pub(super) struct ColorPopup {
@@ -99,7 +99,7 @@ impl Editor {
         let clicked = lighting.or_else(|| self.inspector.asset_view().and_then(|view| view.lighting_color_clicked(&self.ui)));
         if let Some(clicked) = clicked {
             let title = clicked.path.last().copied().unwrap_or("Colour").replace('_', " ");
-            let target = Target::Lighting(clicked.file, clicked.path);
+            let target = Target::Lighting(clicked.of, clicked.path);
             return self.open_color(target, clicked.swatch, &title, (PickedColor::srgb(clicked.srgb), false));
         }
         let Some(&(_, swatch)) = self.color_popup.open.as_ref() else { return };
@@ -136,8 +136,8 @@ impl Editor {
                     self.asset_action(action, renderer);
                 }
             }
-            Some((Target::Lighting(file, path), _)) => {
-                let action = crate::lighting_panel::set_color(file.clone(), path, color.srgb);
+            Some((Target::Lighting(of, path), _)) => {
+                let action = crate::lighting_panel::set_color(of.clone(), path, color.srgb);
                 self.lighting_action(action, renderer);
             }
             Some((Target::Setting(key), _)) => {

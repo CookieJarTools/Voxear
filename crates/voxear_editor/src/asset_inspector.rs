@@ -1721,7 +1721,8 @@ fn show_scene_lighting(ui: &mut Ui, panel: &mut LightingPanel, game: &Game, path
         Ok((current, own)) => (current, Ok(own)),
         Err(error) => (None, Err(error)),
     };
-    panel.show_scene(ui, game, current, own);
+    let open = game.levels.own_scene_path() == Some(path);
+    panel.show_scene(ui, game, current, own, open);
 }
 
 /// A shader's name, functions and properties, as it declares them, and its

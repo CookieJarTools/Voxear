@@ -727,12 +727,13 @@ pub const CALLS: &[CallInfo] = &[
                 .lighting file writes them, the paths `lighting.set` takes, and which upscalers run on this GPU.",
         args: &[],
         changes: false,
-        returns: "{ lighting, changeable, settings, paths: [path], upscalers: [{ name, runs, why }] }",
+        returns: "{ lighting, changeable, own, settings, paths: [path], upscalers: [{ name, runs, why }] }",
     },
     CallInfo {
         name: "lighting.set",
-        about: "Changes one setting of the open scene's lighting settings, as the Lighting page does, as a step to \
-                undo: `post.anti_aliasing.upscaler` to `fsr`, `post.anti_aliasing.quality` to `performance`.",
+        about: "Changes one setting of the open scene's lighting, as the Lighting page does, as a step to undo: in \
+                the lighting settings it names, or in its own while it names none. `sun.shadows` to `cascades`, \
+                `post.anti_aliasing.upscaler` to `fsr`.",
         args: &[
             arg("path", ArgKind::Text, "As `lighting.get` lists them under `paths`."),
             arg("value", ArgKind::Value, "A switch, a number, a word or a list of numbers; null takes it out."),

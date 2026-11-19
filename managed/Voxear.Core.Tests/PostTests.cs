@@ -51,6 +51,26 @@ internal static class PostTests
 	}
 
 	[Test]
+	private static void ShadowsChangeOverTheLevelsAndReset()
+	{
+		Lighting.ResetShadows();
+		Check.True(Lighting.Shadows.Sun == SunShadows.Virtual && Lighting.Shadows.Lamps == LampShadows.Virtual, "virtual");
+		Lighting.ChangeShadows(shadows =>
+		{
+			shadows.Sun = SunShadows.Cascades;
+			shadows.Distance = 120f;
+		});
+		Check.True(Lighting.Shadows.Sun == SunShadows.Cascades, "cascades");
+		Check.Near(120f, Lighting.Shadows.Distance);
+		Check.True(Lighting.Shadows.Lamps == LampShadows.Virtual, "the lamps left as they were");
+		Lighting.ResetShadows();
+		Check.True(Lighting.Shadows.Sun == SunShadows.Virtual, "reset");
+		var read = ShadowSettings.FromJson("{\"sun\":\"cascades\",\"lamps\":\"atlas\",\"distance\":60,\"split\":0.5}");
+		Check.True(read.Sun == SunShadows.Cascades && read.Lamps == LampShadows.Atlas, read.ToString());
+		Check.Near(0.5f, read.Split);
+	}
+
+	[Test]
 	private static void HdrIsOffAwayFromTheEngine()
 	{
 		Check.True(Screen.Hdr == HdrMode.Off && Screen.HdrOutput == HdrOutput.Sdr && !Screen.HdrAvailable, "SDR");

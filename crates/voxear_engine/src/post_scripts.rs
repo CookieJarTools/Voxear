@@ -1,12 +1,17 @@
 //! Post-processing as scripts reach it: `Post` in Voxear.Core reads the
 //! level's settings as they are in effect and lays settings of its own over
 //! them (`voxear_render::ScriptPost`), through the one call set here. Both
-//! go as JSON laid out as a scene's `[post]` writes its settings.
+//! go as JSON laid out as a scene's `[post]` writes its settings. The same
+//! call answers `Lighting.Shadows`: how the sun's and lamps' shadows are
+//! drawn, read as a frame draws them and set over the level's
+//! (`voxear_render::ScriptShadows`).
 
 use anyhow::{Context, Result, bail};
 use voxear_ecs::World;
-use voxear_render::{PostProcess, ScriptPost, WornLook};
-use voxear_scripting::{POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET};
+use voxear_render::{LampShadows, PostProcess, ScriptPost, ScriptShadows, ShadowsInEffect, SunShadows, WornLook};
+use voxear_scripting::{
+    POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET,
+};
 
 /// Sets what answers `Post` in scripts.
 pub(crate) fn register() {
@@ -32,8 +37,59 @@ fn call(world: &mut World, what: i32, text: &str) -> Result<String> {
             world.remove_resource::<ScriptPost>();
             Ok(String::new())
         }
+        SHADOWS_IN_EFFECT => {
+            let shadows = ShadowsInEffect::of(world);
+            let changed = world.resource::<ScriptShadows>().is_some();
+            Ok(serde_json::json!({
+                "sun": shadows.sun.name(),
+                "lamps": shadows.lamps.name(),
+                "distance": shadows.distance,
+                "split": shadows.split,
+                "changed": changed,
+            })
+            .to_string())
+        }
+        SHADOWS_SET => {
+            let json: serde_json::Value = serde_json::from_str(text).context("reading the shadows")?;
+            set_shadows(world, &json)?;
+            Ok(String::new())
+        }
+        SHADOWS_RESET => {
+            world.remove_resource::<ScriptShadows>();
+            Ok(String::new())
+        }
         _ => bail!("no such call ({what})"),
     }
+}
+
+/// Lays the shadow settings `json` gives (`sun`, `lamps`, `distance` and
+/// `split`) over those scripts set before; the rest stay as they were.
+/// Nothing changes where any is refused.
+pub fn set_shadows(world: &mut World, json: &serde_json::Value) -> Result<()> {
+    let mut shadows = world.resource::<ScriptShadows>().copied().unwrap_or_default();
+    let fields = json.as_object().context("the shadows are not a table of settings")?;
+    for (key, value) in fields {
+        match key.as_str() {
+            "sun" => {
+                let name = value.as_str().context("`sun` is not a name")?;
+                shadows.sun = Some(SunShadows::named(name).with_context(|| format!("no sun shadows `{name}`"))?);
+            }
+            "lamps" => {
+                let name = value.as_str().context("`lamps` is not a name")?;
+                shadows.lamps = Some(LampShadows::named(name).with_context(|| format!("no lamp shadows `{name}`"))?);
+            }
+            "distance" => {
+                shadows.distance =
+                    Some((value.as_f64().context("`distance` is not a number")? as f32).clamp(5.0, 1000.0))
+            }
+            "split" => {
+                shadows.split = Some((value.as_f64().context("`split` is not a number")? as f32).clamp(0.0, 1.0))
+            }
+            other => bail!("no shadow setting `{other}`"),
+        }
+    }
+    world.insert_resource(shadows);
+    Ok(())
 }
 
 /// Lays `overrides`, as `[post]` writes settings, over the level's, in place
@@ -94,5 +150,31 @@ mod tests {
         assert_eq!(in_effect(&world).bloom.intensity, 0.5, "kept after a refusal");
         call(&mut world, POST_RESET, "").unwrap();
         assert_eq!(in_effect(&world), PostProcess::cinematic());
+    }
+
+    #[test]
+    fn scripts_read_and_set_the_shadows_over_the_level() {
+        let mut world = World::new();
+        let mut sun = crate::lighting::plain_sun();
+        sun.shadow_distance = 120.0;
+        world.insert_resource(sun);
+        let seen = |world: &mut World| -> serde_json::Value {
+            serde_json::from_str(&call(world, SHADOWS_IN_EFFECT, "").unwrap()).unwrap()
+        };
+        let level = seen(&mut world);
+        assert_eq!((level["sun"].as_str(), level["lamps"].as_str()), (Some("virtual"), Some("virtual")));
+        assert_eq!((level["distance"].as_f64(), level["changed"].as_bool()), (Some(120.0), Some(false)));
+
+        call(&mut world, SHADOWS_SET, r#"{"sun":"cascades","distance":60}"#).unwrap();
+        call(&mut world, SHADOWS_SET, r#"{"lamps":"atlas"}"#).unwrap();
+        let now = seen(&mut world);
+        assert_eq!((now["sun"].as_str(), now["lamps"].as_str()), (Some("cascades"), Some("atlas")), "both kept");
+        assert_eq!((now["distance"].as_f64(), now["changed"].as_bool()), (Some(60.0), Some(true)));
+        assert!(call(&mut world, SHADOWS_SET, r#"{"sun":"soft"}"#).is_err(), "a way that does not exist");
+        assert!(call(&mut world, SHADOWS_SET, r#"{"sharpness":1}"#).is_err(), "a setting that does not exist");
+        assert_eq!(seen(&mut world)["sun"].as_str(), Some("cascades"), "kept after a refusal");
+
+        call(&mut world, SHADOWS_RESET, "").unwrap();
+        assert_eq!(seen(&mut world), level, "the level's again");
     }
 }

@@ -16,7 +16,7 @@ use voxear_assets::{AssetKind, AssetRef};
 use voxear_engine::{
     Game,
     lighting::LightingFile,
-    scene_file::{self, PostTable, SkyData, SkyFromLook, SkyModeData, sky_data},
+    scene_file::{self, PostTable, SkyFromLook, SkyModeData, sky_data},
 };
 use voxear_render::{LookName, PostProcess, Sky};
 use voxear_ui::{Color, NodeId, Style, Ui};
@@ -449,9 +449,9 @@ struct Row {
 pub enum LightingAction {
     /// The active scene names other lighting settings, or none.
     SetScene(Option<String>),
-    /// A setting of the lighting shown is written into its file, or taken
-    /// out of it with `None`.
-    Set { file: PathBuf, path: &'static [&'static str], value: Option<toml_edit::Value> },
+    /// A setting of the lighting shown is changed, or taken out with `None`:
+    /// written into its file, or into the active scene's own.
+    Set { of: SettingsOf, path: &'static [&'static str], value: Option<toml_edit::Value> },
     /// New lighting settings are made, a copy of those shown, and named in
     /// the active scene.
     Copy,
@@ -474,9 +474,9 @@ impl PartialEq for LightingAction {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::SetScene(a), Self::SetScene(b)) => a == b,
-            (Self::Set { file, path, value }, Self::Set { file: f, path: p, value: v }) => {
+            (Self::Set { of, path, value }, Self::Set { of: o, path: p, value: v }) => {
                 let text = |value: &Option<toml_edit::Value>| value.as_ref().map(|v| v.to_string());
-                file == f && path == p && text(value) == text(v)
+                of == o && path == p && text(value) == text(v)
             }
             (Self::Copy, Self::Copy) | (Self::Bake, Self::Bake) => true,
             (Self::Wear(a), Self::Wear(b)) => a == b,
@@ -592,7 +592,7 @@ impl LightingPanel {
         self.fields.set_pictures(ui, pictures(game));
         let current = game.levels.scene_lighting().map(str::to_string);
         let own = world_own(game);
-        self.show_scene(ui, game, current, own);
+        self.show_scene(ui, game, current, own, true);
         self.show_looks(ui, game);
         self.show_textures(ui, game);
         self.show_shader_packs(ui, game);
@@ -675,8 +675,16 @@ impl LightingPanel {
     }
 
     /// Shows a scene's lighting: `current`, the lighting settings it names,
-    /// or with none, `own`, its own sky and post-processing.
-    pub fn show_scene(&mut self, ui: &mut Ui, game: &Game, current: Option<String>, own: Result<LightingFile>) {
+    /// or with none, `own`, its own sky, post-processing, sun, lamps and
+    /// weather, changeable when `own_editable`, as the active scene's are.
+    pub fn show_scene(
+        &mut self,
+        ui: &mut Ui,
+        game: &Game,
+        current: Option<String>,
+        own: Result<LightingFile>,
+        own_editable: bool,
+    ) {
         let mut labels = vec!["None".to_string()];
         let mut choices = vec![None];
         for (_, key, title) in LookName::ALL {
@@ -717,9 +725,8 @@ impl LightingPanel {
         };
         let note = match (&current, &file, &read) {
             (_, _, Err(error)) => format!("{error:#}"),
-            (None, ..) => {
-                "The scene sets its own sky and post-processing. Make lighting settings to share them.".into()
-            }
+            (None, ..) if own_editable => "The scene's own lighting. Make lighting settings to share it.".into(),
+            (None, ..) => "The scene's own lighting. Open the scene to change it.".into(),
             (Some(_), None, _) => "Built-in lighting. Make a copy to change it.".into(),
             (Some(_), Some(_), _) => String::new(),
         };
@@ -727,8 +734,12 @@ impl LightingPanel {
         ui.set_text(self.note, &note);
         ui.set_visible(self.copy, file.is_none());
         ui.set_text(self.copy, if current.is_none() { "New Lighting Settings" } else { "Make a Copy" });
+        let of = match (&current, file) {
+            (Some(_), file) => file.map(SettingsOf::File),
+            (None, _) => (own_editable && read.is_ok()).then_some(SettingsOf::Scene),
+        };
         let values = read.and_then(|file| effective(&file)).unwrap_or_default();
-        self.fields.show(ui, file, values);
+        self.fields.show(ui, of, values);
     }
 
     /// What was changed on the page this frame.
@@ -808,7 +819,7 @@ impl LightingPanel {
 /// A colour setting's swatch clicked: the file and setting it is, the
 /// swatch, and its colour.
 pub struct ColorClicked {
-    pub file: PathBuf,
+    pub of: SettingsOf,
     pub path: &'static [&'static str],
     pub swatch: NodeId,
     pub srgb: [f32; 3],
@@ -817,13 +828,21 @@ pub struct ColorClicked {
 /// Every setting of lighting settings, a tab for each group, as the Lighting
 /// page and a `.lighting` asset's Inspector show them; changed in place
 /// when they are a file of the project's.
+/// Whose lighting settings a change is to: a file of the project's, or the
+/// active scene's own, while it names none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingsOf {
+    File(PathBuf),
+    Scene,
+}
+
 pub struct LightingFields {
     tabs: Vec<(&'static str, NodeId)>,
     headings: Vec<(&'static str, NodeId)>,
     group: &'static str,
     rows: Vec<Row>,
-    /// The file shown, when it is the project's to change.
-    file: Option<PathBuf>,
+    /// Whose settings are shown, when they can be changed.
+    of: Option<SettingsOf>,
     /// Every setting as it is in effect; for a look pack, only what the
     /// pack writes.
     values: toml::Table,
@@ -922,16 +941,16 @@ impl LightingFields {
         let group = rows[0].info.group;
         let values = toml::Table::new();
         let mut fields =
-            Self { tabs, headings, group, rows, file: None, values, pack, pictures: Vec::new(), editable: false };
+            Self { tabs, headings, group, rows, of: None, values, pack, pictures: Vec::new(), editable: false };
         fields.show_group(ui);
         fields
     }
 
-    /// Shows lighting settings' values, in effect, changeable when `file` is
-    /// the project's file of them.
-    pub fn show(&mut self, ui: &mut Ui, file: Option<PathBuf>, values: toml::Table) {
-        let editable = file.is_some();
-        self.file = file;
+    /// Shows lighting settings' values, in effect, changeable when `of` says
+    /// whose they are: the project's file of them, or the scene's own.
+    pub fn show(&mut self, ui: &mut Ui, of: Option<SettingsOf>, values: toml::Table) {
+        let editable = of.is_some();
+        self.of = of;
         self.show_values(ui, editable, values);
     }
 
@@ -975,7 +994,7 @@ impl LightingFields {
             toml::from_str::<toml::Table>(&text).with_context(|| format!("reading {}", file.display()))
         });
         match read {
-            Ok(written) => self.show(ui, Some(file.to_path_buf()), written),
+            Ok(written) => self.show(ui, Some(SettingsOf::File(file.to_path_buf())), written),
             Err(error) => {
                 tracing::error!("{error:#}");
                 self.show(ui, None, toml::Table::new());
@@ -993,7 +1012,7 @@ impl LightingFields {
             .with_context(|| format!("reading {}", file.display()))
             .and_then(|text| toml::from_str::<LightingFile>(&text).with_context(|| format!("reading {}", file.display())));
         match read.and_then(|lighting| effective(&lighting)) {
-            Ok(values) => self.show(ui, Some(file.to_path_buf()), values),
+            Ok(values) => self.show(ui, Some(SettingsOf::File(file.to_path_buf())), values),
             Err(error) => {
                 tracing::error!("{error:#}");
                 self.show(ui, None, toml::Table::new());
@@ -1004,7 +1023,7 @@ impl LightingFields {
     /// A setting changed this frame, as a change to make to the file.
     pub fn update(&mut self, ui: &mut Ui) -> Option<LightingAction> {
         let (path, value) = self.changed(ui)?;
-        Some(LightingAction::Set { file: self.file.clone()?, path, value })
+        Some(LightingAction::Set { of: self.of.clone()?, path, value })
     }
 
     /// A setting changed this frame: where it is, as a `.lighting` file
@@ -1071,11 +1090,11 @@ impl LightingFields {
 
     /// The colour setting whose swatch was clicked this frame.
     pub fn color_clicked(&self, ui: &Ui) -> Option<ColorClicked> {
-        let file = self.file.clone()?;
+        let of = self.of.clone()?;
         self.rows.iter().find_map(|row| match row.control {
             Control::Color(swatch) if ui.clicked(swatch) => {
                 let srgb = find(&self.values, row.info.path).and_then(rgb).unwrap_or([1.0; 3]);
-                Some(ColorClicked { file: file.clone(), path: row.info.path, swatch, srgb })
+                Some(ColorClicked { of: of.clone(), path: row.info.path, swatch, srgb })
             }
             _ => None,
         })
@@ -1113,16 +1132,16 @@ pub fn setting_paths() -> Vec<String> {
 }
 
 /// The open scene's lighting as the page shows it: the settings it names,
-/// their file when it is the project's to change, and every setting in
-/// effect, laid out as a `.lighting` file writes them.
-pub fn scene_effective(game: &mut Game) -> Result<(Option<String>, Option<PathBuf>, toml::Table)> {
+/// whose they are to change (their file when it is the project's, or the
+/// scene's own while it names none), and every setting in effect, laid out
+/// as a `.lighting` file writes them.
+pub fn scene_effective(game: &mut Game) -> Result<(Option<String>, Option<SettingsOf>, toml::Table)> {
     let current = game.levels.scene_lighting().map(str::to_string);
-    let file = current.as_deref().and_then(|reference| project_file(game, reference));
-    let lighting = match current.as_deref() {
-        Some(reference) => read(game, reference)?,
-        None => world_own(game)?,
+    let (lighting, of) = match current.as_deref() {
+        Some(reference) => (read(game, reference)?, project_file(game, reference).map(SettingsOf::File)),
+        None => (world_own(game)?, game.levels.own_lighting().is_some().then_some(SettingsOf::Scene)),
     };
-    Ok((current, file, effective(&lighting)?))
+    Ok((current, of, effective(&lighting)?))
 }
 
 /// The project's pictures, by their project paths, as a picture setting's
@@ -1174,8 +1193,8 @@ fn applies(values: &toml::Table, when: When) -> bool {
 }
 
 /// The change to make for a colour picked for a setting.
-pub fn set_color(file: PathBuf, path: &'static [&'static str], srgb: [f32; 3]) -> LightingAction {
-    LightingAction::Set { file, path, value: Some(color_value(srgb)) }
+pub fn set_color(of: SettingsOf, path: &'static [&'static str], srgb: [f32; 3]) -> LightingAction {
+    LightingAction::Set { of, path, value: Some(color_value(srgb)) }
 }
 
 /// The project's file of lighting settings a scene names, when it is one.
@@ -1264,38 +1283,34 @@ pub fn own_text(own: &LightingFile) -> Result<String> {
     Ok(format!("{COPY_HEADER}{}", toml::to_string(&table)?))
 }
 
-/// A scene's own sky and post-processing as lighting settings: the look its
-/// `[post]` picks, which brings its sky and sun, its `[sky]`, and the rest
-/// of its `[post]`.
-pub fn own_lighting(sky: Option<SkyData>, post: Option<&toml::Table>) -> Result<LightingFile> {
-    let mut file = LightingFile { format: voxear_engine::lighting::LIGHTING_FORMAT, ..LightingFile::default() };
-    let mut post = post.cloned().unwrap_or_default();
-    file.look = post.remove("look").and_then(|look| look.as_str().map(str::to_string));
-    file.post = (!post.is_empty()).then_some(post);
-    file.sky = sky.map(|sky| toml::Table::try_from(sky)).transpose()?;
-    Ok(file)
-}
-
 /// The lighting settings the scene at `path` names, as the editor holds
-/// them while it is open, and its own sky and post-processing, from its
-/// file.
+/// them while it is open, and its own sky, post-processing, sun, lamps and
+/// weather: the editor's while it is the active scene, else from its file.
 pub fn scene_lighting(game: &Game, path: &str) -> Result<(Option<String>, LightingFile)> {
     let scene = scene_file::read(&game.content.db().file(path))?;
     let current = match game.levels.lighting_of(path) {
         Some(open) => open.map(str::to_string),
         None => scene.lighting.clone(),
     };
-    Ok((current, own_lighting(scene.sky, scene.post.as_ref())?))
+    let own = match game.levels.own_scene_path() == Some(path) {
+        true => game.levels.own_lighting().context("no scene is open")??,
+        false => scene_file::own_lighting(scene.sky, scene.post.as_ref(), &scene.own_sun())?,
+    };
+    Ok((current, own))
 }
 
-/// The sky and post-processing the level has from its scenes, as lighting
-/// settings: the open scene's own when it names none.
+/// The lighting the level has from its scenes, as lighting settings: the
+/// active scene's own when it names none.
 fn world_own(game: &Game) -> Result<LightingFile> {
+    if let Some(own) = game.levels.own_lighting() {
+        return own;
+    }
     let world = &game.engine.world;
     let post = world.resource::<PostTable>().map(|table| &table.0);
     let sky = world.resource::<Sky>().copied().unwrap_or_default();
     let sky = world.resource::<SkyFromLook>().is_none().then(|| sky_data(&sky));
-    own_lighting(sky, post)
+    let own = world.resource::<scene_file::SceneSun>().map(|own| own.0.clone()).unwrap_or_default();
+    scene_file::own_lighting(sky, post, &own)
 }
 
 /// Rounds every number in `table` to four decimals, so a file written from
@@ -1578,7 +1593,14 @@ fn format_number(value: f64) -> String {
 /// everything else in the file as written, comments and all.
 pub fn write_setting(file: &Path, path: &[&str], value: Option<toml_edit::Value>) -> Result<()> {
     let text = std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
-    let mut document: toml_edit::DocumentMut = text.parse().with_context(|| format!("reading {}", file.display()))?;
+    let text = set_in_text(&text, path, value).with_context(|| format!("changing {}", file.display()))?;
+    std::fs::write(file, text).with_context(|| format!("writing {}", file.display()))
+}
+
+/// Lighting settings' text with one setting changed, or taken out, and
+/// everything else kept as written.
+pub fn set_in_text(text: &str, path: &[&str], value: Option<toml_edit::Value>) -> Result<String> {
+    let mut document: toml_edit::DocumentMut = text.parse()?;
     let (last, tables) = path.split_last().context("no setting")?;
     let mut table = document.as_table_mut();
     for key in tables {
@@ -1587,7 +1609,7 @@ pub fn write_setting(file: &Path, path: &[&str], value: Option<toml_edit::Value>
             fresh.set_implicit(true);
             toml_edit::Item::Table(fresh)
         });
-        table = entry.as_table_mut().with_context(|| format!("`{key}` in {} is not a table", file.display()))?;
+        table = entry.as_table_mut().with_context(|| format!("`{key}` is not a table"))?;
     }
     let emptied = value.is_none();
     match value {
@@ -1598,7 +1620,7 @@ pub fn write_setting(file: &Path, path: &[&str], value: Option<toml_edit::Value>
     if emptied {
         prune(document.as_table_mut(), tables);
     }
-    std::fs::write(file, document.to_string()).with_context(|| format!("writing {}", file.display()))
+    Ok(document.to_string())
 }
 
 /// Takes the table at `path` under `table` out if nothing is left in it,

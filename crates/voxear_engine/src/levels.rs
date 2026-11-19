@@ -158,6 +158,8 @@ struct LoadedScene {
     lighting: Option<(String, Lighting)>,
     sky: Option<scene_file::SkyData>,
     post: Option<toml::Table>,
+    /// Its own sun, lamps and weather.
+    own: scene_file::OwnSun,
     /// For a `.dimension` opened as a scene, as the editor opens one: the
     /// dimension its Objs are in and its file's settings.
     dimension: Option<OpenDimension>,
@@ -279,6 +281,7 @@ impl Levels {
         }
         let (mut captured, _) = scene_file::capture_scene_with_ids(&engine.world, content, &open.objs);
         (captured.sky, captured.post) = (open.sky, open.post.clone());
+        captured.set_own_sun(open.own.clone());
         captured.lighting = open.lighting.as_ref().map(|(reference, _)| reference.clone());
         if let Some(dimension) = &open.dimension {
             let (now, on_disk) = dimension_texts(&project.join(&open.path), &dimension.settings, captured);
@@ -471,6 +474,9 @@ impl Levels {
             lighting: open.lighting.as_ref().map(|(reference, _)| reference.clone()),
             sky: open.sky,
             post: open.post.clone(),
+            sun: open.own.sun,
+            lamps: open.own.lamps,
+            weather: open.own.weather.clone(),
             ..scene_file::SceneFile::default()
         };
         let file = crate::dimensions::DimensionFile { settings: settings.clone(), scene };
@@ -623,6 +629,7 @@ impl Levels {
                 }
             }
         }
+        let own = scene.own_sun();
         let lighting = match scene.lighting {
             Some(reference) => {
                 let lit = content.lighting(&content.parse(&reference)?).with_context(|| format!("loading {reference}"))?;
@@ -631,7 +638,7 @@ impl Levels {
             None => None,
         };
         let (sky, post) = (scene.sky, scene.post);
-        Ok(LoadedScene { guid: target.guid, path: target.path.clone(), objs, lighting, sky, post, dimension })
+        Ok(LoadedScene { guid: target.guid, path: target.path.clone(), objs, lighting, sky, post, own, dimension })
     }
 
     /// The sky and post-processing come from the active scene, or failing
@@ -648,7 +655,7 @@ impl Levels {
     fn apply_level_environment(&self, engine: &mut Engine) -> Result<()> {
         if let Some((reference, lit)) = &self.applied_lighting {
             let lighting = Some((reference.as_str(), lit));
-            return scene_file::apply_environment(engine, scene_file::Environment { lighting, sky: None, post: None });
+            return scene_file::apply_environment(engine, scene_file::Environment { lighting, ..Default::default() });
         }
         let level = || self.scenes.iter().rev().filter(|s| s.dimension.is_none());
         let active = level().find(|s| Some(s.guid) == self.active);
@@ -658,13 +665,60 @@ impl Levels {
             .and_then(|s| s.lighting.as_ref())
             .or_else(|| level().find_map(|s| s.lighting.as_ref()))
             .map(|(reference, lit)| (reference.as_str(), lit));
-        scene_file::apply_environment(engine, scene_file::Environment { lighting, sky, post })
+        let own = active
+            .map(|s| &s.own)
+            .filter(|own| !own.is_empty())
+            .or_else(|| level().map(|s| &s.own).find(|own| !own.is_empty()));
+        scene_file::apply_environment(engine, scene_file::Environment { lighting, sky, post, own })
     }
 
     /// The lighting settings the active scene names, as it names them.
     pub fn scene_lighting(&self) -> Option<&str> {
         let active = self.scenes.iter().find(|s| Some(s.guid) == self.active)?;
         active.lighting.as_ref().map(|(reference, _)| reference.as_str())
+    }
+
+    /// The own sky, post-processing, sun, lamps and weather of the scene that
+    /// lights the level with them (see [`own_scene`](Self::own_scene)), as
+    /// lighting settings write them. `None` without a scene open.
+    pub fn own_lighting(&self) -> Option<Result<crate::lighting::LightingFile>> {
+        let scene = &self.scenes[self.own_scene()?];
+        Some(scene_file::own_lighting(scene.sky, scene.post.as_ref(), &scene.own))
+    }
+
+    /// Gives the scene that lights the level with its own settings other
+    /// ones, as lighting settings write them, and lights the level with
+    /// them. The scene keeps them when it is saved.
+    pub fn set_own_lighting(&mut self, engine: &mut Engine, own: &crate::lighting::LightingFile) -> Result<()> {
+        let index = self.own_scene().context("no scene is open")?;
+        // A [sky] that writes only some settings is laid over the sky the level shows, where the scene has none.
+        let world = &engine.world;
+        let shown =
+            world.resource::<scene_file::SkyFromLook>().is_none().then(|| world.resource::<voxear_render::Sky>());
+        let shown = shown.flatten().map(scene_file::sky_data);
+        let scene = &mut self.scenes[index];
+        let (sky, post, sun) = scene_file::split_own_lighting(own, scene.sky.or(shown))?;
+        (scene.sky, scene.post, scene.own) = (sky, post, sun);
+        if scene.sky.is_none() {
+            engine.world.insert_resource(scene_file::SkyFromLook);
+        }
+        self.apply_environment(engine)
+    }
+
+    /// The project path of the scene whose own settings light the level (see
+    /// [`own_scene`](Self::own_scene)), which the Lighting page changes.
+    pub fn own_scene_path(&self) -> Option<&str> {
+        Some(self.scenes[self.own_scene()?].path.as_str())
+    }
+
+    /// The loaded scene whose own settings light the level while none names
+    /// lighting settings: the active scene where it sets any, or failing
+    /// that, the last that does, or else the active scene.
+    fn own_scene(&self) -> Option<usize> {
+        let sets =
+            |s: &LoadedScene| s.dimension.is_none() && (s.sky.is_some() || s.post.is_some() || !s.own.is_empty());
+        let active = self.scenes.iter().position(|s| Some(s.guid) == self.active);
+        active.filter(|&index| sets(&self.scenes[index])).or_else(|| self.scenes.iter().rposition(sets)).or(active)
     }
 
     /// The lighting settings a loaded scene names, by its project path:
@@ -743,6 +797,7 @@ impl Levels {
             let (mut captured, ids) = scene_file::capture_scene_with_ids(&engine.world, content, &scene.objs);
             // The world's sky and lighting are the level's; each scene keeps its own.
             (captured.sky, captured.post) = (scene.sky, scene.post.clone());
+            captured.set_own_sun(scene.own.clone());
             captured.lighting = scene.lighting.as_ref().map(|(reference, _)| reference.clone());
             let file = project.join(&scene.path);
             // A particle effect open as a scene goes back to its file as an effect: its Objs' Particle Systems.
@@ -805,8 +860,9 @@ impl Levels {
         for scene in &self.scenes {
             let mut captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
             (captured.sky, captured.post) = (scene.sky, scene.post.clone());
+            captured.set_own_sun(scene.own.clone());
             captured.lighting = scene.lighting.as_ref().map(|(reference, _)| reference.clone());
-            let (lighting, sky, post) = (scene.lighting.clone(), scene.sky, scene.post.clone());
+            let (lighting, sky, post, own) = (scene.lighting.clone(), scene.sky, scene.post.clone(), scene.own.clone());
             // A dimension open in the editor goes into play as edited, made as a Portal into it would make it, so
             // it is let go as one would be once nothing needs it.
             if let Some(open) = &scene.dimension {
@@ -828,13 +884,13 @@ impl Levels {
                 crate::dimensions::made_on_demand(&mut play.world, id);
                 let dimension = Some(OpenDimension { id, settings: open.settings.clone() });
                 let (guid, path) = (scene.guid, scene.path.clone());
-                copy.scenes.push(LoadedScene { guid, path, objs, lighting, sky, post, dimension });
+                copy.scenes.push(LoadedScene { guid, path, objs, lighting, sky, post, own, dimension });
                 continue;
             }
             let objs = scene_file::spawn(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())
                 .with_context(|| format!("starting {}", scene.path))?;
             let (guid, path) = (scene.guid, scene.path.clone());
-            copy.scenes.push(LoadedScene { guid, path, objs, lighting, sky, post, dimension: None });
+            copy.scenes.push(LoadedScene { guid, path, objs, lighting, sky, post, own, dimension: None });
         }
         copy.apply_environment(play)?;
         // The level's lighting bake goes with it, as baked, even before the level is saved.

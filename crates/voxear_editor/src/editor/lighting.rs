@@ -7,7 +7,7 @@ use voxear_render::Renderer;
 
 use super::Editor;
 use crate::{
-    lighting_panel::{self, LightingAction},
+    lighting_panel::{self, LightingAction, SettingsOf},
     project_files::unique,
     project_view::ProjectEvent,
 };
@@ -83,13 +83,16 @@ impl Editor {
         let done = match action {
             LightingAction::SetScene(reference) => self.set_scene_lighting(reference.as_deref()),
             // A look pack's setting: written into its file, and the scene shown under it wears it as it now is.
-            LightingAction::Set { file, path, value } if file.extension().is_some_and(|e| e == "lookpack") => {
+            LightingAction::Set { of: SettingsOf::Scene, path, value } => self.set_own_setting(path, value),
+            LightingAction::Set { of: SettingsOf::File(file), path, value }
+                if file.extension().is_some_and(|e| e == "lookpack") =>
+            {
                 self.write_setting_undoably(&file, path, value).map(|()| {
                     self.files_seen();
                     self.look_pack_changed();
                 })
             }
-            LightingAction::Set { file, path, value } => {
+            LightingAction::Set { of: SettingsOf::File(file), path, value } => {
                 self.write_setting_undoably(&file, path, value).and_then(|()| {
                     self.files_seen();
                     self.game.content.forget_kind(voxear_assets::AssetKind::Lighting);
@@ -145,6 +148,25 @@ impl Editor {
         let after = std::fs::read_to_string(file)?;
         if after != before {
             self.history.record_step(crate::history::Edit::File { path: file.to_path_buf(), before, after });
+        }
+        Ok(())
+    }
+
+    /// Changes a setting of the active scene's own lighting, as a step to
+    /// undo; the scene keeps it when it is saved.
+    fn set_own_setting(&mut self, path: &[&str], value: Option<toml_edit::Value>) -> anyhow::Result<()> {
+        use anyhow::Context;
+        let before = self.game.levels.own_lighting().context("no scene is open")??;
+        let text = lighting_panel::set_in_text(&toml::to_string(&before)?, path, value)?;
+        let after: voxear_engine::lighting::LightingFile = toml::from_str(&text)?;
+        let game = &mut self.game;
+        game.levels.set_own_lighting(&mut game.engine, &after)?;
+        let after = self.game.levels.own_lighting().context("no scene is open")??;
+        if after != before {
+            self.history.record_step(crate::history::Edit::OwnLighting { before, after });
+            if !self.is_playing() {
+                self.unsaved = true;
+            }
         }
         Ok(())
     }

@@ -7625,6 +7625,65 @@ fn a_scenes_inspector_shows_its_lighting_to_change() {
 }
 
 #[test]
+fn a_scene_lit_by_its_own_settings_changes_them_on_the_lighting_page_and_saves_them() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let rail = editor.ui.find(editor.ui.root(), "rail-lighting").unwrap();
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.lighting_shown(), None, "Hello's scenes light themselves");
+    let sun = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<voxear_render::SunLook>().copied();
+    let distance = sun(&editor).map_or(voxear_render::SHADOW_DISTANCE, |sun| sun.shadow_distance);
+
+    // The Sun tab's shadow maps, chosen on the page: the scene's own setting, lit at once.
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, editor.ui.find(editor.ui.root(), "drawer").unwrap(), "settings-tab", &mut tabs);
+    let tab =
+        tabs.into_iter().find(|&tab| editor.ui.text(tab) == "Sun" && editor.ui.is_visible(tab)).expect("a Sun tab");
+    click(&mut editor.ui, tab);
+    frame(&mut editor, &mut renderer);
+    let menu = first_with(&editor.ui, editor.lighting_row("Shadow maps").unwrap(), "value-choice").unwrap();
+    assert!(editor.ui.is_enabled(menu), "the scene's own settings are there to change");
+    choose(&mut editor, &mut renderer, menu, 1);
+    assert_eq!(sun(&editor).map(|sun| sun.sun_shadows), Some(voxear_render::SunShadows::Cascades));
+    let white = voxear_core::math::Vec3::ONE;
+    assert!(sun(&editor).is_some_and(|sun| sun.tint == white), "the scene picks no look, so a plain sun");
+
+    // Tools change the scene's own settings as the page does.
+    let asked = editor.call("lighting.set", serde_json::json!({ "path": "sun.shadow_distance", "value": 60 }));
+    frame(&mut editor, &mut renderer);
+    let answer = asked.try_recv().expect("answered in a frame").expect("set");
+    assert_eq!(answer["own"], serde_json::json!(true), "{answer}");
+    assert_eq!(sun(&editor).map(|sun| sun.shadow_distance), Some(60.0));
+
+    // Each is a step to undo, and to redo.
+    editor.ui.blur();
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(sun(&editor).map(|sun| sun.shadow_distance), Some(distance));
+    assert_eq!(sun(&editor).map(|sun| sun.sun_shadows), Some(voxear_render::SunShadows::Cascades));
+    editor.redo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(sun(&editor).map(|sun| sun.shadow_distance), Some(60.0));
+
+    // Saved into the scene, its sky kept as it was.
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
+    assert!(
+        text.contains("[sun]") && text.contains("shadows = \"cascades\"") && text.contains("shadow_distance = 60"),
+        "{text}"
+    );
+    assert!(text.contains("[sky]") && text.contains("zenith = [0.517"), "{text}");
+}
+
+#[test]
 fn an_asset_field_pings_its_file_in_every_project_panel_not_locked() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();

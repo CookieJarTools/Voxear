@@ -187,6 +187,7 @@ pub struct Surroundings {
     post_table: Option<toml::Table>,
     post: Option<PostProcess>,
     weather: Option<Weather>,
+    scene_sun: Option<crate::scene_file::OwnSun>,
 }
 
 impl Surroundings {
@@ -201,6 +202,7 @@ impl Surroundings {
             post_table: world.resource::<PostTable>().map(|table| table.0.clone()),
             post: world.resource::<PostProcess>().copied(),
             weather: world.resource::<Weather>().copied(),
+            scene_sun: world.resource::<crate::scene_file::SceneSun>().map(|own| own.0.clone()),
         }
     }
 
@@ -220,6 +222,7 @@ impl Surroundings {
         set(world, self.post_table.clone().map(PostTable));
         set(world, self.post);
         set(world, self.weather);
+        set(world, self.scene_sun.clone().map(crate::scene_file::SceneSun));
         // What storms add where the viewer stands is worked out again from the storms of the dimension come into.
         world.remove_resource::<WeatherPlaces>();
     }
@@ -648,7 +651,7 @@ pub fn file_surroundings(
         None => Surroundings::copy(world),
     };
     let scene = &file.scene;
-    let own = match scene.lighting.is_some() || scene.sky.is_some() || scene.post.is_some() {
+    let own = match scene.has_environment() {
         true => {
             let before = Surroundings::copy(&engine.world);
             level.put(&mut engine.world);
@@ -657,7 +660,9 @@ pub fn file_surroundings(
                 None => None,
             };
             let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
-            let environment = crate::scene_file::Environment { lighting, sky: scene.sky, post: scene.post.as_ref() };
+            let sun = scene.own_sun();
+            let environment =
+                crate::scene_file::Environment { lighting, sky: scene.sky, post: scene.post.as_ref(), own: Some(&sun) };
             let applied = crate::scene_file::apply_environment(engine, environment);
             let own = Surroundings::copy(&engine.world);
             before.put(&mut engine.world);

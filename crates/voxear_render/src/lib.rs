@@ -150,7 +150,7 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
 pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
-pub use shadows::{LampShadows, SHADOW_DISTANCE, SHADOW_SPLIT, SunShadows};
+pub use shadows::{LampShadows, SHADOW_DISTANCE, SHADOW_SPLIT, ScriptShadows, ShadowsInEffect, SunShadows};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeResolution, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
 pub use sound_rays::{

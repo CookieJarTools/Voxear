@@ -392,6 +392,9 @@ pub enum Edit {
     /// A settings file of the project changed in place, as the Lighting page
     /// changes lighting settings and look packs: its text before and after.
     File { path: std::path::PathBuf, before: String, after: String },
+    /// The active scene's own lighting changed, as the Lighting page changes
+    /// it while the scene names no lighting settings: before and after.
+    OwnLighting { before: voxear_engine::lighting::LightingFile, after: voxear_engine::lighting::LightingFile },
 }
 
 /// An Obj's link to a prefab instance, before and after: the instance it
@@ -469,6 +472,13 @@ impl Edit {
                 settings_file_changed(game, path);
                 (None, HashMap::new())
             }
+            Edit::OwnLighting { before, after } => {
+                let own = if undo { &*before } else { &*after };
+                if let Err(error) = game.levels.set_own_lighting(&mut game.engine, own) {
+                    tracing::error!("could not change the scene's lighting: {error:#}");
+                }
+                (None, HashMap::new())
+            }
             Edit::Group(edits) => {
                 let mut renderer = renderer;
                 let (mut selected, mut renamed) = (None, HashMap::new());
@@ -510,7 +520,7 @@ impl Edit {
             }
             Edit::Group(edits) => edits.iter_mut().for_each(|edit| edit.remap(renamed)),
             Edit::Linked(links) => links.iter_mut().for_each(|link| link.remap(renamed)),
-            Edit::File { .. } => {}
+            Edit::File { .. } | Edit::OwnLighting { .. } => {}
         }
     }
 }

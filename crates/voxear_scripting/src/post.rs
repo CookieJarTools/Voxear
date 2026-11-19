@@ -14,6 +14,12 @@ pub const POST_IN_EFFECT: i32 = 0;
 pub const POST_OVERRIDES: i32 = 1;
 pub const POST_SET: i32 = 2;
 pub const POST_RESET: i32 = 3;
+/// The sun's and lamps' shadows, through the same call: `Lighting.Shadows`
+/// reads them as a frame draws them, sets its own over the level's, and
+/// takes them off again.
+pub const SHADOWS_IN_EFFECT: i32 = 4;
+pub const SHADOWS_SET: i32 = 5;
+pub const SHADOWS_RESET: i32 = 6;
 
 /// What answers `Post` for scripts: what `what` asks, given `text`, with
 /// the text of its answer.

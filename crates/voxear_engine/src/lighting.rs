@@ -2,8 +2,8 @@
 //! post-processing, kept in a `.lighting` asset of their own, as Unity's
 //! Lighting Settings asset. A scene names one, `lighting = "Lighting/Dusk.lighting"`,
 //! and it is applied as the scene loads; scripts apply one with
-//! `Lighting.Apply`. Whatever the scene sets in its own `[sky]` and `[post]`
-//! wins over its lighting's.
+//! `Lighting.Apply`. A scene that names none is lit by its own `[sky]`,
+//! `[post]`, `[sun]`, `[lamps]` and `[weather]`, written as here.
 //!
 //! A lighting file can start from one of the built-in looks and change only
 //! what it wants:

@@ -10,11 +10,13 @@ Click the sun on the left-hand rail to open the **Lighting** page. At its top, *
 
 Rest the pointer on a setting's name, or on a tab, to read what it does. Below, a tab for each part of the settings shows them all: **Sky**, **Clouds**, **Weather**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading**, **Lens** and **Quality**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value. **Ctrl+Z** takes a change back, and **Ctrl+Shift+Z** makes it again, as for any edit. Every post-processing setting is there; see [[Post-Processing]].
 
-Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by. A scene lit by none has **New Lighting Settings** instead, which carries the scene's own sky and post-processing over into the new settings.
+Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by.
+
+With **Lighting** set to None, the scene lights itself, and the same tabs change its own settings: every one of them, the sun's shadows and the weather among them. They are kept in the scene file once you save it, and **Ctrl+Z** takes them back as any edit. A level of several scenes is lit by the active scene's own settings, or, where it has none, by the last scene that has. **New Lighting Settings** carries a scene's own settings over into new lighting settings, to share them with other scenes.
 
 ## A scene's lighting in the Inspector
 
-Select a scene in the Project panel and the Inspector shows its **Lighting** as the Lighting page does: the settings it is lit by, picked in the same way, and their tabs below. This works for any scene, open or not. A scene that is open keeps the change once you save it, as with the Lighting page; one that is not open has it written into its file at once.
+Select a scene in the Project panel and the Inspector shows its **Lighting** as the Lighting page does: the settings it is lit by, picked in the same way, and their tabs below. This works for any scene, open or not. A scene that is open keeps the change once you save it, as with the Lighting page; one that is not open has it written into its file at once. A scene's own settings can be changed there while it is the scene lighting the level; open it to change another's.
 
 ## Making lighting settings
 
@@ -55,7 +57,18 @@ format = 1
 lighting = "Lighting/Dusk.lighting"
 ```
 
-The scene is lit by them as it loads, by them alone. A scene can also write its own `[sky]` and `[post]`, as older scenes do; those light it only while it names no lighting settings.
+The scene is lit by them as it loads, by them alone. A scene can instead hold its own lighting, in the same parts as lighting settings: `[sky]`, `[post]`, `[sun]`, `[lamps]` and `[weather]`, with a look picked in `[post]`. Those light it only while it names no lighting settings:
+
+```toml
+format = 1
+
+[post]
+look = "storybook"
+
+[sun]
+shadows = "cascades"
+shadow_distance = 120
+```
 
 Each look is built in as lighting settings too, as `builtin:` and its name: `lighting = "builtin:golden_hour"`, `"builtin:dark_forest"` and so on. The Lighting page's menu lists them all.
 
@@ -75,4 +88,24 @@ public sealed class StormTrigger : Behaviour
 }
 ```
 
-Applied settings replace the scenes' own lighting, sky and post-processing and all, from the next frame until the level changes. They set the weather too, to their own or to clear; to turn the weather alone, and gradually, use `Weather.Set` (see [[Weather]]). The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.
+Applied settings replace the scenes' own lighting, sky and post-processing and all, from the next frame until the level changes.
+
+### Shadows from a script
+
+`Lighting.Shadows` reads how shadows are drawn now, and `Lighting.ChangeShadows` changes them over the level's lighting, as a graphics options menu does. What a script changes stays through level changes, over any lighting applied, until `Lighting.ResetShadows`:
+
+```csharp
+Lighting.ChangeShadows(shadows =>
+{
+	shadows.Sun = SunShadows.Cascades;
+	shadows.Distance = 120f;
+	shadows.Lamps = LampShadows.Atlas;
+});
+```
+
+| Setting | What it does |
+| --- | --- |
+| `Sun` | `Virtual` draws only the parts of a very large shadow map the view needs and keeps them from frame to frame; whatever moves is drawn again each frame. `Cascades` draws four shadow maps over the shadow distance, whole each frame, which costs the same however much moves: better for large things that never stand still, such as ships |
+| `Distance` | How far from the camera the sun casts shadows with cascades, 5 to 1000 metres |
+| `Split` | How the cascades share that distance: 1 keeps the nearest small and sharp, 0 shares it evenly |
+| `Lamps` | `Virtual` or `Atlas`, as `[lamps] shadows` | They set the weather too, to their own or to clear; to turn the weather alone, and gradually, use `Weather.Set` (see [[Weather]]). The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.

@@ -31,6 +31,7 @@ impl Editor {
         done(json!({
             "lighting": named,
             "changeable": file.is_some(),
+            "own": named.is_none(),
             "settings": serde_json::to_value(values).unwrap_or_default(),
             "paths": lighting_panel::setting_paths(),
             "upscalers": upscalers,
@@ -41,18 +42,18 @@ impl Editor {
         let dotted = need_text(args, "path")?;
         let path = lighting_panel::setting_path(dotted)
             .ok_or_else(|| bad(format!("no setting `{dotted}`; `lighting.get` lists them under `paths`")))?;
-        let (_, file, _) = lighting_panel::scene_effective(&mut self.game).map_err(|e| bad(format!("{e:#}")))?;
-        let Some(file) = file else {
+        let (_, of, _) = lighting_panel::scene_effective(&mut self.game).map_err(|e| bad(format!("{e:#}")))?;
+        let Some(of) = of else {
             return Err(refuse(
                 ErrorKind::NotAllowed,
-                "the scene is lit by built-in lighting or its own: make lighting settings of the project's first",
+                "the scene is lit by built-in lighting: make a copy of it, or name none to light the scene itself",
             ));
         };
         let value = match need(args, "value")? {
             Json::Null => None,
             value => Some(toml_value(value).ok_or_else(|| bad(format!("{value} is not a setting's value")))?),
         };
-        self.lighting_action(LightingAction::Set { file, path, value }, renderer);
+        self.lighting_action(LightingAction::Set { of, path, value }, renderer);
         self.lighting_get(renderer)
     }
 }

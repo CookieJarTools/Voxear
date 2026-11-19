@@ -542,11 +542,25 @@ pub struct RingFades {
     /// columns were all made, on [`fade_clock`]; `f32::MAX` while they are
     /// not yet, the finer columns made there waiting unseen till then.
     pub covered: crate::coord_hash::CoordMap<[i32; 3], f32>,
+    /// The coarse columns shown whose finer columns are all drawn now: their
+    /// water is left out, the finer columns' drawn in its place. One covered
+    /// once may not be now, as finer columns behind a camera flying on are
+    /// let go, and then shows its own water again.
+    pub drawn_over: crate::coord_hash::CoordSet<[i32; 3]>,
 }
 
 /// How long a coarse column takes to fade into the finer ones over it, in
 /// seconds.
 pub const RING_FADE_SECONDS: f32 = 0.6;
+
+impl RingFades {
+    /// Whether the water of the coarse column at `level` and `x`, `z` in
+    /// that level's columns is left out, the finer columns' water over it
+    /// drawn whole in its place, as water shows no ring's fade.
+    pub fn water_left_out(&self, level: i32, x: i32, z: i32) -> bool {
+        level > 0 && self.drawn_over.contains(&[level, x, z])
+    }
+}
 
 /// Seconds since the program first asked: the clock rings fade by, the same
 /// for the streamer and the renderer.

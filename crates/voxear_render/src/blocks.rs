@@ -2373,7 +2373,7 @@ pub(crate) fn gather(
         // place, as water shows no ring's fade.
         let covered = |chunk: &ChunkDraw| {
             let [level, x, _, z] = chunk.key;
-            fading && level > 0 && fades.covered.get(&[level, x, z]).is_some_and(|&since| since != f32::MAX)
+            fading && fades.water_left_out(level, x, z)
         };
         let wet = pick_water_grouped(grouped, &planes, (seen.as_ref(), shown), |chunk| !covered(chunk));
         drop(camera_chunks);

@@ -1238,6 +1238,9 @@ impl BlockStreamer {
                         let shown = !covered || fades_now || banded;
                         if shown {
                             fades.covered.insert([*level as i32, at[0], at[1]], *since);
+                            if covered {
+                                fades.drawn_over.insert([*level as i32, at[0], at[1]]);
+                            }
                         }
                         shown
                     }
@@ -1860,6 +1863,47 @@ mod tests {
         assert_eq!(faces_of(middle), (0..FACINGS).collect::<Vec<_>>());
         assert!(faces_of(inner).contains(&0), "towards the column beside it");
         assert!(!faces_of(edge).contains(&0), "past the window's edge");
+    }
+
+    #[test]
+    fn a_streamed_seas_coarse_water_is_left_out_only_under_finer_water_drawn_as_the_camera_flies_on() {
+        let (mut streamer, mut world, _) = streamed_sea(false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let making = streamer.making.as_deref().unwrap().clone();
+        let wet = |mesh: &ChunkMesh| mesh.water().1 > 0;
+        // Whether water is drawn in a column of a level: the world's own made for drawing alone at -1 are drawn as
+        // its own.
+        let drawn = |world: &BlockWorld, level: i32, x: i32, z: i32| match level {
+            0 => {
+                world.meshes.iter().any(|(key, mesh)| key[0] == x && key[2] == z && wet(mesh))
+                    || world.far.iter().any(|(key, mesh)| key[0] == -1 && key[1] == x && key[3] == z && wet(mesh))
+            }
+            _ => world.far.iter().any(|(key, mesh)| key[0] == level && key[1] == x && key[3] == z && wet(mesh)),
+        };
+        let mut holes = Vec::new();
+        // On along +x at 30 m a second, an update a sixtieth of a second, for six seconds.
+        for frame in 0..360 {
+            let at = [10.0 + frame as f32 * 0.5, 10.0];
+            streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 600.0), at);
+            for key in world.far.keys().filter(|key| key[0] > 0) {
+                let [level, x, _, z] = *key;
+                if !world.fades.water_left_out(level, x, z) {
+                    continue;
+                }
+                let children = (0..4).map(|i| (x * 2 + (i & 1), z * 2 + (i >> 1)));
+                if !children.into_iter().all(|(cx, cz)| drawn(&world, level - 1, cx, cz)) {
+                    holes.push((frame, level, x, z));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        let columns: HashSet<_> = holes.iter().map(|&(_, level, x, z)| (level, x, z)).collect();
+        let first = &holes[..holes.len().min(6)];
+        assert!(
+            holes.is_empty(),
+            "{} coarse columns' water left out with none drawn over them: {first:?}",
+            columns.len()
+        );
     }
 
     /// A smooth mesh's water's corners, in blocks from its chunk's corner.

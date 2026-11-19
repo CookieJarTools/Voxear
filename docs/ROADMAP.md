@@ -1478,10 +1478,13 @@ Done:
   `SurfaceLook::mixed` flags the twin (`TERRAIN_SURFACE_MIXED`); `blockFringe` in `blocks.slang` works out how
   much of the other look shows from whole-number hashes, teeth by the pixel along the edge, stepped for sharp
   pictures and colour-only blocks and soft for smoothed ones and far off, and the two looks are blended. Far rings
-  and worlds drawn smooth do not mix. A joining face in a far ring now lays one tile over its whole block.
+  and worlds drawn smooth do not mix. A joining face in a far ring now lays one tile over its whole block. On a
+  side face, a block creeping from above or below is read mirrored across that edge, half a pixel in
+  (`blockFringeSpot`): the rows of its picture next to the edge, not its far side wrapped round, which under grass
+  was the green lip along its top.
   - Tests: the mesher (a block of grass in a floor of stone, two blocks over one face, an edge and a corner
     apart, a covered face, a step, sides, a block that takes none), a world's faces and twins, a pack that keeps blocks to themselves, and GPU pictures
-    in colours and under a pixel pack looked at enlarged.
+    in colours and under a pixel pack looked at enlarged; grass creeping down a wall of dirt brings no green.
 - **Grass under a block:** a block's **Covered** block (`covered` in its file, `Block.Covered` in C#) is the
   block it shows as while a block lies on it: Dirt, for grass, so ground is grass on top and earth down a cliff and
   under a wall. Worked out from the block over it as the world is drawn, near and far, with nothing written to the
@@ -1925,7 +1928,9 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   Area (box, ball or capsule) is cut out of every surface per pixel, its sides walls of water. A Dry Area shaped as a
   closed mesh, its own or its Obj's Mesh Renderer's, keeps a hull dry exactly: each frame the meshes are drawn into
   a mask of where they start and end along each pixel's view, which the water, the view under it and underwater
-  lighting read.
+  lighting read. Its faces turned from the camera under the sea are walls of water where what lies behind is
+  past the mesh: where a hole in the hull drawn round it opens onto the sea (`dryMeshWallFragment`). Test: a
+  holed hull seen from inside, the hole a wall of water and the wall round it as it was.
 - **Paths and Streams:** `voxear_scene::Path` (centripetal Catmull-Rom, widths per point), edited in the Scene view
   (`path_handles.rs`: drag, width, insert, extend, Shift-click to remove, one undo step each). A Stream samples its
   Path each frame into world points with Manning speed, rapids foam carried downstream and travel time; drawn as a
@@ -2118,7 +2123,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     the Inspector; either keys it at the moment shown. Tests: easing, loops, keys on steps, the file, baking;
     a clip played by an Animator from the file and from built content with Mob Motion waiting; a clip made,
     keyed by a ring and by a typed number, a key dragged, played, undone, in the editor. Manual: Box Models,
-    Mob Motion. Not done: timeline zoom, copying keys, moving several at once.
+    Mob Motion. Not done: timeline zoom, copying keys, moving several at once. A changed file's clips are read
+    again even where it only lends them to other skeletons, and the world set aside while playing and prefabs
+    take them too; a model kept while only another picture draws it keeps its own material, so importing it again
+    paints no other model's.
   - ~~**Boxes sculpted from cubes:**~~ done: a box can be made of small cubes, one to each pixel of its size,
     each a colour of the model's palette or left out (`ModelBox::voxels`, `BoxModel::palette`; `voxels` and
     `palette` in the file), for rounded and stepped shapes: hair, hands, leaves, a tree's crown. Only the faces
@@ -3081,7 +3089,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - ~~**A far view that does not read as rings:**~~ done: each ring fades into the next over its last column round
     where the world is looked at from, on a dither TAA blends (a clean cut halfway without TAA), and a coarse column
     fades out over 0.6 s as the finer columns over it, all made at last, fade in, where one swapped for the other in
-    a frame (`RingFades`). Leaves past the sun's cascades take the sun a crown's leaves take between them, so far
+    a frame (`RingFades`). A coarse column's sea is left out only while the finer columns over it are drawn
+    (`RingFades::drawn_over`), so a ring's sea stays as the finer columns behind a moving camera go. Leaves past the sun's cascades take the sun a crown's leaves take between them, so far
     crowns are not flat sunlit boxes, and the ground far off takes the colour of the plants that stop being drawn
     on it, from their box models, as much as they would hide seen from the camera (`grow::Cover`). Tests: the
     streamer's fades and band, the tints' cover and its patches, a model's colour; renders of the far view flying,

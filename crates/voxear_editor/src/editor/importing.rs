@@ -448,6 +448,15 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".particles")).map(|path| path.to_string()).collect();
         let box_models: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".boxmodel")).map(|path| path.to_string()).collect();
+        // A model file not loaded to draw may still lend its clips to others: they are read again (a loaded one's
+        // are as it is imported again).
+        let lent: Vec<voxear_assets::AssetGuid> = changed
+            .iter()
+            .filter(|path| !models.iter().any(|model| model == **path))
+            .filter_map(|path| self.game.content.db().get(self.game.content.db().guid_of(path)?))
+            .filter(|entry| entry.kind == voxear_assets::AssetKind::Model)
+            .map(|entry| entry.guid)
+            .collect();
         // A world of blocks whose file or changes a tool wrote, by either file.
         let block_worlds: Vec<voxear_assets::AssetGuid> = self
             .game
@@ -556,6 +565,9 @@ impl Editor {
                     tracing::error!("{error:#}");
                 }
             }
+        }
+        for guid in lent {
+            self.game.content.forget_clips(guid);
         }
         for model in models {
             self.reimport_model(&model, renderer);

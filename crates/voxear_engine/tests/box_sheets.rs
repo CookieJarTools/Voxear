@@ -84,3 +84,77 @@ fn a_box_model_draws_a_picture_in_place_of_its_sheet() {
     let tinted = seen(&mut renderer, ModelRenderer { tints: [[1.0, 0.2, 0.2], [1.0; 3], [1.0; 3]], ..pictured });
     assert!(tinted[2] < drawn[2] - 60, "the picture tinted: {tinted:?} from {drawn:?}");
 }
+
+fn offscreen() -> Option<Renderer> {
+    match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => Some(renderer),
+        Err(error) => {
+            eprintln!("skipping: no usable GPU ({error:#})");
+            None
+        }
+    }
+}
+
+/// The box model of [`project`], its sheet filled with `colour`, as its file has it.
+fn plain_text(colour: [u8; 4]) -> String {
+    let dir = project();
+    let text = std::fs::read_to_string(dir.path().join("Faces/Plain.boxmodel")).unwrap();
+    let mut model = BoxModel::parse(&text).unwrap();
+    model.sheet = Sheet::filled(16, 16, colour);
+    model.to_text()
+}
+
+#[test]
+fn a_box_model_kept_while_only_its_picture_draws_keeps_its_own_material_and_takes_its_new_sheet_to_it() {
+    let Some(mut renderer) = offscreen() else { return };
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let plain = ModelData::of("Faces/Plain.boxmodel");
+    let blue = ModelData { sheet: Some("Faces/Blue.png".into()), ..plain.clone() };
+    // Drawn only with the blue picture: its mesh is in use, its own material is not.
+    let pictured = prefab::model_renderer(&mut content, &mut renderer, &blue).unwrap();
+    let mut world = World::new();
+    world.spawn((pictured,));
+    let released = content.release_unused(&world, Some(&mut renderer), &Default::default());
+    assert_eq!(released.models, 0, "kept, as its mesh is drawn");
+    // A few frames, for what was freed to be let go.
+    for frame in 0..6 {
+        renderer.render(&world, frame as f32 / 60.0).unwrap();
+    }
+    // Another box model loaded since, red, and then the first one's file changed to green.
+    std::fs::write(dir.path().join("Faces/Red.boxmodel"), plain_text([220, 40, 40, 255])).unwrap();
+    content.rescan().unwrap();
+    let red = prefab::model_renderer(&mut content, &mut renderer, &ModelData::of("Faces/Red.boxmodel")).unwrap();
+    std::fs::write(dir.path().join("Faces/Plain.boxmodel"), plain_text([40, 200, 40, 255])).unwrap();
+    let guid = content.parse("Faces/Plain.boxmodel").unwrap().guid().unwrap();
+    content.reimport_model(&mut renderer, guid).unwrap();
+    // Each keeps its own picture.
+    let seen_red = seen(&mut renderer, red);
+    assert!(seen_red[0] > seen_red[1] + 80, "the red model stays red: {seen_red:?}");
+    let own = prefab::model_renderer(&mut content, &mut renderer, &plain).unwrap();
+    let green = seen(&mut renderer, own);
+    assert!(green[1] > green[0] + 80, "the first model's own sheet, green now: {green:?}");
+}
+
+#[test]
+fn a_clip_added_to_a_box_model_not_drawn_is_found_by_what_plays_it_once_its_file_is_read_again() {
+    use voxear_engine::animation::{Animator, Clips, give_clips};
+    let Some(mut renderer) = offscreen() else { return };
+    let dir = project();
+    std::fs::write(dir.path().join("Faces/Moves.boxmodel"), plain_text([255; 4])).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let wave = "Faces/Moves.boxmodel#clip:Wave";
+    let mut world = World::new();
+    world.spawn((Animator { clip: wave.into(), ..Animator::default() },));
+    give_clips(&mut world, &mut content);
+    assert!(world.resource::<Clips>().unwrap().get(wave).is_none(), "no Wave yet");
+    // Wave added to the file, which only lends its clips: read again as a changed model file is.
+    let mut model = BoxModel::parse(&plain_text([255; 4])).unwrap();
+    model.clips.push(voxear_render::BoxClip::new("Wave"));
+    std::fs::write(dir.path().join("Faces/Moves.boxmodel"), model.to_text()).unwrap();
+    let guid = content.parse("Faces/Moves.boxmodel").unwrap().guid().unwrap();
+    content.reimport_model(&mut renderer, guid).unwrap();
+    give_clips(&mut world, &mut content);
+    let found = world.resource::<Clips>().unwrap().get(wave).map(|source| source.clip().name.clone());
+    assert_eq!(found.as_deref(), Some("Wave"));
+}

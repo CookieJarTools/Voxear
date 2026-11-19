@@ -2025,11 +2025,12 @@ impl Content {
     /// became which; the old model stays loaded, since undo steps may still
     /// draw it. A model not loaded is left to import when next used.
     pub fn reimport_model(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<Reimported> {
+        // Its clips are read again by whatever plays them, though it is not loaded to draw: a file of clips alone.
+        self.forget_clips(guid);
         if !self.models.contains_key(&guid) {
             return Ok(Reimported::default());
         }
         ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
-        self.forget_clips(guid);
         self.box_sheets.retain(|&(model, _), _| model != guid);
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
         // Its colliders take the new triangles, under new keys, so their bodies are made again.
@@ -2044,6 +2045,8 @@ impl Content {
             self.models.insert(guid, model);
             // The file's materials went back behind the handles; the remapped ones go on them again.
             self.remap_materials(renderer, guid);
+            // Prefabs drawing it are read again, with its clips as they are now.
+            self.prefabs.templates.iter_mut().for_each(|template| *template = None);
             return Ok(Reimported { moved, ..Reimported::default() });
         }
 
@@ -2696,7 +2699,10 @@ impl Content {
             released.textures += model.textures.len();
         }
 
-        // Materials of their own: `.material` files and inline ones.
+        // Materials of their own: `.material` files and inline ones. A model kept keeps its own, though nothing
+        // draws them now: freed, its handles would name whatever material came next, and its pictures go there
+        // when it is imported again.
+        materials.extend(self.models.values().flat_map(|model| model.nodes.iter().map(|node| node.material)));
         let mut free_material = |handle: MaterialHandle| {
             let unused = !materials.contains(&handle);
             if unused {

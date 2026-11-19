@@ -826,11 +826,16 @@ impl Game {
     /// model puts it now, as after a change of size; one moved since stays.
     /// A world set aside, as the editor's edited level while the game
     /// plays, draws the new parts too. Returns how many moved.
-    pub fn reimport_model(&mut self, renderer: &mut Renderer, path: &str, aside: Option<&mut World>) -> Result<usize> {
+    pub fn reimport_model(
+        &mut self,
+        renderer: &mut Renderer,
+        path: &str,
+        mut aside: Option<&mut World>,
+    ) -> Result<usize> {
         let guid = self.content.db().guid_of(path).with_context(|| format!("{path} is not in the project"))?;
         let Reimported { moved, meshes, materials } = self.content.reimport_model(renderer, guid)?;
         if !meshes.is_empty() || !materials.is_empty() {
-            for world in std::iter::once(&mut self.engine.world).chain(aside) {
+            for world in std::iter::once(&mut self.engine.world).chain(aside.as_deref_mut()) {
                 for drawn in world.query::<&mut MeshRenderer>() {
                     drawn.mesh = meshes.get(&drawn.mesh).copied().unwrap_or(drawn.mesh);
                     drawn.material = materials.get(&drawn.material).copied().unwrap_or(drawn.material);
@@ -840,30 +845,32 @@ impl Game {
         // Objs drawing the whole model draw its parts as they are now, where they now sit.
         if let Some(nodes) = self.content.loaded_model(guid).map(<[_]>::to_vec) {
             let animation = self.content.model_animation(guid);
-            let world = &mut self.engine.world;
-            let query = world.query::<(Entity, &crate::scene_file::ModelSource, &mut voxear_render::ModelRenderer)>();
-            // Those whose bones are not the ones they were posed with, as a box model's with a bone added.
-            let mut other_bones = Vec::new();
-            for (entity, source, drawn) in query {
-                if self.content.parse(&source.0.model).ok().and_then(|r| r.guid()) != Some(guid) {
-                    continue;
+            for world in std::iter::once(&mut self.engine.world).chain(aside.as_deref_mut()) {
+                let query =
+                    world.query::<(Entity, &crate::scene_file::ModelSource, &mut voxear_render::ModelRenderer)>();
+                // Those whose bones are not the ones they were posed with, as a box model's with a bone added.
+                let mut other_bones = Vec::new();
+                for (entity, source, drawn) in query {
+                    if self.content.parse(&source.0.model).ok().and_then(|r| r.guid()) != Some(guid) {
+                        continue;
+                    }
+                    match crate::prefab::model_parts(&mut self.content, renderer, &nodes, &source.0) {
+                        Ok(parts) => drawn.parts = parts.into(),
+                        Err(error) => tracing::error!("{error:#}"),
+                    }
+                    let bones = |animation: &Option<std::sync::Arc<voxear_render::ModelAnimation>>| {
+                        animation.as_ref().map(|animation| animation.skeleton.bones.len())
+                    };
+                    if bones(&drawn.animation) != bones(&animation) {
+                        other_bones.push(entity);
+                    }
+                    drawn.animation = animation.clone();
                 }
-                match crate::prefab::model_parts(&mut self.content, renderer, &nodes, &source.0) {
-                    Ok(parts) => drawn.parts = parts.into(),
-                    Err(error) => tracing::error!("{error:#}"),
+                // A pose of the old bones would move the new ones' skin wrongly; what animates it poses it afresh.
+                for entity in other_bones {
+                    world.remove::<voxear_render::Pose>(entity);
+                    world.remove::<crate::animation::AnimatorState>(entity);
                 }
-                let bones = |animation: &Option<std::sync::Arc<voxear_render::ModelAnimation>>| {
-                    animation.as_ref().map(|animation| animation.skeleton.bones.len())
-                };
-                if bones(&drawn.animation) != bones(&animation) {
-                    other_bones.push(entity);
-                }
-                drawn.animation = animation.clone();
-            }
-            // A pose of the old bones would move the new ones' skin wrongly; what animates it poses it afresh.
-            for entity in other_bones {
-                world.remove::<voxear_render::Pose>(entity);
-                world.remove::<crate::animation::AnimatorState>(entity);
             }
         }
         let world = &mut self.engine.world;

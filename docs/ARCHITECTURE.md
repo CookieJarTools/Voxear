@@ -3509,7 +3509,10 @@ shape casts and overlaps, and are callable from jobs. Bodies of two dimensions n
 ## Animation
 
 **Skinning.** Skinned meshes are skinned in compute shaders, so the GPU does it once per frame for every consumer.
-Blend shapes are supported.
+Blend shapes are supported. A mesh whose every vertex is bound whole to one bone, as a box model's are, is not
+skinned at all: its bones' matrices are all it needs, and each pass that draws it moves each vertex by its bone as it
+reads it (`instanceVertex` in `common.slang`), so it keeps no posed vertices and every Obj drawing the model shares
+one mesh. The frame's bone matrices grow to what it needs (`voxear_render::skinning`).
 
 **State machines.**
 - Layers, avatar masks and blend trees (1D, 2D and direct).
@@ -4637,6 +4640,21 @@ engine's glue is `voxear_engine::navigation`.
   taken for a fresh bake when `LevelNav` is no longer the mesh last put there), on a nav thread, and replaces
   `LevelNav` whole; mesh agents search again when the mesh they found their way on is gone. Obstacles not carved
   join avoidance as movers that do not avoid.
+
+### Crowds *(tiers implemented; the rest planned, see `docs/research/crowds.md`)*
+
+- **Tiers** (`voxear_engine::crowds`). Once a frame, before its fixed steps, every Obj with a Nav Agent, Block Mob,
+  Mob Motion or Motion Matcher is put in a tier by its distance to the nearest viewpoint: the game's camera (or
+  the terrain's viewer), and on a server each player's Obj (`net::player_viewpoints`). No viewpoint, or tiers
+  switched off, puts every one Near. `CrowdTiers` keeps each one's tier and counts the frames and steps; work
+  done every few of them is spread by Obj index (`crowds::turn`), so a quarter of a far crowd plans on each step.
+- **What tiers change.** A Nav Agent off its turn goes on as it last planned when it has a way and nothing new is
+  asked (`step_agents`); a far one moves every few steps, the time it missed kept in its state (`owed`). Mob Motion
+  and the Motion Matcher keep their pose between turns and pose for the whole time since; beyond Near the matcher
+  searches less often and leaves foot locking off, and one with root motion or an action is posed every frame.
+  Mob Motion's posing is pure, so it is gathered, posed over threads, and written back.
+- **The full way**: a `CrowdMember` component gives an Obj a tier of its own or an importance that scales its
+  distances; `CrowdSettings` (`[crowds]`, Project Settings ▸ Crowds) holds the distances and rates.
 
 ### Planned
 

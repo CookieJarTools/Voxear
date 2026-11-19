@@ -65,14 +65,14 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
 {
     Instance instance = buffers()->instances[instanceIndex];
     Mesh mesh = buffers()->meshes[instance.mesh];
-    Vertex v = buffers()->vertices[instanceVertices(instance, mesh) + vertexIndex];
+    Vertex v = instanceVertex(instance, mesh, vertexIndex);
     if (isImpostor(instance))
     {
         return impostorVertex(instance, instanceIndex, v.position.xy, cluster);
     }
     float4 world = transform(instance.model, float4(v.position, 1.0));
-    // A skinned instance's vertex where last frame's pose had it.
-    float3 before = buffers()->vertices[instanceVerticesBefore(instance, mesh) + vertexIndex].position;
+    // A posed instance's vertex where last frame's pose had it.
+    float3 before = instancePositionBefore(instance, mesh, vertexIndex, v.position);
     float4 previous = transform(instance.prevModel, float4(before, 1.0));
     // Plants move in the wind, now and as they were a frame ago, for their motion.
     Material material = buffers()->materials[instance.material];
@@ -113,7 +113,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.moved = moved + swayed;
     o.hidden = float(v.wind >> 24) / 255.0;
     // A rigid mesh's own lightmap UVs, beside its vertices.
-    o.lightmapUv = instance.baked != 0 && instance.posed == 0 ? buffers()->lightmapUvs[mesh.vertexOffset + vertexIndex] : 0.0;
+    o.lightmapUv = instance.baked != 0 && instance.posed == 0 && instance.bones == 0 ? buffers()->lightmapUvs[mesh.vertexOffset + vertexIndex] : 0.0;
     return o;
 }
 

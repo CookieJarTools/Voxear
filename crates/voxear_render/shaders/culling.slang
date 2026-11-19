@@ -127,7 +127,7 @@ MeshletCuller meshletCuller(Frame* frame, Instance instance, uint list)
     // instances whole, from lists without meshlets.
     bool twoSided = list >= LIST_TWO_SIDED_SHADOW;
     culler.cones = (frame->meshletFlags & MESHLET_CONES) != 0 && uniform && !turns && !moved && !twoSided;
-    culler.whole = instance.posed != 0;
+    culler.whole = instance.posed != 0 || instance.bones != 0;
     culler.list = list;
     return culler;
 }

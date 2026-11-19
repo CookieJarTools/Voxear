@@ -232,6 +232,7 @@ pub fn build(
         portals: project.file.portals,
         water_trails: project.file.water_trails,
         navigation: project.file.navigation.clone(),
+        crowds: project.file.crowds.clone(),
         foliage: project.file.foliage,
         validation_layers: profile.development.validation_layers,
         fullscreen: profile.player.window == "fullscreen",

@@ -791,6 +791,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "NavArea" => |world, entity| world.has::<voxear_engine::navigation::NavArea>(entity),
         "NavLink" => |world, entity| world.has::<voxear_engine::navigation::NavLink>(entity),
         "NavObstacle" => |world, entity| world.has::<voxear_engine::nav_obstacle::NavObstacle>(entity),
+        "CrowdMember" => |world, entity| world.has::<voxear_engine::crowds::CrowdMember>(entity),
         "BoneAttachment" => |world, entity| world.has::<animation::BoneAttachment>(entity),
         "Buoyancy" => |world, entity| world.has::<voxear_engine::water::Buoyancy>(entity),
         "Camera" => |world, entity| world.has::<voxear_render::Camera>(entity),

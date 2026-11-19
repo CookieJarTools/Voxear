@@ -144,6 +144,8 @@ pub enum Part {
     NavLink,
     /// A box agents go round, cut out of the nav where it stands still (see `nav_props`).
     NavObstacle,
+    /// An Obj's own place in a crowd: its tier, or how much it matters (see `nav_props`).
+    CrowdMember,
     HeatSource,
     HeatZone,
     HeatBody,
@@ -228,6 +230,7 @@ impl Part {
             Part::NavArea => "nav_area".into(),
             Part::NavLink => "nav_link".into(),
             Part::NavObstacle => "nav_obstacle".into(),
+            Part::CrowdMember => "crowd_member".into(),
             Part::HeatSource => "heat_source".into(),
             Part::HeatZone => "heat_zone".into(),
             Part::HeatBody => "heat_body".into(),
@@ -314,6 +317,7 @@ impl Part {
             Part::NavArea => "Nav Area",
             Part::NavLink => "Nav Link",
             Part::NavObstacle => "Nav Obstacle",
+            Part::CrowdMember => "Crowd Member",
             Part::HeatSource => "Heat Source",
             Part::HeatZone => "Heat Zone",
             Part::HeatBody => "Heat Body",
@@ -415,6 +419,7 @@ impl Part {
             Part::NavArea => "map-pin",
             Part::NavLink => "map-arrow",
             Part::NavObstacle => "box",
+            Part::CrowdMember => "map-player",
             Part::HeatSource | Part::HeatBody => "sun",
             Part::HeatZone => "box",
             Part::NetObject => "globe",
@@ -889,6 +894,8 @@ pub enum Prop {
     NavLink(crate::nav_props::NavLinkField),
     /// A value of an Obj's Nav Obstacle (see `nav_props`).
     NavObstacle(crate::nav_props::NavObstacleField),
+    /// A value of an Obj's Crowd Member (see `nav_props`).
+    CrowdMember(crate::nav_props::CrowdMemberField),
     FieldOfView,
     Near,
     Exposure,
@@ -1040,6 +1047,7 @@ impl Prop {
             Prop::NavArea(_) => Part::NavArea,
             Prop::NavLink(_) => Part::NavLink,
             Prop::NavObstacle(_) => Part::NavObstacle,
+            Prop::CrowdMember(_) => Part::CrowdMember,
             Prop::LightKind
             | Prop::LightAppearance
             | Prop::LightTemperature
@@ -1441,6 +1449,7 @@ impl Prop {
             Prop::NavArea(field) => crate::nav_props::area_key(*field),
             Prop::NavLink(field) => crate::nav_props::link_key(*field),
             Prop::NavObstacle(field) => crate::nav_props::obstacle_key(*field),
+            Prop::CrowdMember(field) => crate::nav_props::crowd_key(*field),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
@@ -1956,6 +1965,7 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     crate::nav_props::area_parts(world, entity, &mut parts);
     crate::nav_props::link_parts(world, entity, &mut parts);
     crate::nav_props::obstacle_parts(world, entity, &mut parts);
+    crate::nav_props::crowd_parts(world, entity, &mut parts);
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -2253,6 +2263,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::NavArea => crate::nav_props::area_props(),
         Part::NavLink => crate::nav_props::link_props(),
         Part::NavObstacle => crate::nav_props::obstacle_props(),
+        Part::CrowdMember => crate::nav_props::crowd_props(),
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
             Prop::AnimatorClip,
@@ -2665,6 +2676,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::NavArea(field) => return crate::nav_props::area_label(*field),
         Prop::NavLink(field) => return crate::nav_props::link_label(*field),
         Prop::NavObstacle(field) => return crate::nav_props::obstacle_label(*field),
+        Prop::CrowdMember(field) => return crate::nav_props::crowd_label(*field),
         Prop::Terrain(field) => crate::terrain_props::label(*field),
         Prop::BlockWorld(field) => crate::block_props::label(*field),
         Prop::Plants(field) => crate::plants_props::label(*field),
@@ -3294,6 +3306,7 @@ pub fn add(
         Part::NavArea => crate::nav_props::area_add(world, entity),
         Part::NavLink => crate::nav_props::link_add(world, entity),
         Part::NavObstacle => crate::nav_props::obstacle_add(world, entity),
+        Part::CrowdMember => crate::nav_props::crowd_add(world, entity),
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -3443,6 +3456,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::NavArea => crate::nav_props::area_remove(world, entity),
         Part::NavLink => crate::nav_props::link_remove(world, entity),
         Part::NavObstacle => crate::nav_props::obstacle_remove(world, entity),
+        Part::CrowdMember => crate::nav_props::crowd_remove(world, entity),
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
         }
@@ -3558,6 +3572,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::NavArea(field) => return crate::nav_props::area_get(game, entity, *field),
         Prop::NavLink(field) => return crate::nav_props::link_get(game, entity, *field),
         Prop::NavObstacle(field) => return crate::nav_props::obstacle_get(game, entity, *field),
+        Prop::CrowdMember(field) => return crate::nav_props::crowd_get(game, entity, *field),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
             let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -4356,6 +4371,7 @@ pub fn set(
         (Prop::NavArea(field), value) => crate::nav_props::area_set(game, entity, *field, value),
         (Prop::NavLink(field), value) => crate::nav_props::link_set(game, entity, *field, value),
         (Prop::NavObstacle(field), value) => crate::nav_props::obstacle_set(game, entity, *field, value),
+        (Prop::CrowdMember(field), value) => crate::nav_props::crowd_set(game, entity, *field, value),
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     };
     if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {

@@ -312,19 +312,14 @@ struct Instance
     uint baked;
     // The tints its Obj lays over its model, each sRGB RGBA8 in its bits, 0 for none (instanceTint).
     uint3 tints;
+    // For an instance whose mesh is bound whole to bones (a box model), where its bones' matrices start in
+    // Buffers' skinMatrices this frame and in skinMatricesBefore last frame, each plus one, 0 for none; and where
+    // its mesh's skin starts in skins.
+    uint bones;
+    uint bonesBefore;
+    uint skin;
+    uint bonesPad;
 };
-
-// Where an instance's vertices start in the vertex buffer: its posed ones
-// when skinned, its mesh's otherwise; and last frame's, for its motion.
-uint instanceVertices(Instance instance, Mesh mesh)
-{
-    return instance.posed != 0 ? instance.posed - 1 : mesh.vertexOffset;
-}
-
-uint instanceVerticesBefore(Instance instance, Mesh mesh)
-{
-    return instance.posedBefore != 0 ? instance.posedBefore - 1 : instanceVertices(instance, mesh);
-}
 
 // An instance whose place in the list another Obj held last frame.
 static const uint INSTANCE_NEW = 1;
@@ -2077,6 +2072,8 @@ struct Buffers
     uint* blockLightBytes;
     // The frame a worn shader pack's surface programs read (shader_pack_surface.slang); null with none worn.
     PackFrame* packFrame;
+    // Last frame's bones' matrices, laid out as skinMatrices, for the motion of what is posed by its bones.
+    float4* skinMatricesBefore;
 };
 
 struct Push
@@ -2360,6 +2357,59 @@ float3 normalizeOr(float3 v, float3 otherwise)
 {
     float lengthSquared = dot(v, v);
     return lengthSquared > 1e-12 ? v * rsqrt(lengthSquared) : otherwise;
+}
+
+// A bone's matrix in a frame's bones' matrices: three rows of a 3×4, and a fourth whose x is 1 for a hidden bone.
+float3x4 rowsMatrix(float4* rows, uint bone)
+{
+    return float3x4(rows[bone * 4], rows[bone * 4 + 1], rows[bone * 4 + 2]);
+}
+
+// The joint a vertex of a mesh bound whole to bones follows: its first, whose weight is all of it.
+uint rigidJoint(Instance instance, uint index)
+{
+    return buffers()->skins[instance.skin + index].x & 0xFFFF;
+}
+
+// Vertex `index` of an instance's mesh as it is drawn this frame: its posed copy when skinned (skinning.slang),
+// moved by its one bone when its mesh is bound whole to bones, as a box model is, and its mesh's own otherwise.
+Vertex instanceVertex(Instance instance, Mesh mesh, uint index)
+{
+    if (instance.posed != 0)
+    {
+        return buffers()->vertices[instance.posed - 1 + index];
+    }
+    Vertex v = buffers()->vertices[mesh.vertexOffset + index];
+    if (instance.bones != 0)
+    {
+        float4* rows = buffers()->skinMatrices;
+        uint bone = instance.bones - 1 + rigidJoint(instance, index);
+        float3x4 moved = rowsMatrix(rows, bone);
+        float3x3 turn = float3x3(moved[0].xyz, moved[1].xyz, moved[2].xyz);
+        v.position = mul(moved, float4(v.position, 1.0));
+        v.normal = normalizeOr(mul(turn, v.normal), v.normal);
+        v.tangent.xyz = normalizeOr(mul(turn, v.tangent.xyz), v.tangent.xyz);
+        // How much of it is bound to a hidden bone, as skinning writes it.
+        v.wind = (v.wind & 0x00FFFFFF) | (rows[bone * 4 + 3].x > 0.5 ? 0xFF000000u : 0u);
+    }
+    return v;
+}
+
+// Where vertex `index` of an instance's mesh was last frame, in its model's space, for its motion; `now` where it
+// is this frame.
+float3 instancePositionBefore(Instance instance, Mesh mesh, uint index, float3 now)
+{
+    if (instance.posedBefore != 0)
+    {
+        return buffers()->vertices[instance.posedBefore - 1 + index].position;
+    }
+    if (instance.bones == 0 || instance.bonesBefore == 0)
+    {
+        return now;
+    }
+    float3 rest = buffers()->vertices[mesh.vertexOffset + index].position;
+    uint bone = instance.bonesBefore - 1 + rigidJoint(instance, index);
+    return mul(rowsMatrix(buffers()->skinMatricesBefore, bone), float4(rest, 1.0));
 }
 
 float4 sampleTexture(uint index, float2 uv)

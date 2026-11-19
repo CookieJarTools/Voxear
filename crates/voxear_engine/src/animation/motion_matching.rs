@@ -219,6 +219,9 @@ pub struct MotionMatcherState {
     travel: Vec3,
     /// Whether the action playing stands the character or moves it itself.
     taken: bool,
+    /// The time of the frames it was not posed on, in a crowd's middle or
+    /// far tier, taken in its next pose.
+    owed: f32,
 }
 
 impl Component for MotionMatcherState {}
@@ -498,7 +501,24 @@ pub fn match_motion(world: &mut World, delta: f32) {
         .into_iter()
         .filter_map(|(entity, matcher, model)| Some((entity, matcher.clone(), model.animation.clone()?)))
         .collect();
-    for (entity, matcher, animation) in matchers {
+    let crowd = world.resource::<crate::crowds::CrowdSettings>().cloned().unwrap_or_default();
+    let frame = world.resource::<crate::crowds::CrowdTiers>().map_or(0, |tiers| tiers.frame);
+    for (entity, mut matcher, animation) in matchers {
+        // Further out in a crowd, it searches less often and lets its feet go with its clips; and where nothing it
+        // plays moves its Obj, it is posed every few frames, the time between taken at once.
+        let tier = world.resource::<crate::crowds::CrowdTiers>().map_or_else(Default::default, |tiers| tiers.of(entity));
+        if tier != crate::crowds::CrowdTier::Near {
+            matcher.search_every *= crowd.middle_search_every;
+            matcher.foot_locking = false;
+            let resting = !crate::crowds::turn(crowd.pose_every(tier), frame, entity);
+            if resting && !matcher.root_motion && matcher.commands.is_empty() {
+                let kept = world.get_mut::<MotionMatcherState>(entity);
+                if let Some(kept) = kept.filter(|kept| kept.play.is_some() && !kept.taken && kept.action.is_none()) {
+                    kept.owed += delta;
+                    continue;
+                }
+            }
+        }
         let set = world.resource::<Clips>().and_then(|clips| clips.set(&matcher.motion_set)).cloned();
         // A set named but not read yet: nothing to play until it is.
         if !matcher.motion_set.is_empty() && set.is_none() {
@@ -507,6 +527,7 @@ pub fn match_motion(world: &mut World, delta: f32) {
             continue;
         }
         let mut state = world.get::<MotionMatcherState>(entity).cloned().unwrap_or_default();
+        let delta = delta + std::mem::take(&mut state.owed);
         let wanted = set.as_deref().map_or(0, |set| chosen(set, &matcher, &state));
         let Some(play) = state_play(world, &matcher.motion_set, set.as_deref(), wanted, &animation) else {
             let why = match set.as_deref().and_then(|set| set.states.get(wanted)) {

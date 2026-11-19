@@ -8722,3 +8722,67 @@ fn a_storm_stands_in_cloud_that_thins_out_round_it_and_costs_little_at_full_hd()
     assert!(beside > 0.3, "beside it: {beside}");
     assert!(far < beside, "further off, less: {far} and {beside}");
 }
+
+/// The infinite-world template's player, a box model, drawn with its arms and legs swung, posed by its bones where
+/// it is drawn (`posed`) or as the same pose made into a mesh on the CPU and drawn still.
+fn box_player_render(posed: bool) -> Option<(Vec<u8>, u64)> {
+    use std::sync::Arc;
+    use voxear_render::{BoxModel, ModelPart, ModelRenderer, Pose, Sky};
+    let mut renderer = renderer()?;
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../templates/infinite-world/Characters/Player.boxmodel");
+    let model = BoxModel::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let imported = renderer.upload_model(&model.prepared("Player.boxmodel")).unwrap();
+    let skeleton = model.skeleton();
+    let mut pose = skeleton.rest();
+    for (index, bone) in pose.iter_mut().enumerate().skip(1) {
+        bone.rotation *= Quat::from_rotation_x(if index % 2 == 0 { 0.6 } else { -0.5 });
+    }
+    let bones = skeleton.model_matrices(&pose);
+    let mut world = World::new();
+    let turned = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.6, 1.0, 3.0), turned, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    world.insert_resource(steady_post());
+    let material = imported.nodes[0].material;
+    if posed {
+        let parts = imported
+            .nodes
+            .iter()
+            .map(|node| ModelPart {
+                mesh: node.mesh,
+                material: node.material,
+                transform: voxear_core::math::Mat4::IDENTITY,
+                node: 0,
+                skin: node.skin.map(|s| s as u32),
+            })
+            .collect();
+        let drawn = ModelRenderer { animation: imported.animation.clone(), ..ModelRenderer::new(parts) };
+        let bones: Arc<[voxear_core::math::Mat4]> = bones.into();
+        world.spawn((drawn, Pose { bones }, Transform::default()));
+    } else {
+        let mesh = renderer.add_mesh(&model.mesh_posed(&bones)).unwrap();
+        world.spawn((MeshRenderer::new(mesh, material), Transform::default()));
+    }
+    let stats = run(&mut renderer, &world, &mut 0.0, 4);
+    assert!(stats.drawn_early + stats.drawn_late >= 1, "drawn: {stats:?}");
+    if posed {
+        let counts = voxear_render::PosedCounts { skinned: 0, by_bones: 1, at_rest: 0 };
+        assert_eq!(stats.posed, counts, "posed by its bones, not skinned");
+    }
+    Some((renderer.read_pixels().unwrap().2, stats.mesh_pool.model_vertices))
+}
+
+#[test]
+fn a_box_model_posed_by_its_bones_where_it_is_drawn_looks_as_posed_on_the_cpu() {
+    let Some((posed, posed_room)) = box_player_render(true) else { return };
+    let (still, still_room) = box_player_render(false).unwrap();
+    // Posed by its bones, it keeps no posed vertices: fewer than the still one's two meshes, where three runs of
+    // posed vertices would have been three meshes more.
+    assert!(posed_room < still_room, "no room taken for posed vertices: {posed_room} and {still_room}");
+    keep_image("box player posed.png", &posed);
+    keep_image("box player still.png", &still);
+    let lit = posed.chunks_exact(4).filter(|p| p[0] > 40 || p[1] > 40 || p[2] > 40).count();
+    assert!(lit > 2000, "the player shows: {lit} pixels");
+    let differing = differing_pixels(&posed, &still);
+    assert!(differing < 20, "{differing} pixels differ");
+}

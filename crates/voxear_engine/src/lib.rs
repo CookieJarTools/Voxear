@@ -38,6 +38,7 @@ pub mod mesh_boxes;
 pub mod model_renderers;
 pub mod lighting;
 pub mod connected_tiles;
+pub mod crowds;
 pub mod look_packs;
 pub mod shader_packs;
 pub mod texture_packs;

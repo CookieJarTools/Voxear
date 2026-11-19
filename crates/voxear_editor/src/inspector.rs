@@ -1304,6 +1304,9 @@ impl Inspector {
                 if let Prop::NavObstacle(field) = value {
                     meta.tooltip = Some(crate::nav_props::obstacle_tooltip(*field).to_string());
                 }
+                if let Prop::CrowdMember(field) = value {
+                    meta.tooltip = Some(crate::nav_props::crowd_tooltip(*field).to_string());
+                }
                 if let Prop::NavArea(field) = value {
                     meta.tooltip = Some(crate::nav_props::area_tooltip(*field).to_string());
                 }
@@ -2331,6 +2334,7 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
         (Part::NavArea, "Navigation"),
         (Part::NavLink, "Navigation"),
         (Part::NavObstacle, "Navigation"),
+        (Part::CrowdMember, "Navigation"),
         (Part::Audio, "Audio"),
         (Part::Listener, "Audio"),
         (Part::ReverbProbe, "Audio"),
@@ -3073,6 +3077,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::NavArea) => "nav_area",
         Some(Part::NavLink) => "nav_link",
         Some(Part::NavObstacle) => "nav_obstacle",
+        Some(Part::CrowdMember) => "crowd_member",
         Some(Part::MotionMatcher) => "motion_matcher",
         Some(Part::BoneAttachment) => "bone_attachment",
         Some(Part::FirstPersonView) => "first_person",

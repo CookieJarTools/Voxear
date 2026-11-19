@@ -66,6 +66,11 @@ pub const CATEGORIES: &[Category] = &[
         about: "What each kind of ground costs things finding their way",
         manual: "Navigation/Areas and Costs",
     },
+    Category {
+        name: "Crowds",
+        about: "How often characters far from the camera plan, move and are posed",
+        manual: "Navigation/Crowds",
+    },
     Category { name: "Physics 2D", about: "Gravity for 2D physics", manual: "Physics/2D Physics" },
     Category {
         name: "Player",
@@ -780,6 +785,69 @@ const FIXED: &[Setting] = &[
         "How many places one search may look at before it gives up and takes the nearest it reached: a way through a great maze may need more. More lets a search cost more.",
     )
     .advanced(),
+    Setting::new(
+        ("Crowds", "Tiers"),
+        "crowds.enabled",
+        "Tiers",
+        Kind::Toggle,
+        "Off, every character plans, moves and is posed every step and frame, however far away it is.",
+    ),
+    Setting::new(
+        ("Crowds", "Tiers"),
+        "crowds.near",
+        "Near",
+        number(1.0, 10_000.0, "m"),
+        "Within this far of the camera, or of a player on a server, a character plans, moves and is posed every step and frame.",
+    ),
+    Setting::new(
+        ("Crowds", "Tiers"),
+        "crowds.middle",
+        "Middle",
+        number(1.0, 100_000.0, "m"),
+        "Out to this far a character is in the middle tier, done less often; beyond it, far, less often still.",
+    ),
+    Setting::new(
+        ("Crowds", "Middle"),
+        "crowds.middle_plan_every",
+        "Plan every",
+        whole(1.0, 60.0, "steps"),
+        "Steps between a Nav Agent's plans in the middle tier: between them it goes on the way it last planned.",
+    ),
+    Setting::new(
+        ("Crowds", "Middle"),
+        "crowds.middle_pose_every",
+        "Pose every",
+        whole(1.0, 60.0, "frames"),
+        "Frames between a Mob Motion's or Motion Matcher's poses in the middle tier.",
+    ),
+    Setting::new(
+        ("Crowds", "Middle"),
+        "crowds.middle_search_every",
+        "Search time ×",
+        number(1.0, 20.0, ""),
+        "A Motion Matcher's time between searches, times this, beyond the near tier, where it also lets its feet follow its clips.",
+    ),
+    Setting::new(
+        ("Crowds", "Far"),
+        "crowds.far_plan_every",
+        "Plan every",
+        whole(1.0, 60.0, "steps"),
+        "Steps between a Nav Agent's plans in the far tier.",
+    ),
+    Setting::new(
+        ("Crowds", "Far"),
+        "crowds.far_move_every",
+        "Move every",
+        whole(1.0, 60.0, "steps"),
+        "Steps between a far Nav Agent's moves, each move taking the time of the steps it missed.",
+    ),
+    Setting::new(
+        ("Crowds", "Far"),
+        "crowds.far_pose_every",
+        "Pose every",
+        whole(1.0, 60.0, "frames"),
+        "Frames between a Mob Motion's or Motion Matcher's poses in the far tier.",
+    ),
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {

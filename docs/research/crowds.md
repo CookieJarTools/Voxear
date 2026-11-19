@@ -4,6 +4,11 @@ Research for running hundreds to thousands of animated AI characters in Voxear's
 mesh levels, written 2026-11-19. Nothing here is built yet. It covers what the engine does now and where it
 stops (measured), the techniques that are published and what each costs, and a recommended plan in stages.
 
+**Progress.** Stages 1 and 3 are built (2026-11-19). Box characters are posed by their bones where they are
+drawn: 5,000 of them take 2.0–2.5 ms of GPU frame and 4.1 ms of renderer CPU, where past 1,638 used to be drawn
+at rest. Tiers put 2,000 far agents' step at 3.8 ms against 5.2 ms all near (along the nav), and 7.8 against
+12.8 ms (by Character Controller). The roadmap's Crowds entry under M9 has the details.
+
 ## The short version
 
 - **Today's limit is about 1,600 box characters or 125 humanoids posed in a frame.** The skinning pass is cheap.

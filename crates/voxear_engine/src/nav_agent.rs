@@ -15,6 +15,7 @@
 //! (`voxear_nav::avoid`). Only where its Obj has authority does an agent
 //! move: on a server, its mobs; a client sees them move by the network.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -192,6 +193,9 @@ pub struct NavAgentState {
     /// Where the way asked for goes, as a block of its world.
     asked_to: Option<[i32; 3]>,
     search_in: f32,
+    /// The time of the steps it was not moved on, a far agent moving every
+    /// few steps (see `crowds`), taken in its next move.
+    owed: f32,
     /// How fast it falls, in metres a second.
     fall: f32,
     /// For each corner, whether it is jumped to; and the shut doors on the
@@ -502,6 +506,14 @@ pub fn step_agents(world: &mut World, delta: f32) {
         return;
     }
     voxear_core::profile_scope!("Nav Agents");
+    // Each one's tier in the crowd, which says how often it plans its way and moves.
+    let count = crate::crowds::count_step(world);
+    let crowd = world.resource::<crate::crowds::CrowdSettings>().cloned().unwrap_or_default();
+    let tiers: HashMap<Entity, crate::crowds::CrowdTier> = match world.resource::<crate::crowds::CrowdTiers>() {
+        Some(tiers) => agents.iter().map(|(entity, _)| (*entity, tiers.of(*entity))).collect(),
+        None => HashMap::new(),
+    };
+    let tier = |entity: Entity| tiers.get(&entity).copied().unwrap_or_default();
     let worlds: Vec<(Entity, Vec3, f32, BlockWorld)> = world
         .query_ref::<(Entity, &BlockWorld, &Transform)>()
         .into_iter()
@@ -538,6 +550,15 @@ pub fn step_agents(world: &mut World, delta: f32) {
         });
         let controller = world.get::<CharacterController>(entity).copied();
         let (height, radius) = size_of(&agent, controller);
+        // Not its turn to plan: it goes on as it last planned, where it has a way and nothing new is asked of it.
+        let planned = state.asked.is_none() && state.status != PathStatus::None && state.planned_for == agent.destination;
+        let turn = crate::crowds::turn(crowd.plan_every(tier(entity)), count, entity);
+        if !turn && planned && !state.crossing_link && !agent.stopped {
+            let walked = state.world.and_then(|world| walked.iter().position(|walked| walked.entity == world));
+            let dimension = dimension_of(world, entity);
+            steps.push(Stepping { entity, agent, state, at, dimension, walked, controller });
+            continue;
+        }
         // The world it walks: the one it stands in, or else the first there is.
         // The world it walks: of its own dimension, the one it stands in, or else the first there is.
         let dimension = dimension_of(world, entity);
@@ -675,7 +696,14 @@ pub fn step_agents(world: &mut World, delta: f32) {
         }
         return;
     };
-    for (step, chosen) in steps.into_iter().zip(chosen.into_iter().take(agents_count)) {
+    for (mut step, chosen) in steps.into_iter().zip(chosen.into_iter().take(agents_count)) {
+        // A far agent moves every few steps, the time of those it missed with it.
+        if !crate::crowds::turn(crowd.move_every(tier(step.entity)), count, step.entity) {
+            step.state.owed += delta;
+            world.insert(step.entity, step.state);
+            continue;
+        }
+        let delta = delta + std::mem::take(&mut step.state.owed);
         let mesh = mesh_of(&step.agent);
         finish(world, step, chosen, &walked, Some(&mut physics), mesh, &portals, delta);
     }

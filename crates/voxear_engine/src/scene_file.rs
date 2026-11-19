@@ -473,6 +473,9 @@ pub struct ObjData {
     /// A box agents go round, cut out of the nav where it stands still.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
+    /// The Obj's own place in a crowd: its tier, or how much it matters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crowd_member: Option<crate::crowds::CrowdMember>,
     /// Animates the Obj's model by motion matching over its clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
@@ -629,6 +632,7 @@ impl ObjData {
             nav_area: None,
             nav_link: None,
             nav_obstacle: None,
+            crowd_member: None,
             motion_matcher: None,
             bone_attachment: None,
             first_person: None,
@@ -2384,6 +2388,9 @@ fn capture_instance(
     if root.nav_obstacle.is_some() && root.nav_obstacle != prefab_root.nav_obstacle {
         instance.nav_obstacle = root.nav_obstacle;
     }
+    if root.crowd_member.is_some() && root.crowd_member != prefab_root.crowd_member {
+        instance.crowd_member = root.crowd_member;
+    }
     if root.motion_matcher.is_some() && root.motion_matcher != prefab_root.motion_matcher {
         instance.motion_matcher = root.motion_matcher.clone();
     }
@@ -2653,6 +2660,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(obstacle) = actual.nav_obstacle.as_ref().filter(|o| Some(*o) != expected.nav_obstacle.as_ref()) {
         put("nav_obstacle", whole(obstacle, &crate::nav_obstacle::NavObstacle::default())?);
+    }
+    if let Some(member) = actual.crowd_member.as_ref().filter(|m| Some(*m) != expected.crowd_member.as_ref()) {
+        put("crowd_member", whole(member, &crate::crowds::CrowdMember::default())?);
     }
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
@@ -2993,6 +3003,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.nav_area = world.get::<crate::navigation::NavArea>(entity).copied();
     obj.nav_link = world.get::<crate::navigation::NavLink>(entity).copied();
     obj.nav_obstacle = world.get::<crate::nav_obstacle::NavObstacle>(entity).copied();
+    obj.crowd_member = world.get::<crate::crowds::CrowdMember>(entity).copied();
     // As saved: where a game sent it is not part of the scene.
     obj.nav_agent = world.get::<crate::nav_agent::NavAgent>(entity).map(|agent| crate::nav_agent::NavAgent {
         destination: None,

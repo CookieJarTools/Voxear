@@ -383,6 +383,9 @@ pub struct MobMotionState {
     skeleton: usize,
     roles: Arc<[BoneRole]>,
     last: Option<(Vec3, Quat)>,
+    /// The time of the frames it was not posed on, in a crowd's middle or
+    /// far tier, taken in its next pose.
+    owed: f32,
 }
 
 impl Component for MobMotionState {}
@@ -404,7 +407,9 @@ pub fn give_mob_bones(world: &mut World, content: &mut Content) {
 }
 
 /// Poses every Obj with a Mob Motion `delta` seconds on, from how it moved
-/// since the last frame.
+/// since it was last posed. In a crowd's middle and far tiers an Obj is
+/// posed every few frames, the time between taken at once (see `crowds`);
+/// the posing itself is shared over threads.
 pub fn animate_mobs(world: &mut World, delta: f32) {
     let mobs: Vec<(Entity, MobMotion, Arc<voxear_render::ModelAnimation>, Arc<[BoneRole]>)> = world
         .query_ref::<(Entity, &MobMotion, &ModelRenderer, &MobBones)>()
@@ -416,7 +421,7 @@ pub fn animate_mobs(world: &mut World, delta: f32) {
         .collect();
     // An Obj whose Animator has a clip is the clip's to pose: Mob Motion waits until it has none, and
     // starts afresh then.
-    let playing: Vec<Entity> = world
+    let playing: std::collections::HashSet<Entity> = world
         .query_ref::<(Entity, &super::Animator, &MobMotion)>()
         .into_iter()
         .filter(|(_, animator, _)| !animator.clip.is_empty())
@@ -425,6 +430,10 @@ pub fn animate_mobs(world: &mut World, delta: f32) {
     for entity in &playing {
         world.remove::<MobMotionState>(*entity);
     }
+    let crowd = world.resource::<crate::crowds::CrowdSettings>().cloned().unwrap_or_default();
+    let frame = world.resource::<crate::crowds::CrowdTiers>().map_or(0, |tiers| tiers.frame);
+    // What each one is posed from, read from the world; those not posed this frame keep their time for later.
+    let mut jobs: Vec<MobJob> = Vec::with_capacity(mobs.len());
     for (entity, mut motion, animation, roles) in mobs {
         if playing.contains(&entity) {
             continue;
@@ -440,10 +449,20 @@ pub fn animate_mobs(world: &mut World, delta: f32) {
                 skeleton: made_for,
                 roles: roles.clone(),
                 last: None,
+                owed: 0.0,
             });
         if !state.poser.moves_anything() {
             continue;
         }
+        let tier = world.resource::<crate::crowds::CrowdTiers>().map_or_else(Default::default, |tiers| tiers.of(entity));
+        let posed_before = state.last.is_some();
+        if posed_before && !crate::crowds::turn(crowd.pose_every(tier), frame, entity) {
+            if let Some(kept) = world.get_mut::<MobMotionState>(entity) {
+                kept.owed += delta;
+            }
+            continue;
+        }
+        let delta = delta + std::mem::take(&mut state.owed);
         // Where it is and faces in the world, and how large, to tell its own speed from the world's.
         let placed = world.get::<WorldTransform>(entity).map(|placed| placed.0).or_else(|| {
             world
@@ -476,15 +495,57 @@ pub fn animate_mobs(world: &mut World, delta: f32) {
         state.last = Some((at, facing));
         (0..std::mem::take(&mut motion.attacks)).for_each(|_| state.poser.attack());
         (0..std::mem::take(&mut motion.hurts)).for_each(|_| state.poser.hurt());
-        let pose = state.poser.pose(skeleton, &motion, input);
-        let bones = skeleton.model_matrices(&pose).into();
-        world.insert(entity, Pose { bones });
-        world.insert(entity, state);
+        jobs.push(MobJob { entity, motion, animation, state, input, bones: None });
+    }
+    // The posing, shared over threads where there are many.
+    pose_all(&mut jobs);
+    for job in jobs {
+        let Some(bones) = job.bones else { continue };
+        world.insert(job.entity, Pose { bones });
+        world.insert(job.entity, job.state);
         // What was asked of it is taken.
-        if let Some(kept) = world.get_mut::<MobMotion>(entity) {
+        if let Some(kept) = world.get_mut::<MobMotion>(job.entity) {
             (kept.attacks, kept.hurts) = (0, 0);
         }
     }
+}
+
+/// One Obj's posing this frame: what it is posed from, and its bones once
+/// posed.
+struct MobJob {
+    entity: Entity,
+    motion: MobMotion,
+    animation: Arc<voxear_render::ModelAnimation>,
+    state: MobMotionState,
+    input: MotionInput,
+    bones: Option<Arc<[Mat4]>>,
+}
+
+impl MobJob {
+    fn pose(&mut self) {
+        let skeleton = &self.animation.skeleton;
+        let pose = self.state.poser.pose(skeleton, &self.motion, self.input);
+        self.bones = Some(skeleton.model_matrices(&pose).into());
+    }
+}
+
+/// Fewer than this many are posed on the calling thread alone.
+const POSED_ON_THREADS: usize = 128;
+
+/// Poses every job, over as many threads as the machine has to spare where
+/// there are enough of them to be worth it.
+fn pose_all(jobs: &mut [MobJob]) {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+    if jobs.len() < POSED_ON_THREADS || threads == 1 {
+        jobs.iter_mut().for_each(MobJob::pose);
+        return;
+    }
+    let share = jobs.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        for chunk in jobs.chunks_mut(share) {
+            scope.spawn(move || chunk.iter_mut().for_each(MobJob::pose));
+        }
+    });
 }
 
 /// What a script asks of a Mob Motion, by number, as `NativeMobMotion` in
@@ -590,6 +651,29 @@ mod tests {
 
     fn bone(name: &str, parent: Option<usize>, at: Vec3) -> Bone {
         Bone { name: name.into(), parent, rest: BonePose { translation: at, ..BonePose::default() } }
+    }
+
+    /// Many figures posed over threads come out as each posed alone.
+    #[test]
+    fn posing_a_crowd_over_threads_poses_each_as_alone() {
+        let (skeleton, roles) = figure();
+        let animation = Arc::new(voxear_render::ModelAnimation { skeleton, ..Default::default() });
+        let job = |k: usize| {
+            let poser = MobPoser::new(&animation.skeleton, &roles);
+            let state = MobMotionState { poser, skeleton: 0, roles: roles.clone().into(), last: None, owed: 0.0 };
+            let velocity = Vec3::new(0.0, 0.0, 0.5 + (k % 7) as f32 * 0.4);
+            let input = MotionInput { velocity, turn: 0.0, look: None, delta: 0.25 };
+            let (entity, motion) = (Entity::from_bits(k as u64), MobMotion::default());
+            MobJob { entity, motion, animation: animation.clone(), state, input, bones: None }
+        };
+        let mut crowd: Vec<MobJob> = (0..POSED_ON_THREADS * 3).map(job).collect();
+        pose_all(&mut crowd);
+        for (k, posed) in crowd.iter().enumerate() {
+            let mut alone = job(k);
+            alone.pose();
+            assert_eq!(posed.bones, alone.bones, "figure {k}");
+        }
+        assert!(crowd.iter().all(|posed| posed.bones.is_some()), "every one posed");
     }
 
     /// A body on two legs with knees, two arms, a head and a tail.

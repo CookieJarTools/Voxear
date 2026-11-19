@@ -2025,6 +2025,8 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - [x] the First-Person View: the camera in a body that is seen, with kick, glance and framing
 - [ ] blend shapes, state machines, blend trees and layers
 - [ ] GPU crowd search
+- [x] crowds of box characters posed by their bones where they are drawn, and characters animated less often
+  further from the camera (see Crowds under M9)
 - **Box models**, for the blocky characters of block worlds, in parts: the asset; a window to build and paint one
   in; bones made from its shape; motion made from how it moves; a raised second layer; walking in a block world;
   clips keyed on a timeline.
@@ -3932,6 +3934,38 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     and not a cliff, round its holes and what stands on it; a kilometre of terrain baked, and kept small; an old
     `.nav` read; agents round a wall and up a terrain hill, by both ways of moving; a vine and a ladder climbed up
     a cliff and down, and not by what does not climb; an agent climbing a vine by both ways of moving.
+- Crowds: hundreds of characters near and thousands in the world, in stages (the research, measured limits and
+  the plan: `docs/research/crowds.md`):
+  - [x] **Box characters posed by their bones where they are drawn.** A skinned mesh whose every vertex is bound
+    whole to one bone, as a box model's are (`Assets::is_rigid_skin`, `SkinVertex::is_rigid`), is not skinned:
+    its bones' matrices are all it needs, and every pass that draws it moves each vertex by its bone as it reads
+    it (`instanceVertex` and `instancePositionBefore` in `common.slang`; `GpuInstance::bones`, `bones_before`,
+    `skin`; last frame's matrices for motion as `GpuBuffers::skin_matrices_before`). No posed vertices, no
+    skinning pass, one mesh for every Obj drawing the model. The frame's bone matrices grow to fit (16K at
+    first, up to 1M) where they stopped at 16,384, past which characters were drawn at rest. Setting up the
+    frame's poses reads each mesh once for all its Objs. The Profiler's **Posed parts** and **Posed at rest**
+    (`RenderStats::posed`; `profiler.frames` `posed`). Timings (RTX 3070 shared, least of 60 frames, 1920×1080,
+    a new pose each frame for every one, test build): 1,000 box characters 1.2 ms GPU frame and 1.4 ms renderer
+    CPU (were 1.6 and 4.1 ms); 5,000, 2.0–2.5 ms and 4.1 ms (past 1,638 were drawn at rest); 10,000, 3.8 and
+    9.0 ms. Tests: a box model posed by its bones drawn as the same pose made on the CPU, with no posed vertices;
+    the skinned bar and hidden-bone tests as they were.
+  - [ ] Skinning held to a budget: one dispatch for all, only what is seen, posed room of its own, shared poses.
+  - [x] **Tiers** (`voxear_engine::crowds`, Project Settings ▸ Crowds, `[crowds]`): every Obj with a Nav Agent,
+    Block Mob, Mob Motion or Motion Matcher is Near (40 m), Middle (150 m) or Far each frame by its distance to
+    the game's camera, and on a server to every player's Obj. Middle agents plan their way every 2nd step and are
+    posed every 2nd frame; far ones plan every 4th step, move every 2nd (each move the time of those missed) and
+    are posed every 4th frame. Beyond Near a Motion Matcher searches three times less often and lets its feet
+    follow its clips; one with root motion or an action is posed every frame. **Crowd Member** (Add Component ▸
+    Navigation ▸ Crowd Member, `[obj.crowd_member]`): a tier of its own, or an Importance that scales the
+    distances. Mob Motion poses on up to eight threads where there are 128 or more. Timings (test build, least
+    of 60 steps, 2,000 agents crossing a square both ways): along the nav 5.2 ms all near, 3.8 ms all far; by
+    Character Controller 12.8 and 7.8 ms. Tests: tiers by distance, by a Crowd Member and switched off; a crowd
+    of twenty seen from far off arriving as soon as one seen near, both ways of moving; 2,000 far agents in less
+    of the step; Mob Motion posed over threads as each alone. Manual: Navigation ▸ Crowds. Not done: Crowd
+    Member from C#; between a far character's poses the GPU does not yet blend.
+  - [ ] Far crowds on clips baked into a texture, played on the GPU; pictures furthest out.
+  - [ ] Agents beyond the streamed rings kept as records that walk the regions; shared direction fields.
+  - [ ] Networked crowds: compact updates, rates by tier, interest by ring.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

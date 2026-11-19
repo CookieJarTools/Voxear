@@ -61,6 +61,10 @@ pub struct ProjectFile {
     /// `crate::navigation::NavigationSettings`).
     #[serde(default)]
     pub navigation: crate::navigation::NavigationSettings,
+    /// How often characters further from whoever looks plan, move and are
+    /// posed (see `crate::crowds::CrowdSettings`).
+    #[serde(default)]
+    pub crowds: crate::crowds::CrowdSettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,6 +92,7 @@ impl ProjectFile {
             time: TimeSettings::default(),
             input: InputSettings::default(),
             navigation: crate::navigation::NavigationSettings::default(),
+            crowds: crate::crowds::CrowdSettings::default(),
             modules: None,
         }
     }

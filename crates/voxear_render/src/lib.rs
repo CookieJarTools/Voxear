@@ -280,6 +280,17 @@ pub struct RenderStats {
     /// What the shared vertex and index space holds: models, worlds of
     /// blocks' lighting, and what is free.
     pub mesh_pool: MeshPoolUse,
+    /// The parts of models a pose moves: skinned into posed vertices, posed
+    /// by their bones where they are drawn, and left at rest for want of room.
+    pub posed: PosedCounts,
+}
+
+/// The parts of models a pose moved in a frame (see [`RenderStats::posed`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct PosedCounts {
+    pub skinned: u32,
+    pub by_bones: u32,
+    pub at_rest: u32,
 }
 
 /// How much of the shared vertex and index space worlds of blocks' lighting
@@ -323,6 +334,7 @@ impl RenderStats {
             lamp_shadow_pages: 0,
             lamp_shadow_drawn: 0,
             mesh_pool: MeshPoolUse::default(),
+            posed: PosedCounts::default(),
         }
     }
 }
@@ -976,6 +988,7 @@ impl Renderer {
             virtual_shadow_moving,
             lamp_shadow_pages,
             lamp_shadow_drawn,
+            posed: self.skinning.counts(),
             ..self.stats
         }
     }
@@ -2021,6 +2034,7 @@ impl Renderer {
                 mesh_shaders,
                 software_rays,
                 posed: skinning.posed.clone(),
+                skin_matrices: skinning.matrices(),
                 simulated: (particle_sim.placed.clone(), particle_sim.pool_address(), particle_pool),
                 particle_step,
                 panels: panel_textures.clone(),
@@ -2555,6 +2569,9 @@ struct ViewSetup {
     software_rays: bool,
     /// This frame's posed parts, whose instances draw their posed vertices.
     posed: std::sync::Arc<HashMap<scene::Owner, skinning::Posed>>,
+    /// Where this frame's and last frame's bones' matrices are, for what is
+    /// posed by its bones where it is drawn.
+    skin_matrices: (u64, u64),
     /// This frame's simulated Particle Systems with particles out, the pool
     /// their particles are in, and the pool as the graph knows it.
     simulated: (std::sync::Arc<particles::PlacedSystems>, u64, Option<graph::BufferId>),
@@ -3950,7 +3967,8 @@ impl View {
                 dice_patches: buffers.dice_patches.address,
                 dice_draws: buffers.dice_draws.address,
                 skins: assets.skins.address,
-                skin_matrices: 0,
+                skin_matrices: setup.skin_matrices.0,
+                skin_matrices_before: setup.skin_matrices.1,
                 ui_panels: buffers.ui_panels.address,
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],

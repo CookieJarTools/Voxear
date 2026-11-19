@@ -331,6 +331,7 @@ impl Profiler {
                 "shadow_draws": blocks.shadow_draws,
             });
             frame["mesh_pool"] = serde_json::to_value(s.stats.mesh_pool).unwrap_or_default();
+            frame["posed"] = serde_json::to_value(s.stats.posed).unwrap_or_default();
             frame
         });
         read_frames(frames, after, limit, self.frames + 1)
@@ -528,6 +529,8 @@ impl Profiler {
             ("By LOD", if lods.is_empty() { "-".into() } else { lods.join(" / ") }),
             ("LOD fades", stats.fade_draws.to_string()),
             ("Lights per cluster", stats.cluster_max_lights.to_string()),
+            ("Posed parts", format!("{} skinned · {} by bones", stats.posed.skinned, stats.posed.by_bones)),
+            ("Posed at rest", stats.posed.at_rest.to_string()),
             ("Model vertices", millions(pool.model_vertices)),
             ("Block light vertices", format!("{} · {} chunks", millions(pool.lighting_vertices), pool.lighting_meshes)),
             ("Free vertices", format!("{} of {}", millions(pool.free_vertices), millions(pool.vertex_capacity))),

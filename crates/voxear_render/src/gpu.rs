@@ -191,6 +191,22 @@ pub struct GpuInstance {
     /// material's `tint_mask`, each where the mask says (see
     /// `ModelRenderer::tints`).
     pub tints: [u32; 3],
+    /// For an instance whose mesh is bound whole to bones (a box model),
+    /// where its bones' matrices start in this frame's and last frame's
+    /// bones' matrices, each plus one, 0 for none; and where its mesh's skin
+    /// starts (see `skinning`).
+    pub bones: u32,
+    pub bones_before: u32,
+    pub skin: u32,
+    pub _bones_pad: u32,
+}
+
+impl GpuInstance {
+    /// Whether a pose moves its vertices: skinned into posed vertices, or
+    /// posed by its bones where it is drawn.
+    pub fn is_posed(&self) -> bool {
+        self.posed != 0 || self.bones != 0
+    }
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
@@ -1284,6 +1300,9 @@ pub struct GpuBuffers {
     /// The frame a worn shader pack's surface programs read
     /// (`shader_packs::GpuPackFrame`); 0 with none worn.
     pub pack_frame: u64,
+    /// Last frame's bones' matrices, for the motion of what is posed by its
+    /// bones where it is drawn (see `skinning`).
+    pub skin_matrices_before: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1681,7 +1700,7 @@ mod tests {
         assert_eq!(size_of::<GpuMeshlet>(), 48);
         assert_eq!(size_of::<GpuMaterial>(), 112);
         // Three matrices, ids and flags, then where its LODs end.
-        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16 + 16 + 16);
+        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16 + 16 + 16 + 16);
         assert_eq!(size_of::<GpuLight>(), 96);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.
@@ -1724,7 +1743,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 75 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 76 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
         assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);

@@ -546,3 +546,94 @@ pub fn obstacle_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
         parts.push(Part::NavObstacle);
     }
 }
+
+/// A value the Crowd Member component shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CrowdMemberField {
+    Tier,
+    Importance,
+}
+
+use voxear_engine::crowds::{CrowdMember, CrowdTierChoice};
+
+const CROWD_FIELDS: [CrowdMemberField; 2] = [CrowdMemberField::Tier, CrowdMemberField::Importance];
+const TIER_CHOICES: [CrowdTierChoice; 4] =
+    [CrowdTierChoice::ByDistance, CrowdTierChoice::Near, CrowdTierChoice::Middle, CrowdTierChoice::Far];
+
+fn tier_name(tier: CrowdTierChoice) -> &'static str {
+    match tier {
+        CrowdTierChoice::ByDistance => "By Distance",
+        CrowdTierChoice::Near => "Near",
+        CrowdTierChoice::Middle => "Middle",
+        CrowdTierChoice::Far => "Far",
+    }
+}
+
+pub fn crowd_props() -> Vec<Prop> {
+    CROWD_FIELDS.into_iter().map(Prop::CrowdMember).collect()
+}
+
+pub fn crowd_label(field: CrowdMemberField) -> String {
+    match field {
+        CrowdMemberField::Tier => "Tier",
+        CrowdMemberField::Importance => "Importance",
+    }
+    .into()
+}
+
+pub fn crowd_tooltip(field: CrowdMemberField) -> &'static str {
+    match field {
+        CrowdMemberField::Tier => {
+            "Which tier of the crowd it is in: by its distance from the camera and the players, as Project Settings \
+             ▸ Crowds sets, or always Near, Middle or Far. Near plans, moves and is posed every step and frame. \
+             Default: By Distance."
+        }
+        CrowdMemberField::Importance => {
+            "How much it matters, which scales the distances its tier is found by: at 2 it stays near twice as far \
+             out, at 0.5 half as far. Default: 1."
+        }
+    }
+}
+
+pub fn crowd_key(field: CrowdMemberField) -> &'static str {
+    match field {
+        CrowdMemberField::Tier => "tier",
+        CrowdMemberField::Importance => "importance",
+    }
+}
+
+pub fn crowd_get(game: &Game, entity: Entity, field: CrowdMemberField) -> Option<Value> {
+    let member = game.engine.world.get::<CrowdMember>(entity)?;
+    Some(match field {
+        CrowdMemberField::Tier => Value::Choice(
+            TIER_CHOICES.iter().position(|tier| *tier == member.tier).unwrap_or_default(),
+            TIER_CHOICES.iter().map(|tier| tier_name(*tier).to_string()).collect(),
+        ),
+        CrowdMemberField::Importance => Value::Number(member.importance),
+    })
+}
+
+pub fn crowd_set(game: &mut Game, entity: Entity, field: CrowdMemberField, value: Value) -> bool {
+    let Some(member) = game.engine.world.get_mut::<CrowdMember>(entity) else { return false };
+    match (field, value) {
+        (CrowdMemberField::Tier, Value::Choice(at, _)) => member.tier = TIER_CHOICES.get(at).copied().unwrap_or_default(),
+        (CrowdMemberField::Importance, Value::Number(importance)) => member.importance = importance.clamp(0.01, 100.0),
+        _ => return false,
+    }
+    true
+}
+
+pub fn crowd_add(world: &mut World, entity: Entity) {
+    world.insert(entity, CrowdMember::default());
+}
+
+pub fn crowd_remove(world: &mut World, entity: Entity) {
+    world.remove::<CrowdMember>(entity);
+}
+
+/// Adds the Crowd Member part where `entity` has the component.
+pub fn crowd_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
+    if world.has::<CrowdMember>(entity) {
+        parts.push(Part::CrowdMember);
+    }
+}

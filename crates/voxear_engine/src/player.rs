@@ -85,6 +85,10 @@ pub struct PlayerSettings {
     /// What each kind of ground costs things finding their way.
     #[serde(default)]
     pub navigation: crate::navigation::NavigationSettings,
+    /// How often characters further from whoever looks plan, move and are
+    /// posed.
+    #[serde(default)]
+    pub crowds: crate::crowds::CrowdSettings,
     /// The project's `[foliage]` settings.
     #[serde(default)]
     pub foliage: voxear_render::FoliageMotion,
@@ -332,6 +336,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             time: settings.time,
             input: crate::project::InputSettings { actions: settings.input_actions.clone() },
             navigation: settings.navigation.clone(),
+            crowds: settings.crowds.clone(),
             modules: Some(settings.modules),
         },
     };

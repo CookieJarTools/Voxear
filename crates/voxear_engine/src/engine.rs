@@ -612,6 +612,10 @@ impl Engine {
             self.run_phase(Phase::OnUiBuilt);
         }
 
+        // Each character's tier in the crowd, by how near it is to whoever looks, for this frame's steps and poses.
+        if !self.edit_mode {
+            crate::crowds::update(&mut self.world);
+        }
         // A networked client runs its ticks a little faster or slower to keep pace with its server.
         self.fixed_accumulator += self.time.delta * crate::net::time_scale(&self.world);
         let mut steps = 0;

@@ -228,6 +228,16 @@ enum End {
     Client(Box<Client>),
 }
 
+/// Where each player is, on a server: their first owned Obj. None on a
+/// client or with no session.
+pub(crate) fn player_viewpoints(world: &World) -> Vec<Vec3> {
+    let Some(session) = world.resource::<NetSession>() else { return Vec::new() };
+    if !matches!(session.end, End::Server(_)) {
+        return Vec::new();
+    }
+    session.players.iter().filter_map(|player| session.replication.viewpoint(*player)).map(|(at, _)| at).collect()
+}
+
 /// The session in the world: a server's clients and their players, or a
 /// client's server.
 pub struct NetSession {

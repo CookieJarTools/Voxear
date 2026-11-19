@@ -179,7 +179,7 @@ impl ShadowCache {
                     && kept.material == instance.material
                     && kept.flags == instance.flags & !INSTANCE_NEW
                     && kept.lod_bias == instance.lod_bias
-                    && instance.posed == 0
+                    && !instance.is_posed()
             });
             let still = same.map_or(0, |kept| kept.still.saturating_add(1));
             let kept = still >= STILL_FRAMES && may_keep(instance, assets);
@@ -188,7 +188,7 @@ impl ShadowCache {
                 None => sphere_of(instance, assets),
             };
             // The sun's pages keep what stands still, plants and a material's sway too: what moves is drawn over them.
-            let moving = still < STILL_FRAMES || instance.posed != 0;
+            let moving = still < STILL_FRAMES || instance.is_posed();
             if moving {
                 self.moving.push(sphere);
                 instance.flags |= INSTANCE_MOVING;
@@ -413,7 +413,7 @@ fn tracked(instance: &GpuInstance, owner: &Owner) -> bool {
 /// not one skinned, whose material moves its vertices, or whose LOD follows
 /// the camera.
 fn may_keep(instance: &GpuInstance, assets: &Assets) -> bool {
-    instance.posed == 0
+    !instance.is_posed()
         && instance.flags & INSTANCE_LOD_SCREEN == 0
         && !assets.moves_vertices(MaterialHandle(instance.material))
 }

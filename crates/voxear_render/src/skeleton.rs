@@ -20,6 +20,12 @@ pub struct SkinVertex {
 }
 
 impl SkinVertex {
+    /// Whether it is bound whole to its first joint: every bit of its weight
+    /// there, none on the others.
+    pub fn is_rigid(&self) -> bool {
+        self.weights == [u16::MAX, 0, 0, 0]
+    }
+
     /// Up to four joints and weights, the heaviest kept and the weights made
     /// to add up to one, as 65535.
     pub fn new(joints: [u16; 4], weights: [f32; 4]) -> Self {

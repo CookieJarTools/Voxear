@@ -543,7 +543,7 @@ impl ViewBaked {
             }
             let mesh = crate::MeshHandle(instance.mesh);
             let model = Mat4::from_cols_array_2d(&instance.model);
-            let receives = lightmap.filter(|l| l.receive && instance.posed == 0 && assets.has_lightmap_uvs(mesh));
+            let receives = lightmap.filter(|l| l.receive && !instance.is_posed() && assets.has_lightmap_uvs(mesh));
             let mut row = GpuBakedInstance { lightmap: NO_TEXTURE, directions: NO_TEXTURE, ..Default::default() };
             if let Some(lightmap) = receives {
                 row.flags |= BAKED_RECEIVES;

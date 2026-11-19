@@ -382,6 +382,10 @@ pub struct Assets {
     pub skins: Buffer,
     skin_space: RangeAllocator,
     skin_ranges: HashMap<MeshHandle, (u64, u64)>,
+    /// Skinned meshes whose every vertex is bound whole to one bone, as a
+    /// box model's are: posed by their bones where they are drawn, with no
+    /// posed vertices of their own (see `skinning`).
+    rigid_skins: std::collections::HashSet<MeshHandle>,
     /// Each vertex's lightmap UVs, at the same place as the vertex is in
     /// `vertices`, for meshes that have them (see `lightmap_uvs`).
     pub lightmap_uvs: Buffer,
@@ -527,6 +531,7 @@ impl Assets {
             skins,
             skin_space: RangeAllocator::new(MAX_SKIN_VERTICES),
             skin_ranges: HashMap::new(),
+            rigid_skins: std::collections::HashSet::new(),
             lightmap_uvs,
             lightmapped: Default::default(),
             space: [MAX_VERTICES, MAX_INDICES, MAX_MESHLETS, MAX_MESHLET_VERTICES, MAX_MESHLET_TRIANGLES]
@@ -1514,14 +1519,23 @@ impl Assets {
         if let Some((offset, count)) = self.skin_ranges.remove(&mesh) {
             self.skin_space.free(offset, count);
         }
+        self.rigid_skins.remove(&mesh);
         if skin.is_empty() {
             return Ok(());
+        }
+        if skin.iter().all(SkinVertex::is_rigid) {
+            self.rigid_skins.insert(mesh);
         }
         let count = skin.len() as u64;
         let offset = self.skin_space.alloc(count).context("out of skin space")?;
         gpu.upload_buffer(&self.skins, offset * size_of::<SkinVertex>() as u64, bytemuck::cast_slice(skin))?;
         self.skin_ranges.insert(mesh, (offset, count));
         Ok(())
+    }
+
+    /// Whether a skinned mesh's every vertex is bound whole to one bone.
+    pub(crate) fn is_rigid_skin(&self, mesh: MeshHandle) -> bool {
+        self.rigid_skins.contains(&mesh)
     }
 
     /// Where a skinned mesh's skin starts in `skins` and how many vertices
@@ -1641,6 +1655,7 @@ impl Assets {
                     gpu.destroy_acceleration_structure(level);
                 }
                 self.lightmapped.remove(&mesh);
+                self.rigid_skins.remove(&mesh);
                 if let Some((offset, count)) = self.skin_ranges.remove(&mesh) {
                     self.skin_space.free(offset, count);
                 }

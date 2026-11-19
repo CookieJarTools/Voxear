@@ -27,12 +27,11 @@ void shadowMesh(
     uint triangleCount = drawn.meshlet.counts >> 8;
     SetMeshOutputCounts(vertexCount, triangleCount);
     Mesh mesh = buffers()->meshes[drawn.data.mesh];
-    uint vertexOffset = instanceVertices(drawn.data, mesh);
     Material material = buffers()->materials[drawn.data.material];
     float height = plantHeight(drawn.data, mesh);
     for (uint i = thread.x; i < vertexCount; i += MESHLET_ROUND)
     {
-        Vertex v = buffers()->vertices[vertexOffset + buffers()->meshletVertices[drawn.vertexBase + i]];
+        Vertex v = instanceVertex(drawn.data, mesh, buffers()->meshletVertices[drawn.vertexBase + i]);
         float4 world = transform(drawn.data.model, float4(v.position, 1.0));
         Instance data = drawn.data;
         float3 normal = normalize(data.normal0.xyz * v.normal.x + data.normal1.xyz * v.normal.y + data.normal2.xyz * v.normal.z);

@@ -2231,6 +2231,7 @@ impl Editor {
                 let file = &self.game.project.file;
                 file.portals.put(&mut self.game.engine.world);
                 file.navigation.put(&mut self.game.engine.world);
+                file.crowds.put(&mut self.game.engine.world);
                 self.game.engine.world.insert_resource(file.foliage.bounded());
                 file.quality.put(&mut self.game.engine.world);
                 file.physics.put(&mut self.game.engine.world);

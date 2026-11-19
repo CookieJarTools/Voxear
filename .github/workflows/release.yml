@@ -1,9 +1,11 @@
 # Builds a Voxear engine release for Linux and Windows, and can publish it for the launcher.
 #
-# Run it from the Actions tab: Release, then Run workflow, choosing the channel and, for a beta, the version.
-# Both platforms are packaged with `voxear-dist` under one version, and their archives are kept as this run's
-# artifacts. That is all it does unless Publish is ticked: the archives can then be signed and listed by hand with
-# the launcher repository's `voxear-release engine add`, as before.
+# Run it from the Actions tab: Release, then Run workflow. It picks the next free version itself: a nightly is
+# today's (`<version>-nightly.<YYYYMMDD>`, then `.2`, `.3` for more the same day), a beta the next `-beta.N`, and a
+# stable the workspace's; give one only to choose it. Both platforms are packaged with `voxear-dist` under one
+# version, and their archives are kept as this run's artifacts. Publish is ticked unless you untick it: untick it to
+# build without releasing, and the archives can then be signed and listed by hand with the launcher repository's
+# `voxear-release engine add`.
 #
 # With Publish ticked, it also signs both archives and lists them in the launcher's release manifest with
 # `voxear-release`, uploads them with their signatures to an `engine-v<version>` release of VoxearReleases, and
@@ -15,8 +17,8 @@
 # - VOXEAR_RELEASES_TOKEN: a token that can read CookieJarTools/VoxearLauncher, for voxear-release, and write to
 #   CookieJarTools/VoxearReleases, for its releases and its gh-pages branch.
 #
-# Nightlies are started from the nightly push on the developer's machine, right after it pushes master, with
-# channel nightly, Publish ticked and a free version for the day, so a build never runs ahead of the push. The
+# Nightlies are also started from the nightly push on the developer's machine, right after it pushes master, so a
+# build never runs ahead of the push. The
 # repository is public, so its runs cost nothing.
 
 name: Release
@@ -30,18 +32,16 @@ on:
         options: [nightly, beta, stable]
         default: nightly
       version:
-        description: Version, needed for a beta (0.2.0-beta.1); a stable takes the workspace's, a nightly today's
+        description: Version; leave empty for the next free one (a nightly's today's, a beta's next, a stable the workspace's)
         type: string
         required: false
       publish:
         description: Sign the archives and publish them for the launcher
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
-  # For a scheduled run to look up the last scheduled nightly.
-  actions: read
 
 # One release at a time, since publishing adds to the one manifest.
 concurrency:
@@ -59,47 +59,47 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
-      skip: ${{ steps.version.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
       # Worked out once, so both platforms are packaged as the same version even across midnight.
       - id: version
         name: Work out the version
         env:
-          # A scheduled run has no inputs: it is a nightly.
-          CHANNEL: ${{ inputs.channel || 'nightly' }}
+          CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ inputs.version }}
-          EVENT: ${{ github.event_name }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.VOXEAR_RELEASES_TOKEN || github.token }}
         run: |
           base=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          # The versions already published, so a run left to choose takes the next free one.
+          taken=$(gh release list --repo CookieJarTools/VoxearReleases --limit 200 --json tagName --jq '.[].tagName')
+          free() { ! grep -qx "engine-v$1" <<< "$taken"; }
           if [ -z "$VERSION" ]; then
             case "$CHANNEL" in
               stable) VERSION="$base" ;;
-              nightly) VERSION="$base-nightly.$(date -u +%Y%m%d)" ;;
-              *) echo "::error::A beta needs a version, such as $base-beta.1"; exit 1 ;;
+              nightly)
+                day=$(date -u +%Y%m%d)
+                VERSION="$base-nightly.$day"
+                n=1
+                while ! free "$VERSION"; do n=$((n + 1)); VERSION="$base-nightly.$day.$n"; done
+                ;;
+              beta)
+                n=1
+                while ! free "$base-beta.$n"; do n=$((n + 1)); done
+                VERSION="$base-beta.$n"
+                ;;
             esac
+          fi
+          if ! free "$VERSION"; then
+            echo "::error::Voxear $VERSION is published already; raise the workspace's version, or give another"
+            exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "Voxear $VERSION, $CHANNEL" >> "$GITHUB_STEP_SUMMARY"
-          # A scheduled run builds only when master has moved since the last scheduled run that succeeded. A run that
-          # stops here succeeds on the same commit, so the chain holds; a failed one is tried again the next night.
-          skip=false
-          if [ "$EVENT" = schedule ]; then
-            last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --event schedule --status success \
-              --limit 1 --json headSha --jq '.[0].headSha // ""')
-            if [ "$last" = "$GITHUB_SHA" ]; then
-              skip=true
-              echo "Nothing new since the last nightly, built from $last" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
   package:
     name: Package (${{ matrix.platform }})
     needs: version
-    if: needs.version.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -164,8 +164,7 @@ jobs:
   publish:
     name: Publish
     needs: [version, package]
-    # Every scheduled nightly is published.
-    if: inputs.publish || github.event_name == 'schedule'
+    if: inputs.publish
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}

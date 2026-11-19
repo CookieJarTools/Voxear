@@ -3412,6 +3412,57 @@ FragmentOut wallFragment(WallOut input)
     {
         discard;
     }
+    return wallWater(frame, input, water);
+}
+
+// A corner of the mesh of Dry Area push.source, placed by its Obj, as a wall of water.
+[shader("vertex")]
+WallOut dryMeshWallVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    WaterBody body = buffers()->waterBodies[push.source];
+    Mesh mesh = buffers()->meshes[body.liquid];
+    Vertex vertex = buffers()->vertices[mesh.vertexOffset + vertexId];
+    float3 world = transform(body.toWorld, float4(vertex.position, 1.0)).xyz;
+    WallOut o;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.normal = float3(0.0, 1.0, 0.0);
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    o.previousClip = transform(frame->prevViewProj, float4(world, 1.0));
+    o.body = push.source;
+    return o;
+}
+
+// A Dry Area shaped as a mesh holds the sea back at its faces turned away from the camera, as a box's far walls
+// do, but only where what lies behind is past the mesh: the hull drawn round the mesh hides the wall, or stands
+// in it, everywhere but where a hole in the hull opens onto the sea. Faces are told apart as the mask's are
+// (dryMeshFragment), and the farthest of them is the mask's.
+[shader("fragment")]
+FragmentOut dryMeshWallFragment(WallOut input, bool front : SV_IsFrontFace)
+{
+    Frame* frame = push.frame;
+    if (front || frame->ocean.dryMask == NO_TEXTURE)
+    {
+        discard;
+    }
+    float2 pixel = input.position.xy;
+    float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
+    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float2 mask = textures[NonUniformResourceIndex(frame->ocean.dryMask)].Load(int3(int2(pixel), 0)).rg;
+    float back = frame->near / max(1.0 - mask.y, 1e-7);
+    if (sceneDepth < back + 0.05)
+    {
+        discard;
+    }
+    return wallWater(frame, input, buffers()->waterBodies[input.body]);
+}
+
+// The water body `water`'s wall at the fragment, seen from the side; nothing over the water's surface.
+FragmentOut wallWater(Frame* frame, WallOut input, WaterBody water)
+{
+    float3 v = normalize(frame->cameraPosition - input.world);
+    bool pool = water.kind == WATER_POOL;
     float surface = wallSurface(frame, water, input.world);
     if (input.world.y > surface || (!pool && frame->ocean.enabled == 0))
     {

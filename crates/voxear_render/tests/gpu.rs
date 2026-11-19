@@ -6830,6 +6830,77 @@ fn a_mesh_dry_area_keeps_the_sea_out_of_its_inside() {
     assert!(sea[2] > sea[0], "the sea beside it: {sea:?}");
 }
 
+/// A hull of wooden walls standing in a calm sea, kept dry by a box mesh round its outside, seen from inside it
+/// above the water looking down at its far wall, with a hole through that wall under the water or none.
+fn holed_hull_render(holed: bool) -> Option<Vec<u8>> {
+    use voxear_render::{DryArea, DryShape, Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let (eye, look) = holed_hull_eye();
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.6, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((
+        MeshRenderer::new(plane, sand),
+        Transform::new(Vec3::new(0.0, -6.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0)),
+    ));
+    world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    // The hull: a floor and four walls a fifth of a metre thick, just inside its dry box, 8 m across and 6 m tall.
+    let wood = MaterialDesc { base_color: [0.55, 0.3, 0.12, 1.0], roughness: 0.8, ..MaterialDesc::default() };
+    let wood = renderer.add_material(&wood).unwrap();
+    let mut plank = |at: Vec3, size: Vec3| {
+        world.spawn((MeshRenderer::new(cube, wood), Transform::new(at, Quat::IDENTITY, size)));
+    };
+    plank(Vec3::new(0.0, -2.8, 6.0), Vec3::new(7.8, 0.2, 7.8));
+    plank(Vec3::new(-3.8, 0.0, 6.0), Vec3::new(0.2, 5.8, 7.8));
+    plank(Vec3::new(3.8, 0.0, 6.0), Vec3::new(0.2, 5.8, 7.8));
+    plank(Vec3::new(0.0, 0.0, 2.2), Vec3::new(7.8, 5.8, 0.2));
+    // The far wall, with a hole two metres wide from half a metre to two under the water.
+    let far = 9.8;
+    match holed {
+        false => plank(Vec3::new(0.0, 0.0, far), Vec3::new(7.8, 5.8, 0.2)),
+        true => {
+            plank(Vec3::new(-2.45, 0.0, far), Vec3::new(2.9, 5.8, 0.2));
+            plank(Vec3::new(2.45, 0.0, far), Vec3::new(2.9, 5.8, 0.2));
+            plank(Vec3::new(0.0, 1.2, far), Vec3::new(2.0, 3.4, 0.2));
+            plank(Vec3::new(0.0, -2.45, far), Vec3::new(2.0, 1.1, 0.2));
+        }
+    }
+    let dry = DryArea { shape: DryShape::Mesh, mesh: Some(cube), ..DryArea::default() };
+    world.spawn((dry, Transform::new(Vec3::new(0.0, 0.0, 6.0), Quat::IDENTITY, Vec3::new(8.0, 6.0, 8.0))));
+    run(&mut renderer, &world, &mut 10.0, 20);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+fn holed_hull_eye() -> (Vec3, Quat) {
+    (Vec3::new(0.0, 1.5, 3.5), Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.4, 1.0).normalize()))
+}
+
+#[test]
+fn a_hole_in_a_hull_kept_dry_by_a_mesh_shows_a_wall_of_water_where_it_opens_onto_the_sea() {
+    let Some(whole) = holed_hull_render(false) else { return };
+    let holed = holed_hull_render(true).unwrap();
+    keep_image("holed hull.png", &holed);
+    let (eye, look) = holed_hull_eye();
+    // Through the hole, the sea standing in it: water, not the sand six metres down past it.
+    let hole = patch_rgb(&holed, on_screen(eye, look, Vec3::new(0.0, -1.25, 9.9)), 3);
+    // Deep water, darker than the floor seen through the hole with none: about 220 against 370 all told.
+    let deep = hole.iter().sum::<i32>() < 300;
+    assert!(deep && hole[1] > hole[0] + 10 && hole[2] > hole[0], "a wall of water in the hole: {hole:?}");
+    // The wall round it as it is with no hole, under the water and over it: the water shows only in the hole.
+    for at in [Vec3::new(-2.0, -1.25, 9.7), Vec3::new(0.0, -2.4, 9.7), Vec3::new(0.0, 0.6, 9.7)] {
+        let (wall, was) =
+            (patch_rgb(&holed, on_screen(eye, look, at), 2), patch_rgb(&whole, on_screen(eye, look, at), 2));
+        let apart = (0..3).map(|c| (wall[c] - was[c]).abs()).max().unwrap();
+        assert!(apart < 12 && wall[0] > wall[2], "the wall at {at:?}: {wall:?} against {was:?}");
+    }
+}
+
 #[test]
 fn under_the_sea_the_water_tints_all_and_caustics_light_the_sand() {
     use voxear_render::{Ocean, Sky, Weather};

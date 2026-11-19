@@ -247,6 +247,7 @@ pub struct Pipelines {
     pub grass_forward_on_depth: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
+    pub dry_mesh_wall: vk::Pipeline,
     /// Worlds of blocks' water (see `blocks` and `water`): how far each
     /// pixel's view goes before it leaves the water, then its faces.
     pub block_water_exits: vk::Pipeline,
@@ -796,6 +797,15 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Walls of water", water, c"wallVertex", c"wallFragment")
+            })?,
+            // A mesh Dry Area's faces turned from the camera, told apart as the dry mask tells them.
+            dry_mesh_wall: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Mesh walls of water", water, c"dryMeshWallVertex", c"dryMeshWallFragment")
             })?,
             // The farthest face turned from the camera in front of what stands behind it.
             block_water_exits: graphics(&GraphicsPipelineDesc {
@@ -1358,6 +1368,7 @@ impl Pipelines {
             self.grass_forward_on_depth,
             self.dry_mesh,
             self.water_wall,
+            self.dry_mesh_wall,
             self.block_water_exits,
             self.block_water,
             self.block_sea_inside,

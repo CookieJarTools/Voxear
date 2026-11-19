@@ -829,7 +829,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, trails, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, trails, dry, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -960,6 +960,7 @@ pub fn record(
         streams: Vec::new(),
         spatter: Vec::new(),
         walls: (first_dry, dries),
+        dry_walls: (dry.map_or_else(Vec::new, |(_, meshes)| meshes), index_buffer),
         blocks: None,
         inside: false,
     };
@@ -976,7 +977,9 @@ pub fn record(
             record_block_exits(fg, (pipelines, push), view, (*exits, depth, size));
         }
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
-        let draws = Draws { sea: false, pools: pool_draws, streams, spatter, walls: (0, pools), blocks, inside };
+        let dry_walls = (Vec::new(), index_buffer);
+        let draws =
+            Draws { sea: false, pools: pool_draws, streams, spatter, walls: (0, pools), dry_walls, blocks, inside };
         match &second {
             Some((copy, copy_texture, copy_mips, depth_copy)) => {
                 record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
@@ -1069,6 +1072,9 @@ struct Draws {
     streams: Vec<(u32, u32)>,
     spatter: Vec<(u32, u32, [u32; 2])>,
     walls: (u32, u32),
+    /// The Dry Areas shaped as meshes whose faces hold the sea back, and
+    /// every mesh's indices.
+    dry_walls: (Vec<DryMesh>, vk::Buffer),
     blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
     /// The swell of the blocks' sea the camera is under the top of, from
     /// where it is.
@@ -1185,6 +1191,16 @@ fn record_layer(
         if count > 0 {
             bind(ctx, pipelines.water_wall, vk::PipelineBindPoint::GRAPHICS, &Push { list: first, ..push });
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 36, count, 0, 0) };
+        }
+        // And each mesh Dry Area's faces, where a hole in what is drawn round it opens onto the sea.
+        let (meshes, index_buffer) = &draws.dry_walls;
+        if !meshes.is_empty() {
+            bind(ctx, pipelines.dry_mesh_wall, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, *index_buffer, 0, vk::IndexType::UINT32) };
+            for draw in meshes {
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: draw.body, ..push });
+                unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, draw.index_count, 1, draw.first_index, 0, 0) };
+            }
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });

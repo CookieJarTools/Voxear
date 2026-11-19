@@ -15,9 +15,9 @@
 # - VOXEAR_RELEASES_TOKEN: a token that can read CookieJarTools/VoxearLauncher, for voxear-release, and write to
 #   CookieJarTools/VoxearReleases, for its releases and its gh-pages branch.
 #
-# It also runs by itself every night at 03:00 UTC as a published nightly, but only when master has a commit since
-# the last scheduled nightly was built; otherwise it stops after working out the version. The repository is public,
-# so its runs cost nothing.
+# Nightlies are started from the nightly push on the developer's machine, right after it pushes master, with
+# channel nightly, Publish ticked and a free version for the day, so a build never runs ahead of the push. The
+# repository is public, so its runs cost nothing.
 
 name: Release
 
@@ -37,8 +37,6 @@ on:
         description: Sign the archives and publish them for the launcher
         type: boolean
         default: false
-  schedule:
-    - cron: "0 3 * * *"
 
 permissions:
   contents: read

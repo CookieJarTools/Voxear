@@ -2637,12 +2637,22 @@ impl Content {
             let in_use =
                 cache.kept.contains(&id) || cache.used.contains(&id) || instances.contains(&cache.guids[index]);
             match slot {
+                // Everything its Objs draw with: Mesh Renderers, whole models and foliage.
                 Some(template) if in_use => {
-                    let drawn = template.objs.iter().filter_map(|o| o.renderer);
-                    drawn.for_each(|r| {
-                        meshes.insert(r.mesh);
-                        materials.insert(r.material);
-                    });
+                    for obj in &template.objs {
+                        if let Some(r) = &obj.renderer {
+                            meshes.insert(r.mesh);
+                            materials.insert(r.material);
+                        }
+                        if let Some(model) = obj.model.as_ref().and_then(|model| model.0.as_ref()) {
+                            meshes.extend(model.parts.iter().map(|part| part.mesh));
+                            materials.extend(model.parts.iter().map(|part| part.material));
+                        }
+                        if let Some(foliage) = obj.foliage.as_ref().and_then(|foliage| foliage.0.as_ref()) {
+                            meshes.insert(foliage.mesh);
+                            materials.insert(foliage.material);
+                        }
+                    }
                 }
                 Some(_) => {
                     *slot = None;

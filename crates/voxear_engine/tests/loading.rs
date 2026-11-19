@@ -38,6 +38,10 @@ fn project() -> tempfile::TempDir {
         ),
         ("Scenes/Broken.scene", "format = 1\n[[obj]]\nid = 1\nname = \"Oops\"\nmystery = true\n"),
         ("Prefabs/Rock.prefab", "format = 1\n[[obj]]\nid = 1\nname = \"Rock\"\n"),
+        (
+            "Prefabs/Ship.prefab",
+            "format = 1\n[[obj]]\nid = 1\nname = \"Ship\"\n[obj.model]\nmodel = \"Models/Tree.gltf\"\n",
+        ),
         ("Models/Tree.gltf", TREE),
     ];
     for (path, text) in files {
@@ -189,6 +193,32 @@ fn a_world_set_aside_keeps_what_it_draws_through_level_changes() {
     assert_eq!(game.content.usage().models, 1, "the level brought back still draws it");
     game.engine = Engine::new();
     game.release_unused(Some(&mut renderer));
+    assert_eq!(game.content.usage().models, 0);
+}
+
+#[test]
+fn a_kept_prefab_keeps_the_models_its_objs_draw() {
+    let dir = project();
+    let mut renderer = Renderer::new_offscreen(64, 64, &RendererSettings::default()).unwrap();
+    let mut game = game(&dir);
+    game.start(Some(&mut renderer)).unwrap();
+    let ship = game.content.prefab(Some(&mut renderer), "Prefabs/Ship.prefab").unwrap();
+    let drawn = game.content.template(ship).unwrap().objs[0].model.as_ref().and_then(|model| model.0.clone());
+    let part = drawn.expect("the Ship draws its model").parts[0].mesh;
+    assert_eq!(game.content.usage().models, 1);
+
+    // Kept, with nothing in the level drawing it, sweep after sweep.
+    game.content.keep_prefab(ship, true);
+    for _ in 0..3 {
+        game.release_unused(Some(&mut renderer));
+    }
+    assert_eq!(game.content.usage().models, 1, "the kept prefab's model stays");
+    assert!(game.content.mesh_ref(part).is_some(), "and so does the mesh its Obj draws");
+
+    // Let go, the prefab and its model go together.
+    game.content.keep_prefab(ship, false);
+    game.release_unused(Some(&mut renderer));
+    assert!(game.content.template(ship).is_none());
     assert_eq!(game.content.usage().models, 0);
 }
 

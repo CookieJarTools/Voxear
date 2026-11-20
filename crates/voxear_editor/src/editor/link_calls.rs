@@ -360,13 +360,11 @@ impl Editor {
                 done(json!({ "worlds": worlds, "hidden": { "fits": hidden.fits } }))
             }
             "world_layers.hide" => {
-                let world = &mut self.game.engine.world;
-                let mut hidden = world.resource::<voxear_engine::ground_fit::HiddenLayers>().copied().unwrap_or_default();
+                // As the Scene view's Gizmos ▸ Bare Ground, which takes hold next frame.
                 if let Some(fits) = opt_bool(args, "fits") {
-                    hidden.fits = fits;
+                    self.memory.settings.bare_ground = fits;
                 }
-                world.insert_resource(hidden);
-                done(json!({ "hidden": { "fits": hidden.fits } }))
+                done(json!({ "hidden": { "fits": self.memory.settings.bare_ground } }))
             }
             "navigation.path" => self.navigation_path(args),
             "navigation.nearest" => {

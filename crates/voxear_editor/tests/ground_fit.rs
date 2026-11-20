@@ -1,0 +1,131 @@
+//! Ground Fits in the editor, driven as `vox editor call` drives it, on a
+//! world of blocks without end from the Infinite World template, its scripts
+//! left out: a fit added and set field by field, each change one step to
+//! undo; set down on the ground without its own cut; and listed among the
+//! world's layers, which the Bare Ground view hides. Skips itself without a
+//! GPU.
+
+use std::{
+    sync::mpsc::TryRecvError,
+    time::{Duration, Instant},
+};
+
+use serde_json::{Value, json};
+use voxear_core::logging::LogCapture;
+use voxear_editor::Editor;
+use voxear_engine::{
+    Project,
+    new_project::{NewProject, create},
+};
+use voxear_render::{Renderer, RendererSettings};
+
+const SIZE: (u32, u32) = (1280, 800);
+const PATIENCE: Duration = Duration::from_secs(120);
+
+fn frames(editor: &mut Editor, renderer: &mut Renderer, count: u32) {
+    for _ in 0..count {
+        editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    }
+}
+
+/// A call made from the test, done, once frames have run it.
+fn done(editor: &mut Editor, renderer: &mut Renderer, call: &str, args: Value) -> Value {
+    let answer = editor.call(call, args);
+    let began = Instant::now();
+    loop {
+        frames(editor, renderer, 1);
+        match answer.try_recv() {
+            Ok(answered) => return answered.unwrap_or_else(|error| panic!("{call}: {error}")),
+            Err(TryRecvError::Empty) => assert!(began.elapsed() < PATIENCE, "{call} was not answered"),
+            Err(TryRecvError::Disconnected) => panic!("{call} was dropped"),
+        }
+    }
+}
+
+#[test]
+fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let folder = dir.path().join("Fits");
+    let request = NewProject {
+        folder: folder.clone(),
+        name: "Fits".into(),
+        template: "infinite-world".into(),
+        setup: None,
+        ide: None,
+        git: false,
+        modding: false,
+        steam_app_id: None,
+    };
+    create(&request, &mut |_| {}).unwrap();
+    // Without its scripts: a build would outlive the test and its folder.
+    let file = folder.join("voxear.toml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.lines().filter(|line| !line.starts_with("scripts")).collect::<Vec<_>>().join("\n"))
+        .unwrap();
+    let scene_path = folder.join("Scenes/Infinite World.scene");
+    let mut scene = voxear_engine::scene_file::read(&scene_path).unwrap();
+    for obj in &mut scene.objs {
+        obj.behaviours.clear();
+        obj.fields.clear();
+        obj.enabled.clear();
+    }
+    voxear_engine::scene_file::write(&scene_path, &scene).unwrap();
+
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let project = Project::open(&folder).unwrap();
+    let mut editor = Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frames(&mut editor, &mut renderer, 2);
+
+    let made = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "House", "position": [120.0, 60.0, 100.0] }),
+    );
+    let house = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": house, "component": "ground_fit" }));
+    let set =
+        |field: &str, value: Value| json!({ "obj": house, "component": "ground_fit", "field": field, "value": value });
+    let changed = done(&mut editor, &mut renderer, "field.set", set("slope_out", json!(2)));
+    assert_eq!(changed["changed"], true);
+    done(&mut editor, &mut renderer, "field.set", set("mode", json!("Cut")));
+    {
+        let world = &editor.game.engine.world;
+        let fits = world.query_ref::<(voxear_ecs::Entity, &voxear_engine::ground_fit::GroundFit)>();
+        let fit = fits.into_iter().next().map(|(_, fit)| fit.clone()).expect("the House has a Ground Fit");
+        assert_eq!((fit.slope_out, fit.mode), (2, voxear_engine::ground_fit::FitMode::Cut));
+    }
+
+    // Set down on the ground the generator makes there: well under where it was made.
+    let landed = done(&mut editor, &mut renderer, "ground_fit.land", json!({ "obj": house }));
+    let y = landed["position"][1].as_f64().unwrap();
+    assert!(y < 59.0, "landed at {landed}");
+
+    // Among the world's layers once it has streamed; hidden by Bare Ground.
+    let began = Instant::now();
+    let status = loop {
+        let status = done(&mut editor, &mut renderer, "world_layers.status", json!({}));
+        if status["worlds"].as_array().is_some_and(|worlds| worlds.iter().any(|world| world["fits"] == 1)) {
+            break status;
+        }
+        assert!(began.elapsed() < PATIENCE, "the fit never joined the world's layers: {status}");
+    };
+    assert_eq!(status["hidden"]["fits"], false);
+    done(&mut editor, &mut renderer, "world_layers.hide", json!({ "fits": true }));
+    frames(&mut editor, &mut renderer, 3);
+    let hidden = done(&mut editor, &mut renderer, "world_layers.status", json!({}));
+    assert_eq!(hidden["hidden"]["fits"], true);
+    assert!(hidden["worlds"].as_array().unwrap().iter().all(|world| world["fits"] != 1), "{hidden}");
+
+    // Each change one step to undo: the landing, then the mode, then the slope out.
+    for _ in 0..2 {
+        done(&mut editor, &mut renderer, "undo", json!({}));
+    }
+    let world = &editor.game.engine.world;
+    let fits = world.query_ref::<(voxear_ecs::Entity, &voxear_engine::ground_fit::GroundFit)>();
+    let fit = fits.into_iter().next().map(|(_, fit)| fit.clone()).unwrap();
+    assert_eq!((fit.slope_out, fit.mode), (2, voxear_engine::ground_fit::FitMode::Flatten));
+}

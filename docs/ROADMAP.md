@@ -3822,6 +3822,44 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 
+## World building (in progress)
+
+Worlds of blocks without end generated first and crafted on top: buildings that level their plots, roads, kits of
+prefabs placed and lined up, painted land, mountains and biomes, areas the game asks about, and routes. Everything
+placed can be moved or deleted and the ground comes back. The plan, with answers to its open questions, is in
+[research/world-building.md](research/world-building.md); the design in
+[ARCHITECTURE.md](ARCHITECTURE.md#world-building).
+
+- ~~**World layers and Ground Fit:**~~ done (stage 1). World layers between the generator's ground and the hand
+  edits, worked out per column from where it is, indexed by chunk column, shown in the far view and on the map from
+  the start, and made again only under what changed, in the background, hand edits kept, the old drawn till the new
+  is ready. The Ground Fit component: boxes and an outline in the Obj's space, Foundation, Flatten or Cut, levelled
+  at the Obj or a point (its door), Sink, Margin, a walkable Slope Out (0 for a wall), Fill and Top blocks, Clear
+  Plants (generated trees, plants and structures left out), Priority. Placing in the Scene view lands it on the
+  ground without its own cut; a gizmo draws the footprint, margin and slope out; Gizmos ▸ Bare Ground hides the
+  layers. Structures' Ground gains Cut. **Streams With Ground:** Objs go with their ground as it streams out,
+  kept for later (made again exactly, their fits still shaping the ground) or destroyed, scripts told with
+  `OnGroundUnloading` and `OnGroundLoaded`; fitted Objs are kept for later. C#: `Obj.GroundFit`, `AddGroundFit`,
+  `GroundFit`, `FitBox`, `FitMode`, `FitLevel`, `Obj.StreamsWithGround`, `AddStreamsWithGround`, `WhenUnloaded`
+  (native API 96). `vox editor call`: `ground_fit.land`, `world_layers.status`, `world_layers.hide`,
+  `blocks.columns`. Two `vox render` runs on one world no longer write a far tile through the same file name.
+  Tests: layers' shapes, order, ids and changed columns; a streamed world remade under a fit, a hand edit kept, an
+  untouched column not made again, alike with a world made with the fit from the start, and its far tile; a game
+  levelling, moving a fit and the ground coming back, Objs kept and destroyed with their ground and coming back;
+  scripts' whole component. Manual: World Building (World Layers, Ground Fit, Streams With Ground), Structures.
+  Not done: slabs on the slope out, Fill and Top for blocks a world does not hold yet, more boxes in the Inspector,
+  records kept in a game's save, smooth worlds and worlds of a set size. Ground cover grows on a plot's top as on
+  any block of its kind: a Top without ground cover keeps the plot bare.
+- **Roads and Area Fill** (stage 2): a Road component holding a spline, widths per point, palettes and patterns,
+  edges and kerbs, Follow or Grade, steps, bridges, tunnels, canals, junctions; plazas as Area Fills.
+- **Placing tools and nav for placed models** (stage 3): the Placement component, a palette of prefabs, lining up
+  along a road, a prefab brush, scattering in an area; walkable mesh colliders in block nav, doors; box models with
+  one bone and no clips drawn unskinned.
+- **Painted maps** (stage 4): Land, Height and Biome maps kept in tiles where painted, a Painted Map node, brushes
+  beside Build with a quick preview.
+- **World Areas and Routes** (stage 5): areas with tags and data the game asks about, structures kept to or out of
+  them; routes and stops joined into a network, found, walked, and laid over the sea.
+
 ## M9 — Navigation, cameras and Timeline (in progress)
 
 - Navigation, for block worlds first, then mesh levels:

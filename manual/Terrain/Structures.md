@@ -81,6 +81,7 @@ Give the wood a block whose **Shape** is **Log** for a trunk that thins as it ri
 | Leave | The ground as it is: for trees and standing stones |
 | Foundation | Ground built up under its lowest blocks, so nothing stands on air on a slope |
 | Flatten | A foundation, and the hillside cleared from over its footprint as high as it stands |
+| Cut | Only the hillside cleared from over its footprint: a cutting, nothing built up under it |
 
 **Sink** stands it that many blocks into the ground.
 

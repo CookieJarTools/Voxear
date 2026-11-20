@@ -142,7 +142,9 @@ pub fn choices(game: &Game, field: FitField) -> Vec<(String, Pick)> {
         return Vec::new();
     }
     let mut found = vec![("None".to_string(), Pick::Asset(None))];
-    found.extend(fields::assets_of(game, Some(AssetKind::Block)).into_iter().filter(|(_, pick)| *pick != Pick::Asset(None)));
+    found.extend(
+        fields::assets_of(game, Some(AssetKind::Block)).into_iter().filter(|(_, pick)| *pick != Pick::Asset(None)),
+    );
     found
 }
 
@@ -214,7 +216,9 @@ pub fn set(game: &mut Game, entity: Entity, field: FitField, value: Value) -> bo
             }
         }
         (F::Level, Value::Choice(at, _)) => fit.level = FitLevel::ALL.get(at).copied().unwrap_or_default(),
-        (F::Point, Value::Vector(point)) if point.len() == 3 => fit.point = [0, 1, 2].map(|a| point[a].clamp(-far, far)),
+        (F::Point, Value::Vector(point)) if point.len() == 3 => {
+            fit.point = [0, 1, 2].map(|a| point[a].clamp(-far, far))
+        }
         (F::Sink, Value::Whole(sink)) => fit.sink = whole(sink, [-16.0, 16.0]),
         (F::Margin, Value::Number(margin)) => fit.margin = margin.clamp(0.0, 64.0),
         (F::SlopeOut, Value::Whole(steps)) => fit.slope_out = whole(steps, [0.0, MOST_SLOPE_OUT as f32]) as u32,

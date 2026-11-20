@@ -107,6 +107,42 @@ pub struct GroundRecord {
     pub column: [i32; 2],
     pub dimension: DimensionId,
     pub scene: SceneFile,
+    /// The Ground Fits of its Objs, where each was placed: they go on shaping
+    /// the ground while it is away, so the far view and the map still show
+    /// it.
+    pub fits: Vec<(crate::ground_fit::GroundFit, voxear_core::math::Mat4)>,
+}
+
+/// The Ground Fits of `root` and every Obj under it, where each is placed.
+pub fn fits_under(world: &World, root: Entity) -> Vec<(crate::ground_fit::GroundFit, voxear_core::math::Mat4)> {
+    let under = |mut entity: Entity| loop {
+        if entity == root {
+            return true;
+        }
+        match world.get::<Parent>(entity) {
+            Some(parent) => entity = parent.0,
+            None => return false,
+        }
+    };
+    world
+        .query_ref::<(Entity, &crate::ground_fit::GroundFit, &WorldTransform)>()
+        .into_iter()
+        .filter(|(entity, ..)| under(*entity))
+        .map(|(_, fit, placed)| (fit.clone(), placed.0))
+        .collect()
+}
+
+/// The Ground Fits of the Objs kept for later in `dimension`.
+pub fn kept_fits(
+    world: &World,
+    dimension: DimensionId,
+) -> Vec<(crate::ground_fit::GroundFit, voxear_core::math::Mat4)> {
+    let Some(kept) = world.resource::<GroundRecords>() else { return Vec::new() };
+    kept.records
+        .iter()
+        .filter(|record| record.dimension == dimension)
+        .flat_map(|record| record.fits.iter().cloned())
+        .collect()
 }
 
 /// The Objs seen standing on made ground, which go once it does.

@@ -310,9 +310,14 @@ impl WorldLayers {
         for cz in cell(low[1])..=cell(high[1]) {
             for cx in cell(low[0])..=cell(high[0]) {
                 let meets = |fit: &&FitLayer| {
-                    fit.bounds().is_some_and(|[l, h]| l[0] <= high[0] && h[0] >= low[0] && l[1] <= high[1] && h[1] >= low[1])
+                    fit.bounds()
+                        .is_some_and(|[l, h]| l[0] <= high[0] && h[0] >= low[0] && l[1] <= high[1] && h[1] >= low[1])
                 };
-                if self.reaching([cx, cz]).filter(|fit| fit.clear_plants || fit.mode != GroundFit::Leave).any(|fit| meets(&fit)) {
+                if self
+                    .reaching([cx, cz])
+                    .filter(|fit| fit.clear_plants || fit.mode != GroundFit::Leave)
+                    .any(|fit| meets(&fit))
+                {
                     return true;
                 }
             }
@@ -462,7 +467,10 @@ mod tests {
 
     #[test]
     fn a_turned_outline_is_measured_where_it_lies() {
-        let diamond = FitLayer { outlines: vec![vec![[4.0, 0.0], [8.0, 4.0], [4.0, 8.0], [0.0, 4.0]]], ..fit(GroundFit::Flatten, 0) };
+        let diamond = FitLayer {
+            outlines: vec![vec![[4.0, 0.0], [8.0, 4.0], [4.0, 8.0], [0.0, 4.0]]],
+            ..fit(GroundFit::Flatten, 0)
+        };
         assert_eq!(diamond.distance([3, 3]), 0.0);
         assert!(diamond.distance([0, 0]) > 1.5);
     }

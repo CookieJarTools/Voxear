@@ -381,6 +381,14 @@ pub const PREFERENCES: &[Setting] = &[
          what it is, and each Nav Agent's and Block Mob's way. Off by default.",
     ),
     Setting::new(
+        ("Scene View", "Gizmos"),
+        "bare_ground",
+        "Bare Ground",
+        Kind::Toggle,
+        "Worlds of blocks without end drawn without their world layers, as Ground Fits, to see the generator's own \
+         ground under them. The scene is not changed. Off by default.",
+    ),
+    Setting::new(
         ("Tools", "Editor Link"),
         "tools_may_change",
         "Let tools change the project",
@@ -469,6 +477,8 @@ pub struct Settings {
     /// Where things can walk in each Block World near the camera, and each
     /// agent's way.
     pub nav_gizmos: bool,
+    /// Whether world layers are left out of worlds' ground, to see it bare.
+    pub bare_ground: bool,
     pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
@@ -563,6 +573,7 @@ impl Default for Settings {
             audio_gizmos: true,
             vehicle_gizmos: false,
             nav_gizmos: false,
+            bare_ground: false,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,
@@ -617,6 +628,7 @@ impl Settings {
             "audio_gizmos" => json!(self.audio_gizmos),
             "vehicle_gizmos" => json!(self.vehicle_gizmos),
             "nav_gizmos" => json!(self.nav_gizmos),
+            "bare_ground" => json!(self.bare_ground),
             "scene_shading" => json!(SHADING.get(self.scene_shading).map_or("Lit", |(label, _)| *label)),
             "prefab_parts" => json!(self.prefab_parts),
             "start_paused" => json!(self.start_paused),
@@ -670,6 +682,7 @@ impl Settings {
             "audio_gizmos" => self.audio_gizmos = on,
             "vehicle_gizmos" => self.vehicle_gizmos = on,
             "nav_gizmos" => self.nav_gizmos = on,
+            "bare_ground" => self.bare_ground = on,
             "scene_shading" => self.scene_shading = at(SHADING).unwrap_or(0),
             "prefab_parts" => self.prefab_parts = on,
             "tools_may_change" => self.tools_may_change = on,

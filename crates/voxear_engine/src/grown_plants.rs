@@ -311,7 +311,12 @@ pub fn update(world: &mut World, content: &mut Content) {
         growers.iter().map(|grower| (grower.world, model_of(content, &grower.mesh), grower.data.clone())).collect();
     for grower in growers {
         let read = worlds.entry(grower.world).or_insert_with(|| {
-            let asset = world.get::<BlockWorldAsset>(grower.world).cloned()?;
+            let mut asset = world.get::<BlockWorldAsset>(grower.world).cloned()?;
+            // Its world layers, so plants keep off a Ground Fit that clears them (see `ground_fit`).
+            if let Some(generate) = asset.file.generate.as_mut() {
+                let layers = crate::ground_fit::kept(world, grower.world);
+                generate.layers = voxear_terrain::blocks::generate::Layers(layers);
+            }
             let blocks = world.get::<BlockWorld>(grower.world).cloned()?;
             let generator = crate::blocks::generator(content, &asset.file);
             Some((asset, blocks, generator))

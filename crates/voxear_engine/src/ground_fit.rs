@@ -163,7 +163,12 @@ impl GroundFit {
 
     /// It as a world layer of a world lying at `place`, its blocks by
     /// `number`: none where it has no footprint.
-    pub fn layer(&self, placed: &Mat4, place: WorldPlace, number: &dyn Fn(AssetGuid) -> Option<BlockId>) -> Option<FitLayer> {
+    pub fn layer(
+        &self,
+        placed: &Mat4,
+        place: WorldPlace,
+        number: &dyn Fn(AssetGuid) -> Option<BlockId>,
+    ) -> Option<FitLayer> {
         let outlines = self.outlines(placed, place);
         if outlines.is_empty() {
             return None;
@@ -246,14 +251,18 @@ fn fits_of(
     if hidden {
         return Vec::new();
     }
-    world
+    let mut fits: Vec<FitLayer> = world
         .query_ref::<(Entity, &GroundFit, &WorldTransform)>()
         .without::<voxear_scene::Destroying>()
         .into_iter()
         .filter(|(obj, ..)| Some(*obj) != leave_out)
         .filter(|(obj, ..)| voxear_scene::is_active(world, *obj) && voxear_scene::dimension_of(world, *obj) == here)
         .filter_map(|(_, fit, placed)| fit.layer(&placed.0, place, number))
-        .collect()
+        .collect();
+    // Those of Objs kept while their ground is away still shape it.
+    let kept = crate::ground_streaming::kept_fits(world, here);
+    fits.extend(kept.iter().filter_map(|(fit, placed)| fit.layer(placed, place, number)));
+    fits
 }
 
 /// World layers of a kind left out of every world's ground, to see the bare

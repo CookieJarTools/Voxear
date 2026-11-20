@@ -589,6 +589,7 @@ fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem>
         MenuItem::new("Audio Sources").checked(settings.audio_gizmos),
         MenuItem::new("Vehicle Debug").checked(settings.vehicle_gizmos),
         MenuItem::new("Navigation").checked(settings.nav_gizmos),
+        MenuItem::new("Bare Ground").checked(settings.bare_ground),
         MenuItem::separator(),
     ];
     for (name, label) in types {
@@ -609,8 +610,9 @@ fn toggle_gizmos(settings: &mut Settings, types: &[(String, String)], choice: us
         2 => settings.audio_gizmos = !settings.audio_gizmos,
         3 => settings.vehicle_gizmos = !settings.vehicle_gizmos,
         4 => settings.nav_gizmos = !settings.nav_gizmos,
+        5 => settings.bare_ground = !settings.bare_ground,
         _ => {
-            let Some((name, _)) = types.get(choice - 6) else { return false };
+            let Some((name, _)) = types.get(choice - 7) else { return false };
             match settings.hidden_gizmos.iter().position(|hidden| hidden == name) {
                 Some(index) => _ = settings.hidden_gizmos.remove(index),
                 None => settings.hidden_gizmos.push(name.clone()),

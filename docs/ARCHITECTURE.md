@@ -4469,6 +4469,48 @@ Terrain.Apply(TerrainEdit.Flatten(at, 4f, floor));            // advanced
 var edits = Terrain.CaptureEdits();                           // for a save, or a player joining
 ```
 
+## World building
+
+*Implemented: world layers, Ground Fit, Streams With Ground. Planned: roads, placing tools, painted maps, areas and
+routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
+first and crafted on top, without storing blocks for what is placed.
+
+**World layers** (`voxear_terrain::blocks::world_layers`). A `WorldLayers` holds every layer of a world in the world's
+own blocks, sorted by priority then id, and indexed by the 32-block chunk column each reaches (`FitLayer::bounds`:
+footprint, margin, slope out and a block). It rides on `BlockGenerate::layers`, a runtime-only `Arc` that compares
+as always alike, so a world differing only in layers counts as the same world and nothing is made anew. Per column,
+`WorldLayers::shape` gives the ground's new top from the generator's, each fit in turn taking the last one's ground:
+levelled inside footprint and margin, then clamped to within `d` blocks of the level `d` blocks out, so the slope out
+is walkable by construction. `shape_column` writes it into a column's chunks after the ground, water and clearing
+of loose rock and before structures; `far::shape_tile` writes it into a far tile's runs as it is taken
+(`far_tile_kept`), so tiles stay on disk without layers. Structure sites that meet a layer's reach are left out
+(`keeps_out`), and grown plants within a fit that clears plants (`clears_plants`). Hand edits stay differences from
+the ground with its layers.
+
+**Making again only what a change touches** (`BlockStreamer::update_from`, `relay`, `remake`). When the layers'
+hash changes and nothing else does, `WorldLayers::changed_columns` (fits added, gone or changed, by id, at their old
+and new bounds) marks those columns stale at every level. A near column is made again in the background; when it
+comes back its hand edits are taken as a difference from its old base and put on the new one, and it and the
+columns round it are meshed again while their old faces stay drawn (`redrawing`). Jobs carry the layers' stamp
+(`made_stamp`), and one made under older layers is made again. The map takes the layers and the columns they
+changed. Navigation follows the replaced chunks by pointer.
+
+**Ground Fit** (`voxear_engine::ground_fit`). The component's footprint (boxes and an outline in the Obj's own
+space), mode (the structure's `GroundFit`: Leave, Foundation, Flatten, Cut), level (the Obj's height or a point in
+its space, plus Sink), margin, slope out, Fill and Top (`.block` GUIDs, numbered by the world's palette) and priority
+become a `FitLayer` per world each frame (`layers_of`), the `WorldLayers` made again only when the fits' bytes
+change (`KeptLayers`). A fit's id is the hash of what it is, so a moved fit touches where it was and where it is.
+`HiddenLayers` leaves them out (the Scene view's Bare Ground). `landing` sets an Obj down on the ground made without
+its own fit, for placing and `ground_fit.land`.
+
+**Streams With Ground** (`voxear_engine::ground_streaming`). The streamer keeps the near columns made and let go
+since it was last asked (`take_moves`); `blocks::stream` puts each world's into `GroundMoves` every frame. While
+playing, `Game::stream_with_ground` takes away the Objs standing on a column no longer made that had stood on made
+ground: Keep For Later captures the Obj and its children as a scene (`scene_file::capture`) with their Ground Fits
+and places, which go on shaping the ground (`kept_fits`), and spawns it again when the column is made; Destroy
+destroys it. Behaviours are told through the `GroundEvents` entry (`OnGroundUnloading`, `OnGroundLoaded`; native
+API 96). Records are not yet kept in a game's save.
+
 ## Heat *(implemented: the temperature field, the clock, Heat Sources, Zones and Bodies, hot and cold blocks)*
 
 Every place has a temperature, in °C, and things there warm and cool towards it: food cooks and freezes, and

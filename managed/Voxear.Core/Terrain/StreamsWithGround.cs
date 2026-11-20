@@ -10,7 +10,7 @@ namespace Voxear;
 /// Obj.AddStreamsWithGround.
 /// <code>
 /// // A mob spawned round the player goes once the player has left its ground behind.
-/// var wolf = Obj.Instantiate(WolfPrefab, at);
+/// var wolf = WolfPrefab.Instantiate(at, Quaternion.Identity);
 /// wolf.AddStreamsWithGround().WhenUnloaded = WhenUnloaded.Destroy;
 /// </code>
 /// </summary>

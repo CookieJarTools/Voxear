@@ -36,3 +36,7 @@ Brushes, **Import**, **Erosion** and **Rivers** layers, holes and digging work o
 ## Far from the middle
 
 Positions are exact to about half a millimetre within 8 km of the world's middle; further out, things that move begin to shake. To walk an endless terrain as far as the player likes, switch the [[Floating Origin]] on in Project Settings ▸ World: once the camera is 2 km from the world's middle, everything moves back towards it by whole kilometres, the ground with it. The tiles already made stay as they were, and the ground carries on round the camera.
+
+## Building on the ground
+
+Buildings can level their own plots, and Objs can come and go with the ground as it streams: see [[World Layers]], [[Ground Fit]] and [[Streams With Ground]].

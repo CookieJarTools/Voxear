@@ -1116,7 +1116,9 @@ impl Game {
             let moved = &moves.worlds[which];
             let at = self.engine.world.get::<voxear_scene::WorldTransform>(entity).map(|p| p.0.w_axis.truncate());
             let scene = crate::scene_file::capture(&self.engine.world, &mut self.content, &[entity]);
+            let fits = crate::ground_streaming::fits_under(&self.engine.world, entity);
             let record = GroundRecord {
+                fits,
                 world: moved.world,
                 column: moved.column_of(at.unwrap_or(moved.corner)),
                 dimension: moved.dimension,

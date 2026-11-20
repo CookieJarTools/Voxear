@@ -13,7 +13,7 @@ namespace Voxear;
 /// one with Obj.AddGroundFit.
 /// <code>
 /// // A house from a kit, set on a level plot 10 by 8 metres with a step down to the street at its door.
-/// var house = Obj.Instantiate(HousePrefab, at);
+/// var house = HousePrefab.Instantiate(at, Quaternion.Identity);
 /// var fit = house.AddGroundFit();
 /// fit.Boxes = [new FitBox(Vector2.Zero, new Vector2(10f, 8f))];
 /// fit.Level = FitLevel.Point;

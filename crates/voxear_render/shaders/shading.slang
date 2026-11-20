@@ -79,10 +79,10 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);
     float height = plantHeight(instance, mesh);
     Frame* frame = push.frame;
-    float3 swayed = windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, v.wind, frame->time);
+    float3 swayed = windOffset(frame, material, instance.model.c3.xyz, height, length(instance.model.c1.xyz), world.xyz, normal, v.wind, frame->time);
     world.xyz += swayed;
     float earlier = frame->time - frame->deltaTime;
-    previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, v.wind, earlier);
+    previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, length(instance.prevModel.c1.xyz), previous.xyz, normal, v.wind, earlier);
     // A custom shader's vertex function, now and a frame ago.
     float3 moved = 0.0;
     if (material.shader != STANDARD_SHADER)

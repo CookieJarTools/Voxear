@@ -34,8 +34,10 @@ use crate::{
 /// bends and flutters in the wind, for a plant that is a box model. 14:
 /// meshes' lightmap UVs in the payload. 15: whether each material is
 /// two-sided. 18: a box model that bends in the wind is cooked with no face
-/// taller than one of its cubes, and no branch masks.
-pub const COOKED_VERSION: u32 = 18;
+/// taller than one of its cubes, and no branch masks. 19: its faces merged
+/// at any height again, each vertex's wind word saying which part of it the
+/// vertex is of, and a plant's coarser LODs made of its cubes halved.
+pub const COOKED_VERSION: u32 = 19;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed

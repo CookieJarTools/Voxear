@@ -524,25 +524,24 @@ pub(super) struct Onto {
 
 /// Builds a sculpted box's cubes into `data`: each face of a cube that has
 /// no cube against it, those of one colour side by side as one face. In a
-/// model that bends in the wind, as a plant does, faces are joined only
-/// along the level: each layer of cubes moves as far as its height says
-/// (`shaders/wind.slang`), so a face taller than a cube would bend straight
-/// past the corners of the faces beside it, and gaps would open there.
+/// model that bends in the wind, as a plant does, each vertex's wind word
+/// says which part of the plant it is of (see [`parts`]); the plant turns
+/// whole and its parts sway sheared about their feet (`shaders/wind.slang`),
+/// so faces stay flat however tall they are merged.
 pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox, voxels: &Voxels, on: &Onto) {
     let size = model_box.size;
+    let parts = (model.wind_bend > 0.0).then(|| parts(voxels, size, on));
     // Only chunks with cubes are read, and a full chunk's faces are hidden but where it meets one that is not.
     let (has, full) = voxels.chunk_fill();
     let each_chunk = chunks_of(size);
     let index = |chunk: [u32; 3]| (chunk[0] + each_chunk[0] * (chunk[1] + each_chunk[1] * chunk[2])) as usize;
     let each = on.reach * 2.0 / Vec3::from(size.map(|side| side.max(1) as f32));
-    let joins = |way: Vec3| model.wind_bend <= 0.0 || on.place.transform_vector3(way).y.abs() < 1e-4;
     for face in Face::ALL {
         let normal = face.normal();
         let (across, down) = face.across_and_down();
         // The axis the face looks along, and the two it lies across, by number.
         let axis_of = |way: Vec3| way.abs().max_position();
         let (n, u, v) = (axis_of(normal), axis_of(across), axis_of(down));
-        let (wide_joins, tall_joins) = (joins(across), joins(down));
         let out = normal[n] as i32;
         let world_normal = on.place.transform_vector3(normal).normalize_or_zero();
         let (wide, tall) = (size[u] as usize, size[v] as usize);
@@ -600,16 +599,15 @@ pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox,
                         a += 1;
                         continue;
                     }
-                    let run = match wide_joins {
-                        true => (a..wide).take_while(|at| shown[at + wide * b] == color).count(),
-                        false => 1,
-                    };
-                    let rows = match tall_joins {
-                        true => {
-                            (b..tall).take_while(|row| (a..a + run).all(|at| shown[at + wide * row] == color)).count()
-                        }
-                        false => 1,
-                    };
+                    let run = (a..wide).take_while(|at| shown[at + wide * b] == color).count();
+                    let rows =
+                        (b..tall).take_while(|row| (a..a + run).all(|at| shown[at + wide * row] == color)).count();
+                    // A face joins cubes side by side, which are always of one part.
+                    let wind = parts.as_ref().map_or(crate::mesh::NO_WIND_MASKS, |parts| {
+                        let mut cell = [0u32; 3];
+                        (cell[n], cell[u], cell[v]) = (layer as u32, a as u32, b as u32);
+                        parts.masks[parts.labels[cell_index(size, cell)] as usize]
+                    });
                     for row in b..b + rows {
                         shown[a + wide * row..a + run + wide * row].fill(0);
                     }
@@ -620,6 +618,12 @@ pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox,
                     middle[v] = (b as f32 + rows as f32 * 0.5) * each[v] - on.reach[v];
                     let along = across * (run as f32 * 0.5 * each[u]);
                     let fall = down * (rows as f32 * 0.5 * each[v]);
+                    // A plant stands on the ground: a face looking down from where it stands is never seen.
+                    let underside = world_normal.y < -0.99 && on.place.transform_point3(middle).y <= 1e-4;
+                    if parts.is_some() && underside {
+                        a += run;
+                        continue;
+                    }
                     let [x, y] = model.palette_pixel(color);
                     let uv = [(x as f32 + 0.5) / on.texture[0], (y as f32 + 0.5) / on.texture[1]];
                     let first = data.vertices.len() as u32;
@@ -628,6 +632,7 @@ pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox,
                             position: on.place.transform_point3(middle + corner).into(),
                             normal: world_normal.into(),
                             uv,
+                            wind,
                             ..Vertex::default()
                         });
                         data.skin.push(SkinVertex { joints: [on.joint, 0, 0, 0], weights: [u16::MAX, 0, 0, 0] });
@@ -638,6 +643,120 @@ pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox,
             }
         }
     }
+}
+
+/// A cube's place in a list of a box's cubes run along X, then Y, then Z.
+fn cell_index(size: [u32; 3], [x, y, z]: [u32; 3]) -> usize {
+    x as usize + size[0] as usize * (y as usize + size[1] as usize * z as usize)
+}
+
+/// The parts of a plant's sculpted box, for the wind: its cubes in runs joined
+/// face to face, as the blades of a tuft are. `labels` gives each cube its
+/// part, and `masks` each part's wind word (see `shaders/wind.slang`): how
+/// high its foot stands over the model's ground in sixteenths of a metre,
+/// its phase, from where its foot is, and how far it sways.
+pub(super) struct Parts {
+    pub labels: Vec<u32>,
+    pub masks: Vec<[u8; 4]>,
+}
+
+/// The highest a part's foot can say, in metres.
+const HIGHEST_FOOT: f32 = 255.0 / 16.0;
+
+pub(super) fn parts(voxels: &Voxels, size: [u32; 3], on: &Onto) -> Parts {
+    let mut labels = vec![u32::MAX; count(size)];
+    let mut masks = Vec::new();
+    let each = on.reach * 2.0 / Vec3::from(size.map(|side| side.max(1) as f32));
+    // How far a cube reaches down from its middle in the model's space, however the box is turned.
+    let down =
+        (0..3).map(|axis| (on.place.transform_vector3(Vec3::AXES[axis] * each[axis]).y * 0.5).abs()).sum::<f32>();
+    let mut stack = Vec::new();
+    voxels.each(|start, _| {
+        if labels[cell_index(size, start)] != u32::MAX {
+            return;
+        }
+        let label = masks.len() as u32;
+        labels[cell_index(size, start)] = label;
+        stack.push(start);
+        let (mut foot, mut lowest) = (f32::INFINITY, start);
+        while let Some(cell) = stack.pop() {
+            let middle = (Vec3::from(cell.map(|at| at as f32)) + Vec3::splat(0.5)) * each - on.reach;
+            let bottom = on.place.transform_point3(middle).y - down;
+            if bottom < foot || bottom == foot && cell < lowest {
+                (foot, lowest) = (bottom, cell);
+            }
+            for axis in 0..3 {
+                for step in [-1i32, 1] {
+                    let mut next = cell.map(|at| at as i32);
+                    next[axis] += step;
+                    if next[axis] < 0 || next[axis] >= size[axis] as i32 || voxels.get(size, next) == 0 {
+                        continue;
+                    }
+                    let next = next.map(|at| at as u32);
+                    let at = cell_index(size, next);
+                    if labels[at] == u32::MAX {
+                        labels[at] = label;
+                        stack.push(next);
+                    }
+                }
+            }
+        }
+        let foot = (foot.clamp(0.0, HIGHEST_FOOT) * 16.0).round() as u8;
+        // A phase from where the foot is, whole numbers alone, so a plant sways the same wherever it is made.
+        let mut hash = lowest[0].wrapping_mul(0x8DA6_B343) ^ lowest[1].wrapping_mul(0xD816_3841);
+        hash ^= lowest[2].wrapping_mul(0xCB1A_B31F);
+        hash ^= hash >> 15;
+        hash = hash.wrapping_mul(0x2C1B_3C6D);
+        hash ^= hash >> 13;
+        masks.push([foot, (hash >> 24) as u8, 255, 0]);
+    });
+    Parts { labels, masks }
+}
+
+/// Its cubes as they are seen from far off, with half as many each way:
+/// each cube of the coarser grid filled where at least a quarter of the up
+/// to eight it stands for are, in their most common colour, so thin blades
+/// and stalks stay as thicker ones rather than going.
+pub(super) fn halved(voxels: &Voxels, size: [u32; 3]) -> (Voxels, [u32; 3]) {
+    let half = size.map(|side| side.div_ceil(2).max(1));
+    let mut cells = vec![0u8; count(half)];
+    for z in 0..half[2] {
+        for y in 0..half[1] {
+            for x in 0..half[0] {
+                let (mut present, mut colors) = (0usize, [(0u8, 0u8); 8]);
+                let mut found = 0usize;
+                for corner in 0..8u32 {
+                    let at = [x * 2 + (corner & 1), y * 2 + (corner >> 1 & 1), z * 2 + (corner >> 2)];
+                    if (0..3).any(|axis| at[axis] >= size[axis]) {
+                        continue;
+                    }
+                    present += 1;
+                    let color = voxels.get(size, at.map(|at| at as i32));
+                    if color == 0 {
+                        continue;
+                    }
+                    match colors[..found].iter_mut().find(|(seen, _)| *seen == color) {
+                        Some((_, times)) => *times += 1,
+                        None => {
+                            colors[found] = (color, 1);
+                            found += 1;
+                        }
+                    }
+                }
+                let filled: usize = colors[..found].iter().map(|(_, times)| *times as usize).sum();
+                if filled * 4 >= present && filled > 0 {
+                    // The most common colour; of those as common, the least numbered, so it is the same every time.
+                    let (color, _) = colors[..found]
+                        .iter()
+                        .copied()
+                        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+                        .unwrap_or((0, 0));
+                    cells[cell_index(half, [x, y, z])] = color;
+                }
+            }
+        }
+    }
+    (Voxels::from_cells(half, &cells), half)
 }
 
 /// Where a ray first meets a cube of a sculpted box: how far along the
@@ -815,6 +934,65 @@ mod tests {
         assert_eq!(model_box.voxels.as_ref().unwrap().solid(), 9, "the one on top is cut off");
         model_box.set_side(0, 4, true);
         assert_eq!(model_box.voxels.as_ref().unwrap().get(model_box.size, [1, 0, 0]), red);
+    }
+
+    /// A box of `size` holding `cubes`, all red, in a model that bends in the wind by `bend`.
+    fn sculpted(size: [u32; 3], cubes: &[[u32; 3]], bend: f32) -> BoxModel {
+        let mut model = boxed(size);
+        model.wind_bend = bend;
+        let red = model.color_index(RED);
+        let mut cells = vec![0u8; count(size)];
+        for &cube in cubes {
+            cells[cell_index(size, cube)] = red;
+        }
+        model.bones[0].boxes[0].voxels = Some(Voxels::from_cells(size, &cells));
+        model.bones[0].boxes[0].skin = BoxSkin::Faces([None; 6]);
+        model
+    }
+
+    #[test]
+    fn a_bending_plants_blades_are_parts_of_their_own_with_their_feet_and_faces_merged_up_them() {
+        // A blade four cubes tall on the ground, and one two tall standing a cube up, apart from it.
+        let cubes = [[0, 0, 0], [0, 1, 0], [0, 2, 0], [0, 3, 0], [2, 1, 0], [2, 2, 0]];
+        let model = sculpted([3, 4, 1], &cubes, 2.0);
+        let mesh = model.mesh();
+        assert_eq!(mesh.indices.len() / 6, 11, "its sides as tall as each blade, and no bottom on the ground");
+        let cube = 1.0 / 16.0;
+        let of = |x: f32| mesh.vertices.iter().filter(move |vertex| (vertex.position[0] - x).abs() < cube * 1.01);
+        let tall: Vec<[u8; 4]> = of(0.5 * cube).map(|vertex| vertex.wind).collect();
+        let short: Vec<[u8; 4]> = of(2.5 * cube).map(|vertex| vertex.wind).collect();
+        assert!(tall.iter().all(|wind| *wind == tall[0]) && short.iter().all(|wind| *wind == short[0]));
+        assert_eq!((tall[0][0], tall[0][2]), (0, 255), "its foot on the ground, swaying");
+        assert_eq!((short[0][0], short[0][2]), (1, 255), "its foot a sixteenth of a metre up");
+        assert_ne!(tall[0][1], short[0][1], "each at a phase of its own");
+
+        // One that does not bend has no parts, and its faces are merged as they always were.
+        let still = sculpted([3, 4, 1], &cubes, 0.0).mesh();
+        assert!(still.vertices.iter().all(|vertex| vertex.wind == crate::mesh::NO_WIND_MASKS));
+        assert_eq!(still.indices.len() / 6, 12, "a still one keeps its bottom");
+    }
+
+    #[test]
+    fn halved_cubes_keep_thin_blades_as_thicker_ones_and_lose_lone_cubes() {
+        let size = [4, 4, 4];
+        let mut cells = vec![0u8; count(size)];
+        for y in 0..4 {
+            cells[cell_index(size, [0, y, 0])] = 1;
+        }
+        cells[cell_index(size, [3, 3, 3])] = 2;
+        // Three of one colour and one of another in a corner: the commoner wins.
+        for (at, color) in [([2, 0, 2], 3), ([3, 0, 2], 3), ([2, 0, 3], 3), ([3, 0, 3], 4)] {
+            cells[cell_index(size, at)] = color;
+        }
+        let (half, half_size) = halved(&Voxels::from_cells(size, &cells), size);
+        assert_eq!(half_size, [2, 2, 2]);
+        assert_eq!((half.get(half_size, [0, 0, 0]), half.get(half_size, [0, 1, 0])), (1, 1), "the blade");
+        assert_eq!(half.get(half_size, [1, 1, 1]), 0, "a lone cube is too little of its eight");
+        assert_eq!(half.get(half_size, [1, 0, 1]), 3);
+        assert_eq!(half.solid(), 3);
+        // An odd side rounds up, and a box one cube thick stays one thick.
+        let (_, odd) = halved(&Voxels::filled([5, 1, 3], 1), [5, 1, 3]);
+        assert_eq!(odd, [3, 1, 2]);
     }
 
     #[test]

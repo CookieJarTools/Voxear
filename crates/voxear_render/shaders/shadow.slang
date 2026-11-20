@@ -20,7 +20,7 @@ float4 shadowVertex(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex) : S
     // A virtual shadow page is kept from frame to frame, so what sways is drawn into it at rest.
     if (push.level < VSM_PAGE_VIEW)
     {
-        world.xyz += windOffset(push.frame, material, origin, plantHeight(instance, mesh), world.xyz, normal, v.wind, push.frame->time);
+        world.xyz += windOffset(push.frame, material, origin, plantHeight(instance, mesh), length(instance.model.c1.xyz), world.xyz, normal, v.wind, push.frame->time);
     }
     // A custom shader's vertex function moves its shadow too.
     if (material.shader != STANDARD_SHADER)

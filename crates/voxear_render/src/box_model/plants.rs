@@ -805,17 +805,18 @@ mod tests {
     }
 
     #[test]
-    fn starter_plants_bend_in_the_wind_but_for_the_rock_and_no_face_of_one_is_taller_than_a_cube() {
+    fn starter_plants_bend_in_the_wind_but_for_the_rock_and_their_faces_are_joined_up_their_parts() {
         for plant in StarterPlant::ALL {
             let model = plant.model();
             let prepared = model.prepared("Plants/Test.boxmodel");
             let (material, mesh) = (&prepared.materials[0].desc, &prepared.meshes[0].0);
             assert_eq!(material.wind_bend > 0.0, !plant.is_still(), "{}", plant.name());
             assert_eq!(material.wind_flutter, 0.0, "cubes do not flutter apart");
-            // Nothing sways on its own: a plant of cubes bends whole, each layer as far as its height says.
-            let masks = crate::mesh::NO_WIND_MASKS;
-            assert!(mesh.vertices.iter().all(|vertex| vertex.wind == masks), "{}", plant.name());
-            // A face of a plant that bends spans one layer of cubes at most, so none bends past another's corner.
+            // A plant that bends says for each vertex which part it is of and that the part sways; a still one, none.
+            let swaying = mesh.vertices.iter().all(|vertex| vertex.wind[2] == 255);
+            let none = mesh.vertices.iter().all(|vertex| vertex.wind == crate::mesh::NO_WIND_MASKS);
+            assert!(if plant.is_still() { none } else { swaying }, "{}", plant.name());
+            // The plant turns whole and its parts shear, so faces are joined up their height as a still one's are.
             let cube = model.pixel_size();
             let tallest = mesh
                 .indices
@@ -826,10 +827,8 @@ mod tests {
                     high - low
                 })
                 .fold(0.0, f32::max);
-            if !plant.is_still() {
-                assert!(tallest <= cube * 1.001, "{}: a face {tallest} tall", plant.name());
-            } else if plant == StarterPlant::Rock {
-                assert!(tallest > cube * 1.5, "a still one's faces are joined up it: {tallest}");
+            if matches!(plant, StarterPlant::Rock | StarterPlant::Tuft | StarterPlant::Pine) {
+                assert!(tallest > cube * 1.5, "{}: faces joined up it: {tallest}", plant.name());
             }
         }
         // A build keeps the bend: cooked and read back, the tuft's material has it.
@@ -843,5 +842,35 @@ mod tests {
         assert!(StarterPlant::Pine.wind_bend() < StarterPlant::Bush.wind_bend());
         let [wide, tall, deep] = StarterPlant::Rock.size();
         assert_eq!([wide, tall, deep], [1.625, 0.75, 1.25]);
+    }
+
+    #[test]
+    fn starter_plants_have_coarser_lods_of_larger_cubes_and_characters_have_none() {
+        for plant in
+            [StarterPlant::Tuft, StarterPlant::Flower, StarterPlant::Bush, StarterPlant::Tree, StarterPlant::Rock]
+        {
+            let prepared = plant.model().prepared("Plant.boxmodel");
+            let (mesh, lods) = &prepared.meshes[0];
+            assert!(lods.len() >= 2, "{}: {} LODs", plant.name(), lods.len());
+            for pair in lods.windows(2) {
+                assert!(
+                    pair[1].indices.len() < pair[0].indices.len(),
+                    "{}: each LOD has fewer triangles",
+                    plant.name()
+                );
+                assert!(pair[1].error > pair[0].error, "{}: and is drawn from further off", plant.name());
+            }
+            assert_eq!(mesh.skin.len(), mesh.vertices.len(), "{}: every corner bound to the bone", plant.name());
+            let most = lods.iter().flat_map(|lod| &lod.indices).max().copied().unwrap_or(0);
+            assert!((most as usize) < mesh.vertices.len());
+        }
+        // A tuft's blades are merged up their height: few faces for ten blades.
+        let tuft = StarterPlant::Tuft.model().prepared("Tuft.boxmodel");
+        let faces = tuft.meshes[0].1[0].indices.len() / 6;
+        assert!(faces <= 90, "a tuft is {faces} faces");
+        // A model of more bones, as a character is, keeps only its own.
+        let mut character = StarterPlant::Bush.model();
+        character.add_bone("Arm", Some(0), Vec3::ZERO);
+        assert_eq!(character.prepared("Character.boxmodel").meshes[0].1.len(), 1);
     }
 }

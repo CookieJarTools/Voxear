@@ -22,12 +22,15 @@
 // running up it as the water's to and fro reaches its tip later than its
 // root; under a Pool's still water it drifts a little.
 //
-// A plant drawn in pixels, a box model's (MATERIAL_PIXELS), moves whole: as
-// far as its height says and no more, every one of its vertices as high up
-// it alike, and pushed by what is at its foot rather than at each vertex. A
-// layer of its cubes slides over the one under it, the faces of each staying
-// flat and square, and as its faces are never taller than a cube (see
-// box_model/voxels.rs) none parts from another as it bends.
+// A plant drawn in pixels, a box model's (MATERIAL_PIXELS), moves whole: it
+// leans from the ground, as far as the wind and what is at its foot lean its
+// top, every point of it moved by the same sum of where it is, so its faces
+// stay flat however tall they are merged (see box_model/voxels.rs). Each of its parts,
+// a run of cubes joined face to face such as a blade of a tuft, then sways on
+// its own about its own foot, at a phase of its own, by its vertices' wind
+// word: how high its foot is over the plant's in sixteenths of a metre, its
+// phase, and how far it sways. A part's foot does not move against the plant,
+// so what it stands on keeps hold of it.
 //
 // What pushes through plants bends those rooted about as high as it stands
 // (foliage_push.slang), as far up them as it reaches: a pole taller than
@@ -46,6 +49,10 @@ static const float WIND_FLUTTER = 0.02;
 static const float PUSH_LEAN = 0.8;
 // How far a branch sways at strength 1, as a share of the plant's height.
 static const float WIND_BRANCH = 0.05;
+// The furthest a plant of cubes leans over, as the sine of its angle: further, its cubes would shear flat.
+static const float WHOLE_MOST_LEAN = 0.6;
+// How far a part of a plant of cubes sways at strength 1, as a share of how high it stands over its own foot.
+static const float WIND_PART = 0.06;
 
 // How fast the air moves at strength 1, in metres a second.
 static const float WIND_SPEED = 5.0;
@@ -211,10 +218,71 @@ float2 foliagePush(Frame* frame, float3 world)
     return foliagePush(frame, world.xz, world.y, reach);
 }
 
+// A plant of cubes leant over, its top `height` up moving by `tip` across: where it moves a point `from` its foot.
+// Each point moves across as far as its height says and down as much as keeps every upright line of it as long as
+// it was, the ground it stands on staying where it is. Each moves by the same sum of its place, as a solid sheared
+// would, so faces of any size stay flat and meet where they met.
+float3 leantWhole(float3 tip, float3 from, float height)
+{
+    float lean = length(tip.xz);
+    if (lean < 1e-6)
+    {
+        return 0.0;
+    }
+    float s = min(lean / height, WHOLE_MOST_LEAN);
+    float2 across = tip.xz / lean * s;
+    return float3(across.x * from.y, (sqrt(1.0 - s * s) - 1.0) * from.y, across.y * from.y);
+}
+
+// How the wind and pushes move a vertex at `world` of a plant of cubes (see the top): its top leant as a plant's
+// is, read where it stands, and the whole leant so; and the vertex's part swaying about its own foot.
+float3 wholeOffset(Frame* frame, float windBend, float3 origin, float height, float scale, float3 world, uint masks, float time)
+{
+    float pushReach;
+    float2 pushed = foliagePush(frame, origin.xz, origin.y, pushReach);
+    float reached = saturate((min(origin.y + height, pushReach) - origin.y) / height);
+    float3 tip = float3(pushed.x, 0.0, pushed.y) * (windBend * reached * reached * height * PUSH_LEAN);
+    bool sea;
+    float below = windBend > 0.0 ? plantUnderwater(frame, origin, sea) : 0.0;
+    float3 from = world - origin;
+    if (below > 0.0)
+    {
+        return leantWhole(tip + surgeOffset(frame, origin, height, below, sea, 1.0, time) * windBend, from, height);
+    }
+    Wind wind = frame->wind;
+    if (wind.strength <= 0.0)
+    {
+        return leantWhole(tip, from, height);
+    }
+    float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
+    float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
+    float2 place = levelPosition(frame, origin, 4096.0).xz;
+    float push = windPush(wind, place, time);
+    float phase = windHash(floor(place * 4.0)) * 6.2831;
+    float sway = sin(time * 1.6 + phase) * 0.6 + sin(time * 2.7 + phase * 1.7) * 0.4;
+    float rock = sin(time * 2.1 + phase * 2.3);
+    float lean = windBend * height * WIND_LEAN;
+    tip += along * lean * max(push + wind.turbulence * wind.strength * sway * 0.5, 0.0);
+    tip += across * lean * wind.turbulence * wind.strength * rock * 0.35;
+    float3 offset = leantWhole(tip, from, height);
+
+    // The part's own sway: sheared about its foot, which stays where it is on what it stands on.
+    float foot = float(masks & 0xFF) / 16.0 * scale;
+    float own = float((masks >> 8) & 0xFF) / 255.0 * 6.2831;
+    float swaying = float((masks >> 16) & 0xFF) / 255.0;
+    float above = max(from.y - foot, 0.0);
+    float swing = sin(time * 2.3 + phase + own) * 0.6 + sin(time * 3.8 + (phase + own) * 1.3) * 0.4;
+    float aside = sin(time * 1.9 + (phase + own) * 2.1);
+    float part = swaying * windBend * WIND_PART * above * (0.4 + 0.6 * max(push, 0.0));
+    offset += (along * (0.5 + 0.5 * swing) + across * 0.4 * aside) * part;
+    return offset;
+}
+
 // How far the wind, and what pushes through foliage, move a vertex at
-// `world` of a plant standing at `origin`, `height` tall, drawn with
-// `material`, its normal `normal` and its wind masks `masks`, at `time`.
-float3 windOffset(Frame* frame, Material material, float3 origin, float height, float3 world, float3 normal, uint masks, float time)
+// `world` of a plant standing at `origin`, `height` tall and `scale` times
+// as large as made, drawn with `material`, its normal `normal` and its wind
+// masks `masks`, at `time`.
+float3 windOffset(Frame* frame, Material material, float3 origin, float height, float scale, float3 world, float3 normal, uint masks, float time)
 {
     // As far as the plant's own bend says, and as many times that as the game's foliage bends.
     float windBend = material.windBend * frame->wind.bend;
@@ -224,12 +292,16 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
         return 0.0;
     }
     bool whole = (material.flags & MATERIAL_PIXELS) != 0;
+    if (whole)
+    {
+        return wholeOffset(frame, windBend, origin, height, scale, world, masks, time);
+    }
     float up = saturate((world.y - origin.y) / height);
     // Pushed aside by what passes through where it is rooted, bending from the ground as the wind bends it, as far up
     // as the push reaches; above that it is carried along as it is there. A low plant is read where each blade is,
-    // so a patch of grass parts round what passes through it; a tall one, and a plant that moves whole, where it
-    // stands, so a crown over someone's head does not part round them.
-    float stem = whole ? 1.0 : saturate((height - 1.5) / 1.5);
+    // so a patch of grass parts round what passes through it; a tall one where it stands, so a crown over someone's
+    // head does not part round them.
+    float stem = saturate((height - 1.5) / 1.5);
     float pushReach;
     float2 pushed = foliagePush(frame, lerp(world.xz, origin.xz, stem), origin.y, pushReach);
     float reached = saturate((min(world.y, pushReach) - origin.y) / height);
@@ -261,10 +333,6 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     offset += along * lean * max(push + wind.turbulence * wind.strength * sway * 0.5, 0.0);
     offset += across * lean * wind.turbulence * wind.strength * rock * 0.35;
     offset = bowed(offset, height);
-    if (whole)
-    {
-        return offset;
-    }
 
     float flutters = float(masks & 0xFF) / 255.0;
     float own = float((masks >> 8) & 0xFF) / 255.0 * 6.2831;

@@ -38,7 +38,7 @@ void shadowMesh(
         // A virtual shadow page is kept from frame to frame, so what sways is drawn into it at rest.
         if (push.level < VSM_PAGE_VIEW)
         {
-            world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, v.wind, push.frame->time);
+            world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, length(data.model.c1.xyz), world.xyz, normal, v.wind, push.frame->time);
         }
         if (material.shader != STANDARD_SHADER)
         {

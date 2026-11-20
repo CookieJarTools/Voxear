@@ -10,6 +10,8 @@ Every model gets simpler copies of its meshes when it is imported, or uses the o
 
 Each copy has about half the triangles of the one before, down to six levels. Where a mesh's seams, such as where its texture wraps round it, stop it simplifying neatly, its last levels are simplified more roughly, ignoring the seams: they are only ever drawn small, where the seams cannot be seen, and they keep a meadow of a thousand plants from drawing each one at hundreds of triangles.
 
+A [[Box Models|box model]] of one bone sculpted from cubes, such as a plant, a rock or a mushroom, gets its simpler copies another way, so it stays made of cubes: each level has its cubes twice as large each way, a larger cube standing wherever enough of the small ones it covers did, in their commonest colour. Thin blades and stalks become thicker ones rather than going. A level takes over from where its cubes would be about six pixels across on screen. A grass tuft goes from 180 triangles to 86, 26 and 10.
+
 Select an Obj with a **Mesh Renderer** to see its mesh's levels in the Inspector, as a bar like a LOD Group's: a part for each level, the most detailed on the left, with its triangles and where it ends as a share of the screen. The level the Scene view draws now is outlined, and the camera mark above shows how much of the screen the mesh covers from there; while the game plays, it is the game's camera.
 
 - **Click** a level to move the Scene view to where that level is drawn, looking at the Obj.

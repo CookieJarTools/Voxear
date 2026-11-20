@@ -3593,7 +3593,11 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   model's texture, in rows under the sheet (`BoxModel::texture`), and every face of a cube points at the middle
   of its colour's pixel, which sharp sampling reads exactly. Faces of one colour are merged, so a part of a
   few hundred cubes is a few dozen quads. Plants and trees are meant to be made this way and grown by a
-  Foliage, whose rays for the ground meet a Block World's blocks.
+  Foliage, whose rays for the ground meet a Block World's blocks. A model of one bone sculpted so gets coarser
+  LODs of its own cubes halved each way (`BoxModel::plant_lods`, `voxels::halved`), so it stays cubes from afar.
+  One that bends in the wind leans as a sheared solid and each of its parts, a run of cubes joined face to face,
+  sways sheared about its own foot (`voxels::parts`, which the vertices' wind word names; `wholeOffset` in
+  `shaders/wind.slang`): every move is linear in place, so faces are merged at any height and nothing parts.
 - **Clips** (`box_model/clips.rs`) are the made path to animation, for what Mob Motion does not do. They are
   kept sparse, as they are made: keys only for bones that move, only at the moments that matter, each saying how
   far the bone is from rest. What plays clips wants every bone at every frame, so `prepared` bakes each one

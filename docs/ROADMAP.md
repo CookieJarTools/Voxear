@@ -1661,7 +1661,7 @@ Later, after M5:
 - The look: bounced light, exposure and contrast kept matched to the reference scenes as the worlds grow.
 - The smaller "Later" notes under each part above.
 
-## Vegetation ✅ (done)
+## Vegetation (in progress: dense plants of cubes)
 
 What The Vegetation Engine brings to Unity, built in: foliage that is cheap to draw in great numbers, moves with
 the wind and with what passes through it, and changes with the seasons, from one set of settings per level.
@@ -1919,6 +1919,36 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   `wind.slang` scales flutter by the mask, offsets phases, and sways branches downwind and bobbing
   (`WIND_BRANCH`). Unit tests for generation and the settings; GPU test: a pole's masked top sways further
   downwind, its foot still. The foliage shading's needs (normals, foliage materials) were already met by import.
+- **Dense plants of cubes**, in stages: the research, measured limits and plan are in
+  [docs/research/vegetation.md](research/vegetation.md). Measured in a CubeGame meadow at 1920×1080 on the RTX 3070,
+  least of 60 frames, the meshes' depth and shading passes less a run with no plants: three grass tufts a block to
+  60 m (7,430 on screen) went from 3.67 to 2.10 ms with stages 1 and 2, their meshlets from 85,100 to 46,200; twelve
+  a block to 90 m (42,900 on screen) from 18.8 to 8.9 ms, meshlets 434,000 to 182,000; those tufts' shadows from
+  1.17 to 0.51 ms.
+  - [x] **Blocky LODs for plants** (`BoxModel::plant_lods`, `voxels::halved`): a box model of one bone with
+    sculpted boxes gets coarser LODs of its cubes halved each way, a larger cube where at least a quarter of the
+    eight it stands for are, in their commonest colour, so thin blades become thicker ones; drawn from the
+    vertices after the full mesh's, from where their cubes are six pixels across (`PLANT_LOD_CUBE_PIXELS`), until
+    a LOD saves under 15%. A tuft is 180, 86, 26 and 10 triangles, a bush 752 to 10, the tree 4,064 to 10. The
+    dithered LOD fade and plants' coarser shadow LOD (`PLANT_SHADOW_COARSER`) now work for them. Tried at ten
+    pixels: 1.89 and 6.0 ms in the two meadows above, but the middle distance read visibly chunkier.
+  - [x] **Parts that sway whole** (`wholeOffset` in `shaders/wind.slang`, `voxels::parts`): a plant of cubes leans
+    from the ground as one sheared solid (`leantWhole`: across by height, down as keeps each upright line its
+    length, at most about 37°), and each part, a run of cubes joined face to face such as a blade, sways sheared
+    about its own foot at a phase of its own; its vertices' wind word holds the part's foot in sixteenths of a
+    metre, its phase and its sway. Every move is linear in place, so faces are merged up their height again
+    (the rule that a bending plant's faces stay one cube tall is gone), and a plant's bottoms on the ground are
+    left out. A tuft went from about 140 faces in 10 meshlets to 90 in 6. `windOffset` takes the instance's scale.
+    `COOKED_VERSION` 19.
+  - [ ] Ground cover grown on the GPU per chunk in worlds of blocks.
+  - [ ] Cheaper instances for placed plants.
+  - [ ] Voxel impostors for bushes and trees.
+  - [ ] Plant shadows by tier.
+  - [ ] Far grass from the ground's small-cube relief.
+  - [ ] A vegetation stress scene and `foliage.stats`/`foliage.set`.
+  - Tests: unit tests of the parts (feet, phases, merged faces, no bottom on the ground), halving (thin blades
+    kept, lone cubes gone, commonest colour, odd sides), and every starter plant's LODs (fewer triangles, further
+    off, bound to the bone; none for a model of more bones); the GPU tests of plants of cubes in wind and pushes.
 
 ## Water ✅ (done)
 

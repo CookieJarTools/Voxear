@@ -19,7 +19,7 @@ MILESTONES = [
     ("", "Packages", "Share code, tools and content from GitHub", "done"),
     ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, 3D and 2D physics", "done"),
     ("M5", "Lighting", "GI, lightmaps, probes, ray-traced sound, soft shadows, clouds, weather, HDR", "done"),
-    ("", "Vegetation", "Foliage swaying in the wind, pushed aside, turning with the seasons", "done"),
+    ("", "Vegetation", "Foliage in wind and seasons; dense plants of cubes with blocky LODs", "now"),
     ("", "Water", "The sea, pools, rivers and lava: shores, foam, trails, going under, buoyancy", "done"),
     ("M6", "Animation", "GPU skinning, motion matching, rigs and IK, box models, state machines", "now"),
     ("", "Gameplay kits", "Guns with procedural recoil, heat and cold, controllers, destruction", "now"),

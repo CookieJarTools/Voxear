@@ -94,7 +94,7 @@ In a material file, `wind_bend = 1.0` and `wind_flutter = 0.5`.
 
 ### Plants of cubes
 
-A [[Box Models|box model]] has its own **Wind bend**, in the Inspector while it is open in the Model window, under **Model**. Set it and every one of that plant bends in the wind and away from what walks through it, wherever it stands or grows. Nothing flutters: a plant of cubes bends whole, each layer of its cubes sliding over the one below as far as its height says, so its faces stay flat and square and nothing parts. It is pushed by what stands at its foot, so a bush leans away from someone walking into it as one. Its faces are made no taller than one of its cubes, so a plant that bends is a little more to draw than one that does not: in a meadow of grass, flowers and bushes, about a tenth of a millisecond a frame on a mid-range GPU.
+A [[Box Models|box model]] has its own **Wind bend**, in the Inspector while it is open in the Model window, under **Model**. Set it and every one of that plant bends in the wind and away from what walks through it, wherever it stands or grows. Nothing flutters: a plant of cubes leans whole, turning about its foot like a solid thing, so its faces stay flat and square and nothing parts. On top of that, each of its parts sways on its own about its own foot, at its own pace: a part is a run of cubes joined face to face, such as each blade of a tuft or the stalk of a flower, found from the cubes themselves with nothing to set. A plant is pushed by what stands at its foot, so a bush leans away from someone walking into it as one.
 
 | Plant | Wind bend |
 | --- | --- |

@@ -214,9 +214,9 @@ VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instance
     float height = max((mesh.center.y + mesh.radius) * scale, 0.05);
     // Lying flat, it no longer catches the wind.
     float sway = 1.0 - over;
-    float3 now = world + windOffset(frame, material, blade.position, height, world, normal, v.wind, frame->time) * sway;
+    float3 now = world + windOffset(frame, material, blade.position, height, scale, world, normal, v.wind, frame->time) * sway;
     float earlier = frame->time - frame->deltaTime;
-    float3 before = world + windOffset(frame, material, blade.position, height, world, normal, v.wind, earlier) * sway;
+    float3 before = world + windOffset(frame, material, blade.position, height, scale, world, normal, v.wind, earlier) * sway;
     Terrain terrain = buffers()->terrains[job.terrain];
 
     VertexOut o;

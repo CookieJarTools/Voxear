@@ -54,6 +54,14 @@ use crate::{
     skeleton::{Bone, BonePose, ModelAnimation, Skeleton, Skin, SkinVertex},
 };
 
+/// How many pixels across a plant's cubes may be drawn at a coarser LOD:
+/// halving its cubes, each LOD takes over once its cubes would be this wide
+/// or narrower on the screen (see `BoxModel::plant_lods`).
+const PLANT_LOD_CUBE_PIXELS: f32 = 6.0;
+
+/// The least share of triangles a plant's next LOD must save to be kept.
+const PLANT_LOD_PROGRESS: f32 = 0.15;
+
 mod clips;
 mod edit;
 mod layer;
@@ -790,6 +798,13 @@ impl BoxModel {
     /// every pixel standing out. `None` where no box has a layer that
     /// stands out.
     pub(crate) fn build(&self, bones: &[Mat4]) -> (MeshData, Option<Vec<u32>>) {
+        self.build_coarser(bones, 0)
+    }
+
+    /// As [`build`](Self::build), with every sculpted box's cubes halved
+    /// `coarser` times over each way (see `voxels::halved`), as it is drawn
+    /// from further off; layers are left out of a coarser one.
+    fn build_coarser(&self, bones: &[Mat4], coarser: u32) -> (MeshData, Option<Vec<u32>>) {
         // The texture is the sheet with the palette's colours under it.
         let texture = self.texture();
         let sheet = Vec3::new(texture.width as f32, texture.height as f32, 1.0);
@@ -800,6 +815,20 @@ impl BoxModel {
             for model_box in &bone.boxes {
                 let (place, reach) = self.box_place(in_model, model_box);
                 let before = data.indices.len();
+                // In a plant, a plain box is a part of its own for the wind, its foot its lowest corner.
+                let wind = match self.wind_bend > 0.0 {
+                    true => {
+                        let lowest = (0..8)
+                            .map(|corner| {
+                                let sign = |bit: u32| if corner >> bit & 1 == 0 { -1.0 } else { 1.0 };
+                                place.transform_point3(reach * Vec3::new(sign(0), sign(1), sign(2))).y
+                            })
+                            .fold(f32::INFINITY, f32::min);
+                        let foot = (lowest.clamp(0.0, 255.0 / 16.0) * 16.0).round() as u8;
+                        [foot, (data.indices.len() as u32).wrapping_mul(0x9E37_79B9).to_le_bytes()[3], 255, 0]
+                    }
+                    false => crate::mesh::NO_WIND_MASKS,
+                };
                 for face in Face::ALL {
                     let Some(rect) = model_box.face_rect(face) else { continue };
                     let (normal, (across, down)) = (face.normal(), face.across_and_down());
@@ -822,6 +851,7 @@ impl BoxModel {
                             position: place.transform_point3(corner).into(),
                             normal: normal.into(),
                             uv: [u / sheet.x, v / sheet.y],
+                            wind,
                             ..Vertex::default()
                         });
                         data.skin.push(SkinVertex { joints: [joint, 0, 0, 0], weights: [u16::MAX, 0, 0, 0] });
@@ -831,12 +861,22 @@ impl BoxModel {
                 // The box itself is drawn near and far alike; its layer stands out near, and lies flat far.
                 if let Some(cubes) = &model_box.voxels {
                     let on = voxels::Onto { place, reach, joint, texture: [sheet.x, sheet.y] };
-                    voxels::build(&mut data, self, model_box, cubes, &on);
+                    let mut fewer = (cubes.clone(), model_box.size);
+                    for _ in 0..coarser {
+                        fewer = voxels::halved(&fewer.0, fewer.1);
+                    }
+                    match coarser {
+                        0 => voxels::build(&mut data, self, model_box, cubes, &on),
+                        _ => {
+                            let coarse = ModelBox { size: fewer.1, voxels: None, ..model_box.clone() };
+                            voxels::build(&mut data, self, &coarse, &fewer.0, &on);
+                        }
+                    }
                     far.extend_from_slice(&data.indices[before..]);
                     continue;
                 }
                 far.extend_from_slice(&data.indices[before..]);
-                if let Some(layer) = model_box.layer {
+                if let Some(layer) = model_box.layer.filter(|_| coarser == 0) {
                     let on = layer::Onto { place, reach, joint, pixel: self.pixel_size() };
                     raised |= layer::raise(&mut data, &mut far, &texture, model_box, layer, &on);
                 }
@@ -844,6 +884,34 @@ impl BoxModel {
         }
         mesh_tools::calculate_tangents(&mut data);
         (data, raised.then_some(far))
+    }
+
+    /// A model of one bone with sculpted boxes, a plant or a rock, as seen
+    /// from further and further off: its cubes halved each way at each LOD
+    /// (see `voxels::halved`), so it stays made of cubes, only larger ones,
+    /// each LOD with its triangles and how far it is from the model, which
+    /// is drawn from where its cubes are `PLANT_LOD_CUBE_PIXELS` across. It
+    /// stops where a LOD would save too little, and has none for a model of
+    /// more bones, whose boxes move apart. `indices` is how many the full
+    /// mesh has.
+    fn plant_lods(&self, rest: &[Mat4], indices: usize) -> Vec<(MeshData, f32)> {
+        let sculpted = self.boxes().any(|(_, _, model_box)| model_box.voxels.is_some());
+        if self.bones.len() != 1 || !sculpted {
+            return Vec::new();
+        }
+        let mut lods: Vec<(MeshData, f32)> = Vec::new();
+        let mut last = indices;
+        for coarser in 1..crate::lod::MAX_LODS as u32 {
+            let (mut mesh, _) = self.build_coarser(rest, coarser);
+            if mesh.indices.is_empty() || mesh.indices.len() as f32 > last as f32 * (1.0 - PLANT_LOD_PROGRESS) {
+                break;
+            }
+            mesh_tools::calculate_tangents(&mut mesh);
+            last = mesh.indices.len();
+            let cube = self.pixel_size() * (1u32 << coarser) as f32;
+            lods.push((mesh, cube / PLANT_LOD_CUBE_PIXELS));
+        }
+        lods
     }
 
     /// The model ready to upload, as a model file read from `path` is: its
@@ -867,11 +935,25 @@ impl BoxModel {
             roles: self.bones.iter().map(|bone| bone.role).collect(),
             source: None,
         };
-        let (data, far) = self.build(&self.rest_matrices());
+        let rest = self.rest_matrices();
+        let (mut data, far) = self.build(&rest);
         if data.indices.is_empty() {
             return model;
         }
+        // A plant's coarser LODs, drawn from the vertices after its own.
+        let mut coarser = Vec::new();
+        if far.is_none() {
+            for (mesh, error) in self.plant_lods(&rest, data.indices.len()) {
+                let first = data.vertices.len() as u32;
+                data.vertices.extend(mesh.vertices);
+                data.skin.extend(mesh.skin);
+                coarser.push((mesh.indices.iter().map(|index| index + first).collect::<Vec<_>>(), error));
+            }
+        }
         let mut lods = full_lod(&data);
+        for (indices, error) in coarser {
+            lods.push(crate::lod::Lod::new(&indices, error, &data.vertices));
+        }
         // From far off, layers lie flat: as far out as the tallest stands, which is how wrong that looks.
         if let Some(far) = far {
             let tallest =

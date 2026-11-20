@@ -1057,7 +1057,10 @@ decompression, background loading, unloading)*.
   frames still on the GPU are done with it.
 - **Who holds the shared space.** Models (with built-in meshes and skinned parts' poses) and worlds of blocks'
   lighting, their chunks' meshes for the GI's and sound's rays, share the eight million vertices and sixteen million
-  indices (`assets::MeshPoolUse`), and two million skinned vertices' bones beside them; a skinned part's poses take three
+  indices (`assets::MeshPoolUse`). Skinned vertices' bones have a pool beside them that starts at two million and
+  doubles when a skin does not fit, up to 64 million (`Assets::grow_skins`): the pool keeps every skin on the CPU
+  too, 16 bytes a vertex, gives the larger buffer all of it, and retires the old one once no frame in flight reads
+  it; skinning reads the pool by its address each frame, so nothing else changes. A skinned part's poses take three
   times its vertices. With the meshlets' buffers sized from the indices they take about 660 MB of GPU memory, held
   from the start, 330 MB more than at four million. Lighting is registered apart (`Assets::add_lighting_mesh`, each mesh with how far
   its chunk is from the camera) and may take only what leaves the rest of its share free: 75% by default,

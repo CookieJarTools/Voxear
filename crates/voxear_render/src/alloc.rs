@@ -3,6 +3,7 @@
 
 /// First-fit over a sorted free list; freed ranges merge with their
 /// neighbours, so space does not fragment into slivers over a long session.
+#[derive(Clone)]
 pub(crate) struct RangeAllocator {
     capacity: u64,
     /// Free ranges as (start, length), sorted by start and never touching.
@@ -56,6 +57,19 @@ impl RangeAllocator {
         self.capacity
     }
 
+    /// Hands out up to `capacity` from now on, as a larger buffer would.
+    pub fn grow(&mut self, capacity: u64) {
+        if capacity <= self.capacity {
+            return;
+        }
+        let more = capacity - self.capacity;
+        match self.free.last_mut() {
+            Some((start, length)) if *start + *length == self.capacity => *length += more,
+            _ => self.free.push((self.capacity, more)),
+        }
+        self.capacity = capacity;
+    }
+
     /// Hands out nothing past `capacity` from now on, as a smaller buffer
     /// would, where nothing has been handed out there yet; returns the
     /// capacity it has now.
@@ -107,6 +121,20 @@ impl SlotAllocator {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_range_allocator_grows_with_the_free_end_joined_on() {
+        let mut ranges = RangeAllocator::new(10);
+        assert_eq!(ranges.alloc(10), Some(0));
+        assert_eq!(ranges.alloc(5), None, "full");
+        ranges.grow(20);
+        assert_eq!((ranges.capacity(), ranges.largest()), (20, 10));
+        assert_eq!(ranges.alloc(10), Some(10));
+        ranges.free(15, 5);
+        ranges.grow(40);
+        assert_eq!(ranges.largest(), 25, "the free end and what was added are one run");
+        assert_eq!(ranges.used(), 15);
+    }
     use super::*;
 
     #[test]

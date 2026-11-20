@@ -76,10 +76,12 @@ pub const DEFAULT_LIGHTING_SHARE: u32 = 75;
 /// The least and most share of the space lighting may be given, in percent.
 pub const MIN_LIGHTING_SHARE: u32 = 10;
 pub const MAX_LIGHTING_SHARE: u32 = 95;
-/// How many skinned vertices' bones all meshes may keep (see
+/// How many skinned vertices' bones the meshes' pool holds at first (see
 /// `skeleton::SkinVertex`): every box model's count, a fleet of ships'
-/// over half a million.
-const MAX_SKIN_VERTICES: u64 = 2 * 1024 * 1024;
+/// over half a million. It doubles as more are needed, up to the most it
+/// holds, 16 bytes a vertex: 32 MB at first, 1 GB at the most.
+const FIRST_SKIN_VERTICES: u64 = 2 * 1024 * 1024;
+const MOST_SKIN_VERTICES: u64 = 64 * 1024 * 1024;
 const MAX_INDICES: u64 = 16 * 1024 * 1024;
 const MAX_MESHES: u64 = 16 * 1024;
 /// Enough for every index in meshlets of 64 triangles, half the most they hold.
@@ -361,6 +363,8 @@ enum Retiring {
     BottomLevel(AccelerationStructure),
     /// A replaced mesh's old space.
     Space(Space),
+    /// A pool's buffer, replaced by a larger one.
+    Buffer(Buffer),
     Material(MaterialHandle),
     Texture(TextureId),
 }
@@ -381,6 +385,9 @@ pub struct Assets {
     /// where its skin starts (see `skin_of`).
     pub skins: Buffer,
     skin_space: RangeAllocator,
+    /// Every skin kept in the pool, where it is there, for a larger pool to
+    /// be given.
+    skins_kept: Vec<SkinVertex>,
     skin_ranges: HashMap<MeshHandle, (u64, u64)>,
     /// Skinned meshes whose every vertex is bound whole to one bone, as a
     /// box model's are: posed by their bones where they are drawn, with no
@@ -505,7 +512,7 @@ impl Assets {
             device_local,
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
-        let skins = gpu.create_buffer("skins", MAX_SKIN_VERTICES * size_of::<SkinVertex>() as u64, storage, device_local)?;
+        let skins = gpu.create_buffer("skins", FIRST_SKIN_VERTICES * size_of::<SkinVertex>() as u64, storage, device_local)?;
         // Read back for a lightmap bake.
         let lightmap_uvs = gpu.create_buffer("lightmap uvs", MAX_VERTICES * 8, storage | read, device_local)?;
         let meshlets =
@@ -529,7 +536,8 @@ impl Assets {
             materials,
             material_properties,
             skins,
-            skin_space: RangeAllocator::new(MAX_SKIN_VERTICES),
+            skin_space: RangeAllocator::new(FIRST_SKIN_VERTICES),
+            skins_kept: Vec::new(),
             skin_ranges: HashMap::new(),
             rigid_skins: std::collections::HashSet::new(),
             lightmap_uvs,
@@ -1527,10 +1535,57 @@ impl Assets {
             self.rigid_skins.insert(mesh);
         }
         let count = skin.len() as u64;
-        let offset = self.skin_space.alloc(count).context("out of skin space")?;
+        let offset = match self.skin_space.alloc(count) {
+            Some(offset) => offset,
+            None => {
+                self.grow_skins(gpu, count)?;
+                self.skin_space.alloc(count).context("out of skin space")?
+            }
+        };
+        // Kept here too, so a larger pool can be given all of it.
+        let end = (offset + count) as usize;
+        if self.skins_kept.len() < end {
+            self.skins_kept.resize(end, SkinVertex::default());
+        }
+        self.skins_kept[offset as usize..end].copy_from_slice(skin);
         gpu.upload_buffer(&self.skins, offset * size_of::<SkinVertex>() as u64, bytemuck::cast_slice(skin))?;
         self.skin_ranges.insert(mesh, (offset, count));
         Ok(())
+    }
+
+    /// Gives the skinned vertices' pool room for `count` more in one run: a
+    /// buffer twice as large, or more, given every skin there is, the old
+    /// one kept until no frame in flight reads it. Skinning reads the pool
+    /// by its address each frame, so nothing else needs telling.
+    fn grow_skins(&mut self, gpu: &Gpu, count: u64) -> Result<()> {
+        let before = self.skin_space.capacity();
+        let mut capacity = before;
+        while capacity < MOST_SKIN_VERTICES {
+            capacity = (capacity * 2).min(MOST_SKIN_VERTICES);
+            let mut trial = self.skin_space.clone();
+            trial.grow(capacity);
+            if trial.largest() >= count {
+                break;
+            }
+        }
+        anyhow::ensure!(
+            capacity > before,
+            "out of skin space: {before} skinned vertices are the most there can be, and {count} more were asked for"
+        );
+        let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let bytes = capacity * size_of::<SkinVertex>() as u64;
+        let skins = gpu.create_buffer("skins", bytes, storage, MemoryLocation::GpuOnly)?;
+        gpu.upload_buffer(&skins, 0, bytemuck::cast_slice(&self.skins_kept))?;
+        let old = std::mem::replace(&mut self.skins, skins);
+        self.retire(self.frame, Retiring::Buffer(old));
+        self.skin_space.grow(capacity);
+        tracing::info!("the skinned vertices' pool grew from {before} to {capacity}");
+        Ok(())
+    }
+
+    /// How many skinned vertices the pool holds now, and how many are used.
+    pub fn skin_space(&self) -> (u64, u64) {
+        (self.skin_space.capacity(), self.skin_space.used())
     }
 
     /// Whether a skinned mesh's every vertex is bound whole to one bone.
@@ -1641,6 +1696,7 @@ impl Assets {
                 self.retiring_meshes.remove(&mesh);
             }
             Retiring::Space(space) => self.free_space(space),
+            Retiring::Buffer(buffer) => gpu.destroy_buffer(buffer),
             Retiring::Material(material) => {
                 self.glass.retain(|&glass| glass != material);
                 self.two_sided_materials.remove(&material);
@@ -1670,8 +1726,13 @@ impl Assets {
     }
 
     pub fn destroy(self, gpu: &Gpu, bindless: &mut Bindless) {
+        let mut buffers = Vec::new();
         let retired = self.retiring.into_iter().filter_map(|(_, what)| match what {
             Retiring::BottomLevel(level) => Some(level),
+            Retiring::Buffer(buffer) => {
+                buffers.push(buffer);
+                None
+            }
             _ => None,
         });
         for level in self.bottom_levels.into_values().chain(self.retired_levels).chain(retired) {
@@ -1687,7 +1748,7 @@ impl Assets {
         let meshlets = [self.meshlets, self.meshlet_vertices, self.meshlet_triangles];
         let materials = [self.materials, self.material_properties];
         let shared = [self.vertices, self.indices, self.meshes, self.skins, self.lightmap_uvs];
-        for buffer in shared.into_iter().chain(materials).chain(meshlets) {
+        for buffer in shared.into_iter().chain(materials).chain(meshlets).chain(buffers) {
             gpu.destroy_buffer(buffer);
         }
     }

@@ -1610,6 +1610,12 @@ impl Renderer {
         self.assets.as_ref().expect("assets live until drop").usage()
     }
 
+    /// How many skinned vertices the pool holds now, which grows as more are
+    /// needed, and how many are used.
+    pub fn skin_space(&self) -> (u64, u64) {
+        self.assets.as_ref().expect("assets live until drop").skin_space()
+    }
+
     /// What the shared vertex and index space holds now, and who holds it.
     pub fn mesh_pool(&self) -> MeshPoolUse {
         self.assets.as_ref().expect("assets live until drop").pool_use()

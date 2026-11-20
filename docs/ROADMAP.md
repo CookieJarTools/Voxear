@@ -3628,7 +3628,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   mesh shares (`[quality] block_lighting`, Project Settings ▸ Quality ▸ Block Worlds ▸ Lighting share), the rest
   kept free; as models take it, the farthest chunks give theirs back, never a nearer while a farther is held, and
   a burst larger than the room kept has them give it back at once, the frame waiting for the GPU. The space is 8
-  million vertices and 16 million indices (was 4 and 8) and 2 million skinned vertices (was 1). A model too large
+  million vertices and 16 million indices (was 4 and 8) and 2 million skinned vertices (was 1), which since
+  2026-11-20 grow as needed, doubling up to 64 million. A model too large
   for it all says how full the space is and who holds it; the Profiler, `profiler.frames` and `mesh_pool.get`
   show the split. GPU tests: models spawned over time and in a burst into a full world, a model too large; unit
   test of the order chunks give back in. Frames after a model loads into the room kept: no slower than the rest.

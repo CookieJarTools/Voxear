@@ -7237,6 +7237,13 @@ fn bar_render(cooked: bool, bent: bool) -> Option<Vec<u8>> {
 
 /// The bar drawn, and with `hide_tip`, its tip's bone hidden from the camera.
 fn bar_render_hiding(cooked: bool, bent: bool, hide_tip: bool) -> Option<Vec<u8>> {
+    bar_render_with(cooked, bent, hide_tip, false)
+}
+
+/// The bar drawn as [`bar_render_hiding`] draws it, and with `fill_skins`, a
+/// mesh of more skinned vertices than the pool first holds uploaded after
+/// it, so the pool grows under the bar's skin.
+fn bar_render_with(cooked: bool, bent: bool, hide_tip: bool, fill_skins: bool) -> Option<Vec<u8>> {
     use std::sync::Arc;
     use voxear_render::{ModelPart, ModelRenderer, Pose, Sky};
     let mut renderer = renderer()?;
@@ -7249,6 +7256,20 @@ fn bar_render_hiding(cooked: bool, bent: bool, hide_tip: bool) -> Option<Vec<u8>
         }
         false => renderer.upload_model(&model).unwrap(),
     };
+    if fill_skins {
+        let (first, _) = renderer.skin_space();
+        let count = first as usize + 100_000;
+        let bound = voxear_render::SkinVertex { joints: [0, 1, 0, 0], weights: [32768, 32767, 0, 0] };
+        let filler = voxear_render::MeshData {
+            vertices: vec![voxear_render::Vertex::default(); count],
+            indices: vec![0, 1, 2],
+            skin: vec![bound; count],
+            ..Default::default()
+        };
+        renderer.add_mesh(&filler).unwrap();
+        let (grown, used) = renderer.skin_space();
+        assert!(grown >= first * 2 && used > first, "the pool grew from {first} to {grown}, {used} used");
+    }
     let mut world = World::new();
     // From the side the bar faces.
     let turned = Quat::from_rotation_y(std::f32::consts::PI);
@@ -7303,6 +7324,14 @@ fn a_skinned_bar_bends_where_its_bone_turns() {
     let leaning = [-0.5f32, 0.5].map(|x| lit(&bent, Vec3::new(x, 0.5, 0.0)));
     assert!(leaning[0] ^ leaning[1], "it leans to one side: {leaning:?}");
     assert_eq!(differing_pixels(&bent, &cooked), 0, "cooked, the same");
+}
+
+#[test]
+fn the_skinned_vertices_pool_grows_and_keeps_the_skins_it_had() {
+    let Some(bent) = bar_render(false, true) else { return };
+    // The bar's skin was in the pool before it grew, and is drawn bent just the same from the larger one.
+    let grown = bar_render_with(false, true, false, true).unwrap();
+    assert_eq!(differing_pixels(&bent, &grown), 0, "the same after the pool grew");
 }
 
 #[test]

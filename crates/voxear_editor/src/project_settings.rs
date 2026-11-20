@@ -863,6 +863,13 @@ const FIXED: &[Setting] = &[
         number(0.0, 1_000_000.0, "m"),
         "Beyond this far from the camera and every player, a Crowd Member kept as a record goes and is kept as a few numbers, walked on once a second; within it less 30 m it is made again. Past the middle tier at least. 0 keeps every one an Obj.",
     ),
+    Setting::new(
+        ("Crowds", "Records"),
+        "crowds.draw_records_within",
+        "Draw records within",
+        number(0.0, 100_000.0, "m"),
+        "Records within this far of the camera are drawn as their prefab's models, playing their clips on the GPU, with nothing else of them there; on a server each player is sent those within this far of them. 0 draws none.",
+    ),
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {

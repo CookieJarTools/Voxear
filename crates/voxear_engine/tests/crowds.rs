@@ -258,4 +258,16 @@ fn a_walker_far_off_is_kept_as_a_record_walks_on_and_is_made_again_near() {
     // Put back from the save, the record is where it was then.
     voxear_engine::crowd_records::state(&mut game.engine.world, Some(&saved)).unwrap();
     assert_eq!(voxear_engine::crowd_records::count(&game.engine.world), 1);
+    // Drawn while the camera is within 600 m of it, and not beyond.
+    let ghosts = |game: &Game| {
+        game.engine.world.query_ref::<&voxear_engine::crowd_records::RecordGhost>().into_iter().count()
+    };
+    // 400 m off, the walker made again goes as a record too: both drawn.
+    game.engine.world.get_mut::<Transform>(eye).unwrap().position = Vec3::new(400.0, 10.0, 16.0);
+    game.tick(FRAME, None);
+    assert_eq!(voxear_engine::crowd_records::count(&game.engine.world), 2, "both records 400 m off");
+    assert_eq!(ghosts(&game), 2, "both drawn");
+    game.engine.world.get_mut::<Transform>(eye).unwrap().position = Vec3::new(2000.0, 10.0, 16.0);
+    game.tick(FRAME, None);
+    assert_eq!(ghosts(&game), 0, "too far to draw");
 }

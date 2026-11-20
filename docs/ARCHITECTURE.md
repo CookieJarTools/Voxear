@@ -4666,7 +4666,10 @@ engine's glue is `voxear_engine::navigation`.
   stays put as the world's middle moves), its yaw, destination, the rest of its way and its speed. The game makes
   records of those gone beyond Records beyond, and Objs again of those come within it less a margin, a few a frame,
   from their prefabs (`Game::keep_crowd_records`), so it can reach the content; records walk on once a second with
-  no ground. Saves of the scene keep them as small bytes beside the storms' and blocks' edits.
+  no ground. Saves of the scene keep them as small bytes beside the storms' and blocks' edits. Records within drawing
+  distance are drawn as ghosts: their prefab's models under one Obj marked `RecordGhost`, with no behaviours, playing
+  baked clips. On a server each player is sent the records near them (`net::crowd_sync`), which their machine walks
+  and draws but never makes Objs of.
 
 ### Planned
 

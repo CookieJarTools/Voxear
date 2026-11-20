@@ -34,6 +34,8 @@ const WALK_EVERY: f32 = 1.0;
 /// A character kept as numbers while far off.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CrowdRecord {
+    /// Its number in the level's records, the same on every machine.
+    pub id: u32,
     pub prefab: AssetGuid,
     /// Where it is, from the level's real middle, and which way it faces,
     /// about up.
@@ -54,6 +56,11 @@ pub struct CrowdRecords {
     walked: f32,
     /// The level the records are in; another level starts without them.
     level: Option<String>,
+    /// The number the next record made takes.
+    next_id: u32,
+    /// Counts each time records are made or made Objs again, or put in
+    /// place: players are sent them again when it moves on.
+    pub version: u64,
 }
 
 impl CrowdRecords {
@@ -77,6 +84,7 @@ impl CrowdRecords {
         for record in &self.records {
             let prefab = prefabs.iter().position(|p| *p == record.prefab).unwrap_or(0);
             put_varint(&mut bytes, prefab as u64);
+            put_varint(&mut bytes, u64::from(record.id));
             put_point(&mut bytes, record.position, DVec3::ZERO);
             let turn = (record.yaw.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * 256.0).round() as u32;
             bytes.push((turn % 256) as u8);
@@ -98,7 +106,11 @@ impl CrowdRecords {
     /// Records from what [`to_bytes`](Self::to_bytes) wrote; `None` for
     /// anything else.
     pub fn from_bytes(bytes: &[u8]) -> Option<Vec<CrowdRecord>> {
-        let mut at = bytes.strip_prefix(RECORDS_MAGIC)?;
+        // The first layout had no numbers: they are given in order.
+        let (mut at, numbered) = match bytes.strip_prefix(RECORDS_MAGIC) {
+            Some(rest) => (rest, true),
+            None => (bytes.strip_prefix(FIRST_RECORDS_MAGIC)?, false),
+        };
         let prefabs: Vec<AssetGuid> = (0..take_varint(&mut at)?)
             .map(|_| {
                 let (guid, rest) = at.split_first_chunk::<16>()?;
@@ -108,8 +120,12 @@ impl CrowdRecords {
             .collect::<Option<_>>()?;
         let count = take_varint(&mut at)?;
         let mut records = Vec::with_capacity(count.min(1 << 20) as usize);
-        for _ in 0..count {
+        for number in 0..count {
             let prefab = *prefabs.get(take_varint(&mut at)? as usize)?;
+            let id = match numbered {
+                true => u32::try_from(take_varint(&mut at)?).ok()?,
+                false => number as u32 + 1,
+            };
             let position = take_point(&mut at, DVec3::ZERO)?;
             let (&turn, rest) = at.split_first()?;
             at = rest;
@@ -127,14 +143,15 @@ impl CrowdRecords {
                 from = take_point(&mut at, from)?;
                 way.push(from);
             }
-            records.push(CrowdRecord { prefab, position, yaw, destination, way, speed });
+            records.push(CrowdRecord { id, prefab, position, yaw, destination, way, speed });
         }
         at.is_empty().then_some(records)
     }
 }
 
 /// What a save's records start with, and their layout's version.
-const RECORDS_MAGIC: &[u8] = b"VXCR\x01";
+const RECORDS_MAGIC: &[u8] = b"VXCR\x02";
+const FIRST_RECORDS_MAGIC: &[u8] = b"VXCR\x01";
 
 fn put_varint(bytes: &mut Vec<u8>, mut value: u64) {
     while value >= 0x80 {
@@ -222,11 +239,19 @@ fn viewpoints(world: &World) -> Vec<DVec3> {
 /// Objs destroyed; walks the records on; and gives back the records come
 /// near enough to be made again, taken from the store. `level` is the level
 /// open, whose records these are. Nothing while no viewpoint is known.
-pub fn update(world: &mut World, delta: f32, level: Option<&str>) -> (RecordChanges, Vec<Entity>) {
+/// Without `makes`, as on a player's machine, whose records are the
+/// server's, records are only walked.
+pub fn update(world: &mut World, delta: f32, level: Option<&str>, makes: bool) -> (RecordChanges, Vec<Entity>) {
     let settings = world.resource::<CrowdSettings>().cloned().unwrap_or_default();
     let mut records = world.remove_resource::<CrowdRecords>().unwrap_or_default();
     if records.level.as_deref() != level {
-        records = CrowdRecords { level: level.map(str::to_string), ..CrowdRecords::default() };
+        let version = records.version + 1;
+        records = CrowdRecords { level: level.map(str::to_string), version, ..CrowdRecords::default() };
+    }
+    if !makes {
+        walk_on(&mut records, delta);
+        world.insert_resource(records);
+        return (RecordChanges::default(), Vec::new());
     }
     let points = viewpoints(world);
     let beyond = f64::from(settings.records_beyond);
@@ -265,7 +290,10 @@ pub fn update(world: &mut World, delta: f32, level: Option<&str>) -> (RecordChan
             .map(|state| state.corners.iter().skip(state.next).map(|c| c.as_dvec3() + origin).collect())
             .unwrap_or_default();
         let (yaw, _, _) = transform.rotation.to_euler(voxear_core::math::EulerRot::YXZ);
+        records.next_id += 1;
+        records.version += 1;
         records.records.push(CrowdRecord {
+            id: records.next_id,
             prefab,
             position: at,
             yaw,
@@ -275,12 +303,7 @@ pub fn update(world: &mut World, delta: f32, level: Option<&str>) -> (RecordChan
         });
         gone.push(entity);
     }
-    // Once a second, every record walks on.
-    records.walked += delta;
-    if records.walked >= WALK_EVERY {
-        let seconds = std::mem::take(&mut records.walked);
-        records.records.iter_mut().for_each(|record| record.walk(seconds));
-    }
+    walk_on(&mut records, delta);
     // Those come near again are made again, a few a frame.
     let within = (beyond - f64::from(RECORD_MARGIN)).max(0.0);
     let mut kept = Vec::with_capacity(records.records.len());
@@ -292,8 +315,80 @@ pub fn update(world: &mut World, delta: f32, level: Option<&str>) -> (RecordChan
         }
     }
     records.records = kept;
+    if !changes.make.is_empty() {
+        records.version += 1;
+    }
     world.insert_resource(records);
     (changes, gone)
+}
+
+/// Once a second, every record walks on.
+fn walk_on(records: &mut CrowdRecords, delta: f32) {
+    records.walked += delta;
+    if records.walked >= WALK_EVERY {
+        let seconds = std::mem::take(&mut records.walked);
+        records.records.iter_mut().for_each(|record| record.walk(seconds));
+    }
+}
+
+/// The records within `within` metres of `at`, in this world, the nearest
+/// first, as bytes of no more than `most`; and the records' version.
+pub(crate) fn near_bytes(world: &World, at: Vec3, within: f32, most: usize) -> (Vec<u8>, u64) {
+    let Some(records) = world.resource::<CrowdRecords>() else { return (Vec::new(), 0) };
+    let at = at.as_dvec3() + WorldOrigin::of(world).0.as_dvec3();
+    let mut near: Vec<(f64, &CrowdRecord)> = records
+        .records
+        .iter()
+        .map(|record| (record.position.distance(at), record))
+        .filter(|(far, _)| *far <= f64::from(within))
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // About 20 bytes a record, and a prefab's GUID now and then: as many as fit.
+    let fit = (most.saturating_sub(64) / 40).max(1);
+    let sent = CrowdRecords { records: near.into_iter().take(fit).map(|(_, r)| r.clone()).collect(), ..CrowdRecords::default() };
+    (sent.to_bytes(), records.version)
+}
+
+/// On a player's machine: the records the server sent, in place of those
+/// it had, walked on from here as the server walks its own.
+pub(crate) fn take_from_server(world: &mut World, bytes: &[u8]) -> bool {
+    let Some(sent) = CrowdRecords::from_bytes(bytes) else { return false };
+    let mut records = world.remove_resource::<CrowdRecords>().unwrap_or_default();
+    records.records = sent;
+    records.version += 1;
+    world.insert_resource(records);
+    true
+}
+
+/// A record drawn far off: its number, its prefab, where it is in this
+/// world, which way it faces, and how fast it walks there, 0 standing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drawn {
+    pub id: u32,
+    pub prefab: AssetGuid,
+    pub at: Vec3,
+    pub yaw: f32,
+    pub speed: f32,
+}
+
+/// The records to draw: those within `within` metres of where the game
+/// looks from, the nearest `most`.
+pub fn to_draw(world: &World, within: f32, most: usize) -> Vec<Drawn> {
+    let Some(records) = world.resource::<CrowdRecords>() else { return Vec::new() };
+    let Some(eye) = crate::terrain::viewer(world) else { return Vec::new() };
+    let origin = WorldOrigin::of(world).0.as_dvec3();
+    let mut near: Vec<(f32, Drawn)> = records
+        .records
+        .iter()
+        .map(|record| {
+            let at = (record.position - origin).as_vec3();
+            let speed = if record.destination.is_some() { record.speed } else { 0.0 };
+            (at.distance(eye), Drawn { id: record.id, prefab: record.prefab, at, yaw: record.yaw, speed })
+        })
+        .filter(|(far, _)| *far <= within)
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    near.into_iter().take(most).map(|(_, drawn)| drawn).collect()
 }
 
 /// Where a record's Obj is put, in this world's own space, and which way
@@ -324,10 +419,55 @@ pub fn state(world: &mut World, given: Option<&[u8]>) -> Option<Vec<u8>> {
     };
     let restored = CrowdRecords::from_bytes(bytes)?;
     let mut records = world.remove_resource::<CrowdRecords>().unwrap_or_default();
+    records.next_id = restored.iter().map(|record| record.id).max().unwrap_or(0);
     records.records = restored;
     records.walked = 0.0;
+    records.version += 1;
     world.insert_resource(records);
     Some(Vec::new())
+}
+
+/// The most records drawn at once.
+pub const MOST_DRAWN: usize = 2000;
+
+/// Marks the Objs drawing a record far off: its models, with nothing else
+/// of it there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordGhost;
+impl voxear_ecs::Component for RecordGhost {}
+
+/// Each record drawn: the Obj it stands at, the models under it each with
+/// the clips it walks and stands with, and how far through them it is.
+#[derive(Default)]
+pub(crate) struct Ghosts(pub std::collections::HashMap<u32, Ghost>);
+
+pub(crate) struct Ghost {
+    pub root: Entity,
+    pub parts: Vec<(Entity, Option<std::sync::Arc<voxear_render::Clip>>, Option<std::sync::Arc<voxear_render::Clip>>)>,
+    pub time: f32,
+}
+
+/// Moves each ghost on towards its record, smoothly as its record walks in
+/// steps, and plays its clips: walking while its record walks, standing
+/// while it stands. Set down where its record is when far behind.
+pub(crate) fn move_ghost(world: &mut World, ghost: &mut Ghost, drawn: &Drawn, delta: f32) {
+    ghost.time += delta;
+    if let Some(transform) = world.get_mut::<Transform>(ghost.root) {
+        let to = drawn.at - transform.position;
+        let step = drawn.speed.max(0.5) * 1.5 * delta;
+        transform.position = match to.length() {
+            far if far > 10.0 || far <= step => drawn.at,
+            far => transform.position + to / far * step,
+        };
+        transform.rotation = Quat::from_rotation_y(drawn.yaw);
+    }
+    for (part, walk, stand) in &ghost.parts {
+        let clip = if drawn.speed > 0.05 { walk.clone().or(stand.clone()) } else { stand.clone().or(walk.clone()) };
+        match clip {
+            Some(clip) => drop(world.insert(*part, voxear_render::PlayedClip { clip, time: ghost.time, looping: true })),
+            None => drop(world.remove::<voxear_render::PlayedClip>(*part)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -336,6 +476,7 @@ mod tests {
 
     fn record() -> CrowdRecord {
         CrowdRecord {
+            id: 3,
             prefab: AssetGuid::from_u128(7),
             position: DVec3::ZERO,
             yaw: 0.0,

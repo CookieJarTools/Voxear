@@ -79,6 +79,9 @@ A world can hold thousands of characters, most of them nowhere near anyone. A Cr
 - **It comes back.** Within Records beyond less 30 m, it is made again from its prefab where it got to, a few a frame, and sent on where it was going.
 - **Saves keep it.** A save of the scene keeps every record, in about 18 bytes each; `CrowdRecords.Capture` and `CrowdRecords.Apply` keep them in a game's own saves.
 
+- **It is drawn far off.** Records within **Draw records within** (600 m) of the camera are drawn as their prefab's models, nothing else of them there, walking smoothly where their record walks and playing their clips on the GPU: their Animator's clip, or else a clip named for walking while they walk and one named for idling or standing while they stand. Up to 2,000 are drawn, the nearest first.
+- **Players see them too.** On a server each player is sent the records within Draw records within of them as they join, whenever records come and go, and every five seconds as they move about. Their machine walks them on between and draws them, but never makes Objs of them: that is the server's to do.
+
 A record comes back as a new Obj, so a script that held the old one sees it gone: keep what a character is in its prefab, and find it again by what it is rather than holding on to it. Records are kept on the server, or by a game playing alone, and only in the level's own dimension.
 
 ## Playing together

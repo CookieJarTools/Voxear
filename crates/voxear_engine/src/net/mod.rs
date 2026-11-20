@@ -24,6 +24,7 @@ mod prediction;
 mod replication;
 mod rewind;
 mod rpcs;
+mod crowd_sync;
 mod scripts;
 mod storms;
 
@@ -228,6 +229,12 @@ enum End {
     Client(Box<Client>),
 }
 
+/// Whether this machine is a player's in a session, whose server's are the
+/// crowd records, storms and the rest.
+pub fn is_client(world: &World) -> bool {
+    world.resource::<NetSession>().is_some_and(|session| session.role == NetRole::Client)
+}
+
 /// Where each player is, on a server: their first owned Obj. None on a
 /// client or with no session.
 pub(crate) fn player_viewpoints(world: &World) -> Vec<Vec3> {
@@ -289,6 +296,7 @@ pub struct NetSession {
     commands: VecDeque<(u64, Command)>,
     /// The storms, as the server sends them and a client takes them in.
     storms: storms::StormSync,
+    records: crowd_sync::RecordSync,
     /// Which dimensions each player has, and on a client what the server
     /// named and the edits that came for them.
     dims: dimensions::Dims,
@@ -335,6 +343,7 @@ impl NetSession {
             authority: authority::Authority::default(),
             commands: VecDeque::new(),
             storms: storms::StormSync::default(),
+            records: crowd_sync::RecordSync::default(),
             dims: dimensions::Dims::default(),
             nav_asked: Vec::new(),
         }
@@ -454,6 +463,7 @@ impl NetSession {
             match event {
                 ServerEvent::Connected { client, .. } => self.join(client),
                 ServerEvent::Disconnected { client, reason } => {
+                    self.records.forget(client);
                     let Some(player) = self.by_client.remove(&client) else { continue };
                     tracing::info!("player {} left ({reason:?})", player.0);
                     self.players.retain(|p| *p != player);
@@ -580,6 +590,7 @@ impl NetSession {
                 }
                 Message::Level(level) => self.level_request = Some(level),
                 Message::Storms(bytes) => self.storms.arrived(bytes, rtt),
+                Message::CrowdRecords(bytes) => self.records.arrived(bytes),
                 Message::Sync { tick, ahead } if ahead != messages::UNHEARD => self.keep_pace(tick, i64::from(ahead), rtt),
                 Message::Spawn { id, owner, origin, dimension, tick, state, fields } => {
                     self.replication.note(id, tick, state);
@@ -1075,6 +1086,7 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     }
     authority::take_in(world, &mut session);
     storms::take_in(world, &mut session);
+    crowd_sync::take_in(world, &mut session);
     world.insert_resource(session);
 }
 
@@ -1096,6 +1108,7 @@ pub fn frame_end(world: &mut World) {
     dimensions::send_own_crossings(world, &mut session);
     session.replicate(world);
     storms::send(world, &mut session);
+    crowd_sync::send(world, &mut session);
     session.flush();
     if smoothed {
         crate::tick_smoothing::show(world);

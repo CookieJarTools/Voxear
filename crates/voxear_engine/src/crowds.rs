@@ -81,6 +81,7 @@ impl Component for CrowdMember {}
 /// far_pose_every = 4
 /// middle_search_every = 3.0  # a Motion Matcher's time between searches, times this
 /// records_beyond = 250.0   # metres beyond which Crowd Members kept as records go; 0 for never
+/// draw_records_within = 600.0  # metres within which records are drawn far off; 0 for none
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -96,6 +97,7 @@ pub struct CrowdSettings {
     pub far_pose_every: u32,
     pub middle_search_every: f32,
     pub records_beyond: f32,
+    pub draw_records_within: f32,
 }
 
 impl Default for CrowdSettings {
@@ -111,6 +113,7 @@ impl Default for CrowdSettings {
             far_pose_every: 4,
             middle_search_every: 3.0,
             records_beyond: 250.0,
+            draw_records_within: 600.0,
         }
     }
 }
@@ -139,6 +142,11 @@ impl CrowdSettings {
             records_beyond: match self.records_beyond.is_finite() && self.records_beyond > 0.0 {
                 true => self.records_beyond.clamp(middle + crate::crowd_records::RECORD_MARGIN * 2.0, 1_000_000.0),
                 false => 0.0,
+            },
+            draw_records_within: if self.draw_records_within.is_finite() {
+                self.draw_records_within.clamp(0.0, 100_000.0)
+            } else {
+                600.0
             },
         }
     }

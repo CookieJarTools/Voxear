@@ -4023,8 +4023,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     A Mob Motion's `Attack` and `Hurt` on a server reach every player's machine as the engine's own reliable events
     (`net::MOB_ACTS`, keys from `ENGINE_KEYS` up), each with its tick, and play there once that tick is shown (or a
     fifth of a second at most), never twice on a host. Test: two strikes and a flinch reach a player, played once
-    their tick is shown. Not done: far crowds drawn on each machine from records and seeds; records sent to joining
-    players.
+    their tick is shown. Records reach players and are drawn: each record has a number the same on every machine
+    (saved too: `VXCR` 2, 1 still read); the server sends each player the records within Project Settings ▸ Crowds ▸
+    **Draw records within** (`draw_records_within`, 600 m) of them as they join, whenever records are made or made
+    Objs again (`CrowdRecords::version`, at most once a second) and every 5 s (`net::crowd_sync`,
+    `Message::CrowdRecords`, the nearest that fit 64 KB); a player's machine walks them on and never makes or takes
+    one. Every machine draws the records within that distance of its camera, up to 2,000, as ghosts
+    (`crowd_records::RecordGhost`, `Game::draw_crowd_records`): the prefab's models under one Obj moved smoothly to
+    its record, playing on the GPU their Animator's clip, or one named for walking or idling as the record walks or
+    stands. Tests: a player sent the two records within 600 m, nearest first with the server's numbers, and after
+    walking over, the far one in place of the first; a record drawn 400 m off and not 2 km off. Not done: far crowds
+    made from seeds; ghosts seen through a renderer in a test.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

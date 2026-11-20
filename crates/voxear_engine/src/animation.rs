@@ -179,6 +179,12 @@ pub fn animate(world: &mut World, delta: f32) {
     }
 }
 
+/// The clip a reference names, made to fit `model`'s skeleton, for what
+/// plays it elsewhere, as a record's ghost does (see `crowd_records`).
+pub(crate) fn fitted_clip(world: &mut World, reference: &str, model: &Arc<ModelAnimation>) -> Option<Arc<Clip>> {
+    clip_for(world, reference, model)
+}
+
 /// The clip a reference names, made to fit `model`'s skeleton: a clip
 /// asset the game resolved, or one of the model's own by its name alone.
 fn clip_for(world: &mut World, reference: &str, model: &Arc<ModelAnimation>) -> Option<Arc<Clip>> {

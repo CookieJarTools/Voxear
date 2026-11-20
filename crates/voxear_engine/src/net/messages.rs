@@ -74,6 +74,9 @@ pub enum Message {
     /// The server's storms: their clock, those scripts made and the
     /// whirlpools, as `storms::StormsSaved::to_bytes` gives them.
     Storms(Vec<u8>),
+    /// The crowd records near a player, as `crowd_records::CrowdRecords::to_bytes`
+    /// gives them, for their machine to draw far off.
+    CrowdRecords(Vec<u8>),
     /// To a client: the dimension a number stands for on this connection,
     /// for it to make and keep until told to let it go. Its edits follow.
     Dimension {
@@ -158,6 +161,7 @@ const EDITS: u32 = 17;
 const EDITS_DONE: u32 = 18;
 const READY: u32 = 19;
 const NAV_GO: u32 = 20;
+const CROWD_RECORDS: u32 = 21;
 /// The most bytes one message of a dimension's edits takes.
 pub const MOST_EDIT_BYTES: usize = 65536;
 /// The most bytes a message of storms takes.
@@ -193,6 +197,11 @@ impl Message {
             }
             Message::Storms(bytes) => {
                 w.write_bits(STORMS, KIND_BITS);
+                w.write_varint(bytes.len() as u64);
+                w.write_bytes(bytes);
+            }
+            Message::CrowdRecords(bytes) => {
+                w.write_bits(CROWD_RECORDS, KIND_BITS);
                 w.write_varint(bytes.len() as u64);
                 w.write_bytes(bytes);
             }
@@ -378,6 +387,15 @@ impl Message {
                 r.read_bytes(&mut bytes)?;
                 Message::Storms(bytes)
             }
+            CROWD_RECORDS => {
+                let length = r.read_varint()? as usize;
+                if length > MOST_STORM_BYTES {
+                    return None;
+                }
+                let mut bytes = vec![0u8; length];
+                r.read_bytes(&mut bytes)?;
+                Message::CrowdRecords(bytes)
+            }
             INPUTS => {
                 let first = r.read_varint()?;
                 let count = r.read_bits(4)? as usize;
@@ -553,6 +571,7 @@ mod tests {
             Message::Sync { tick: 5, ahead: -3 },
             Message::Rpc { id: NetId(12), key: 0xdead_beef, tick: 77, bytes: vec![1, 2, 3] },
             Message::Storms(b"STM1 and the rest".to_vec()),
+            Message::CrowdRecords(b"VXCR and the rest".to_vec()),
             Message::Despawn { id: NetId(8), gone: false },
             Message::Dimension { number: 3, what: DimensionWhat::Asset { guid: "0123456789abcdef".into(), key: 9 } },
             Message::Dimension {

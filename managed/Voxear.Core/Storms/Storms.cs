@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
+using Voxear.Interop;
+
 namespace Voxear;
 
 /// <summary>
@@ -101,6 +103,16 @@ public static class Storms
 			}
 			return found;
 		}
+	}
+
+	/// <summary>
+	/// What tells this level's natural storms from another's, with its generator's seed: the same seed brings the same
+	/// storms. Without the level's Storms settings, setting it does nothing and says so in the Console.
+	/// </summary>
+	public static uint Seed
+	{
+		get => (uint)Rules.Number("seed", 0f);
+		set => Rules.Change("seed", value);
 	}
 
 	/// <summary>Whether storms come and go by themselves.</summary>
@@ -228,4 +240,6 @@ public static class Storms
 			}
 		}
 	}
+
+	private static LevelSettings Rules { get; } = new("storm_rules", "Storms");
 }

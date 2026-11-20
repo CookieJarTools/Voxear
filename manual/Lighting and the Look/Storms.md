@@ -29,7 +29,7 @@ Add a **Storms** component to any Obj of the level, such as the one that holds i
 | Frequency | How often, from 0 for never to 1. At the usual 0.35 there is a storm within three kilometres about a third of the time. Dry country gets fewer |
 | Largest | How far the largest reaches, in metres. The smallest reach 250 m |
 | Standing Storms | Great storms that never leave their place, each a wall of weather round a calm eye. They stand at seeded places, never within 2.5 km of the level's middle |
-| Seed | Another seed gives the level other storms |
+| Seed | Another seed gives the level other storms; a script sets it as `Storms.Seed` |
 | Sea Look, Swell Height, Storm Whirlpools, Maelstroms, Night Glow | The sea under the weather: see [[Block Worlds#Rough seas]] |
 | Sounds | How loud the weather's own rain, wind, surf and thunder are, from 0 for none to 1 (see [[Weather#Sounds]]) |
 

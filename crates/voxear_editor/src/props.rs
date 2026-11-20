@@ -972,6 +972,9 @@ pub enum Prop {
     PortalSize,
     PortalOpen,
     PortalMist,
+    /// Whether Objs on a layer go through it: the layer's number, and its
+    /// name, which the row is labelled with.
+    PortalPass(u8, String),
     /// Whether its view distance is the project's or its own, and its own.
     PortalViewFrom,
     PortalViewDistance,
@@ -1391,6 +1394,7 @@ impl Prop {
             | Prop::PortalSize
             | Prop::PortalOpen
             | Prop::PortalMist
+            | Prop::PortalPass(..)
             | Prop::PortalViewFrom
             | Prop::PortalViewDistance => Part::Portal,
             Prop::Shape2D
@@ -1821,6 +1825,7 @@ impl Prop {
             Prop::PortalSize => "size",
             Prop::PortalOpen => "open",
             Prop::PortalMist => "mist",
+            Prop::PortalPass(_, name) => return format!("passes.{name}"),
             Prop::PortalViewFrom | Prop::PortalViewDistance => "view_distance",
             Prop::CameraFollows => "camera_follows",
             Prop::Shape2D => "shape",
@@ -2581,8 +2586,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         // A Portal shows its own view distance where it has one.
         Part::Portal => {
-            let mut props =
-                vec![Prop::PortalTo, Prop::PortalSize, Prop::PortalOpen, Prop::PortalMist, Prop::PortalViewFrom];
+            let mut props = vec![Prop::PortalTo, Prop::PortalSize, Prop::PortalOpen, Prop::PortalMist];
+            // Which layers' Objs go through it, a row for each the project names.
+            let layers = world.resource::<voxear_scene::Layers>();
+            for layer in 0..voxear_scene::LAYER_COUNT as u8 {
+                let name = layers.map_or(if layer == 0 { "Default" } else { "" }, |layers| layers.name(layer));
+                if !name.is_empty() {
+                    props.push(Prop::PortalPass(layer, name.to_string()));
+                }
+            }
+            props.push(Prop::PortalViewFrom);
             if world.get::<Portal>(entity).is_some_and(|portal| portal.view_distance.is_some()) {
                 props.push(Prop::PortalViewDistance);
             }
@@ -3062,6 +3075,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::PortalSize => "Size",
         Prop::PortalOpen => "Open",
         Prop::PortalMist => "Mist",
+        Prop::PortalPass(_, name) => return format!("Passes {name}"),
         Prop::PortalViewFrom => "View Distance",
         Prop::PortalViewDistance => "Distance",
         Prop::CameraFollows => "Follows",
@@ -3677,6 +3691,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         }
         Prop::PortalSize => Value::Vector(world.get::<Portal>(entity)?.size.to_array().to_vec()),
         Prop::PortalOpen => Value::Toggle(world.get::<Portal>(entity)?.open),
+        Prop::PortalPass(layer, _) => Value::Toggle(world.get::<Portal>(entity)?.passes & (1 << layer) != 0),
         Prop::PortalMist => Value::Color(srgb(world.get::<Portal>(entity)?.mist.to_array()).map(round3)),
         Prop::PortalViewFrom => {
             let own = world.get::<Portal>(entity)?.view_distance.is_some();
@@ -5249,6 +5264,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             portal.size = voxear_core::math::Vec2::new(side(0), side(1));
         }),
         (Prop::PortalOpen, Value::Toggle(on)) => with(world, entity, |portal: &mut Portal| portal.open = on),
+        (Prop::PortalPass(layer, _), Value::Toggle(on)) => with(world, entity, |portal: &mut Portal| {
+            portal.passes = if on { portal.passes | 1 << layer } else { portal.passes & !(1 << layer) };
+        }),
         (Prop::PortalMist, Value::Color(color)) => with(world, entity, |portal: &mut Portal| {
             portal.mist = Vec3::from(linear(color.map(|c| c.clamp(0.0, 1.0))));
         }),

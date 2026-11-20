@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Text.Json.Nodes;
 using Voxear.Interop;
 
 namespace Voxear;
@@ -300,6 +301,63 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.TrailWidth, value); }
 	}
 
+	/// <summary>What its particles are drawn with: a built-in texture, or one of the project's pictures.</summary>
+	public ParticleTexture Texture
+	{
+		get { return ParticleTexture.FromKey(Whole()?["texture"]?.GetValue<string>()); }
+		set { ChangeWhole("texture", value.Key); }
+	}
+
+	/// <summary>How many frames across and down a picture holds, as a sheet of them.</summary>
+	public (int Across, int Down) Tiles
+	{
+		get
+		{
+			var tiles = Whole()?["tiles"] as JsonArray;
+			return tiles is { Count: 2 } ? (tiles[0]!.GetValue<int>(), tiles[1]!.GetValue<int>()) : (1, 1);
+		}
+		set { ChangeWhole("tiles", new JsonArray(Math.Clamp(value.Across, 1, 64), Math.Clamp(value.Down, 1, 64))); }
+	}
+
+	/// <summary>Whether each particle plays through the sheet's frames over its life, rather than taking one.</summary>
+	public bool Animate
+	{
+		get { return Whole()?["animate"]?.GetValue<bool>() ?? false; }
+		set { ChangeWhole("animate", value); }
+	}
+
+	/// <summary>
+	/// A picture of how its texture is lit from six sides, for lit particles drawn with one of the project's
+	/// pictures; Dot for none.
+	/// </summary>
+	public ParticleTexture LightMap
+	{
+		get { return ParticleTexture.FromKey(Whole()?["light_map"]?.GetValue<string>()); }
+		set { ChangeWhole("light_map", value.Key); }
+	}
+
+	/// <summary>A mesh each particle is drawn as, in place of a flat picture; None draws them flat.</summary>
+	public ParticleMesh Mesh
+	{
+		get { return ParticleMesh.FromKey(Whole()?["mesh"]?.GetValue<string>()); }
+		set { ChangeWhole("mesh", value.IsSet ? JsonValue.Create(value.Key) : null); }
+	}
+
+	/// <summary>A particle graph that moves and colours its particles in place of its own settings; None for none.</summary>
+	public ParticleGraph Graph
+	{
+		get
+		{
+			var guid = Whole()?["graph"]?.GetValue<string>();
+			return string.IsNullOrEmpty(guid) ? ParticleGraph.None : ParticleGraph.Load(guid);
+		}
+		set
+		{
+			IAsset<ParticleGraph> graph = value;
+			ChangeWhole("graph", value.IsSet ? JsonValue.Create(graph.AssetGuid ?? value.Reference) : null);
+		}
+	}
+
 	/// <summary>
 	/// The effect it plays in place of its own settings: a starter, or one of the project's. None for its own
 	/// settings. Setting it plays it from its start.
@@ -482,6 +540,19 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 	private void Set(int what, Vector4 value)
 	{
 		if (!NativeParticles.Set(Obj, what, value) && Native.IsConnected)
+		{
+			Log.Error($"{Obj} has no Particle System; give it one with AddParticles.");
+		}
+	}
+
+	private JsonObject? Whole()
+	{
+		return NativeWhole.ReadWhole(NativeWhole.ParticleSystem, Obj);
+	}
+
+	private void ChangeWhole(string key, JsonNode? value)
+	{
+		if (!NativeWhole.ChangeWhole(NativeWhole.ParticleSystem, Obj, new JsonObject { [key] = value }) && Native.IsConnected && !IsValid)
 		{
 			Log.Error($"{Obj} has no Particle System; give it one with AddParticles.");
 		}

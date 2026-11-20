@@ -31,6 +31,11 @@ internal static class PostJson
 		return color is { } set ? Of(set) : null;
 	}
 
+	public static JsonNode Of(Vector2 value)
+	{
+		return new JsonArray(value.X, value.Y);
+	}
+
 	public static JsonNode Of(Vector3 value)
 	{
 		return new JsonArray(value.X, value.Y, value.Z);

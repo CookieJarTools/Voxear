@@ -28,6 +28,10 @@ How a Stream looks follows how fast it runs, and changes smoothly from one to th
 - **Faster water** is rougher, and drawn out into streaks along the current, with thin lines of foam riding down it.
 - **Rapids**, where it falls more steeply than its **Rapids** setting (a slope: 0.1 is a metre's drop every ten metres), are white water. The surface heaves up into standing waves and churns. Its crests are white froth with broken edges that glints in the sun, its troughs run clear and green, and spray flies over it. The white water runs on past the foot of the rapids and fades back to calm.
 
+### A Stream from a script
+
+`Obj.Stream` is an Obj's Stream, a `WaterStream`, null when it has none, and `Obj.AddStream` gives it one. Its depth, speed, rapids, liquid and colours are there to set while the game runs, for a river in flood.
+
 ## Rocks and banks
 
 Whatever stands in a Stream disturbs it as fast as it runs. In calm water a rock has only a faint line round it. In fast water the water piles up against its upstream side in a bow wave, it has a white collar, and its wake spreads out downstream in a V: rough water between two low ridges, with a trail of white down the middle. Water running fast over a bed just under its surface breaks white there too, so a shelf of stones makes a riffle.

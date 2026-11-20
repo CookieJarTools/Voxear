@@ -6908,6 +6908,49 @@ fn a_new_car_has_a_vehicle_on_four_wheels() {
 }
 
 #[test]
+fn tools_wear_look_and_texture_packs_and_read_the_games_volumes_and_display() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let mut ask = |editor: &mut voxear_editor::Editor, name: &str, args: serde_json::Value| {
+        let asked = editor.call(name, args);
+        frame(editor, &mut renderer);
+        asked.try_recv().expect("answered in a frame")
+    };
+
+    // Look packs and texture packs, listed and worn as the Lighting page's menus wear them, and taken off.
+    let looks = ask(&mut editor, "look_pack.list", serde_json::json!({})).unwrap();
+    assert!(looks["packs"].as_array().is_some_and(|packs| packs.iter().any(|p| p["reference"] == "builtin:sunlit")));
+    assert!(looks["worn"].is_null(), "{looks}");
+    let worn = ask(&mut editor, "look_pack.wear", serde_json::json!({ "pack": "builtin:sunlit" })).unwrap();
+    assert_eq!(worn["worn"], "builtin:sunlit");
+    assert_eq!(voxear_engine::look_packs::worn(&editor.game.engine.world), Some("builtin:sunlit"));
+    assert!(ask(&mut editor, "look_pack.wear", serde_json::json!({ "pack": "builtin:nothing" })).is_err());
+    assert_eq!(voxear_engine::look_packs::worn(&editor.game.engine.world), Some("builtin:sunlit"), "kept");
+    ask(&mut editor, "look_pack.wear", serde_json::json!({ "pack": null })).unwrap();
+    assert!(voxear_engine::look_packs::worn(&editor.game.engine.world).is_none());
+    let textures = ask(&mut editor, "texture_pack.list", serde_json::json!({})).unwrap();
+    assert!(textures["packs"].as_array().is_some_and(|p| p.iter().any(|p| p["reference"] == "builtin:pixel_grain")));
+    ask(&mut editor, "texture_pack.wear", serde_json::json!({ "pack": "builtin:pixel_grain" })).unwrap();
+    assert_eq!(voxear_engine::texture_packs::worn(&editor.game.content), Some("builtin:pixel_grain"));
+    ask(&mut editor, "texture_pack.wear", serde_json::json!({})).unwrap();
+    assert!(voxear_engine::texture_packs::worn(&editor.game.content).is_none());
+
+    // The game's volumes and display read at any time, and are set only while it plays, as a script sets them.
+    let mix = ask(&mut editor, "audio.mix", serde_json::json!({})).unwrap();
+    assert!(mix["master"].as_f64().is_some() && mix["headphones"].is_boolean(), "{mix}");
+    assert!(ask(&mut editor, "audio.mix", serde_json::json!({ "music": 0.5 })).is_err(), "not while editing");
+    let display = ask(&mut editor, "display", serde_json::json!({})).unwrap();
+    assert_eq!((display["hdr"].as_str(), display["output"].as_str()), (Some("off"), Some("sdr")), "{display}");
+    assert!(ask(&mut editor, "display", serde_json::json!({ "hdr": "bright" })).is_err(), "no such mode");
+}
+
+#[test]
 fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,

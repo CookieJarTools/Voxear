@@ -272,11 +272,79 @@ impl Wearing {
     }
 }
 
-/// Lays the pack worn over the level's lighting as it is now, for the
-/// renderer to draw with: again only when the level's lighting or the pack
-/// has changed. With none worn, the level is drawn as it is.
+/// What scripts set of the sky and the sun over the level's and a worn
+/// pack's, as a world resource (`Lighting.ChangeSky` and
+/// `Lighting.ChangeSun`): the sky's settings as `[sky]` writes them, and
+/// the sun's as `[sun]` does. Kept through level changes until scripts
+/// take it off, as a game's options are.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScriptLook {
+    pub sky: Option<toml::Table>,
+    pub sun: Option<SunData>,
+    seen: Option<Seen>,
+}
+
+impl ScriptLook {
+    pub fn new(sky: Option<toml::Table>, sun: Option<SunData>) -> Self {
+        Self { sky, sun, seen: None }
+    }
+
+    /// Whether it sets nothing.
+    pub fn is_empty(&self) -> bool {
+        self.sky.is_none() && self.sun.is_none()
+    }
+
+    /// `worn` with what scripts set laid over it.
+    pub fn over(&self, mut worn: WornLook) -> Result<WornLook> {
+        if let Some(over) = &self.sky {
+            let mut table = toml::Table::try_from(sky_data(&worn.sky)).context("writing the sky")?;
+            merge(&mut table, over);
+            let data: SkyData = table.try_into().context("reading the sky scripts set")?;
+            // The picture stays as it was uploaded.
+            let (texture, light) = (worn.sky.picture_texture, worn.sky.picture_light);
+            worn.sky = sky_from_data(&data);
+            (worn.sky.picture_texture, worn.sky.picture_light) = (texture, light);
+        }
+        if let Some(over) = self.sun {
+            let mut looked = worn.sun.unwrap_or_else(plain_sun);
+            over.lay_over(&mut looked);
+            worn.sun = Some(looked);
+        }
+        Ok(worn)
+    }
+}
+
+/// Sets what scripts lay over the sky and the sun, or with nothing set
+/// takes it off; worked out again from the next tick.
+pub fn set_script_look(world: &mut World, script: ScriptLook) {
+    if let Some(wearing) = world.resource_mut::<Wearing>() {
+        wearing.seen = None;
+    }
+    match script.is_empty() {
+        true => drop(world.remove_resource::<ScriptLook>()),
+        false => drop(world.insert_resource(ScriptLook { seen: None, ..script })),
+    }
+}
+
+/// The level's lighting as it is now with the pack worn and what scripts
+/// set laid over it, worked out afresh: as the next frame is drawn.
+pub fn in_effect(world: &World) -> WornLook {
+    let sky = world.resource::<Sky>().copied().unwrap_or_default();
+    let sun = world.resource::<SunLook>().copied();
+    let post = world.resource::<PostProcess>().copied().unwrap_or_default();
+    let level = WornLook { sky, sun, post, voxels: None, water: WaterLook::default(), shader: None };
+    let worn = world.resource::<Wearing>().and_then(|wearing| wearing.pack.worn(sky, sun, post).ok()).unwrap_or(level);
+    let script = world.resource::<ScriptLook>();
+    script.and_then(|script| script.over(worn).ok()).unwrap_or(worn)
+}
+
+/// Lays the pack worn, and what scripts set, over the level's lighting as
+/// it is now, for the renderer to draw with: again only when the level's
+/// lighting, the pack or what scripts set has changed. With neither, the
+/// level is drawn as it is.
 pub fn update(world: &mut World) {
-    let Some(wearing) = world.resource::<Wearing>() else {
+    let script = world.resource::<ScriptLook>().filter(|script| !script.is_empty());
+    let Some(wearing) = world.resource::<Wearing>().map(Some).or(script.map(|_| None)) else {
         if world.resource::<WornLook>().is_some() {
             world.remove_resource::<WornLook>();
         }
@@ -286,19 +354,33 @@ pub fn update(world: &mut World) {
     let sun = world.resource::<SunLook>().copied();
     let post = world.resource::<PostProcess>().copied().unwrap_or_default();
     let now: Seen = (sky_data(&sky), sun, post);
-    if wearing.seen.as_ref() == Some(&now) {
+    let pack_seen = wearing.is_none_or(|wearing| wearing.seen.as_ref() == Some(&now));
+    let script_seen = script.is_none_or(|script| script.seen.as_ref() == Some(&now));
+    if pack_seen && script_seen {
         return;
     }
-    let shader = wearing.shader;
-    let worn = wearing.pack.worn(sky, sun, post).map(|worn| WornLook { shader, ..worn });
-    let reference = wearing.reference.clone();
+    let worn = match wearing {
+        Some(wearing) => {
+            let shader = wearing.shader;
+            wearing.pack.worn(sky, sun, post).map(|worn| WornLook { shader, ..worn })
+        }
+        None => Ok(WornLook { sky, sun, post, voxels: None, water: WaterLook::default(), shader: None }),
+    };
+    let worn = match script {
+        Some(script) => worn.and_then(|worn| script.over(worn).context("what scripts set of the sky and the sun")),
+        None => worn,
+    };
+    let reference = wearing.map_or_else(|| "scripts set".to_string(), |wearing| wearing.reference.clone());
     if let Some(wearing) = world.resource_mut::<Wearing>() {
-        wearing.seen = Some(now);
+        wearing.seen = Some(now.clone());
+    }
+    if let Some(script) = world.resource_mut::<ScriptLook>() {
+        script.seen = Some(now);
     }
     match worn {
         Ok(worn) => drop(world.insert_resource(worn)),
         Err(error) => {
-            tracing::error!("the look pack {reference} cannot be worn over this level: {error:#}");
+            tracing::error!("the look {reference} cannot be laid over this level: {error:#}");
             world.remove_resource::<WornLook>();
         }
     }

@@ -20,6 +20,19 @@ pub const POST_RESET: i32 = 3;
 pub const SHADOWS_IN_EFFECT: i32 = 4;
 pub const SHADOWS_SET: i32 = 5;
 pub const SHADOWS_RESET: i32 = 6;
+/// The sky, through the same call: `Lighting.Sky` reads it as a frame
+/// draws it, sets settings of its own over the level's, and takes them off.
+pub const SKY_IN_EFFECT: i32 = 7;
+pub const SKY_SET: i32 = 8;
+pub const SKY_RESET: i32 = 9;
+/// How the sun looks, through the same call: what scripts set over the
+/// level's `[sun]`, set again whole, and taken off.
+pub const SUN_LOOK: i32 = 10;
+pub const SUN_LOOK_SET: i32 = 11;
+pub const SUN_LOOK_RESET: i32 = 12;
+/// The level's Seasons or Climate, through the same call: read whole, and
+/// changed setting by setting (`Seasons` and `Climate`).
+pub const LEVEL_COMPONENT: i32 = 13;
 
 /// What answers `Post` for scripts: what `what` asks, given `text`, with
 /// the text of its answer.

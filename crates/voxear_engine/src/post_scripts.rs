@@ -6,11 +6,18 @@
 //! drawn, read as a frame draws them and set over the level's
 //! (`voxear_render::ScriptShadows`).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use voxear_ecs::World;
 use voxear_render::{LampShadows, PostProcess, ScriptPost, ScriptShadows, ShadowsInEffect, SunShadows, WornLook};
 use voxear_scripting::{
-    POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET,
+    LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, SHADOWS_IN_EFFECT, SHADOWS_RESET,
+    SHADOWS_SET, SKY_IN_EFFECT, SKY_RESET, SKY_SET, SUN_LOOK, SUN_LOOK_RESET, SUN_LOOK_SET,
+};
+
+use crate::{
+    lighting::{SunData, merge},
+    look_packs::{ScriptLook, set_script_look},
+    scene_file::{SkyData, sky_data},
 };
 
 /// Sets what answers `Post` in scripts.
@@ -58,8 +65,99 @@ fn call(world: &mut World, what: i32, text: &str) -> Result<String> {
             world.remove_resource::<ScriptShadows>();
             Ok(String::new())
         }
+        SKY_IN_EFFECT => Ok(sky_json(&sky_in_effect(world)).to_string()),
+        SKY_SET => {
+            let json: serde_json::Value = serde_json::from_str(text).context("reading the sky")?;
+            set_sky(world, &json)?;
+            Ok(String::new())
+        }
+        SKY_RESET => {
+            let script = world.resource::<ScriptLook>().cloned().unwrap_or_default();
+            set_script_look(world, ScriptLook::new(None, script.sun));
+            Ok(String::new())
+        }
+        SUN_LOOK => {
+            let sun = world.resource::<ScriptLook>().and_then(|script| script.sun).unwrap_or_default();
+            Ok(serde_json::to_string(&sun)?)
+        }
+        SUN_LOOK_SET => {
+            let json: serde_json::Value = serde_json::from_str(text).context("reading the sun")?;
+            set_sun_look(world, &json)?;
+            Ok(String::new())
+        }
+        SUN_LOOK_RESET => {
+            let script = world.resource::<ScriptLook>().cloned().unwrap_or_default();
+            set_script_look(world, ScriptLook::new(script.sky, None));
+            Ok(String::new())
+        }
+        // Answered with nothing where the level has none.
+        LEVEL_COMPONENT => Ok(crate::script_components::level_component(world, text)?.unwrap_or_default()),
         _ => bail!("no such call ({what})"),
     }
+}
+
+/// The sky as a frame draws it, weather aside: a look pack's and what
+/// scripts set where either is laid over the level's, the level's own
+/// otherwise.
+pub fn sky_in_effect(world: &World) -> voxear_render::Sky {
+    crate::look_packs::in_effect(world).sky
+}
+
+/// A sky as scripts read it: every setting, colours sRGB, laid out as
+/// `[sky]` writes them.
+pub fn sky_json(sky: &voxear_render::Sky) -> serde_json::Value {
+    let data = sky_data(sky);
+    serde_json::json!({
+        "mode": data.mode,
+        "zenith": data.zenith,
+        "horizon": data.horizon,
+        "ground": data.ground,
+        "ambient": data.ambient,
+        "stars": data.stars,
+        "haze": data.haze,
+        "haze_tint": data.haze_tint,
+        "haze_glow": data.haze_glow,
+        "distance_haze": data.distance_haze,
+        "sun_size": data.sun_size,
+        "picture_turn": data.picture_turn,
+        "clouds": data.clouds,
+    })
+}
+
+/// Lays the sky's settings `json` gives, as `[sky]` writes them, over those
+/// scripts set before. Nothing changes where any is refused: one there is
+/// not, or the sky's picture, which is the level's own.
+pub fn set_sky(world: &mut World, json: &serde_json::Value) -> Result<()> {
+    let Some(toml::Value::Table(over)) = to_toml(json) else { bail!("the sky is not a table of settings") };
+    ensure!(
+        !over.contains_key("picture"),
+        "the sky's picture is the level's own: apply lighting settings to change it"
+    );
+    let script = world.resource::<ScriptLook>().cloned().unwrap_or_default();
+    let mut sky = script.sky.clone().unwrap_or_default();
+    merge(&mut sky, &over);
+    // Checked over the default sky, so every setting written is one there is.
+    let mut table = toml::Table::try_from(sky_data(&voxear_render::Sky::default())).context("writing the sky")?;
+    merge(&mut table, &sky);
+    let _: SkyData = table.try_into().context("reading the sky")?;
+    set_script_look(world, ScriptLook::new(Some(sky), script.sun));
+    Ok(())
+}
+
+/// Sets how the sun looks over the level's, as `[sun]` writes it, in place
+/// of what scripts set before: its temperature, tint, strength, softness,
+/// shadow tint and canopy. Its shadows are `Lighting.Shadows`'.
+pub fn set_sun_look(world: &mut World, json: &serde_json::Value) -> Result<()> {
+    let fields = json.as_object().context("the sun is not a table of settings")?;
+    const LOOKS: [&str; 6] = ["temperature", "tint", "strength", "softness", "shadow_tint", "canopy"];
+    if let Some(other) = fields.keys().find(|key| !LOOKS.contains(&key.as_str())) {
+        bail!("no sun setting `{other}`");
+    }
+    let sun: SunData = serde_json::from_value(json.clone()).context("reading the sun")?;
+    let script = world.resource::<ScriptLook>().cloned().unwrap_or_default();
+    let sun = (sun != SunData::default()).then_some(sun);
+    set_script_look(world, ScriptLook::new(script.sky, sun));
+    Ok(())
 }
 
 /// Lays the shadow settings `json` gives (`sun`, `lamps`, `distance` and
@@ -176,5 +274,49 @@ mod tests {
 
         call(&mut world, SHADOWS_RESET, "").unwrap();
         assert_eq!(seen(&mut world), level, "the level's again");
+    }
+
+    #[test]
+    fn scripts_lay_the_sky_and_the_suns_look_over_the_levels_and_take_them_off() {
+        let mut world = World::new();
+        let sky = voxear_render::Sky { haze: 2.0, ..Default::default() };
+        world.insert_resource(sky);
+        world.insert_resource(crate::lighting::plain_sun());
+        let seen = |world: &mut World| -> serde_json::Value {
+            serde_json::from_str(&call(world, SKY_IN_EFFECT, "").unwrap()).unwrap()
+        };
+        let level = seen(&mut world);
+        assert_eq!((level["haze"].as_f64(), level["mode"].as_str()), (Some(2.0), Some("gradient")));
+        assert_eq!(level["clouds"]["kind"].as_str(), Some("soft"), "every setting, clouds and all");
+
+        call(&mut world, SKY_SET, r#"{"mode":"atmosphere","clouds":{"cover":0.6}}"#).unwrap();
+        call(&mut world, SKY_SET, r#"{"clouds":{"kind":"blocks"}}"#).unwrap();
+        let now = seen(&mut world);
+        assert_eq!((now["mode"].as_str(), now["haze"].as_f64()), (Some("atmosphere"), Some(2.0)), "the level's haze");
+        let cover = now["clouds"]["cover"].as_f64().unwrap_or_default();
+        assert!((cover - 0.6).abs() < 1e-6 && now["clouds"]["kind"] == "blocks", "{now}");
+        assert!(call(&mut world, SKY_SET, r#"{"glow":1}"#).is_err(), "a setting that does not exist");
+        assert!(call(&mut world, SKY_SET, r#"{"picture":"x"}"#).is_err(), "the level's picture");
+        crate::look_packs::update(&mut world);
+        let worn = world.resource::<WornLook>().expect("drawn with what scripts set");
+        assert_eq!(
+            (worn.sky.mode, worn.sky.clouds.kind),
+            (voxear_render::SkyMode::Atmosphere, voxear_render::CloudKind::Blocks)
+        );
+
+        call(&mut world, SUN_LOOK_SET, r#"{"temperature":3000,"strength":2}"#).unwrap();
+        assert!(call(&mut world, SUN_LOOK_SET, r#"{"shadows":"cascades"}"#).is_err(), "shadows are Lighting.Shadows'");
+        let sun: serde_json::Value = serde_json::from_str(&call(&mut world, SUN_LOOK, "").unwrap()).unwrap();
+        assert_eq!(sun, serde_json::json!({"temperature": 3000.0, "strength": 2.0}));
+        crate::look_packs::update(&mut world);
+        let worn = world.resource::<WornLook>().and_then(|worn| worn.sun).unwrap();
+        assert_eq!(worn.strength, 2.0);
+        assert!(worn.tint.z < worn.tint.x, "warm at 3000 K");
+
+        call(&mut world, SKY_RESET, "").unwrap();
+        assert_eq!(seen(&mut world), level, "the level's sky again");
+        call(&mut world, SUN_LOOK_RESET, "").unwrap();
+        crate::look_packs::update(&mut world);
+        assert!(world.resource::<WornLook>().is_none(), "drawn as the level is");
     }
 }

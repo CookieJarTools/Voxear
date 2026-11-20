@@ -561,6 +561,12 @@ impl Editor {
             "shader_pack.list" => self.shader_pack_list(),
             "shader_pack.wear" => self.shader_pack_wear(args),
             "shader_pack.options" => self.shader_pack_options(args),
+            "look_pack.list" => self.look_pack_list(),
+            "look_pack.wear" => self.look_pack_wear(args),
+            "texture_pack.list" => self.texture_pack_list(),
+            "texture_pack.wear" => self.texture_pack_wear(args),
+            "audio.mix" => self.audio_mix(args),
+            "display" => self.display(args),
             "settings.get" => done(self.settings_json(args)),
             "settings.set" => self.settings_set(args),
             "settings.show" => {
@@ -753,7 +759,7 @@ impl Editor {
         }
     }
 
-    fn refuse_unless_playing(&self, what: &str) -> Result<(), LinkError> {
+    pub(super) fn refuse_unless_playing(&self, what: &str) -> Result<(), LinkError> {
         match self.is_playing() {
             true => Ok(()),
             false => Err(refuse(ErrorKind::Failed, format!("the game is not playing, so there is nothing to {what}"))),

@@ -27,6 +27,10 @@ const LENGTH: i32 = 12;
 const SOFTNESS: i32 = 13;
 const SOFT_SHADOWS: i32 = 14;
 const MODE: i32 = 15;
+// A directional light's cookie size, its shadows' tint and whether it is the sun or the moon.
+const COOKIE_SIZE: i32 = 16;
+const SHADOW_TINT: i32 = 17;
+const BODY: i32 = 18;
 
 /// As `LightKind` in Voxear.Core numbers them.
 const KINDS: [LightKind; 6] =
@@ -82,6 +86,12 @@ fn read(light: &Light, what: i32) -> Option<[f32; 4]> {
         SOFTNESS => number(light.softness),
         SOFT_SHADOWS => flag(light.soft_shadows),
         MODE => number(voxear_render::LightMode::ALL.iter().position(|m| *m == light.mode).unwrap_or(1) as f32),
+        COOKIE_SIZE => number(light.cookie_size),
+        SHADOW_TINT => {
+            let [r, g, b] = srgb(light.shadow_tint.to_array());
+            [r, g, b, 1.0]
+        }
+        BODY => flag(light.body == voxear_render::SkyBody::Moon),
         _ => return None,
     })
 }
@@ -117,6 +127,9 @@ fn write(light: &mut Light, what: i32, [x, y, z, _]: [f32; 4]) {
         SOFTNESS => light.softness = x.clamp(0.0, 10.0),
         SOFT_SHADOWS => light.soft_shadows = x != 0.0,
         MODE => light.mode = voxear_render::LightMode::ALL[(x.max(0.0) as usize).min(2)],
+        COOKIE_SIZE => light.cookie_size = x.max(0.01),
+        SHADOW_TINT => light.shadow_tint = Vec3::from(linear([x, y, z].map(|c| c.clamp(0.0, 1.0)))),
+        BODY => light.body = if x != 0.0 { voxear_render::SkyBody::Moon } else { voxear_render::SkyBody::Sun },
         _ => {}
     }
 }

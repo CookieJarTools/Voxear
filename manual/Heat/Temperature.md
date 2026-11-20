@@ -29,6 +29,13 @@ The level's first **Climate** keeps its clock, and its climate where no generato
 
 The clock only turns while the game plays. Without a Climate in the level, it is always noon and the day adds nothing.
 
+A script reads and changes the level's climate with `Climate.Celsius`, `Climate.DaySwing` and `Climate.Humidity`, and its clock with `Clock` (below). `Climate.Exists` tells whether the level has one; without one, setting them does nothing and says so in the Console.
+
+```csharp
+// A cold snap.
+Climate.Celsius -= 12f;
+```
+
 ## Heat Sources
 
 A **Heat Source** is something hot or cold, as a campfire or a block of ice. At its middle it is its **Temperature**, fading to the place's own by its **Radius** away.

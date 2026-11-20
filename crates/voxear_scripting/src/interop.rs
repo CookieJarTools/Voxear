@@ -704,10 +704,25 @@ pub enum ComponentKind {
     /// The crowd as a whole: its distances, and how many are in each tier
     /// and kept as records.
     Crowds = 41,
+    /// A box or sphere whose post-processing blends in as the camera comes
+    /// into it, read and written whole as its scene file writes it.
+    PostVolume = 42,
+    /// Wind over the level or part of it, read and written whole.
+    WindZone = 43,
+    /// The sea, read and written whole.
+    Ocean = 44,
+    /// Water or lava over a box of ground, read and written whole.
+    Pool = 45,
+    /// Water running down a path, read and written whole.
+    Stream = 46,
+    /// Components with calls of their own that are also read and written
+    /// whole, which one in the call's number: a Bone Attachment, a Particle
+    /// System, a Nav Area, a Nav Link, a Foliage and a LOD Group.
+    Whole = 47,
 }
 
 /// The most kinds `kind_value` answers.
-const KINDS: usize = 42;
+const KINDS: usize = 48;
 static KIND_VALUES: [std::sync::OnceLock<ComponentValues>; KINDS] = [const { std::sync::OnceLock::new() }; KINDS];
 
 /// Sets what answers a kind of component in scripts; the first set is kept.

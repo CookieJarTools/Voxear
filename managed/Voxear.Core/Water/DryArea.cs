@@ -94,6 +94,22 @@ public sealed class DryArea : IEquatable<DryArea>, IObjComponent
 	/// </summary>
 	public float InsideHeight => Number(InsideHeightValue);
 
+	/// <summary>
+	/// The mesh a Mesh Dry Area keeps water out of, in place of the mesh its Obj draws; None for its Obj's own. Its
+	/// InsideHeight follows it once it has loaded.
+	/// </summary>
+	public MeshAsset Mesh
+	{
+		get { return MeshAsset.FromReference(NativeWhole.Asset(NativeWhole.DryAreaMesh, Obj)); }
+		set
+		{
+			if (!NativeWhole.SetAsset(NativeWhole.DryAreaMesh, Obj, value.IsSet ? value.Reference : string.Empty) && Native.IsConnected && !IsValid)
+			{
+				Log.Error($"{Obj} has no Dry Area; give it one with AddDryArea.");
+			}
+		}
+	}
+
 	/// <summary>Takes the Dry Area off its Obj, which lets the water back in.</summary>
 	public void Remove()
 	{

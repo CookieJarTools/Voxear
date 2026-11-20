@@ -98,6 +98,7 @@ impl Engine {
         crate::heat::scripts::register();
         crate::storms::scripts::register();
         crate::post_scripts::register();
+        crate::script_components::register();
         crate::foliage_scripts::register();
         crate::first_person::register();
         crate::animation::bones::register();

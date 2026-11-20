@@ -193,13 +193,17 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
 | `nav_agent.set_destination` | Send an Obj's Nav Agent somewhere, or stop it |
+| `crowds.get` | Read the crowd's settings, how many are in each tier and kept as records far off, and how many are posed a frame |
 | `graph.comments`, `graph.comment.add`, `graph.comment.set`, `graph.comment.remove` | Read and change the comments of a generator's graph or a VoxShade shader |
 | `reflection_probe.capture`, `reflection_probes.bake` | Capture a Reflection Probe again, and bake the open level's probes beside it |
 | `reverb_probes.bake` | Bake the open level's Reverb Probes beside it |
 | `audio.rays` | Read ray-traced audio in the running game, or set it there: on, quality and budget |
+| `audio.mix` | Read the running game's volumes, headphones and reverb, or set them there as a script's `Audio` does |
+| `display` | Read the game's window and its HDR output, and ask for HDR while it plays as `Screen.SetHdr` does |
 | `lighting.get`, `lighting.set` | Read the open scene's lighting as the Lighting page shows it, and change one of its settings |
 | `lighting.bake`, `lighting.bake_status`, `lighting.bake_cancel`, `lighting.probe_light` | Bake the open level's lightmaps and light probes beside it, see how a bake goes or give it up, and read the baked probes' light at a point |
 | `shader_pack.list`, `shader_pack.wear`, `shader_pack.options` | List the shader packs there are, wear one in the Scene view and the game, and read or set the worn pack's options |
+| `look_pack.list`, `look_pack.wear`, `texture_pack.list`, `texture_pack.wear` | List the look packs and texture packs there are, and wear one, as the Lighting page's menus do |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |

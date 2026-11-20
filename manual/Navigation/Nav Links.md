@@ -24,6 +24,14 @@ Turn on **Gizmos ▸ Navigation** in the Scene view to see the link as a purple 
 
 A link starts and ends at the places to stand nearest its two ends. Put each end on or just over a floor something can stand on.
 
+### Nav Links from a script
+
+`Obj.NavLink` is an Obj's Nav Link, null when it has none, and `Obj.AddNavLink` gives it one, with each setting above by its name, `Kind` as a `NavLinkKind`. Ways searched after a change go by it, as a drawbridge raised costs too much to take:
+
+```csharp
+Obj.NavLink?.Cost = lowered ? 1f : 1000f;
+```
+
 ## Crossing a link
 
 A Nav Agent or a Block Mob reaching a link crosses it along its line, or along an arc for a jump, whatever way it moves: a Character Controller is carried across, as on a ladder. Then it walks on.

@@ -153,6 +153,47 @@ public readonly struct Light : IEquatable<Light>, IObjComponent
 		set { Set(NativeLights.SoftShadows, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// A picture it shines through, its colours tinting the light: projected over a Spot light's cone, or tiled over
+	/// the world by a Directional light every CookieSize metres. Texture.None for none.
+	/// </summary>
+	public Texture Cookie
+	{
+		get { return NativeWhole.Asset(NativeWhole.LightCookie, Obj) is { } guid ? Texture.Load(guid) : Texture.None; }
+		set { SetAsset(NativeWhole.LightCookie, value.IsSet ? value.Reference : string.Empty); }
+	}
+
+	/// <summary>How far apart a Directional light's cookie repeats over the world, in metres.</summary>
+	public float CookieSize
+	{
+		get { return NativeLights.Number(Obj, NativeLights.CookieSize, 1f); }
+		set { Set(NativeLights.CookieSize, value); }
+	}
+
+	/// <summary>An IES profile a Point or Spot light shines by: how bright a real fitting is in each direction.</summary>
+	public LightProfile Profile
+	{
+		get { return NativeWhole.Asset(NativeWhole.LightProfile, Obj) is { } guid ? LightProfile.Load(guid) : LightProfile.None; }
+		set { SetAsset(NativeWhole.LightProfile, value.IsSet ? value.Reference : string.Empty); }
+	}
+
+	/// <summary>
+	/// The colour a Directional light's shadows take, as light through a canopy or off warm ground fills them; black
+	/// leaves them as they are.
+	/// </summary>
+	public Color ShadowTint
+	{
+		get { return NativeLights.Get(Obj, NativeLights.ShadowTint, out var value) ? new Color(value.X, value.Y, value.Z) : Color.Black; }
+		set { Set(NativeLights.ShadowTint, new Vector4(value.R, value.G, value.B, 1f)); }
+	}
+
+	/// <summary>What a Directional light is in the sky: the sun, or the moon, under which the sky is a night sky.</summary>
+	public SkyBody Body
+	{
+		get { return NativeLights.Number(Obj, NativeLights.Body, 0f) != 0f ? SkyBody.Moon : SkyBody.Sun; }
+		set { Set(NativeLights.Body, value == SkyBody.Moon ? 1f : 0f); }
+	}
+
 	/// <summary>Takes the Light off its Obj.</summary>
 	public void Remove()
 	{
@@ -202,6 +243,14 @@ public readonly struct Light : IEquatable<Light>, IObjComponent
 	private void Set(int what, Vector4 value)
 	{
 		if (!NativeLights.Set(Obj, what, value) && Native.IsConnected)
+		{
+			Log.Error($"{Obj} has no Light; give it one with AddLight.");
+		}
+	}
+
+	private void SetAsset(int which, string reference)
+	{
+		if (!NativeWhole.SetAsset(which, Obj, reference) && Native.IsConnected && !IsValid)
 		{
 			Log.Error($"{Obj} has no Light; give it one with AddLight.");
 		}

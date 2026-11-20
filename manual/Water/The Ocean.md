@@ -36,6 +36,18 @@ The sea's wind blows along the Ocean's Obj's blue arrow, as fast as its weather 
 
 When the wind changes, turning, rising or dropping, the waves take **Transition** seconds to follow, the same waves growing, calming and turning rather than jumping to a new sea. Floating Objs ride the same sea as it changes, alike on every machine.
 
+## The sea from a script
+
+`Obj.Ocean` is an Obj's Ocean, null when it has none. Its weather, as a `SeaWeather`, the Custom weather's swell and wind, its colours, foam, spray, murk and where its wind comes from are there to set while the game runs; the waves follow a change over its Transition. Its costlier looks are switched with `Water.Features`.
+
+```csharp
+if (Obj.Ocean is { } sea)
+{
+	sea.Weather = SeaWeather.Stormy;
+	sea.Deep = new Color(0.02f, 0.05f, 0.07f);
+}
+```
+
 ## Quality
 
 The sea's costlier looks can each be turned off, on the Ocean in the Inspector or from code with `Water.Features`, for slower machines or a simpler style. All are on to start with.

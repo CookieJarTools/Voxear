@@ -588,6 +588,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("Level" | "LevelAsset") => Some(AssetKind::Level),
         Some("Dimension") => Some(AssetKind::Dimension),
         Some("Sound") => Some(AssetKind::Sound),
+        Some("LightProfile") => Some(AssetKind::LightProfile),
         Some("LightingSettings") => Some(AssetKind::Lighting),
         Some("LookPack") => Some(AssetKind::LookPack),
         Some("TexturePack") => Some(AssetKind::TexturePack),
@@ -601,6 +602,15 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("MotionAction") => return set_parts(game, ACTION_PART),
         Some("MotionMark") => return set_parts(game, MARK_PART),
         Some("GunHandling") => Some(AssetKind::GunHandling),
+        Some("ParticleGraph") => {
+            // None, then the project's particle graphs by their paths, as a Particle System's Graph lists them.
+            let mut paths: Vec<String> =
+                game.content.shaders().particle_graphs.iter().map(|graph| graph.path.clone()).collect();
+            paths.sort();
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+            return found;
+        }
         Some("ParticleEffect") => {
             // None, the starters, then the project's own, as a Particle System's Effect lists them.
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
@@ -825,6 +835,15 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "UiPanel" => |world, entity| world.has::<voxear_render::UiPanel>(entity),
         "Vehicle" => |world, entity| world.has::<Vehicle>(entity),
         "Wheel" => |world, entity| world.has::<Wheel>(entity),
+        "WaterWake" => |world, entity| world.has::<voxear_render::WaterWake>(entity),
+        "DryArea" => |world, entity| world.has::<voxear_render::DryArea>(entity),
+        "PostVolume" => |world, entity| world.has::<voxear_render::PostVolume>(entity),
+        "WindZone" => |world, entity| world.has::<voxear_render::WindZone>(entity),
+        "Ocean" => |world, entity| world.has::<voxear_render::Ocean>(entity),
+        "Pool" => |world, entity| world.has::<voxear_render::Pool>(entity),
+        "WaterStream" => |world, entity| world.has::<voxear_render::Stream>(entity),
+        "LodGroup" => |world, entity| world.has::<voxear_render::LodGroup>(entity),
+        "FoliageRenderer" => |world, entity| world.has::<voxear_render::Foliage>(entity),
         _ => return None,
     })
 }
@@ -912,8 +931,14 @@ mod tests {
                     declared(&path, found);
                 } else if path.extension().is_some_and(|e| e == "cs") {
                     let text = std::fs::read_to_string(&path).unwrap();
-                    for line in text.lines().filter(|line| line.contains("IObjComponent") && line.contains(" struct ")) {
-                        let after = line.split(" struct ").nth(1).unwrap_or_default();
+                    let components = text.lines().filter(|line| {
+                        let declared =
+                            line.contains(" struct ") || (line.contains(" class ") && !line.contains("abstract"));
+                        declared && (line.contains("IObjComponent") || line.contains(": WholeComponent"))
+                    });
+                    for line in components {
+                        let kind = if line.contains(" struct ") { " struct " } else { " class " };
+                        let after = line.split(kind).nth(1).unwrap_or_default();
                         let name: String = after.chars().take_while(|c| c.is_alphanumeric()).collect();
                         found.push(name);
                     }

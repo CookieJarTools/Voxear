@@ -22,6 +22,17 @@ A large Pool is drawn as finely near the camera as the sea is, so a lake's rippl
 | Waves | How much of the sea's long swell it takes |
 | Deep, Scatter, Clarity, Murk | Its water's colours, as [[The Ocean]] describes them. A new Pool starts as a lake's green |
 
+### Pools from a script
+
+`Obj.Pool` is an Obj's Pool, null when it has none, and `Obj.AddPool` gives it one. Its size, depth, liquid, waves and colours are there to set while the game runs, so a room can flood a little each frame:
+
+```csharp
+if (Obj.Pool is { } flood)
+{
+	flood.Depth = MathF.Min(2f, flood.Depth + 0.1f * Time.Delta);
+}
+```
+
 ## Dry Areas
 
 A **Dry Area** keeps water out of its shape: the inside of a boat's hull, a cave under the sea, a diving bell, or a road across a parted sea. Add one with **Add Component ▸ Water ▸ Dry Area** and pick its **Shape**: a box, a ball, a capsule, or a mesh.
@@ -53,6 +64,8 @@ The bilge is worked out again every frame from these two settings, with nothing 
 | Bilge on | Whether that water is there at all |
 
 ## Dry Areas in scripts
+
+`area.Mesh` sets a Mesh Dry Area's own mesh, a `MeshAsset`: one built in, such as `MeshAsset.Sphere`, or one of a model's with `MeshAsset.Of(model)`; `MeshAsset.None` goes back to the mesh its Obj draws. It is loaded as it is set.
 
 A script reaches a Dry Area through `Obj.DryArea`, which is null when the Obj has none, and gives an Obj one with `Obj.AddDryArea()`. Set its bilge as a depth in metres with `Bilge`, or as a share of how tall its inside stands with `BilgeFill`: the water drawn in the hold, what `Water` finds there, and what floats in it follow on the same frame.
 

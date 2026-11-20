@@ -9,6 +9,7 @@ use voxear_core::logging::LogCapture;
 use voxear_engine::{Engine, Game, Project, scripts};
 
 const ARMOURER: &str = r#"using System;
+using System.Numerics;
 using Voxear;
 
 namespace Hello;
@@ -36,6 +37,11 @@ public sealed class Armourer : SystemBase
 		gun.Handling = GunHandling.Load("Smg.gunhandling");
 		Log.Info($"handling {gun.Handling == GunHandling.Load("Smg.gunhandling")}");
 		Log.Info($"sprinting {holder.Sprinting}");
+		gun.GripTurn = new Vector3(0f, 0f, 90f);
+		gun.Butt = new Vector3(0f, -0.05f, -0.3f);
+		holder.HipTurn = new Vector3(5f, 0f, 0f);
+		holder.Shoulder = new Vector3(0.1f, 0f, 0f);
+		Log.Info($"turns {gun.GripTurn.Z} {gun.Butt.Z} {gun.SupportTurn.Z} {holder.HipTurn.X} {holder.Shoulder.X}");
 	}
 
 	protected override void Update()
@@ -110,6 +116,7 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     assert!(lines.iter().any(|l| l == "doing Inspect "), "an action of its handling's own, no built-in: {lines:#?}");
     assert!(lines.iter().any(|l| l == "doing Look "), "one played from clips, two seconds long: {lines:#?}");
     assert!(lines.iter().any(|l| l == "sprinting True"), "{lines:#?}");
+    assert!(lines.iter().any(|l| l == "turns 90 -0.3 0 5 0.1"), "{lines:#?}");
     let states: Vec<voxear_engine::guns::mechanism::GunState> =
         game.engine.world.query_ref::<&voxear_engine::guns::mechanism::GunState>().into_iter().cloned().collect();
     assert_eq!(states[0].rounds, 32, "reloaded: {:?}", states[0]);

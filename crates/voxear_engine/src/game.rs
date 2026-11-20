@@ -2093,6 +2093,16 @@ impl ScriptServices for GameServices<'_> {
         crate::model_renderers::change_model(world, self.content, self.renderer.as_deref_mut(), entity, change)
     }
 
+    fn obj_asset(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        which: voxear_scripting::ObjAsset,
+        set: Option<Option<&str>>,
+    ) -> Result<Option<String>> {
+        crate::script_components::obj_asset(world, self.content, self.renderer.as_deref_mut(), entity, which, set)
+    }
+
     fn model_part_name(&mut self, world: &World, entity: Entity, part: usize) -> Option<String> {
         crate::model_renderers::part_name(world, self.content, entity, part)
     }

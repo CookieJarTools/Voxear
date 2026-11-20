@@ -108,4 +108,26 @@ Lighting.ChangeShadows(shadows =>
 | `Sun` | `Virtual` draws only the parts of a very large shadow map the view needs and keeps them from frame to frame; whatever moves is drawn again each frame. `Cascades` draws four shadow maps over the shadow distance, whole each frame, which costs the same however much moves: better for large things that never stand still, such as ships |
 | `Distance` | How far from the camera the sun casts shadows with cascades, 5 to 1000 metres |
 | `Split` | How the cascades share that distance: 1 keeps the nearest small and sharp, 0 shares it evenly |
-| `Lamps` | `Virtual` or `Atlas`, as `[lamps] shadows` | They set the weather too, to their own or to clear; to turn the weather alone, and gradually, use `Weather.Set` (see [[Weather]]). The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.
+| `Lamps` | `Virtual` or `Atlas`, as `[lamps] shadows` |
+
+### The sky and the sun from a script
+
+`Lighting.Sky` reads the sky as a frame draws it, and `Lighting.ChangeSky` changes any of its settings over the level's, clouds and all, as a storm gathering or a menu's sky options do. `Lighting.SunLook` and `Lighting.ChangeSun` do the same for how the sun looks: its temperature, tint, strength, softness, shadow tint and canopy, each left `null` for the level's own. Both are laid over a look pack the player wears, stay through level changes, and come off with `Lighting.ResetSky` and `Lighting.ResetSun`:
+
+```csharp
+Lighting.ChangeSky(sky =>
+{
+	sky.Haze = 2.5f;
+	sky.Clouds.Cover = 0.9f;
+	sky.Clouds.Kind = CloudKind.Blocks;
+});
+Lighting.ChangeSun(sun =>
+{
+	sun.Temperature = 7500f;
+	sun.Strength = 0.4f;
+});
+```
+
+The sky's picture is the level's own: apply other lighting settings to change it.
+
+Applied settings set the weather too, to their own or to clear; to turn the weather alone, and gradually, use `Weather.Set` (see [[Weather]]). The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.

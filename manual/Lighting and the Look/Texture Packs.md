@@ -17,7 +17,7 @@ Voxear cannot know your game's blocks, so its own packs name none: they make a p
 
 ## Seeing a level under a pack
 
-On the **Lighting** page, under **Look pack**, **Texture pack** shows the open scene under any pack, as a player who picked it would see it. Nothing of it is saved with the scene. Playing starts under the pack chosen the last time you played, as a build would, and the page's pack is back when you stop.
+On the **Lighting** page, under **Look pack**, **Texture pack** shows the open scene under any pack, as a player who picked it would see it. Nothing of it is saved with the scene. Playing starts under the pack chosen the last time you played, as a build would, and the page's pack is back when you stop. Tools do the same with `vox editor call texture_pack.list` and `texture_pack.wear`.
 
 ## Making a pack
 

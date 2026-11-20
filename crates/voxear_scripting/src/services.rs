@@ -200,6 +200,19 @@ pub trait ScriptServices {
         anyhow::bail!("there are no models to change here")
     }
 
+    /// An asset an Obj's component is drawn with that needs the content and
+    /// the renderer to load: by GUID, or as a mesh is named; with `set`, the
+    /// one to load in its place first, or `None` for none.
+    fn obj_asset(
+        &mut self,
+        _world: &mut World,
+        _entity: Entity,
+        _which: ObjAsset,
+        _set: Option<Option<&str>>,
+    ) -> Result<Option<String>> {
+        anyhow::bail!("there is nothing to load it here")
+    }
+
     /// The name the model gives one of the parts an Obj draws, by its place
     /// among them.
     fn model_part_name(&mut self, _world: &World, _entity: Entity, _part: usize) -> Option<String> {
@@ -812,6 +825,29 @@ pub enum ModelChange<'a> {
 /// [`ScriptServices::change_model`]); none outside them.
 pub fn change_model(world: &mut World, entity: Entity, change: ModelChange<'_>) -> Option<Result<()>> {
     with_services(|services| services.change_model(world, entity, change))
+}
+
+/// An asset an Obj's component is drawn with, which scripts set through
+/// the lent services as only the content and the renderer can load it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjAsset {
+    /// The picture a Light shines through.
+    LightCookie,
+    /// The IES profile a point or spot Light shines by.
+    LightProfile,
+    /// The mesh a Dry Area of the Mesh shape keeps water out of.
+    DryAreaMesh,
+}
+
+/// An Obj's asset read, or set first, through the lent services (see
+/// [`ScriptServices::obj_asset`]); none outside them.
+pub fn obj_asset(
+    world: &mut World,
+    entity: Entity,
+    which: ObjAsset,
+    set: Option<Option<&str>>,
+) -> Option<Result<Option<String>>> {
+    with_services(|services| services.obj_asset(world, entity, which, set))
 }
 
 /// A part's name through the lent services (see

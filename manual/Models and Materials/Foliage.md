@@ -18,6 +18,8 @@ Add a **Foliage** to an Obj (Add Component, then Rendering). It starts as small 
 | Impostors | Whether far plants are drawn as pictures of themselves (see below): **Auto** for the engine to choose, **Off** for never, or **From distance** |
 | Impostors from | With From distance: how far from the camera, in metres, plants become pictures |
 
+A script changes them as the game runs, as a graphics options menu does, through `Obj.FoliageRenderer`: `DrawDistance`, `FadeDistance`, `ShadowDistance`, `HealthyColor`, `DryColor`, `ColorSpread`, `Impostors` and `ImpostorDistance`.
+
 ## Where plants grow
 
 Plants grow in the Obj's space, so moving, turning or scaling the Obj moves all of them. They grow in four ways: **painted** onto the ground in the Scene view with the Foliage's **Paint** tool, each dropped onto the terrain or mesh below it and leaning with it (see [[Painting and Cutting Plants]]); scattered; placed one by one; and grown by a Block World by itself (see [[Foliage#Growing on a Block World]]).

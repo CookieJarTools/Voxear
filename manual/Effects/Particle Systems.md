@@ -148,6 +148,8 @@ An output's input left empty keeps what the settings give. The graph's nodes rea
 
 A graph with an Update has its system simulated; one with only a Look leaves it worked out from its age. A graph's properties are its own settings, set in the graph and worked into it as numbers. It can read up to three pictures, each named on its picture property's **Picture** row, for colours or patterns along a particle's life. The Look draws flat particles; meshes and trails are drawn as the settings say.
 
+From a script, `system.Graph` takes a `ParticleGraph` field picked in the Inspector, and `ParticleGraph.None` takes it off. `system.Texture` takes a built-in texture such as `ParticleTexture.Puff`, or one of the project's pictures with `ParticleTexture.Of`, with its `Tiles` and `Animate`; `system.Mesh` a built-in mesh such as `ParticleMesh.Chunk`, or a model's with `ParticleMesh.Of`.
+
 A graph's cost is small: 300,000 particles stepped with the starter's swirl and drawn take 0.85 ms a frame on a mid-range graphics card, against 0.77 ms moved by their settings alone.
 
 ## Simulated systems

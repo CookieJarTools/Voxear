@@ -363,6 +363,22 @@ The Inspector shows them under **Settings**, in the same tabs as the Lighting pa
 
 As the camera comes into the volume, numbers and colours blend smoothly from the scene's settings to the volume's. Switches, such as `enabled`, and choices, such as the tonemapper, change once the camera is more than halfway into the blend. A volume cannot change the lookup table.
 
+### Post volumes from a script
+
+`Obj.PostVolume` is an Obj's Post Volume, null when it has none, and `Obj.AddPostVolume` gives it one. Its `Shape`, `BlendDistance`, `Weight` and `Priority` are there to set, `Post` reads its settings over the Voxear Look, and `ChangePost` changes the settings it changes, as `Post.Change` does for the level:
+
+```csharp
+var cave = Obj.AddPostVolume();
+cave.BlendDistance = 6f;
+cave.ChangePost(post =>
+{
+	post.Exposure.Compensation = -1f;
+	post.Fog.Density = 0.02f;
+});
+```
+
+`ClearPost` takes off every setting it changes.
+
 ## The Scene view's shading
 
 The menu at the top of the Scene view changes how you see the level while you work on it, without changing the game:

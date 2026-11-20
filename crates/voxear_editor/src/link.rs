@@ -742,6 +742,70 @@ pub const CALLS: &[CallInfo] = &[
         returns: "As lighting.get",
     },
     CallInfo {
+        name: "look_pack.list",
+        about: "Every look pack there is to wear, the engine's and the project's, each with what `look_pack.wear` \
+                takes to wear it, and the pack the Scene view and the game wear.",
+        args: &[],
+        changes: false,
+        returns: "{ packs: [{ reference, name, description, source }], worn }",
+    },
+    CallInfo {
+        name: "look_pack.wear",
+        about: "Wears a look pack in the Scene view and the game, as the Lighting page's Look pack menu does and a \
+                script's LookPacks.Use; null takes it off.",
+        args: &[maybe(
+            "pack",
+            ArgKind::Value,
+            "As `look_pack.list` gives it: `builtin:sunlit`, or a .lookpack of the project's.",
+        )],
+        changes: true,
+        returns: "{ worn }",
+    },
+    CallInfo {
+        name: "texture_pack.list",
+        about: "Every texture pack there is to wear, the engine's and the project's, each with what \
+                `texture_pack.wear` takes to wear it, and the pack worn.",
+        args: &[],
+        changes: false,
+        returns: "{ packs: [{ reference, name, description, source }], worn }",
+    },
+    CallInfo {
+        name: "texture_pack.wear",
+        about: "Wears a texture pack, as the Lighting page's Texture pack menu does and a script's TexturePacks.Use; \
+                null takes it off.",
+        args: &[maybe("pack", ArgKind::Value, "As `texture_pack.list` gives it.")],
+        changes: true,
+        returns: "{ worn }",
+    },
+    CallInfo {
+        name: "audio.mix",
+        about: "The running game's volumes, from 0 to 1, and whether it plays for headphones and rings with the \
+                room's reverb, after setting those given, as a script's Audio.MasterVolume, MusicVolume, \
+                EffectsVolume, Headphones and Reverb set them. Setting needs the game playing.",
+        args: &[
+            maybe("master", ArgKind::Number, "The volume over everything."),
+            maybe("music", ArgKind::Number, "The music bus's volume."),
+            maybe("effects", ArgKind::Number, "The effects bus's volume."),
+            maybe("headphones", ArgKind::Toggle, "3D sound heard as through headphones."),
+            maybe("reverb", ArgKind::Toggle, "3D sound rings as the room does."),
+        ],
+        changes: false,
+        returns: "{ master, music, effects, headphones, reverb }",
+    },
+    CallInfo {
+        name: "display",
+        about: "The game's window, its size and whether it fills the screen, and its HDR: what is asked for, as a \
+                script's Screen.SetHdr asks, what is shown and what the display offers. HDR asked for while the \
+                game plays is made so when the game shows in a window of its own.",
+        args: &[
+            maybe("hdr", ArgKind::Choice(&["off", "on", "hdr10", "scrgb"]), "The HDR output to ask for."),
+            maybe("paper_white", ArgKind::Number, "How bright white paper is, in nits."),
+            maybe("peak", ArgKind::Number, "The brightest the display shows, in nits."),
+        ],
+        changes: false,
+        returns: "{ width, height, fullscreen, hdr, paper_white, peak, output, offered: { hdr10, scrgb } }",
+    },
+    CallInfo {
         name: "shader_pack.list",
         about: "Every shader pack there is to wear, the engine's, the project's and a player's, each with what \
                 `shader_pack.wear` takes to wear it, and the pack the Scene view wears: its passes, its options and \

@@ -84,6 +84,17 @@ Real light fittings are not equally bright in every direction: a downlight throw
 
 The profile's straight-ahead direction is the way the light faces, along its Obj's blue (Z) axis. The light's intensity still sets how bright it is overall: the profile only shapes it.
 
+### Cookies and profiles from a script
+
+`light.Cookie` takes any picture of the project, as a `Texture`, and `light.Profile` an IES file, as a `LightProfile` field picked in the Inspector; each is loaded as it is set, and `Texture.None` or `LightProfile.None` takes it off. `light.CookieSize`, `light.ShadowTint` and `light.Body`, `SkyBody.Sun` or `SkyBody.Moon`, set the rest of a directional light's look:
+
+```csharp
+public LightProfile StreetLamp;
+
+lamp.Light.Profile = StreetLamp;
+moon.Light.Body = SkyBody.Moon;
+```
+
 ## Shadows from lamps
 
 Lights cast shadows unless you turn their **Shadows** off: what stands in a light's way casts a shadow, so a candle behind a pillar lights the floor round the pillar but not behind it. With Shadows off, a light shines through walls, curtains and everything else, which costs nothing and often looks fine for small, soft lights.

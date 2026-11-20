@@ -23,6 +23,8 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	private const int AimingValue = 4;
 	private const int AimedValue = 5;
 	private const int HipValue = 6;
+	private const int HipTurnValue = 21;
+	private const int ShoulderValue = 22;
 	private const int AimTimeValue = 7;
 	private const int SwayValue = 8;
 	private const int BobValue = 9;
@@ -94,6 +96,28 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 			return value.AsVector3();
 		}
 		set { NativeComponent.Set(NativeComponent.GunHolder, Obj, HipValue, new Vector4(value, 0f)); }
+	}
+
+	/// <summary>How the gun is turned at the hip, in degrees about the camera's X, Y and Z.</summary>
+	public Vector3 HipTurn
+	{
+		get
+		{
+			NativeComponent.Get(NativeComponent.GunHolder, Obj, HipTurnValue, out var value);
+			return value.AsVector3();
+		}
+		set { NativeComponent.Set(NativeComponent.GunHolder, Obj, HipTurnValue, new Vector4(value, 0f)); }
+	}
+
+	/// <summary>Where a long gun's butt sits from the shooting shoulder, in metres in the body's space: in toward the chest, up and forward.</summary>
+	public Vector3 Shoulder
+	{
+		get
+		{
+			NativeComponent.Get(NativeComponent.GunHolder, Obj, ShoulderValue, out var value);
+			return value.AsVector3();
+		}
+		set { NativeComponent.Set(NativeComponent.GunHolder, Obj, ShoulderValue, new Vector4(value, 0f)); }
 	}
 
 	/// <summary>How long raising the gun to the eye takes, in seconds.</summary>

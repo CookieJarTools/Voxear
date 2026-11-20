@@ -986,6 +986,25 @@ fn a_tool_reads_and_sets_the_world_quality_by_preset_number_and_for_this_machine
 }
 
 #[test]
+fn a_portal_shows_a_row_for_each_named_layer_it_lets_through() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let gate =
+        done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Gate" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": gate, "component": "portal" }));
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": gate }));
+    assert_eq!(field(&shown, "portal", "passes.Default")["value"], true, "every layer goes through: {shown}");
+    let set = json!({ "obj": gate, "component": "portal", "field": "passes.Default", "value": false });
+    done(&mut editor, &mut renderer, "field.set", set);
+    let entity = link::resolve_obj(&editor.game, &gate).unwrap();
+    let portal = *editor.game.engine.world.get::<voxear_render::Portal>(entity).unwrap();
+    assert_eq!(portal.passes & 1, 0, "Default's Objs no longer go through");
+    assert_ne!(portal.passes, 0, "the other layers' still do");
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": gate }));
+    assert_eq!(field(&shown, "portal", "passes.Default")["value"], false, "{shown}");
+}
+
+#[test]
 fn a_portals_view_distance_is_the_projects_or_its_own_and_a_tool_sets_both() {
     use voxear_render::portals::PortalQuality;
     let dir = hello_copy();

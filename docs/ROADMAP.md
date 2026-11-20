@@ -1212,6 +1212,22 @@ Done:
   `ResetShadows` set the sun's shadow method, distance and split and the lamps' shadows over the level's, as a graphics
   options menu does. Tests: a scene's own sun and weather light it as lighting settings would; the page and
   `lighting.set` change Hello's own shadows, undo and save them; scripts read, change and reset the shadows.
+- **Run-time settings in reach of scripts and tools:** C# `Lighting.Sky`/`ChangeSky`/`ResetSky` (every `[sky]` and
+  `[sky.clouds]` setting but the picture) and `Lighting.SunLook`/`ChangeSun`/`ResetSun` (the `[sun]` look) are laid
+  over the level's and a worn look pack's as `look_packs::ScriptLook`, kept through level changes. Post Volume, Wind
+  Zone, Ocean, Pool and Stream (`WaterStream`) are C# classes over one engine path that reads and changes a
+  component whole as its scene file writes it (`script_components`); `Seasons` gets each season's look and the rest,
+  `Climate` its temperature, swing and humidity. Tools: `look_pack.list`/`wear`, `texture_pack.list`/`wear`,
+  `audio.mix` and `display`. Tests: engine lib and a C# script on Hello changing each; editor calls; C# away from the
+  engine.
+- **Component fields in reach of scripts:** C# Light `Cookie` (a `Texture`), `Profile` (`LightProfile`), `CookieSize`,
+  `ShadowTint` and `Body` (`SkyBody`); Particle System `Texture` (`ParticleTexture`), `Tiles`, `Animate`, `LightMap`,
+  `Mesh` (`ParticleMesh`) and `Graph` (`ParticleGraph`); First-Person View `Twist`; Bone Attachment `Bone`; Gun
+  `GripTurn`, `SupportTurn`, `Butt` and Gun Holder `HipTurn`, `Shoulder`; Dry Area `Mesh` (`MeshAsset`); `Storms.Seed`;
+  `FoliageRenderer`, `LodGroup`, `NavArea` and `NavLink` classes. What only content and the renderer load goes
+  through the services lent scripts (`ObjAsset`); the rest through `ComponentKind::Whole`. A Portal's Passes have
+  an Inspector row per named layer. Tests: engine lib, a C# script on Hello with a renderer, the guns script,
+  the Portal's rows by `field.set`, C# away from the engine.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

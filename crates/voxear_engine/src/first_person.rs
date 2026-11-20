@@ -375,6 +375,7 @@ const PUNCH: i32 = 17;
 const GLANCE: i32 = 18;
 const FRAME_EYES: i32 = 19;
 const LEVEL: i32 = 20;
+const TWIST: i32 = 21;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::FirstPersonView, values);
@@ -413,6 +414,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             EYES => Some([view.eyes[0], view.eyes[1], view.eyes[2], 0.0]),
             TURN_OBJ => Some(flag(view.turn_obj)),
             LEAN => Some(number(view.lean)),
+            TWIST => Some(number(view.twist)),
             HIDE_HEAD => Some(flag(view.hide_head)),
             BODY => Some(obj_value(view.body)),
             CAMERA => Some(obj_value(view.camera)),
@@ -430,6 +432,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         EYES => view.eyes = [v[0], v[1], v[2]],
         TURN_OBJ => view.turn_obj = v[0] != 0.0,
         LEAN => view.lean = v[0].clamp(0.0, 1.0),
+        TWIST => view.twist = v[0].clamp(0.0, 1.0),
         HIDE_HEAD => view.hide_head = v[0] != 0.0,
         BODY => view.body = value_obj(v),
         CAMERA => view.camera = value_obj(v),

@@ -12,6 +12,13 @@ internal static unsafe class NativePost
 	public const int ShadowsInEffect = 4;
 	public const int ShadowsSet = 5;
 	public const int ShadowsReset = 6;
+	public const int SkyInEffect = 7;
+	public const int SkySet = 8;
+	public const int SkyReset = 9;
+	public const int SunLook = 10;
+	public const int SunLookSet = 11;
+	public const int SunLookReset = 12;
+	public const int LevelComponent = 13;
 
 	public static bool IsConnected => Native.IsConnected;
 

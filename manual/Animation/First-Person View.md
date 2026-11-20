@@ -7,6 +7,7 @@ A **First-Person View** puts the camera in a character's own head. Add it to the
 - The mouse turns it, by **Sensitivity** degrees a pixel, between its **Tilt Limits**. Turn **Mouse Look** off to turn it from a script with `view.Yaw` and `view.Pitch`.
 - **Turn Obj**: the Obj it is on turns to face where it looks.
 - **Lean**: how much of the tilt the upper body leans into, so looking down bends the character over rather than only the camera.
+- **Twist**: how much of the way the upper body turns to face where the view looks before the legs have, from 0 to 1. A script sets it as `view.Twist`.
 - **Head Bob**: how much of the head's bob reaches the camera. A camera that follows the head exactly is hard to look through, so it is steadied.
 - **Eyes**: where the eyes are from the head bone.
 - **Hide Head**: the head and neck are left out of what the camera sees, so it doesn't see inside them, but they still cast their shadow (see [[Bone Attachments]]). While a gun's clips hold it, the camera sits low, near the neck, and the upper chest and collarbones round it are left out too, as the steps carry them up past the camera; the arms stay.

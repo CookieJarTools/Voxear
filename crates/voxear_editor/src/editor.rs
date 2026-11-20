@@ -47,6 +47,7 @@ mod model_materials;
 mod model_parts;
 mod modules;
 mod multiplayer;
+mod pack_calls;
 mod particle_effects;
 mod path_bakes;
 mod nav_bakes;

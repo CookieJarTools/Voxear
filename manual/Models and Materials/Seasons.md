@@ -73,3 +73,11 @@ public sealed class Calendar : Behaviour
 ```
 
 `Seasons.Season = Season.Winter;` turns it to winter at once. Without a Seasons in the level, setting the year does nothing and says so in the Console; `Seasons.Exists` tells whether there is one.
+
+How each season looks, and the rest of the Seasons' settings, change from code too: `Seasons.Look` and `Seasons.SetLook` for a season's colour, how far leaves turn to it and its snow, and `Variation`, `PatchSize`, `Dryness`, `DryColor`, `Wetness` and `GroundCover`:
+
+```csharp
+// A blight: autumn comes early and brown, and the fields dry out.
+Seasons.SetLook(Season.Autumn, Seasons.Look(Season.Autumn) with { Color = new Color(0.4f, 0.3f, 0.15f) });
+Seasons.Dryness = 0.8f;
+```

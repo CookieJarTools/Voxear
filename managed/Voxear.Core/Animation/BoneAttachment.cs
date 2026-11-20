@@ -36,6 +36,35 @@ public readonly struct BoneAttachment : IEquatable<BoneAttachment>, IObjComponen
 		set { Set(NativeBoneAttachment.Offset, new Vector4(value, 0f)); }
 	}
 
+	/// <summary>
+	/// The bone it sits on, in the model its parent draws: found by name, so it can be set before the model has
+	/// loaded. Bone.None while it names none, or none the model has.
+	/// <code>
+	/// sword.BoneAttachment.Bone = Obj.Skeleton.Find("hand_r");
+	/// </code>
+	/// </summary>
+	public Bone Bone
+	{
+		get
+		{
+			var name = BoneName;
+			return name.Length == 0 ? Bone.None : new Bone(Obj.Parent, name);
+		}
+		set { BoneName = value.Name; }
+	}
+
+	private string BoneName
+	{
+		get { return NativeWhole.ReadWhole(NativeWhole.BoneAttachment, Obj)?["bone"]?.GetValue<string>() ?? string.Empty; }
+		set
+		{
+			if (!NativeWhole.ChangeWhole(NativeWhole.BoneAttachment, Obj, new System.Text.Json.Nodes.JsonObject { ["bone"] = value }) && Native.IsConnected)
+			{
+				Log.Error($"{Obj} has no Bone Attachment; give it one with AddBoneAttachment.");
+			}
+		}
+	}
+
 	/// <summary>Whether it turns as the bone turns, rather than keeping its own turn.</summary>
 	public bool Turn
 	{

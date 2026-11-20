@@ -34,6 +34,10 @@ const FEED_KNOWN: i32 = 17;
 const CHAMBER_KNOWN: i32 = 18;
 const CAPACITY: i32 = 19;
 const OPEN: i32 = 20;
+// How the hand at the grip and at the support is turned, in degrees, and where the butt is.
+const GRIP_TURN: i32 = 21;
+const SUPPORT_TURN: i32 = 22;
+const BUTT: i32 = 23;
 
 // A Gun Holder's values.
 const GUN: i32 = 3;
@@ -54,6 +58,9 @@ const ACTING: i32 = 17;
 const SPARE: i32 = 18;
 const AUTO_CYCLE: i32 = 19;
 const SPRINTING: i32 = 20;
+// How the gun is turned at the hip, in degrees, and where it is held at the shoulder.
+const HIP_TURN: i32 = 21;
+const SHOULDER: i32 = 22;
 
 /// The actions in the order Voxear.Guns numbers them.
 const ACTIONS: [ActionKind; 4] =
@@ -196,6 +203,9 @@ fn gun_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
             EYE_RELIEF => Some(number(gun.eye_relief)),
             AIM_FOV => Some(number(gun.aim_fov)),
             MUZZLE => Some(point(gun.muzzle)),
+            GRIP_TURN => Some(point(gun.grip.rotation)),
+            SUPPORT_TURN => Some(point(gun.support.rotation)),
+            BUTT => Some(point(gun.butt)),
             _ => None,
         };
     };
@@ -217,6 +227,9 @@ fn gun_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
         EYE_RELIEF => gun.eye_relief = v[0].max(0.0),
         AIM_FOV => gun.aim_fov = v[0].clamp(0.0, 120.0),
         MUZZLE => gun.muzzle = at,
+        GRIP_TURN => gun.grip.rotation = at,
+        SUPPORT_TURN => gun.support.rotation = at,
+        BUTT => gun.butt = at,
         _ => return None,
     }
     Some([0.0; 4])
@@ -254,6 +267,8 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
             AIMING => Some(flag(holder.aiming)),
             AIMED => Some(number(aimed)),
             HIP => Some(point(holder.hip)),
+            HIP_TURN => Some(point(holder.hip_turn)),
+            SHOULDER => Some(point(holder.shoulder)),
             AIM_TIME => Some(number(holder.aim_time)),
             SWAY => Some(number(holder.sway)),
             BOB => Some(number(holder.bob)),
@@ -271,6 +286,8 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
         GUN => holder.gun = value_obj(v),
         AIMING => holder.aiming = v[0] != 0.0,
         HIP => holder.hip = [v[0], v[1], v[2]],
+        HIP_TURN => holder.hip_turn = [v[0], v[1], v[2]],
+        SHOULDER => holder.shoulder = [v[0], v[1], v[2]],
         AIM_TIME => holder.aim_time = v[0].max(0.02),
         SWAY => holder.sway = v[0].max(0.0),
         BOB => holder.bob = v[0].max(0.0),

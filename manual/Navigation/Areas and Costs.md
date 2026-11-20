@@ -28,3 +28,9 @@ Open **Project Settings ▸ Navigation**. **Costs** sets the cost of a road, wat
 ## From a script
 
 `Navigation.AreaAt(point)` says what area the place to stand nearest a point is, as a `NavAreaType`.
+
+`Obj.NavArea` is an Obj's Nav Area, null when it has none, and `Obj.AddNavArea` gives it one: its `Size`, and its `Mark`, a `NavAreaMark`. Ways searched after a change go by it, as a bridge that burns is kept off:
+
+```csharp
+Obj.NavArea?.Mark = NavAreaMark.NotWalkable;
+```

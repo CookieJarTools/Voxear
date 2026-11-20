@@ -186,3 +186,7 @@ The horizon colour is also the colour of the distant mist; see [[Post-Processing
 
 > [!NOTE]
 > The editor has no settings for the sky yet. Change the scene file in a text editor, then open the level again to see it.
+
+## The sky from a script
+
+A script changes any setting of the sky and its clouds while the game runs with `Lighting.ChangeSky`, over the level's own: see [[Lighting Settings#The sky and the sun from a script]].

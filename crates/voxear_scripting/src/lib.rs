@@ -50,8 +50,8 @@ pub use interop::{
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
 pub use post::{
-    POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PostCall, SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET,
-    set_post_call,
+    LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PostCall, SHADOWS_IN_EFFECT, SHADOWS_RESET,
+    SHADOWS_SET, SKY_IN_EFFECT, SKY_RESET, SKY_SET, SUN_LOOK, SUN_LOOK_RESET, SUN_LOOK_SET, set_post_call,
 };
 pub use plants::{FoliageCall, set_foliage_call};
 pub use crowds::{CrowdRecordsState, set_crowd_records};
@@ -69,9 +69,10 @@ pub use saves::{
     SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language, saves_folder,
 };
 pub use services::{
-    AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, ModelChange, PreviewOptions, PreviewSource,
-    PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
-    change_model, model_part_name, set_model, set_parent, ui_panel_document, ui_screen_document,
+    AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, ModelChange, ObjAsset, PreviewOptions,
+    PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
+    UiAnswer, UiAsk, change_model, model_part_name, obj_asset, set_model, set_parent, ui_panel_document,
+    ui_screen_document,
 };
 pub use trees::FelledInfo;
 pub use ui_rows::RowWork;

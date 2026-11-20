@@ -494,6 +494,82 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new DryArea(this);
 	}
 
+	/// <summary>The Obj's Post Volume, whose post-processing blends in round it; null when it has none.</summary>
+	public PostVolume? PostVolume => PostVolume.Of(this);
+
+	/// <summary>Gives the Obj a Post Volume, a box that changes nothing yet, unless it has one, and returns it.</summary>
+	public PostVolume AddPostVolume()
+	{
+		NativeComponent.Set(NativeWhole.PostVolume, this, NativeComponent.Add, Vector4.Zero);
+		return new PostVolume(this);
+	}
+
+	/// <summary>The Obj's Nav Area, which marks the ground in its box for navigation; null when it has none.</summary>
+	public NavArea? NavArea => NavArea.Of(this);
+
+	/// <summary>Gives the Obj a Nav Area, a box 4 by 2 by 4 metres marked Road, unless it has one, and returns it.</summary>
+	public NavArea AddNavArea()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.NavArea, this, true);
+		return new NavArea(this);
+	}
+
+	/// <summary>The Obj's Nav Link, a way from it walking does not take; null when it has none.</summary>
+	public NavLink? NavLink => NavLink.Of(this);
+
+	/// <summary>Gives the Obj a Nav Link, a ladder two metres ahead both ways, unless it has one, and returns it.</summary>
+	public NavLink AddNavLink()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.NavLink, this, true);
+		return new NavLink(this);
+	}
+
+	/// <summary>The Obj's LOD Group; null when it has none.</summary>
+	public LodGroup? LodGroup => LodGroup.Of(this);
+
+	/// <summary>The Obj's Foliage, one plant drawn wherever its plants grow; null when it has none.</summary>
+	public FoliageRenderer? FoliageRenderer => FoliageRenderer.Of(this);
+
+	/// <summary>The Obj's Wind Zone; null when it has none.</summary>
+	public WindZone? WindZone => WindZone.Of(this);
+
+	/// <summary>Gives the Obj a Wind Zone, a breeze over the whole level, unless it has one, and returns it.</summary>
+	public WindZone AddWindZone()
+	{
+		NativeComponent.Set(NativeWhole.WindZone, this, NativeComponent.Add, Vector4.Zero);
+		return new WindZone(this);
+	}
+
+	/// <summary>The Obj's Ocean, the sea; null when it has none.</summary>
+	public Ocean? Ocean => Ocean.Of(this);
+
+	/// <summary>Gives the Obj an Ocean, a sea at its height in Normal weather, unless it has one, and returns it.</summary>
+	public Ocean AddOcean()
+	{
+		NativeComponent.Set(NativeWhole.Ocean, this, NativeComponent.Add, Vector4.Zero);
+		return new Ocean(this);
+	}
+
+	/// <summary>The Obj's Pool of water or lava; null when it has none.</summary>
+	public Pool? Pool => Pool.Of(this);
+
+	/// <summary>Gives the Obj a Pool, a lake 10 metres across and 4 deep, unless it has one, and returns it.</summary>
+	public Pool AddPool()
+	{
+		NativeComponent.Set(NativeWhole.Pool, this, NativeComponent.Add, Vector4.Zero);
+		return new Pool(this);
+	}
+
+	/// <summary>The Obj's Stream, water or lava running along its Path; null when it has none.</summary>
+	public WaterStream? Stream => WaterStream.Of(this);
+
+	/// <summary>Gives the Obj a Stream, which runs along its Path, unless it has one, and returns it.</summary>
+	public WaterStream AddStream()
+	{
+		NativeComponent.Set(NativeWhole.Stream, this, NativeComponent.Add, Vector4.Zero);
+		return new WaterStream(this);
+	}
+
 	/// <summary>
 	/// The Obj's Reverb Probe, a box of probes baked for how long sound rings through it. Not valid when it has none.
 	/// </summary>

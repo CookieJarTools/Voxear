@@ -68,6 +68,15 @@ strength = 1.5
 gusts = 0.8
 ```
 
+### A Wind Zone from a script
+
+`Obj.WindZone` is an Obj's Wind Zone, null when it has none, and `Obj.AddWindZone` gives it one. Every setting above is there by its name, `Shape` as a `WindShape`:
+
+```csharp
+// A storm rising: the wind builds to a gale over a minute.
+Obj.WindZone?.Strength = MathF.Min(3f, 1f + stormTime / 30f);
+```
+
 ## Plants that move
 
 Foliage materials move in the wind on their own: grass, leaves and bushes need no setup. Two material settings say how:

@@ -50,7 +50,7 @@ These go through by themselves:
 
 An Obj goes through when its own position crosses the opening, so a character goes through as its feet do. What is under it goes with it. While an Obj is part-way through, it is drawn on both sides, so a character stepping through is whole from either place.
 
-**Passes** says which layers' Objs go through. In a scene file it is a list of layer numbers; left out, every layer passes.
+**Passes** says which layers' Objs go through: the Inspector has a row for each layer the project names, as tools have `passes.` and the layer's name for `field.set`. In a scene file it is a list of layer numbers; left out, every layer passes.
 
 ## Cameras
 

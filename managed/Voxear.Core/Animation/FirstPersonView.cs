@@ -38,6 +38,7 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 	private const int GlanceValue = 18;
 	private const int FrameEyesValue = 19;
 	private const int LevelValue = 20;
+	private const int TwistValue = 21;
 
 	public static readonly FirstPersonView None = default;
 
@@ -133,6 +134,13 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 	{
 		get { return Number(LeanValue); }
 		set { Set(LeanValue, value); }
+	}
+
+	/// <summary>How much of the way the upper body turns to face where the view looks before the legs have, from 0 to 1.</summary>
+	public float Twist
+	{
+		get { return Number(TwistValue); }
+		set { Set(TwistValue, value); }
 	}
 
 	/// <summary>Whether the head is hidden, so the camera does not see inside it.</summary>

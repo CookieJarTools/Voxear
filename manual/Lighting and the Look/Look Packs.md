@@ -21,7 +21,7 @@ A pack changes only what is there to change: Cube Clouds does nothing over a lev
 
 ## Seeing a level under a pack
 
-On the **Lighting** page, under the scene's lighting, **Look pack** shows the open scene under any pack, as a player who picked it would see it. It is a way to check your levels against the packs your game offers: nothing of it is saved with the scene, and the page's settings go on showing the level's own lighting.
+On the **Lighting** page, under the scene's lighting, **Look pack** shows the open scene under any pack, as a player who picked it would see it. It is a way to check your levels against the packs your game offers: nothing of it is saved with the scene, and the page's settings go on showing the level's own lighting. Tools do the same with `vox editor call look_pack.list` and `look_pack.wear`.
 
 ## Letting players choose
 

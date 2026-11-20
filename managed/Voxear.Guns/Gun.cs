@@ -34,6 +34,9 @@ public readonly struct Gun : IEquatable<Gun>, IObjComponent
 	private const int ChamberKnownValue = 18;
 	private const int CapacityValue = 19;
 	private const int OpenValue = 20;
+	private const int GripTurnValue = 21;
+	private const int SupportTurnValue = 22;
+	private const int ButtValue = 23;
 
 	private const int HandlingText = 0;
 
@@ -104,6 +107,27 @@ public readonly struct Gun : IEquatable<Gun>, IObjComponent
 	{
 		get { return Point(SupportValue); }
 		set { Set(SupportValue, value); }
+	}
+
+	/// <summary>How the shooting hand is turned at the Grip, in degrees about X, Y and Z of the model.</summary>
+	public Vector3 GripTurn
+	{
+		get { return Point(GripTurnValue); }
+		set { Set(GripTurnValue, value); }
+	}
+
+	/// <summary>How the other hand is turned at the Support, in degrees about X, Y and Z of the model.</summary>
+	public Vector3 SupportTurn
+	{
+		get { return Point(SupportTurnValue); }
+		set { Set(SupportTurnValue, value); }
+	}
+
+	/// <summary>Where a long gun's stock meets the shoulder, on the model: the middle of its butt.</summary>
+	public Vector3 Butt
+	{
+		get { return Point(ButtValue); }
+		set { Set(ButtValue, value); }
 	}
 
 	/// <summary>The rear sight, on the model.</summary>

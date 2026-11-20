@@ -46,6 +46,16 @@ Each view chooses for itself, so a Scene view close up and the Game view far awa
 
 A LOD Group can be part of a prefab. Each copy of the prefab switches between its own Objs.
 
+A script reads and sets an Obj's group as `Obj.LodGroup`: its `Measure`, `Cull` and `Levels`, each level its Objs and where it ends, set whole:
+
+```csharp
+// A slow machine: each level ends sooner.
+if (Obj.LodGroup is { } lods)
+{
+	lods.Levels = [.. lods.Levels.Select(level => level with { Until = level.Until * 1.5f })];
+}
+```
+
 ## In a scene file
 
 A scene or prefab file writes a LOD Group under its Obj as `[obj.lod_group]`, each level naming its Obj by id:

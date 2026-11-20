@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 95;
+pub(crate) const API_VERSION: u32 = 96;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -1308,6 +1308,10 @@ pub(crate) struct ManagedApi {
     /// name one to a line.
     pub heat_events:
         Option<unsafe extern "C" fn(events: *const crate::heat::HeatEventData, count: i32, text: *const u8, len: i32)>,
+    /// Tells behaviours their Obj's ground goes or came back
+    /// (`OnGroundUnloading`, `OnGroundLoaded`): each Obj, and 0 for going or
+    /// 1 for come back.
+    pub ground_events: Option<unsafe extern "C" fn(objs: *const u64, count: i32, kinds: *const i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(

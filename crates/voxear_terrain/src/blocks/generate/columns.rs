@@ -20,6 +20,7 @@ use crate::{
     blocks::{
         chunk::{AIR, BlockId, CHUNK, Chunk},
         file::BlockFile,
+        world_layers,
     },
     generate::Cells,
 };
@@ -972,6 +973,27 @@ fn column_chunks_within(
         };
         clear_loose(&mut chunks, sea, &beyond);
     }
+    // The world's layers over its ground, before anything is built on it (see `world_layers`).
+    if let Some(layers) = generate.layers.get().filter(|layers| !file.smooth && layers.reaches_level(level, [cx, cz])) {
+        let bottom = generate.lowest_open().div_euclid(scale as i32);
+        let highest = chunks.iter().map(|(key, _)| key[1] * side + side - 1).max().unwrap_or(top);
+        for at in (0..places.len()).filter(|&at| own(places[at])) {
+            let ((x, z), column) = (places[at], &columns[at]);
+            let ground = (column.surface - 0.5).ceil() as i32;
+            let Some(shaped) = layers.shape_at(level, [x, z], ground) else { continue };
+            let block_at = |depth: f32| column.block(depth);
+            let open = |y: i32| cell(column, -2.0, -2.0, 0.0, -2.0, sea_at(at, y), false).map_or(AIR, |cell| cell.0);
+            let mut put = |y: i32, block: BlockId| {
+                let held = chunks.iter().any(|(key, _)| key[1] == y.div_euclid(side));
+                if y >= bottom && (block != AIR || held) {
+                    crate::blocks::structure::put_block(&mut chunks, [cx, cz], bottom, [x, y, z], block);
+                }
+            };
+            world_layers::shape_column(shaped, ground, highest, &block_at, &open, &mut put);
+        }
+        chunks.retain(|(_, chunk)| !chunk.is_air());
+        chunks.sort_by_key(|(key, _)| key[1]);
+    }
     let built = generate.built.as_deref().filter(|built| !built.list.is_empty());
     if let Some(built) = built.filter(|_| level == 0) {
         let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
@@ -980,7 +1002,7 @@ fn column_chunks_within(
         let under = if usize::from(under) <= file.blocks.len() { under } else { AIR };
         // Nothing is built into the floor.
         let at = (size, generate.position, generate.lowest_open(), halves.is_some());
-        crate::blocks::structure::build(&mut chunks, built, world, biomes, at, [cx, cz], under);
+        crate::blocks::structure::build(&mut chunks, built, world, biomes, at, [cx, cz], under, generate.layers.get());
     }
     // The floor last, over whatever the ground, its caves or its water put there.
     lay_floor(&mut chunks, (file, generate, level), [cx, cz], (across, along));

@@ -137,6 +137,29 @@ pub struct BlockGenerate {
     /// otherwise.
     #[serde(skip_serializing_if = "BlockFloor::is_default")]
     pub floor: BlockFloor,
+    /// The world layers a scene puts over its ground (see
+    /// `blocks::world_layers`): filled in by whoever has the scene, and not
+    /// part of the world's settings, so two worlds alike but for their
+    /// layers count as alike, and a change to them makes again only the
+    /// columns it touches.
+    #[serde(skip)]
+    pub layers: Layers,
+}
+
+/// A world's layers, compared as always alike (see `BlockGenerate::layers`).
+#[derive(Clone, Debug, Default)]
+pub struct Layers(pub Option<std::sync::Arc<super::world_layers::WorldLayers>>);
+
+impl PartialEq for Layers {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Layers {
+    pub fn get(&self) -> Option<&super::world_layers::WorldLayers> {
+        self.0.as_deref().filter(|layers| !layers.is_empty())
+    }
 }
 
 /// The floor under a generated world: its lowest `depth` blocks, from its
@@ -221,6 +244,7 @@ impl Default for BlockGenerate {
             structures: Vec::new(),
             built: None,
             floor: BlockFloor::default(),
+            layers: Layers::default(),
         }
     }
 }

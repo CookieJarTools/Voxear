@@ -560,6 +560,37 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled }], agents, mobs }",
     },
     CallInfo {
+        name: "ground_fit.land",
+        about: "Sets an Obj with a Ground Fit down on the ground of the world of blocks in its dimension, as the generator and every other Ground Fit make it, its own fit left out: where it lands dropped in the Scene view. At its own place along x and z, or at `at`. One step to undo.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the Ground Fit."),
+            maybe("at", ArgKind::Vector, "Where to set it down along x and z, in metres; its own place when left out."),
+        ],
+        changes: true,
+        returns: "{ position }",
+    },
+    CallInfo {
+        name: "blocks.columns",
+        about: "Each world of blocks without end streamed last frame: the chunk columns made round where it is seen from, those made and let go that frame, and how many Objs are kept while their ground is away (see Streams With Ground).",
+        args: &[],
+        changes: false,
+        returns: "{ worlds: [{ world, near, came, went }], kept }",
+    },
+    CallInfo {
+        name: "world_layers.status",
+        about: "The world layers over each world of blocks without end's ground, as it was last streamed: how many Ground Fits, how many chunk columns they reach, and which kinds are hidden to show the bare ground.",
+        args: &[],
+        changes: false,
+        returns: "{ worlds: [{ world, fits, columns }], hidden: { fits } }",
+    },
+    CallInfo {
+        name: "world_layers.hide",
+        about: "Hides world layers of a kind from every world's ground, to see the bare ground under them, or shows them again. A view setting: the scene is not changed.",
+        args: &[maybe("fits", ArgKind::Toggle, "Whether Ground Fits are hidden.")],
+        changes: false,
+        returns: "{ hidden: { fits } }",
+    },
+    CallInfo {
         name: "navigation.bake",
         about: "Bakes the open level's nav mesh from its still colliders, as its Inspector's Bake Navigation does, for agents on levels of models; written beside the level as its `.nav` file. Answers once the bake is done.",
         args: &[],
@@ -1361,6 +1392,8 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::NavAgent
             | Part::NavArea
             | Part::NavLink
+            | Part::GroundFit
+            | Part::StreamsWithGround
             | Part::NavObstacle
             | Part::CrowdMember
             | Part::MotionMatcher

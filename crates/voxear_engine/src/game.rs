@@ -1098,6 +1098,65 @@ impl Game {
         self.engine.instantiate(&template, parent, placement)
     }
 
+    /// Takes away the Objs whose ground streamed out, kept for later or
+    /// destroyed as their Streams With Ground says, and makes again those
+    /// kept whose ground came back (see `ground_streaming`).
+    fn stream_with_ground(&mut self, mut renderer: Option<&mut Renderer>) {
+        use crate::ground_streaming::{GroundMoves, GroundRecord, GroundRecords};
+        let Some(moves) = self.engine.world.resource::<GroundMoves>().cloned() else { return };
+        let going = crate::ground_streaming::going(&mut self.engine.world, &moves);
+        let told: Vec<(Entity, bool)> =
+            going.keep.iter().map(|(entity, _)| *entity).chain(going.destroy.iter().copied()).map(|e| (e, true)).collect();
+        self.engine.tell_ground_events(&told);
+        let mut gone: Vec<Entity> = going.destroy.clone();
+        for (entity, which) in going.keep {
+            if !self.engine.world.is_alive(entity) {
+                continue;
+            }
+            let moved = &moves.worlds[which];
+            let at = self.engine.world.get::<voxear_scene::WorldTransform>(entity).map(|p| p.0.w_axis.truncate());
+            let scene = crate::scene_file::capture(&self.engine.world, &mut self.content, &[entity]);
+            let record = GroundRecord {
+                world: moved.world,
+                column: moved.column_of(at.unwrap_or(moved.corner)),
+                dimension: moved.dimension,
+                scene,
+            };
+            let world = &mut self.engine.world;
+            if world.resource::<GroundRecords>().is_none() {
+                world.insert_resource(GroundRecords::default());
+            }
+            world.resource_mut::<GroundRecords>().expect("put in above").records.push(record);
+            gone.push(entity);
+        }
+        if !gone.is_empty() {
+            self.engine.destroy_objs(&gone);
+        }
+        let mut back: Vec<(Entity, bool)> = Vec::new();
+        for record in crate::ground_streaming::coming(&mut self.engine.world, &moves) {
+            let none = std::collections::HashSet::new();
+            let made = crate::scene_file::spawn_objs(&mut self.engine, &mut self.content, renderer.as_deref_mut(), &record.scene, &none);
+            let made = match made {
+                Ok(made) => made,
+                Err(error) => {
+                    tracing::warn!("an Obj kept while its ground was away: {error:#}");
+                    continue;
+                }
+            };
+            let world = &mut self.engine.world;
+            let roots: Vec<Entity> =
+                made.iter().map(|(_, entity)| *entity).filter(|&entity| !world.has::<voxear_scene::Parent>(entity)).collect();
+            if record.dimension != voxear_scene::DimensionId::LEVEL {
+                for &root in &roots {
+                    voxear_scene::put_in_dimension(world, root, record.dimension);
+                }
+            }
+            crate::ground_streaming::landed(world, &roots);
+            back.extend(roots.into_iter().map(|root| (root, false)));
+        }
+        self.engine.tell_ground_events(&back);
+    }
+
     /// Makes records of Crowd Members gone far off and Objs again of records
     /// come near (see `crowd_records`), each made from its prefab, sent on
     /// where it was going.
@@ -1479,6 +1538,10 @@ impl Game {
         if !self.engine.is_edit_mode() {
             profile_scope!("Crowd Records");
             self.keep_crowd_records(delta, renderer.as_deref_mut());
+        }
+        if !self.engine.is_edit_mode() {
+            profile_scope!("Streams With Ground");
+            self.stream_with_ground(renderer.as_deref_mut());
         }
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
         {

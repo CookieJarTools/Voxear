@@ -26,6 +26,7 @@ pub(crate) use voxshades::VOXSHADE_HEADING;
 mod models;
 mod grown_plants;
 mod heat_view;
+mod fit_view;
 mod nav_view;
 mod river_water;
 mod hierarchies;
@@ -1215,6 +1216,7 @@ impl Editor {
         self.draw_scene_gizmos();
         self.draw_heat_view();
         self.draw_nav_view();
+        self.draw_fit_view();
 
         if let Some((viewport, camera)) = view {
             // Set each frame, a copy: the Gizmos button changes it as much as the camera does.

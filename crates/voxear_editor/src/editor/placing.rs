@@ -129,16 +129,26 @@ impl Editor {
             self.live_place = Some(LivePlace { path, root, family, offset });
         }
         let Some(live) = &self.live_place else { return };
-        let at = self.scene_landing(renderer, &live.family) + live.offset;
-        if let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(live.root) {
+        let (root, at) = (live.root, self.scene_landing(renderer, &live.family) + live.offset);
+        let at = self.fit_landing(root, at);
+        if let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(root) {
             transform.position = at;
         }
+    }
+
+    /// Where `root`, set down at `at`, lands: with a Ground Fit, on the
+    /// ground as it is without its own fit, so it does not sink into its own
+    /// cut or stand on its own foundation.
+    fn fit_landing(&mut self, root: Entity, at: Vec3) -> Vec3 {
+        let game = &mut self.game;
+        voxear_engine::ground_fit::landing(&mut game.engine.world, &mut game.content, root, at).unwrap_or(at)
     }
 
     /// Keeps what was placed live where it was let go of, as one step to
     /// undo, and selects it.
     fn keep_live(&mut self, live: LivePlace, renderer: &Renderer) {
         let at = self.scene_landing(renderer, &live.family) + live.offset;
+        let at = self.fit_landing(live.root, at);
         if let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(live.root) {
             transform.position = at;
         }

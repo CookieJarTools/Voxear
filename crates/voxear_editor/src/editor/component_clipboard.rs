@@ -61,6 +61,8 @@ pub(super) enum Copied {
     NavAgent(voxear_engine::nav_agent::NavAgent),
     NavArea(voxear_engine::navigation::NavArea),
     NavLink(voxear_engine::navigation::NavLink),
+    GroundFit(voxear_engine::ground_fit::GroundFit),
+    StreamsWithGround(voxear_engine::ground_streaming::StreamsWithGround),
     NavObstacle(voxear_engine::nav_obstacle::NavObstacle),
     CrowdMember(voxear_engine::crowds::CrowdMember),
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
@@ -136,6 +138,10 @@ impl Copied {
             Part::NavAgent => Self::NavAgent(world.get::<voxear_engine::nav_agent::NavAgent>(entity)?.clone()),
             Part::NavArea => Self::NavArea(*world.get::<voxear_engine::navigation::NavArea>(entity)?),
             Part::NavLink => Self::NavLink(*world.get::<voxear_engine::navigation::NavLink>(entity)?),
+            Part::GroundFit => Self::GroundFit(world.get::<voxear_engine::ground_fit::GroundFit>(entity)?.clone()),
+            Part::StreamsWithGround => {
+                Self::StreamsWithGround(*world.get::<voxear_engine::ground_streaming::StreamsWithGround>(entity)?)
+            }
             Part::NavObstacle => Self::NavObstacle(*world.get::<voxear_engine::nav_obstacle::NavObstacle>(entity)?),
             Part::CrowdMember => Self::CrowdMember(*world.get::<voxear_engine::crowds::CrowdMember>(entity)?),
             Part::Gun => Self::Gun(Box::new(world.get::<voxear_engine::guns::Gun>(entity)?.clone())),
@@ -204,6 +210,8 @@ impl Copied {
             Self::NavAgent(agent) => drop(world.insert(entity, agent.clone())),
             Self::NavArea(area) => drop(world.insert(entity, *area)),
             Self::NavLink(link) => drop(world.insert(entity, *link)),
+            Self::GroundFit(fit) => drop(world.insert(entity, fit.clone())),
+            Self::StreamsWithGround(streams) => drop(world.insert(entity, *streams)),
             Self::NavObstacle(obstacle) => drop(world.insert(entity, *obstacle)),
             Self::CrowdMember(member) => drop(world.insert(entity, *member)),
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),

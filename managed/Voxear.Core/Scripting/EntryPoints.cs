@@ -248,6 +248,13 @@ internal static unsafe class EntryPoints
 		MotionMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), Encoding.UTF8.GetString(text, length));
 	}
 
+	/// <summary>Tells behaviours their Obj's ground goes, as OnGroundUnloading, or came back, as OnGroundLoaded.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void GroundEvents(ulong* objs, int count, int* kinds)
+	{
+		GroundMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), new ReadOnlySpan<int>(kinds, count));
+	}
+
 	/// <summary>Tells scripts of particles' strikes, as OnParticleHit and Particles.Hit.</summary>
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static void ParticleHits(ParticleHitData* hits, int count)

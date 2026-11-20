@@ -490,7 +490,7 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
             let top = (height / coarse - 0.5).ceil() as i32;
             (level > 0).then_some((top << level) - 1)
         };
-        super::structure::build_over_standing(&mut set, built, world, biomes, at, (first, end), under, &feet);
+        super::structure::build_over_standing(&mut set, built, world, biomes, at, (first, end), under, &feet, generate.layers.get());
     });
     sets
 }

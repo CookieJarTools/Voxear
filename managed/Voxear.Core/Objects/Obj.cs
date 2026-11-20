@@ -524,6 +524,26 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new NavLink(this);
 	}
 
+	/// <summary>The Obj's Ground Fit, which shapes the ground of a world of blocks under it; null when it has none.</summary>
+	public GroundFit? GroundFit => GroundFit.Of(this);
+
+	/// <summary>Gives the Obj a Ground Fit, a 4 by 4 metre plot levelled at its height, unless it has one, and returns it.</summary>
+	public GroundFit AddGroundFit()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.GroundFit, this, true);
+		return new GroundFit(this);
+	}
+
+	/// <summary>The Obj's Streams With Ground, which makes it come and go with its ground; null when it has none.</summary>
+	public StreamsWithGround? StreamsWithGround => StreamsWithGround.Of(this);
+
+	/// <summary>Gives the Obj a Streams With Ground, kept for later, unless it has one, and returns it.</summary>
+	public StreamsWithGround AddStreamsWithGround()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.StreamsWithGround, this, true);
+		return new StreamsWithGround(this);
+	}
+
 	/// <summary>The Obj's LOD Group; null when it has none.</summary>
 	public LodGroup? LodGroup => LodGroup.Of(this);
 

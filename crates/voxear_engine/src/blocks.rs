@@ -1496,6 +1496,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
     drop(finding);
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
+    let mut moves = crate::ground_streaming::GroundMoves::default();
     for (entity, mut asset, corner) in endless {
         // The far sides of Portals into its dimension; and where it is seen from, if that is in it. A world with
         // neither is left as it is, its streamer kept for when it is seen again.
@@ -1514,6 +1515,11 @@ pub fn stream(world: &mut World, content: &mut Content) {
         // Woods of the plants it grows, where they are thick enough to show so far off.
         making.far_built = crate::grown_plants::far_built(world, content, entity);
         drop(wooded);
+        // The world layers its scene puts over its ground: Ground Fits.
+        let place = crate::ground_fit::WorldPlace { corner, block_size: asset.file.block_size };
+        let drawn = asset.drawn.clone();
+        let layers = crate::ground_fit::layers_of(world, entity, place, &|guid| drawn.number_of(guid), None);
+        making.generate.layers = voxear_terrain::blocks::generate::Layers(layers);
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let streamer = streams.0.entry(entity).or_default();
         // As many columns at once as the game's budget lets it, and as many times as far as the world says as
@@ -1547,12 +1553,25 @@ pub fn stream(world: &mut World, content: &mut Content) {
             far: distances.1,
             pushed: 1.0,
         }));
-        if streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from) {
+        let changed = streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from);
+        // Which columns came and went, for what stands on them (see `ground_streaming`).
+        let (came, went) = streamer.take_moves();
+        moves.worlds.push(crate::ground_streaming::WorldMoves {
+            world: entity,
+            dimension: here,
+            corner,
+            block_size: asset.file.block_size,
+            near: blocks.columns.clone().unwrap_or_default(),
+            came,
+            went,
+        });
+        if changed {
             world.insert(entity, blocks);
             world.insert(entity, asset);
         }
     }
     world.insert_resource(streams);
+    world.insert_resource(moves);
 }
 
 /// Makes changes that came from elsewhere, as a server's edits to a player

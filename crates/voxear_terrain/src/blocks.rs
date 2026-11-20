@@ -51,6 +51,7 @@ pub mod structure;
 pub mod stream;
 pub mod usable;
 pub mod vox;
+pub mod world_layers;
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},

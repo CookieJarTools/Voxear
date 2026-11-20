@@ -800,6 +800,8 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "NavAgent" => |world, entity| world.has::<voxear_engine::nav_agent::NavAgent>(entity),
         "NavArea" => |world, entity| world.has::<voxear_engine::navigation::NavArea>(entity),
         "NavLink" => |world, entity| world.has::<voxear_engine::navigation::NavLink>(entity),
+        "GroundFit" => |world, entity| world.has::<voxear_engine::ground_fit::GroundFit>(entity),
+        "StreamsWithGround" => |world, entity| world.has::<voxear_engine::ground_streaming::StreamsWithGround>(entity),
         "NavObstacle" => |world, entity| world.has::<voxear_engine::nav_obstacle::NavObstacle>(entity),
         "CrowdMember" => |world, entity| world.has::<voxear_engine::crowds::CrowdMember>(entity),
         "BoneAttachment" => |world, entity| world.has::<animation::BoneAttachment>(entity),

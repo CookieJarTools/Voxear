@@ -120,6 +120,7 @@ mod plants_panel;
 mod volume_panel;
 mod heat_props;
 mod storm_props;
+mod fit_props;
 mod nav_props;
 mod plants_props;
 mod plants_tools;

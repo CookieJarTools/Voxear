@@ -47,6 +47,7 @@ pub use super::dungeon::{
 use super::{
     chunk::{AIR, BlockId, CHUNK, Chunk},
     plant::{PlantDef, PlantPart},
+    world_layers::WorldLayers,
 };
 use crate::generate::{
     Biomes, WorldBiomes, WorldGen,
@@ -67,16 +68,20 @@ pub enum GroundFit {
     /// A foundation, and the ground cleared over its footprint as high as
     /// it stands, so a hillside does not run through it.
     Flatten,
+    /// Only the ground over its footprint cleared, as high as it stands: a
+    /// cutting, with nothing built up under it.
+    Cut,
 }
 
 impl GroundFit {
-    pub const ALL: [GroundFit; 3] = [GroundFit::Leave, GroundFit::Foundation, GroundFit::Flatten];
+    pub const ALL: [GroundFit; 4] = [GroundFit::Leave, GroundFit::Foundation, GroundFit::Flatten, GroundFit::Cut];
 
     pub fn name(self) -> &'static str {
         match self {
             GroundFit::Leave => "Leave",
             GroundFit::Foundation => "Foundation",
             GroundFit::Flatten => "Flatten",
+            GroundFit::Cut => "Cut",
         }
     }
 }
@@ -1277,9 +1282,11 @@ pub fn build(
     at: (f32, [f32; 2], i32, bool),
     [cx, cz]: [i32; 2],
     under: BlockId,
+    layers: Option<&WorldLayers>,
 ) {
     let mut set = |block_at: [i32; 3], block: BlockId| put_block(chunks, [cx, cz], at.2, block_at, block);
-    build_over(&mut set, structures, world, biomes, at, ([cx, cz], [cx + 1, cz + 1]), under);
+    let area = ([cx, cz], [cx + 1, cz + 1]);
+    build_looking(&mut set, structures, world, biomes, at, area, under, (&looks(structures, at.0), &|_| None, layers));
     chunks.retain(|(_, chunk)| !chunk.is_air());
     chunks.sort_by_key(|(key, _)| key[1]);
 }
@@ -1299,7 +1306,7 @@ pub fn build_over(
     area: ([i32; 2], [i32; 2]),
     under: BlockId,
 ) {
-    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), &|_| None));
+    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), &|_| None, None));
 }
 
 /// [`build_over`], each structure standing on the ground `feet` gives for
@@ -1319,8 +1326,9 @@ pub fn build_over_standing(
     area: ([i32; 2], [i32; 2]),
     under: BlockId,
     feet: &dyn Fn([i32; 2]) -> Option<i32>,
+    layers: Option<&WorldLayers>,
 ) {
-    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), feet));
+    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), feet, layers));
 }
 
 /// The dungeons `structures` lays out within `reach` metres of `near`, a
@@ -1418,7 +1426,7 @@ fn build_looking(
     (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
     (first, end): ([i32; 2], [i32; 2]),
     under: BlockId,
-    (looks, feet): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>),
+    (looks, feet, layers): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>, Option<&WorldLayers>),
 ) {
     let side = CHUNK as i32;
     let ground = Ground { world, size, position, biomes, halved, flat: None };
@@ -1505,6 +1513,11 @@ fn build_looking(
             if kept.near(block, by).filter(|taken| taken.which != which).any(|taken| {
                 taken.meets(block, footprint, reach) || too_near(taken)
             }) {
+                continue;
+            }
+            // Nor where a world layer leaves out what the generator builds (see `world_layers`).
+            let round = (footprint + reach).ceil() as i32;
+            if layers.is_some_and(|layers| layers.keeps_out(block.map(|v| v - round), block.map(|v| v + round))) {
                 continue;
             }
             // A town's layout, worked out once: what it takes up is its streets and buildings.
@@ -1594,7 +1607,7 @@ fn build_looking(
 
 /// Puts `block` at block `at` of chunk column `[cx, cz]`'s chunks, a chunk
 /// made where there is none, and nothing below block `bottom`.
-fn put_block(
+pub(crate) fn put_block(
     chunks: &mut Vec<([i32; 3], Chunk)>,
     [cx, cz]: [i32; 2],
     bottom: i32,
@@ -1795,10 +1808,12 @@ fn build_part(put: &mut impl FnMut(i32, i32, i32, BlockId), ground: &Ground, par
         for ([x, z], lowest, _) in footprint {
             let top = ground.top(x, z);
             let floor = base + lowest;
-            for y in (top + 1).min(floor)..floor {
-                put(x, y, z, under);
+            if part.ground != GroundFit::Cut {
+                for y in (top + 1).min(floor)..floor {
+                    put(x, y, z, under);
+                }
             }
-            if part.ground == GroundFit::Flatten {
+            if matches!(part.ground, GroundFit::Flatten | GroundFit::Cut) {
                 for y in floor..=top.max(floor).min(base + tallest + 2) {
                     put(x, y, z, AIR);
                 }
@@ -1966,7 +1981,7 @@ mod tests {
                     }
                 }
             }
-            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2);
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2, None);
             chunks
         };
         let count = |chunks: &[([i32; 3], Chunk)], block: BlockId| {
@@ -2078,7 +2093,7 @@ mod tests {
                     }
                 }
             }
-            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2);
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2, None);
             chunks
         };
         let columns: Vec<Vec<([i32; 3], Chunk)>> = (0..16).map(|i| make([i % 4 - 2, i / 4 - 2])).collect();
@@ -2224,7 +2239,7 @@ mod tests {
         let structures = WorldStructures { list: vec![town], ..WorldStructures::default() };
         let make = |[cx, cz]: [i32; 2]| {
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2);
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2, None);
             chunks
         };
         let count = |chunks: &[([i32; 3], Chunk)], block: BlockId| -> usize {
@@ -2422,7 +2437,7 @@ mod tests {
         for cz in -5..5 {
             for cx in -5..5 {
                 let mut chunks = Vec::new();
-                build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -64, false), [cx, cz], 2);
+                build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -64, false), [cx, cz], 2, None);
                 for (key, chunk) in &chunks {
                     for i in 0..32 * 32 * 32u32 {
                         let block = chunk.get(i % 32, i / 1024, (i / 32) % 32);
@@ -2504,7 +2519,7 @@ mod tests {
                 at,
                 area,
                 2,
-                (looks, generators),
+                (looks, generators, None),
             );
             sets
         };

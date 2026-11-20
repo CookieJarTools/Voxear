@@ -436,6 +436,8 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.nav_agent = instance.nav_agent.clone().or(root.nav_agent.clone());
     root.nav_area = instance.nav_area.or(root.nav_area);
     root.nav_link = instance.nav_link.or(root.nav_link);
+    root.ground_fit = instance.ground_fit.clone().or(root.ground_fit.clone());
+    root.streams_with_ground = instance.streams_with_ground.or(root.streams_with_ground);
     root.nav_obstacle = instance.nav_obstacle.or(root.nav_obstacle);
     root.crowd_member = instance.crowd_member.or(root.crowd_member);
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
@@ -541,6 +543,8 @@ pub struct TemplateObj {
     pub nav_agent: Option<crate::nav_agent::NavAgent>,
     pub nav_area: Option<crate::navigation::NavArea>,
     pub nav_link: Option<crate::navigation::NavLink>,
+    pub ground_fit: Option<crate::ground_fit::GroundFit>,
+    pub streams_with_ground: Option<crate::ground_streaming::StreamsWithGround>,
     pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
     pub crowd_member: Option<crate::crowds::CrowdMember>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
@@ -774,6 +778,12 @@ impl Template {
             }
             if let Some(link) = obj.nav_link {
                 world.insert(entity, link);
+            }
+            if let Some(fit) = obj.ground_fit.clone() {
+                world.insert(entity, fit);
+            }
+            if let Some(streams) = obj.streams_with_ground {
+                world.insert(entity, streams);
             }
             if let Some(obstacle) = obj.nav_obstacle {
                 world.insert(entity, obstacle);
@@ -1436,6 +1446,8 @@ pub(crate) fn resolve_obj(
         nav_agent: data.nav_agent.clone(),
         nav_area: data.nav_area,
         nav_link: data.nav_link,
+        ground_fit: data.ground_fit.clone(),
+        streams_with_ground: data.streams_with_ground,
         nav_obstacle: data.nav_obstacle,
         crowd_member: data.crowd_member,
         motion_matcher: data.motion_matcher.clone(),

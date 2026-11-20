@@ -331,6 +331,43 @@ impl Editor {
                 done(json!({ "dimension": id.0 }))
             }
             "navigation.status" => self.navigation_status(),
+            "ground_fit.land" => self.ground_fit_land(args),
+            "blocks.columns" => {
+                let world = &self.game.engine.world;
+                let moves = world.resource::<voxear_engine::ground_streaming::GroundMoves>().cloned().unwrap_or_default();
+                let worlds: Vec<Json> = moves
+                    .worlds
+                    .iter()
+                    .map(|moved| {
+                        let mut near: Vec<[i32; 2]> = moved.near.iter().copied().collect();
+                        near.sort_unstable();
+                        json!({ "world": link::obj_ref(&self.game, moved.world), "near": near, "came": moved.came, "went": moved.went })
+                    })
+                    .collect();
+                done(json!({ "worlds": worlds, "kept": voxear_engine::ground_streaming::kept_count(world) }))
+            }
+            "world_layers.status" => {
+                let world = &self.game.engine.world;
+                let worlds: Vec<Json> = world
+                    .query_ref::<(Entity, &voxear_engine::blocks::BlockWorldAsset)>()
+                    .into_iter()
+                    .filter_map(|(entity, _)| Some((entity, voxear_engine::ground_fit::kept(world, entity)?)))
+                    .map(|(entity, layers)| {
+                        json!({ "world": link::obj_ref(&self.game, entity), "fits": layers.fits().len(), "columns": layers.columns() })
+                    })
+                    .collect();
+                let hidden = world.resource::<voxear_engine::ground_fit::HiddenLayers>().copied().unwrap_or_default();
+                done(json!({ "worlds": worlds, "hidden": { "fits": hidden.fits } }))
+            }
+            "world_layers.hide" => {
+                let world = &mut self.game.engine.world;
+                let mut hidden = world.resource::<voxear_engine::ground_fit::HiddenLayers>().copied().unwrap_or_default();
+                if let Some(fits) = opt_bool(args, "fits") {
+                    hidden.fits = fits;
+                }
+                world.insert_resource(hidden);
+                done(json!({ "hidden": { "fits": hidden.fits } }))
+            }
             "navigation.path" => self.navigation_path(args),
             "navigation.nearest" => {
                 let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
@@ -1084,6 +1121,29 @@ impl Editor {
         after.apply(world, entity);
         let changed = self.record_change(entity, before);
         done(json!({ "changed": changed }))
+    }
+
+    fn ground_fit_land(&mut self, args: &Json) -> Called {
+        let entity = self.obj_arg(args)?;
+        let game = &mut self.game;
+        let placed = game.engine.world.get::<voxear_scene::WorldTransform>(entity).map(|placed| placed.0);
+        let here = placed.map_or(Vec3::ZERO, |placed| placed.w_axis.truncate());
+        let at = opt_vector(args, "at")?.map_or(here, |at| Vec3::new(at[0], here.y, at[2]));
+        if !game.engine.world.has::<voxear_engine::ground_fit::GroundFit>(entity) {
+            return Err(refuse(ErrorKind::NoSuchComponent, "the Obj has no Ground Fit"));
+        }
+        let landed = voxear_engine::ground_fit::landing(&mut game.engine.world, &mut game.content, entity, at)
+            .ok_or_else(|| refuse(ErrorKind::Failed, "no world of blocks without end is in the Obj's dimension"))?;
+        let world = &mut self.game.engine.world;
+        let before = ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let mut after = before.clone();
+        // Its own place under its parent's.
+        let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+        let above = parent.and_then(|parent| world.get::<voxear_scene::WorldTransform>(parent)).map(|placed| placed.0);
+        after.transform.position = above.map_or(landed, |above| above.inverse().transform_point3(landed));
+        after.apply(world, entity);
+        self.record_change(entity, before);
+        done(json!({ "position": landed.to_array() }))
     }
 
     fn obj_duplicate(&mut self, args: &Json, renderer: &mut Renderer) -> Called {

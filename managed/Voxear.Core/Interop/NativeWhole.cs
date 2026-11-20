@@ -25,6 +25,8 @@ internal static class NativeWhole
 	public const int DryAreaMesh = 6;
 	public const int LightCookie = 7;
 	public const int LightProfile = 8;
+	public const int GroundFit = 9;
+	public const int StreamsWithGround = 10;
 
 	private const int ReadAll = 0;
 	private const int ChangeSome = 1;

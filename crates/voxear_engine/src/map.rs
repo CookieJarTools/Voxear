@@ -463,9 +463,16 @@ impl Maps {
         let endless = asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
         // The plants the world grows by itself that a map shows, as their Foliage are now.
         let plants = if endless { crate::grown_plants::on_maps(world, content, entity) } else { Vec::new() };
+        // The world layers its ground is made with, as the world streams it (see `ground_fit`).
+        let layers = endless.then(|| crate::ground_fit::kept(world, entity)).flatten();
+        let layered = |ground: &MapGround| match ground {
+            MapGround::Made { making, .. } => making.generate.layers.get().map(|layers| layers.hash()),
+            _ => None,
+        };
         if let Some(kept) = self.grounds.get_mut(&entity) {
             (kept.corner, kept.block_size) = (corner, blocks.block_size);
             let same = Arc::ptr_eq(&kept.blocks, &blocks.blocks)
+                && layered(&kept.ground) == layers.as_deref().filter(|layers| !layers.is_empty()).map(|layers| layers.hash())
                 && Arc::ptr_eq(&kept.changes, &asset.pending)
                 && Arc::ptr_eq(&kept.faces, &blocks.faces)
                 && kept.ground.plants() == &plants[..];
@@ -475,7 +482,8 @@ impl Maps {
         }
         let making = if endless { crate::blocks::making(content, asset) } else { None };
         let (ground, changes) = match making {
-            Some(making) => {
+            Some(mut making) => {
+                making.generate.layers = voxear_terrain::blocks::generate::Layers(layers.clone());
                 let changes = Arc::new(all_changes(&asset.base, &blocks.blocks, &asset.pending));
                 (MapGround::made(making, changes.clone()).growing(plants), Some(changes))
             }
@@ -496,7 +504,15 @@ impl Maps {
             {
                 let differs = |key: &[i32; 3]| was.chunks.get(key) != now.chunks.get(key);
                 let keys = was.chunks.keys().chain(now.chunks.keys()).filter(|key| differs(key));
-                Some(keys.map(|key| [key[0], key[2]]).collect())
+                let mut columns: HashSet<[i32; 2]> = keys.map(|key| [key[0], key[2]]).collect();
+                // And those under the world layers that changed.
+                let none = voxear_terrain::blocks::world_layers::WorldLayers::default();
+                let (old_layers, new_layers) = (old.generate.layers.get(), making.generate.layers.get());
+                columns.extend(voxear_terrain::blocks::world_layers::WorldLayers::changed_columns(
+                    old_layers.unwrap_or(&none),
+                    new_layers.unwrap_or(&none),
+                ));
+                Some(columns)
             }
             (
                 Some(KeptGround { ground: MapGround::Held { blocks: was, .. }, .. }),

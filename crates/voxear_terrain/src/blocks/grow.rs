@@ -506,6 +506,15 @@ fn plant_of(rule: &GrowRule, found: &Try, size: f32, top: f32) -> Plant {
     Plant::new([x, top, z], yaw, scale)
 }
 
+/// Those of `grown` no world layer of `generate` keeps plants off (see
+/// `world_layers::FitLayer::clear_plants`).
+fn clear_of_layers(generate: Option<&BlockGenerate>, mut grown: Vec<Grown>) -> Vec<Grown> {
+    if let Some(layers) = generate.and_then(|generate| generate.layers.get()) {
+        grown.retain(|grown| !layers.clears_plants([grown.ground[0], grown.ground[2]]));
+    }
+    grown
+}
+
 /// Those of `grown` whose climate the rule likes, asked of `world` at once
 /// where each stands, `feet` metres up, a world lying at `position` in it.
 fn liked(rule: &GrowRule, world: Option<&WorldGen>, position: [f32; 2], grown: Vec<(f32, Grown)>) -> Vec<Grown> {
@@ -600,7 +609,7 @@ pub fn grow_on(rule: &GrowRule, ground: &Ground, column: [i32; 2], blocks: &Tops
         }
         grown.push((top, Grown { plant: plant_of(rule, &found, size, top), ground: [bx, y, bz], block, above: AIR }));
     }
-    liked(rule, world, position, grown)
+    clear_of_layers(ground.generated.map(|(generate, _)| generate), liked(rule, world, position, grown))
 }
 
 /// Generated ground too far off to have its own blocks: the world's file,
@@ -709,7 +718,7 @@ fn grow_far_on(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u3
         let above = if rule.under_water { ground.generate.sea } else { AIR };
         grown.push((feet, Grown { plant: plant_of(rule, found, size, stood), ground: [bx, y, bz], block, above }));
     }
-    liked(rule, Some(ground.world), position, grown)
+    clear_of_layers(Some(ground.generate), liked(rule, Some(ground.world), position, grown))
 }
 
 /// A rule's plants as the far view shows them, too far off for plants of

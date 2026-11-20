@@ -124,7 +124,8 @@ impl ScriptRuntime {
                 && managed.set_enabled.is_some()
                 && managed.origin_moved.is_some()
                 && managed.particle_hits.is_some()
-                && managed.heat_events.is_some(),
+                && managed.heat_events.is_some()
+                && managed.ground_events.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -421,6 +422,19 @@ impl ScriptRuntime {
         let send = self.api().heat_events.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { send(events.as_ptr(), events.len() as i32, names.as_ptr(), names.len() as i32) };
+    }
+
+    /// Tells behaviours their Obj's ground goes, as `OnGroundUnloading`, or
+    /// came back, as `OnGroundLoaded`: each Obj with `true` for going.
+    pub fn ground_events(&mut self, world: &mut World, events: &[(Entity, bool)]) {
+        if events.is_empty() {
+            return;
+        }
+        let send = self.api().ground_events.expect("validated at start");
+        let objs: Vec<u64> = events.iter().map(|(entity, _)| entity.to_bits()).collect();
+        let kinds: Vec<i32> = events.iter().map(|(_, going)| if *going { 0 } else { 1 }).collect();
+        let _scope = WorldScope::enter(world);
+        unsafe { send(objs.as_ptr(), objs.len() as i32, kinds.as_ptr()) };
     }
 
     /// Tells behaviours of the marks actions passed, as `OnMotionMark`:

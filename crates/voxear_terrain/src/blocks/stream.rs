@@ -141,6 +141,17 @@ impl BlockMaking {
         crate::layers::stable_hash(&stamps)
     }
 
+    /// A number for what a column of level `level` is made from besides its
+    /// ground: the world's layers, and past the near columns what is built
+    /// into the far view.
+    fn made_stamp(&self, level: u32) -> u64 {
+        let layers = self.generate.layers.get().map_or(0, super::world_layers::WorldLayers::hash);
+        match level {
+            0 => layers,
+            _ => self.built_stamp() ^ layers.rotate_left(17),
+        }
+    }
+
     /// The first ring anything is built into, by its level; none where
     /// nothing is built far off.
     fn built_from(&self) -> Option<u32> {
@@ -167,6 +178,15 @@ impl BlockMaking {
 /// was kept, else made and kept there. Not kept where the folder cannot be
 /// written to, as in a game installed where it may not write.
 pub fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
+    let mut tile = far_tile_bare(making, folder, level, at);
+    // The world's layers, kept out of what is kept on disk, so a layer changed makes no tile again.
+    if let Some(layers) = making.generate.layers.get() {
+        super::generate::far::shape_tile(&mut tile, layers);
+    }
+    tile
+}
+
+fn far_tile_bare(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
     let path = folder.map(|folder| folder.join(format!("{level}_{}_{}.far", at[0], at[1])));
     let read = path.as_ref().and_then(|path| std::fs::read(path).ok());
     let kept = read.and_then(|bytes| FarTile::from_bytes(&bytes).ok());
@@ -175,9 +195,11 @@ pub fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, lev
     }
     let tile = far_tile(&making.file, &making.generate, &making.world, level, at);
     if let Some(path) = path {
-        // Written whole beside it, then put in its place, so a tile read as it is written is never half of one.
+        // Written whole beside it, then put in its place, so a tile read as it is written is never half of one: by a
+        // name of this program's own, as two programs may make the same tile at once.
         static WRITING: AtomicU64 = AtomicU64::new(0);
-        let writing = path.with_extension(format!("far.{}", WRITING.fetch_add(1, Ordering::Relaxed)));
+        let writing = WRITING.fetch_add(1, Ordering::Relaxed);
+        let writing = path.with_extension(format!("far.{}.{writing}", std::process::id()));
         let written = path.parent().map(std::fs::create_dir_all).transpose().and_then(|_| {
             std::fs::write(&writing, tile.to_bytes())?;
             std::fs::rename(&writing, &path)
@@ -426,6 +448,13 @@ pub struct BlockStreamer {
     /// Coarse columns made before changes were kept for the ground under
     /// them, made again to show what was built, the old drawn till then.
     stale: CoordSet<(u32, [i32; 2])>,
+    /// Near columns made again, as under a world layer that changed: their
+    /// old faces drawn till their new ones are made.
+    redrawing: CoordSet<[i32; 2]>,
+    /// The near columns made, and let go, since they were last taken (see
+    /// [`BlockStreamer::take_moves`]).
+    came_since: Vec<[i32; 2]>,
+    went_since: Vec<[i32; 2]>,
     /// For each coarse column made round where the world is looked at
     /// from, by level and place: when its finer columns were all made, on
     /// `fade_clock`, or `f32::MAX` while it shows with them not made yet
@@ -481,6 +510,9 @@ impl Default for BlockStreamer {
             again: false,
             asked: CoordSet::default(),
             stale: CoordSet::default(),
+            redrawing: CoordSet::default(),
+            came_since: Vec::new(),
+            went_since: Vec::new(),
             covered_since: CoordMap::default(),
             fading: false,
             fade_over: 0.0,
@@ -510,6 +542,13 @@ impl BlockStreamer {
             && self.meshing.is_empty()
             && self.joining.is_empty()
             && self.making_now.load(Ordering::Acquire) == 0
+    }
+
+    /// The near columns whose blocks were made, and those let go, since this
+    /// was last asked, in chunk columns: so what stands on a column can come
+    /// and go with it. A world made anew lets every column go.
+    pub fn take_moves(&mut self) -> (Vec<[i32; 2]>, Vec<[i32; 2]>) {
+        (std::mem::take(&mut self.came_since), std::mem::take(&mut self.went_since))
     }
 
     /// Whether a near column's blocks are made now, by its place in chunks
@@ -576,8 +615,18 @@ impl BlockStreamer {
             self.stale.extend(stale);
             self.again = true;
         }
+        // Its world layers changed, its ground the same: the columns under what changed are made again, the old drawn
+        // till then.
+        let relaid = self.making.as_ref().filter(|kept| kept.same(&making)).and_then(|kept| {
+            use super::world_layers::WorldLayers;
+            let (old, new) = (kept.generate.layers.get(), making.generate.layers.get());
+            let none = WorldLayers::default();
+            (old.map(WorldLayers::hash) != new.map(WorldLayers::hash))
+                .then(|| WorldLayers::changed_columns(old.unwrap_or(&none), new.unwrap_or(&none)))
+        });
         if !self.making.as_ref().is_some_and(|kept| kept.same(&making)) {
             // Made anew: every column let go, the changes on those near kept.
+            self.went_since.extend(self.near.iter().copied());
             if !self.near.is_empty() {
                 Arc::make_mut(pending).chunks.extend(BlockEdits::between(base, &world.blocks).chunks);
             }
@@ -591,6 +640,7 @@ impl BlockStreamer {
             world.floor = making.generate.floor_top();
             (self.near, self.drawn, self.meshing) = Default::default();
             (self.coarse, self.asked, self.stale) = Default::default();
+            self.redrawing.clear();
             self.covered_since.clear();
             self.fine.clear();
             (self.coarse_blocks, self.joining) = Default::default();
@@ -605,8 +655,11 @@ impl BlockStreamer {
             world.faces = making.faces.clone();
             self.making = Some(Arc::new(making));
             changed = true;
-        } else if rebuilt {
+        } else if rebuilt || relaid.is_some() {
             self.making = Some(Arc::new(making));
+        }
+        if let Some(columns) = relaid {
+            self.relay(&columns);
         }
         let making = self.making.clone().expect("kept above");
         let (windows, by_place, fine) = areas(&making.file, from);
@@ -624,7 +677,7 @@ impl BlockStreamer {
         // coarse ground is drawn there.
         if !self.seen.as_ref().is_some_and(|seen| Arc::ptr_eq(seen, &world.meshes)) {
             let stray: Vec<[i32; 3]> =
-                world.meshes.keys().filter(|key| !self.drawn.contains(&[key[0], key[2]])).copied().collect();
+                world.meshes.keys().filter(|key| !self.shows(&[key[0], key[2]])).copied().collect();
             if !stray.is_empty() {
                 let meshes = Arc::make_mut(&mut world.meshes);
                 for key in stray {
@@ -678,15 +731,29 @@ impl BlockStreamer {
                 Finished::Made { level: FINE, at, meshes, .. } => {
                     // The world's own blocks drawn past where they are made, kept while their window holds them.
                     self.asked.remove(&(FINE, at));
+                    self.stale.remove(&(FINE, at));
                     let meshes = meshes.into_iter().map(|(key, mesh)| (key, Arc::new(mesh))).collect();
                     self.made_count += 1;
                     self.coarse_made.insert((FINE, at), self.made_count);
                     self.fine.insert(at, meshes);
                     changed = true;
                 }
-                Finished::Made { level: 0, at, chunks, .. } => {
+                Finished::Made { level: 0, at, chunks, built, .. } => {
                     self.asked.remove(&(0, at));
-                    if !made.contains(at) || self.near.contains(&at) {
+                    let remade = self.stale.remove(&(0, at));
+                    // Made under world layers other than those now: kept, and made again.
+                    if made.contains(at) && self.making.as_ref().is_some_and(|making| making.made_stamp(0) != built) {
+                        self.stale.insert((0, at));
+                        self.again = true;
+                    }
+                    if !made.contains(at) {
+                        continue;
+                    }
+                    if self.near.contains(&at) {
+                        if remade {
+                            self.remake(world, base, at, chunks);
+                            changed = true;
+                        }
                         continue;
                     }
                     let blocks = Arc::make_mut(&mut world.blocks);
@@ -705,7 +772,7 @@ impl BlockStreamer {
                     self.asked.remove(&(level, at));
                     let was_stale = self.stale.remove(&(level, at));
                     // Made while what is built into the far view was other than it is now: shown, and made again.
-                    if self.making.as_ref().is_some_and(|making| making.built_stamp() != built) {
+                    if self.making.as_ref().is_some_and(|making| making.made_stamp(level) != built) {
                         self.stale.insert((level, at));
                         self.again = true;
                     }
@@ -752,6 +819,10 @@ impl BlockStreamer {
                         }
                     }
                     let kept = Arc::make_mut(&mut world.meshes);
+                    // Made again, its chunks may be others than before: its old faces all go.
+                    if self.redrawing.remove(&at) {
+                        kept.retain(|key, _| [key[0], key[2]] != at);
+                    }
                     for (key, mesh) in meshes {
                         if mesh.is_empty() {
                             kept.remove(&key);
@@ -767,6 +838,7 @@ impl BlockStreamer {
         // The changes kept for columns come near made, before their faces are; past the columns made, water
         // shows no faces.
         if !came.is_empty() {
+            self.came_since.extend(&came);
             world.columns = Some(Arc::new(self.near.iter().copied().collect()));
             let mut theirs = BlockEdits::default();
             Arc::make_mut(pending).chunks.retain(|key, change| {
@@ -781,6 +853,63 @@ impl BlockStreamer {
         changed
     }
 
+    /// Whether a near column's faces are drawn: made, or being made again
+    /// with its old ones drawn till then.
+    fn shows(&self, at: &[i32; 2]) -> bool {
+        self.drawn.contains(at) || self.redrawing.contains(at)
+    }
+
+    /// Marks every column made of chunk columns `columns`, at every level, to
+    /// be made again: their ground changed.
+    fn relay(&mut self, columns: &[[i32; 2]]) {
+        for &at in columns {
+            if self.near.contains(&at) {
+                self.stale.insert((0, at));
+            }
+            if self.fine.contains_key(&at) {
+                self.stale.insert((FINE, at));
+            }
+            for level in 1..MOST_LEVELS {
+                let coarse = (level, [at[0] >> level, at[1] >> level]);
+                if self.coarse.contains_key(&coarse) || self.coarse_blocks.contains_key(&coarse) {
+                    self.stale.insert(coarse);
+                }
+            }
+        }
+        self.again = true;
+    }
+
+    /// Puts `chunks`, near column `at` made again, in place of its old ones,
+    /// the changes made to those kept on them; and draws it and the columns
+    /// round it again, their old faces drawn till then.
+    fn remake(&mut self, world: &mut BlockWorld, base: &mut Arc<BlockMap>, at: [i32; 2], chunks: Vec<([i32; 3], Chunk)>) {
+        let mine = |key: &[i32; 3]| [key[0], key[2]] == at;
+        let (mut was, mut now) = (BlockMap::default(), BlockMap::default());
+        for (key, chunk) in base.chunks().filter(|(key, _)| mine(key)) {
+            was.put_shared(*key, chunk.clone());
+        }
+        for (key, chunk) in world.blocks.chunks().filter(|(key, _)| mine(key)) {
+            now.put_shared(*key, chunk.clone());
+        }
+        let changes = BlockEdits::between(&was, &now);
+        let (blocks, kept) = (Arc::make_mut(&mut world.blocks), Arc::make_mut(base));
+        for (key, _) in now.chunks().chain(was.chunks()) {
+            blocks.put_chunk(*key, Chunk::filled(super::chunk::AIR));
+            kept.put_chunk(*key, Chunk::filled(super::chunk::AIR));
+        }
+        for (key, chunk) in chunks.into_iter().filter(|(_, chunk)| !chunk.is_air()) {
+            let chunk = Arc::new(chunk);
+            kept.put_shared(key, chunk.clone());
+            blocks.put_shared(key, chunk);
+        }
+        changes.apply(blocks);
+        for column in round(at) {
+            if self.drawn.remove(&column) {
+                self.redrawing.insert(column);
+            }
+        }
+    }
+
     /// Lets go of the near columns gone from `made`, their changes kept, and
     /// stops drawing those gone from `shown`. True if any went.
     fn let_go(
@@ -793,6 +922,7 @@ impl BlockStreamer {
         let hidden: Vec<[i32; 2]> = self.drawn.iter().copied().filter(|at| !shown.contains(*at)).collect();
         for at in &hidden {
             self.drawn.remove(at);
+            self.redrawing.remove(at);
         }
         let gone: Vec<[i32; 2]> = self.near.iter().copied().filter(|at| !made.contains(*at)).collect();
         if hidden.is_empty() && gone.is_empty() {
@@ -825,9 +955,12 @@ impl BlockStreamer {
             blocks.put_chunk(*key, Chunk::filled(super::chunk::AIR));
             kept.put_chunk(*key, Chunk::filled(super::chunk::AIR));
         }
+        self.went_since.extend(&gone);
         for at in &gone {
             self.near.remove(at);
             self.drawn.remove(at);
+            self.redrawing.remove(at);
+            self.stale.remove(&(0, *at));
         }
         if !gone.is_empty() && world.light.size().0 > 0 {
             Arc::make_mut(&mut world.light).forget_columns(&gone);
@@ -965,7 +1098,8 @@ impl BlockStreamer {
                 places.iter().map(from).fold(f32::MAX, f32::min) as i64
             };
             for at in fine.columns().filter(|at| !windows[0].contains(*at)) {
-                if self.fine.contains_key(&at) || self.asked.contains(&(FINE, at)) {
+                let stale = self.stale.contains(&(FINE, at));
+                if self.fine.contains_key(&at) && !stale || self.asked.contains(&(FINE, at)) {
                     continue;
                 }
                 wanted.push((Some(FINE), at, away(at)));
@@ -1084,7 +1218,7 @@ impl BlockStreamer {
                 let under = |key: &[i32; 3]| [key[0] >> level, key[2] >> level] == at;
                 built.chunks.extend(pending.chunks.iter().filter(|(key, _)| under(key)).map(|(k, c)| (*k, c.clone())));
             }
-            let stamp = making.built_stamp();
+            let stamp = making.made_stamp(if fine { FINE } else { level });
             crate::workers::spawn(move || {
                 if latest.load(Ordering::Acquire) == number {
                     let mut chunks = if level >= FAR_FROM {
@@ -2259,6 +2393,67 @@ mod tests {
             let since = world.fades.covered.get(&[1, key[1], key[3]]).copied();
             assert!(!all || since.is_some_and(|since| since != f32::MAX), "coarse column {key:?} over near ones");
         }
+    }
+
+    #[test]
+    fn a_world_layer_makes_again_only_the_columns_it_touches_keeping_hand_edits_and_shows_far_off() {
+        use crate::blocks::{
+            generate::Layers,
+            structure::GroundFit,
+            world_layers::{FitLayer, WorldLayers},
+        };
+        let bare = making();
+        let mut world = BlockWorld::new(BlockMap::default(), &bare.faces, 2.0);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &bare, [10.0, 10.0]);
+        let top = |world: &BlockWorld, x: i32, z: i32| (-8..300).rev().find(|&y| world.blocks.get([x, y, z]) != 0).unwrap();
+        let level = top(&world, 20, 20) + 6;
+        let was = top(&world, 16, 16);
+        // A block placed by hand where the fit will stand, and a column the fit never reaches.
+        Arc::make_mut(&mut world.blocks).set([20, level + 3, 20], 3);
+        let far_column = [-2, -2];
+        assert!(streamer.near.contains(&far_column));
+        let untouched: Vec<Arc<Chunk>> =
+            world.blocks.chunks().filter(|(k, _)| [k[0], k[2]] == far_column).map(|(_, c)| c.clone()).collect();
+        let fit = FitLayer {
+            id: 7,
+            outlines: vec![vec![[12.0, 12.0], [28.0, 12.0], [28.0, 28.0], [12.0, 28.0]]],
+            level,
+            mode: GroundFit::Flatten,
+            margin: 1.0,
+            slope_out: 4,
+            fill: AIR,
+            top: AIR,
+            clear_plants: true,
+            priority: 0,
+        };
+        let mut fitted = bare.clone();
+        fitted.generate.layers = Layers(Some(Arc::new(WorldLayers::new(vec![fit]))));
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &fitted, [10.0, 10.0]);
+        assert_eq!(top(&world, 16, 16), level - 1, "the footprint levelled");
+        assert_eq!(world.blocks.get([20, level + 3, 20]), 3, "the block placed by hand stays");
+        assert_eq!(world.blocks.get([20, level + 1, 20]), 0);
+        let still: Vec<Arc<Chunk>> =
+            world.blocks.chunks().filter(|(k, _)| [k[0], k[2]] == far_column).map(|(_, c)| c.clone()).collect();
+        assert!(untouched.iter().zip(&still).all(|(a, b)| Arc::ptr_eq(a, b)), "a column it never reached is not made");
+        assert!(world.meshes.keys().any(|k| [k[0], k[2]] == [0, 0]), "drawn again");
+        // The same ground as a world made with the fit from the start.
+        let mut fresh = BlockWorld::new(BlockMap::default(), &fitted.faces, 2.0);
+        let (mut fresh_base, mut fresh_pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        settle(&mut BlockStreamer::default(), &mut fresh, (&mut fresh_base, &mut fresh_pending), &fitted, [10.0, 10.0]);
+        for (key, chunk) in base.chunks().filter(|(k, _)| [k[0], k[2]] == [0, 0]) {
+            assert!(fresh_base.chunk(*key).is_some_and(|other| **other == **chunk), "chunk {key:?} alike");
+        }
+        // Far off, as the far view's tile shows it.
+        let far = far_tile_kept(&fitted, None, 3, [0, 0]);
+        let bare_far = far_tile_kept(&bare, None, 3, [0, 0]);
+        assert_ne!(far.surface([2, 2]), bare_far.surface([2, 2]));
+        assert_eq!(far.surface([2, 2]) as i32, (level as f32 / 8.0).round() as i32);
+        // And taken away, the ground comes back as it was.
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &bare, [10.0, 10.0]);
+        assert_eq!(top(&world, 16, 16), was);
+        assert_eq!(world.blocks.get([20, level + 3, 20]), 3);
     }
 
     #[test]

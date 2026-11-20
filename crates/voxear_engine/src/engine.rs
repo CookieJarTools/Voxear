@@ -880,6 +880,17 @@ impl Engine {
         }
     }
 
+    /// Tells behaviours their Obj's ground goes, `true`, or came back (see
+    /// `ground_streaming`).
+    pub fn tell_ground_events(&mut self, events: &[(Entity, bool)]) {
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
+            profile_scope!("Ground Events");
+            scripts.ground_events(&mut self.world, events);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
     /// Tells scripts of Heat Bodies' changes, and what each became, and of
     /// characters that came to feel otherwise, as `HeatBody.Changed` and
     /// `HeatBody.FeelsChanged`; `names` has each change's name, a line each.

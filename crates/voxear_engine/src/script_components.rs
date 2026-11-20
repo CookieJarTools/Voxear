@@ -20,6 +20,8 @@ use voxear_scripting::ComponentKind;
 
 use crate::{
     animation::BoneAttachment,
+    ground_fit::GroundFit,
+    ground_streaming::StreamsWithGround,
     heat::Climate,
     navigation::{NavArea, NavLink},
     scene_file::PostVolumeData,
@@ -50,6 +52,8 @@ const LOD_GROUP: i32 = 5;
 const DRY_AREA_MESH: i32 = 6;
 const LIGHT_COOKIE: i32 = 7;
 const LIGHT_PROFILE: i32 = 8;
+const GROUND_FIT: i32 = 9;
+const STREAMS_WITH_GROUND: i32 = 10;
 
 /// Whether an Obj has one, and adding and taking off those scripts may add:
 /// the component in the number's bits above the lowest two.
@@ -58,6 +62,8 @@ fn whole_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
     match which {
         NAV_AREA => values::<NavArea>(world, entity, asked, written),
         NAV_LINK => values::<NavLink>(world, entity, asked, written),
+        GROUND_FIT => values::<GroundFit>(world, entity, asked, written),
+        STREAMS_WITH_GROUND => values::<StreamsWithGround>(world, entity, asked, written),
         BONE_ATTACHMENT => has::<BoneAttachment>(world, entity, asked, written),
         PARTICLE_SYSTEM => has::<ParticleSystem>(world, entity, asked, written),
         FOLIAGE => has::<Foliage>(world, entity, asked, written),
@@ -75,6 +81,8 @@ fn whole_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opti
         PARTICLE_SYSTEM => texts::<ParticleSystem>(world, entity, asked, text),
         NAV_AREA => texts::<NavArea>(world, entity, asked, text),
         NAV_LINK => texts::<NavLink>(world, entity, asked, text),
+        GROUND_FIT => texts::<GroundFit>(world, entity, asked, text),
+        STREAMS_WITH_GROUND => texts::<StreamsWithGround>(world, entity, asked, text),
         FOLIAGE => texts::<Foliage>(world, entity, asked, text),
         LOD_GROUP => texts::<LodGroup>(world, entity, asked, text),
         DRY_AREA_MESH | LIGHT_COOKIE | LIGHT_PROFILE => {
@@ -210,7 +218,9 @@ written_as_is!(
     BoneAttachment,
     ParticleSystem,
     NavArea,
-    NavLink
+    NavLink,
+    GroundFit,
+    StreamsWithGround
 );
 
 /// A Foliage's settings scripts change: how far its plants are drawn, cast
@@ -471,6 +481,13 @@ mod tests {
         let link = *world.get::<NavLink>(obj).unwrap();
         assert_eq!((link.kind, link.cost, link.both_ways), (crate::navigation::NavLinkKind::Jump, 3.0, true));
         assert!(whole_texts(&mut world, obj, NAV_LINK << 1 | CHANGE, r#"{"kind":"fly"}"#).is_none());
+        // A Ground Fit, added and changed a setting at a time, its blocks by their GUIDs.
+        whole_values(&mut world, obj, GROUND_FIT << 2 | ADD, Some([0.0; 4])).unwrap();
+        let fill = r#"{"mode":"cut","slope_out":0,"fill":"0123456789abcdef0123456789abcdef"}"#;
+        whole_texts(&mut world, obj, GROUND_FIT << 1 | CHANGE, fill).unwrap();
+        let fit = world.get::<GroundFit>(obj).unwrap().clone();
+        assert_eq!((fit.mode, fit.slope_out, fit.margin), (crate::ground_fit::FitMode::Cut, 0, 1.0));
+        assert!(fit.fill.is_some() && fit.top.is_none());
 
         let near = world.spawn((voxear_scene::Transform::default(),));
         world.insert(obj, LodGroup::of(&[near]));

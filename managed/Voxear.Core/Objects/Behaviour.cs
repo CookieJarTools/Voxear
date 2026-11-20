@@ -188,6 +188,32 @@ public abstract class Behaviour
 	}
 
 	/// <summary>
+	/// Called when the ground under the Obj streams out of a world of blocks and the Obj goes with it, as its Streams
+	/// With Ground says: kept for later, or destroyed. Write what it must keep into its fields now; kept for later,
+	/// they come back with it.
+	/// </summary>
+	protected virtual void OnGroundUnloading()
+	{
+	}
+
+	/// <summary>Called when an Obj kept for later comes back with its ground, after its other behaviours start.</summary>
+	protected virtual void OnGroundLoaded()
+	{
+	}
+
+	internal void PassGround(bool going)
+	{
+		if (going)
+		{
+			OnGroundUnloading();
+		}
+		else
+		{
+			OnGroundLoaded();
+		}
+	}
+
+	/// <summary>
 	/// Called when a particle of the Obj's Particle System strikes something, with Hit Events on: where, the way the
 	/// surface faces, and how fast it went in, for a hiss where a spark lands or a clink where a shell case does. It
 	/// comes before LateUpdate, a few frames after the strike.

@@ -470,6 +470,12 @@ pub struct ObjData {
     /// Joins its Obj to a point that walking does not reach, for navigation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_link: Option<crate::navigation::NavLink>,
+    /// Shapes the ground a world of blocks makes under and round it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_fit: Option<crate::ground_fit::GroundFit>,
+    /// Makes it come and go with the ground of a world of blocks under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streams_with_ground: Option<crate::ground_streaming::StreamsWithGround>,
     /// A box agents go round, cut out of the nav where it stands still.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
@@ -631,6 +637,8 @@ impl ObjData {
             nav_agent: None,
             nav_area: None,
             nav_link: None,
+            ground_fit: None,
+            streams_with_ground: None,
             nav_obstacle: None,
             crowd_member: None,
             motion_matcher: None,
@@ -2385,6 +2393,12 @@ fn capture_instance(
     if root.nav_link.is_some() && root.nav_link != prefab_root.nav_link {
         instance.nav_link = root.nav_link;
     }
+    if root.ground_fit.is_some() && root.ground_fit != prefab_root.ground_fit {
+        instance.ground_fit = root.ground_fit.clone();
+    }
+    if root.streams_with_ground.is_some() && root.streams_with_ground != prefab_root.streams_with_ground {
+        instance.streams_with_ground = root.streams_with_ground;
+    }
     if root.nav_obstacle.is_some() && root.nav_obstacle != prefab_root.nav_obstacle {
         instance.nav_obstacle = root.nav_obstacle;
     }
@@ -2657,6 +2671,13 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(link) = actual.nav_link.as_ref().filter(|l| Some(*l) != expected.nav_link.as_ref()) {
         put("nav_link", whole(link, &crate::navigation::NavLink::default())?);
+    }
+    if let Some(fit) = actual.ground_fit.as_ref().filter(|f| Some(*f) != expected.ground_fit.as_ref()) {
+        put("ground_fit", whole(fit, &crate::ground_fit::GroundFit::default())?);
+    }
+    let streams = actual.streams_with_ground.as_ref().filter(|s| Some(*s) != expected.streams_with_ground.as_ref());
+    if let Some(streams) = streams {
+        put("streams_with_ground", whole(streams, &crate::ground_streaming::StreamsWithGround::default())?);
     }
     if let Some(obstacle) = actual.nav_obstacle.as_ref().filter(|o| Some(*o) != expected.nav_obstacle.as_ref()) {
         put("nav_obstacle", whole(obstacle, &crate::nav_obstacle::NavObstacle::default())?);
@@ -3002,6 +3023,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     });
     obj.nav_area = world.get::<crate::navigation::NavArea>(entity).copied();
     obj.nav_link = world.get::<crate::navigation::NavLink>(entity).copied();
+    obj.ground_fit = world.get::<crate::ground_fit::GroundFit>(entity).cloned();
+    obj.streams_with_ground = world.get::<crate::ground_streaming::StreamsWithGround>(entity).copied();
     obj.nav_obstacle = world.get::<crate::nav_obstacle::NavObstacle>(entity).copied();
     obj.crowd_member = world.get::<crate::crowds::CrowdMember>(entity).copied();
     // As saved: where a game sent it is not part of the scene.

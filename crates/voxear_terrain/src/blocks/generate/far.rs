@@ -171,6 +171,46 @@ impl FarTile {
     }
 }
 
+/// Puts what the world's `layers` make of the ground into `tile` (see
+/// `blocks::world_layers`): kept on disk without them, so a layer changed
+/// makes again no tile, only shapes it again as it is taken.
+pub fn shape_tile(tile: &mut FarTile, layers: &crate::blocks::world_layers::WorldLayers) {
+    let side = SIDE as i32;
+    if !layers.reaches_level(tile.level, tile.at) {
+        return;
+    }
+    let (sea, sea_top) = tile.sea;
+    for z in 0..SIDE as u32 {
+        for x in 0..SIDE as u32 {
+            let ground = (tile.surface([x, z]) - 0.5).ceil() as i32;
+            let at = [tile.at[0] * side + x as i32, tile.at[1] * side + z as i32];
+            let Some(shaped) = layers.shape_at(tile.level, at, ground) else { continue };
+            let runs = tile.column([x, z]);
+            let under = |y: i32| runs.iter().find(|run| run.from <= y && y < run.to && run.block != sea);
+            let old_top = under(ground - 1).map_or(AIR, |run| run.block);
+            let old_fill = under(ground - 2).map_or(old_top, |run| run.block);
+            let highest = runs.last().map_or(ground, |run| run.to).max(ground);
+            let top_block = if shaped.top_block != AIR { shaped.top_block } else { old_top };
+            let fill = if shaped.fill != AIR { shaped.fill } else { old_fill };
+            let top = shaped.top;
+            if top > ground {
+                tile.add([x, z], ground - 1, top - 1, fill);
+            }
+            if top != ground || shaped.top_block != AIR {
+                tile.add([x, z], top - 1, top, top_block);
+            }
+            if shaped.cleared || top < ground {
+                tile.add([x, z], top, highest + 1, AIR);
+                let sea_to = sea_top.ceil() as i32;
+                if sea != AIR && sea_to > top {
+                    tile.add([x, z], top, sea_to, sea);
+                }
+            }
+            tile.surfaces[z as usize * SIDE + x as usize] = top as f32;
+        }
+    }
+}
+
 /// Reads a tile's bytes in order.
 struct Reader<'a> {
     bytes: &'a [u8],

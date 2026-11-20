@@ -193,7 +193,7 @@ pub(super) fn send_owned(world: &World, session: &mut NetSession) {
             Some((*id, OWN_PARTS, ObjState::of(world, entity)?, None))
         })
         .collect();
-    let message = Message::Snapshot { tick: session.tick, entries };
+    let message = Message::Snapshot { tick: session.tick, anchor: None, entries };
     let _ = client.send(Channel::UNRELIABLE, &message.encode(session.origin));
 }
 

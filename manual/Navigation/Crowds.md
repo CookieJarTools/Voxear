@@ -57,6 +57,10 @@ A world can hold thousands of characters, most of them nowhere near anyone. A Cr
 
 A record comes back as a new Obj, so a script that held the old one sees it gone: keep what a character is in its prefab, and find it again by what it is rather than holding on to it. Records are kept on the server, or by a game playing alone, and only in the level's own dimension.
 
+## Playing together
+
+On a server the tiers are measured from every player, and each player is sent the crowd by how near it is to them: every tick near, 20 times a second in the middle distance, 5 times far, and nothing beyond Records beyond. See [[Sharing Objs]].
+
 ## Seeing it work
 
 The Profiler's counts show **Posed parts**: how many skinned and how many posed by their bones; **Posed elsewise**: how many posed where drawn for want of room, left as they were out of sight, sharing another's pose, and playing a baked clip; and **Posed at rest**, which should be none.

@@ -201,6 +201,50 @@ const POSITION_BITS: u32 = 24;
 /// middle: half a million kilometres either way.
 const FAR_BITS: u32 = 16;
 const ROTATION_BITS: u32 = 10;
+/// A root near a snapshot's anchor: steps a metre, bits an axis, and so how
+/// far from the anchor it may be, about 327 m either way.
+const NEAR_STEPS: f64 = 100.0;
+const NEAR_BITS: u32 = 16;
+/// Bits for a rotation that only turns about up: a third of a degree.
+const YAW_BITS: u32 = 10;
+
+/// A root's place, from a machine whose middle is `origin` from the level's,
+/// as steps from `anchor` in the level, when it is near enough to it.
+fn near_steps(position: Vec3, origin: I64Vec3, anchor: I64Vec3) -> Option<[i16; 3]> {
+    let from = (position.as_dvec3() + origin.as_dvec3() - anchor.as_dvec3()) * NEAR_STEPS;
+    let steps = from.to_array().map(|v| v.round());
+    steps.iter().all(|s| (f64::from(i16::MIN)..=f64::from(i16::MAX)).contains(s)).then(|| steps.map(|s| s as i16))
+}
+
+/// Where a snapshot for a player at `at`, in this machine's world whose
+/// middle is `origin` from the level's, is anchored: their place in the
+/// level, to a metre.
+pub(super) fn anchor_at(at: Vec3, origin: I64Vec3) -> I64Vec3 {
+    let level = at.as_dvec3() + origin.as_dvec3();
+    I64Vec3::new(level.x.round() as i64, level.y.round() as i64, level.z.round() as i64)
+}
+
+/// Writes a snapshot's anchor: whether it has one, then each axis zigzagged.
+pub(super) fn write_anchor(w: &mut BitWriter, anchor: Option<I64Vec3>) {
+    w.write_bool(anchor.is_some());
+    if let Some(anchor) = anchor {
+        for v in anchor.to_array() {
+            w.write_varint(((v << 1) ^ (v >> 63)) as u64);
+        }
+    }
+}
+
+pub(super) fn read_anchor(r: &mut BitReader) -> Option<Option<I64Vec3>> {
+    if !r.read_bool()? {
+        return Some(None);
+    }
+    let mut axes = [0i64; 3];
+    for axis in &mut axes {
+        let zigzag = r.read_varint()?;
+        *axis = (zigzag >> 1) as i64 ^ -((zigzag & 1) as i64);
+    }
+    Some(Some(I64Vec3::from_array(axes)))
+}
 
 fn quantize_position(p: Vec3) -> [i64; 3] {
     p.as_dvec3().to_array().map(|v| (v * STEPS).round() as i64)
@@ -256,13 +300,34 @@ fn quantize_rotation(q: Quat) -> u32 {
 
 /// Writes the parts of `state` in `mask`, but its fields, from a machine
 /// whose world's middle is `origin` from the level's.
-pub(super) fn write_state(w: &mut BitWriter, state: &ObjState, mask: u8, origin: I64Vec3) {
+///
+/// With an `anchor`, the snapshot's (the player's place in the level, to a
+/// metre), a root within `NEAR_REACH` of it is written as how far it is from
+/// the anchor, to a centimetre, 16 bits an axis; and a rotation that only
+/// turns about up, as a character's does, as its yaw in `YAW_BITS`.
+pub(super) fn write_state(w: &mut BitWriter, state: &ObjState, mask: u8, origin: I64Vec3, anchor: Option<I64Vec3>) {
     w.write_bits(u32::from(mask), MASK_BITS);
     if mask & 1 != 0 {
-        write_position(w, state.position, state.root, origin);
+        let near = anchor.filter(|_| state.root).and_then(|anchor| near_steps(state.position, origin, anchor));
+        w.write_bool(near.is_some());
+        match near {
+            Some(steps) => steps.into_iter().for_each(|s| w.write_bits(u32::from(s as u16), NEAR_BITS)),
+            None => write_position(w, state.position, state.root, origin),
+        }
     }
     if mask & 2 != 0 {
-        w.write_rotation(state.rotation.normalize().to_array(), ROTATION_BITS);
+        let rotation = state.rotation.normalize();
+        let rotation = if rotation.w < 0.0 { -rotation } else { rotation };
+        let upright = rotation.x.abs() < 1e-4 && rotation.z.abs() < 1e-4;
+        w.write_bool(upright);
+        match upright {
+            true => {
+                let yaw = (2.0 * rotation.y.atan2(rotation.w)).rem_euclid(std::f32::consts::TAU);
+                let steps = (yaw / std::f32::consts::TAU * (1u32 << YAW_BITS) as f32).round() as u32;
+                w.write_bits(steps % (1 << YAW_BITS), YAW_BITS);
+            }
+            false => w.write_rotation(rotation.to_array(), ROTATION_BITS),
+        }
     }
     if mask & 4 != 0 {
         for v in state.scale.to_array() {
@@ -282,14 +347,31 @@ pub(super) fn write_state(w: &mut BitWriter, state: &ObjState, mask: u8, origin:
 }
 
 /// Reads parts written by [`write_state`] over `into`, and which they were,
-/// on a machine whose world's middle is `origin` from the level's.
-pub(super) fn read_state(r: &mut BitReader, into: &mut ObjState, origin: I64Vec3) -> Option<u8> {
+/// on a machine whose world's middle is `origin` from the level's, with the
+/// snapshot's `anchor`.
+pub(super) fn read_state(r: &mut BitReader, into: &mut ObjState, origin: I64Vec3, anchor: Option<I64Vec3>) -> Option<u8> {
     let mask = r.read_bits(MASK_BITS)? as u8;
     if mask & 1 != 0 {
-        (into.position, into.root) = read_position(r, origin)?;
+        if r.read_bool()? {
+            let anchor = anchor?;
+            let mut steps = [0i16; 3];
+            for s in &mut steps {
+                *s = r.read_bits(NEAR_BITS)? as u16 as i16;
+            }
+            let level = anchor.as_dvec3() + DVec3::from_array(steps.map(|s| f64::from(s) / NEAR_STEPS));
+            (into.position, into.root) = ((level - origin.as_dvec3()).as_vec3(), true);
+        } else {
+            (into.position, into.root) = read_position(r, origin)?;
+        }
     }
     if mask & 2 != 0 {
-        into.rotation = Quat::from_array(r.read_rotation(ROTATION_BITS)?);
+        into.rotation = match r.read_bool()? {
+            true => {
+                let yaw = r.read_bits(YAW_BITS)? as f32 / (1u32 << YAW_BITS) as f32 * std::f32::consts::TAU;
+                Quat::from_rotation_y(yaw)
+            }
+            false => Quat::from_array(r.read_rotation(ROTATION_BITS)?),
+        };
     }
     if mask & 4 != 0 {
         into.scale = Vec3::new(r.read_f32()?, r.read_f32()?, r.read_f32()?);
@@ -324,6 +406,53 @@ pub(super) struct Tracked {
     /// Its behaviours' replicated fields, written by their scripts: each
     /// behaviour's, by a key for its type.
     pub fields: Fields,
+    /// One of a crowd (a Nav Agent, Block Mob or Crowd Member): sent less
+    /// often to a player further from it, and only within their records'
+    /// ring (see `crate::crowds`).
+    pub crowd: bool,
+}
+
+/// Whether an Obj is one of a crowd, as replication treats it.
+pub(super) fn is_crowd(world: &World, entity: Entity) -> bool {
+    world.has::<crate::nav_agent::NavAgent>(entity)
+        || world.has::<crate::block_mob::BlockMob>(entity)
+        || world.has::<crate::crowds::CrowdMember>(entity)
+}
+
+/// How often crowds go to a player by how far from them: every tick within
+/// `near`, every `middle_ticks` out to `middle`, every `far_ticks` beyond;
+/// and not at all beyond `beyond` (none for no end), for an Obj with no
+/// range of its own.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CrowdRates {
+    pub near: f32,
+    pub middle: f32,
+    pub middle_ticks: u64,
+    pub far_ticks: u64,
+    pub beyond: Option<f32>,
+}
+
+impl CrowdRates {
+    /// The rates from the project's crowds' settings, at `tick_rate`: 20 a
+    /// second in the middle distance and 5 far.
+    pub fn of(world: &World, tick_rate: u32) -> Self {
+        let settings = world.resource::<crate::crowds::CrowdSettings>().cloned().unwrap_or_default();
+        let ticks = |hz: u32| u64::from(tick_rate.div_ceil(hz).max(1));
+        let beyond = (settings.records_beyond > 0.0).then_some(settings.records_beyond);
+        match settings.enabled {
+            true => Self { near: settings.near, middle: settings.middle, middle_ticks: ticks(20), far_ticks: ticks(5), beyond },
+            false => Self { near: f32::MAX, middle: f32::MAX, middle_ticks: 1, far_ticks: 1, beyond: None },
+        }
+    }
+
+    /// Ticks between a crowd's updates `distance` from a player.
+    pub fn every(&self, distance: f32) -> u64 {
+        match distance {
+            d if d <= self.near => 1,
+            d if d <= self.middle => self.middle_ticks,
+            _ => self.far_ticks,
+        }
+    }
 }
 
 /// Behaviours' replicated fields, by a key for each behaviour's type.
@@ -371,6 +500,8 @@ pub(super) struct Viewer {
     pub next_tag: u32,
     /// The dimensions they have, and what the server knows of them.
     pub dimensions: super::dimensions::Seen,
+    /// The tick each of a crowd was last put in their snapshot.
+    pub sent: HashMap<NetId, u64>,
 }
 
 /// A networked Obj on a player's machine.
@@ -451,6 +582,7 @@ impl Replication {
                     tracked.changed = state.changed(&tracked.state) | if tracked.fields_changed { FIELDS } else { 0 };
                     tracked.fields_changed = false;
                     tracked.state = state;
+                    tracked.crowd = is_crowd(world, tracked.entity);
                     let dimension = dimensions.of_obj(tracked.entity);
                     tracked.crossed = dimension != tracked.dimension;
                     tracked.dimension = dimension;
@@ -581,19 +713,51 @@ mod tests {
             parent: Some(NetId(70_000)),
         };
         let mut w = BitWriter::new();
-        write_state(&mut w, &state, ALL, I64Vec3::ZERO);
+        write_state(&mut w, &state, ALL, I64Vec3::ZERO, None);
         let bits = w.bits();
         let bytes = w.finish();
         let mut back = crate::net::messages::BLANK;
-        assert_eq!(read_state(&mut BitReader::new(&bytes), &mut back, I64Vec3::ZERO), Some(ALL));
+        assert_eq!(read_state(&mut BitReader::new(&bytes), &mut back, I64Vec3::ZERO, None), Some(ALL));
         assert!(back.position.distance(state.position) < 0.001, "{} against {}", back.position, state.position);
         assert!(back.rotation.dot(state.rotation).abs() > 0.9999);
         assert_eq!((back.scale, back.mist, back.root), (state.scale, state.mist, true));
         assert_eq!(back.parent, state.parent, "the networked Obj it is inside");
         let mut moved = BitWriter::new();
-        write_state(&mut moved, &state, 0b11, I64Vec3::ZERO);
-        assert!(moved.bits() <= MASK_BITS as usize + 2 + 72 + 32, "a moving Obj in {} bits", moved.bits());
+        write_state(&mut moved, &state, 0b11, I64Vec3::ZERO, None);
+        assert!(moved.bits() <= MASK_BITS as usize + 1 + 2 + 72 + 1 + 32, "a moving Obj in {} bits", moved.bits());
         assert!(bits < 248, "{bits}");
+    }
+
+    /// A character near the player a snapshot is anchored at goes as 16 bits
+    /// an axis from the anchor and its yaw in 10, wherever the two
+    /// machines' middles are; one too far from it, as ever.
+    #[test]
+    fn a_character_near_the_snapshots_anchor_goes_in_few_bits() {
+        let walking = ObjState {
+            position: Vec3::new(2_120.37, 64.5, -310.02),
+            rotation: Quat::from_rotation_y(2.0),
+            root: true,
+            ..crate::net::messages::BLANK
+        };
+        let (server, player) = (I64Vec3::new(1024, 0, 0), I64Vec3::new(2048, 0, -1024));
+        let anchor = Some(anchor_at(Vec3::new(2_000.0, 60.0, -300.0), server));
+        let mut w = BitWriter::new();
+        write_state(&mut w, &walking, 0b11, server, anchor);
+        let bits = w.bits();
+        let mut back = crate::net::messages::BLANK;
+        read_state(&mut BitReader::new(&w.finish()), &mut back, player, anchor).unwrap();
+        let expected = walking.position + (server - player).as_vec3();
+        assert!(back.position.distance(expected) < 0.006, "to a centimetre: {} against {expected}", back.position);
+        assert!(back.rotation.dot(walking.rotation).abs() > 0.99999, "its yaw");
+        assert_eq!(bits, MASK_BITS as usize + 1 + 48 + 1 + YAW_BITS as usize, "{bits} bits");
+        // Too far from the anchor, and turned other than about up: written as ever.
+        let off = ObjState { position: walking.position + Vec3::new(400.0, 0.0, 0.0), rotation: Quat::from_rotation_x(0.3), ..walking };
+        let mut w = BitWriter::new();
+        write_state(&mut w, &off, 0b11, server, anchor);
+        let mut back = crate::net::messages::BLANK;
+        read_state(&mut BitReader::new(&w.finish()), &mut back, player, anchor).unwrap();
+        assert!(back.position.distance(off.position + (server - player).as_vec3()) < 0.002);
+        assert!(back.rotation.dot(off.rotation).abs() > 0.9999);
     }
 
     #[test]
@@ -601,17 +765,17 @@ mod tests {
         let far = |position: Vec3, root: bool| ObjState { position, root, ..crate::net::messages::BLANK };
         let send = |state: &ObjState, from: I64Vec3, to: I64Vec3| {
             let mut w = BitWriter::new();
-            write_state(&mut w, state, 1, from);
+            write_state(&mut w, state, 1, from, None);
             let bits = w.bits();
             let mut back = crate::net::messages::BLANK;
-            read_state(&mut BitReader::new(&w.finish()), &mut back, to).unwrap();
+            read_state(&mut BitReader::new(&w.finish()), &mut back, to, None).unwrap();
             (back, bits)
         };
         // 100 km out on the server, whose middle stays put, to a player whose middle is 99 km out.
         let player = I64Vec3::new(99 * 1024, 0, -50 * 1024);
         let (seen, bits) = send(&far(Vec3::new(102_400.25, 3.0, -51_200.5), true), I64Vec3::ZERO, player);
         assert_eq!(seen.position, Vec3::new(1024.25, 3.0, -0.5), "exact in the player's world");
-        assert_eq!(bits, MASK_BITS as usize + 2 + 72 + 48, "far out, 16 bits an axis more");
+        assert_eq!(bits, MASK_BITS as usize + 1 + 2 + 72 + 48, "far out, 16 bits an axis more");
         // Back from the player, the server reads it where it was; a child's is its parent's either way.
         assert_eq!(send(&seen, player, I64Vec3::ZERO).0.position, Vec3::new(102_400.25, 3.0, -51_200.5));
         let child = far(Vec3::new(0.5, 1.0, 2.0), false);
@@ -619,7 +783,7 @@ mod tests {
         // Near the level's middle as ever, 8 km either way, its edge too.
         let (edge, bits) = send(&far(Vec3::new(8191.999, -8192.0, 0.0), true), I64Vec3::ZERO, I64Vec3::ZERO);
         assert!(
-            edge.position.distance(Vec3::new(8191.999, -8192.0, 0.0)) < 0.001 && bits == MASK_BITS as usize + 2 + 72
+            edge.position.distance(Vec3::new(8191.999, -8192.0, 0.0)) < 0.001 && bits == MASK_BITS as usize + 1 + 2 + 72
         );
         assert_eq!(send(&far(Vec3::new(8192.0, 0.0, 0.0), true), I64Vec3::ZERO, I64Vec3::ZERO).0.position.x, 8192.0);
     }

@@ -491,7 +491,7 @@ impl NetSession {
                         }
                     }
                     // A player's word on their own Objs, when they run them.
-                    Message::Snapshot { tick, entries } if self.settings.authority == NetAuthority::Shared => {
+                    Message::Snapshot { tick, entries, .. } if self.settings.authority == NetAuthority::Shared => {
                         self.authority.states_from(player, tick, entries, &self.replication.objects);
                     }
                     Message::Fields { id, fields } if self.settings.authority == NetAuthority::Shared => {
@@ -601,7 +601,7 @@ impl NetSession {
                         (None, _) => {}
                     }
                 }
-                Message::Snapshot { tick, entries } => self.take_snapshot(tick, entries),
+                Message::Snapshot { tick, entries, .. } => self.take_snapshot(tick, entries),
                 Message::Owner { id, owner } => self.authority.owners.push((id, owner)),
                 Message::Rpc { id, key, tick, bytes } => match self.replication.remote.get(&id).and_then(|r| r.entity) {
                     Some(entity) => self.rpcs.incoming.push_back(Rpc { entity, key, caller: None, tick, bytes }),
@@ -680,6 +680,7 @@ impl NetSession {
             return;
         }
         let wanted = dimensions::wanted_by_players(world, self);
+        let crowd_rates = replication::CrowdRates::of(world, self.settings.tick_rate);
         let End::Server(server) = &mut self.end else { return };
         let replication = &mut self.replication;
         let gone = replication.capture(world);
@@ -714,19 +715,24 @@ impl NetSession {
             }
             let mut reliable = Vec::new();
             for id in &gone {
+                viewer.sent.remove(id);
                 if viewer.known.remove(id).is_some() {
                     reliable.push(Message::Despawn { id: *id, gone: true });
                 }
             }
             let mut spawned = 0;
             for (&id, tracked) in &replication.objects {
-                // Within range in the same dimension, and in one they have.
+                // Within range in the same dimension, and in one they have. One of a crowd with no range of its own
+                // goes only within their records' ring: beyond it, it would be a record on its own machine.
+                let range = match (tracked.object.range > 0.0, tracked.crowd) {
+                    (false, true) => crowd_rates.beyond.unwrap_or(0.0),
+                    _ => tracked.object.range,
+                };
                 let near = at.is_none_or(|(at, dimension)| {
-                    dimension == tracked.dimension && at.distance(tracked.state.position) <= tracked.object.range
+                    dimension == tracked.dimension && at.distance(tracked.state.position) <= range
                 });
                 let number = seen.number(tracked.dimension).filter(|_| seen.has(tracked.dimension));
-                let wanted =
-                    number.is_some() && (tracked.object.range <= 0.0 || near || tracked.owner == Some(*player));
+                let wanted = number.is_some() && (range <= 0.0 || near || tracked.owner == Some(*player));
                 match (wanted, viewer.known.get_mut(&id)) {
                     (true, None) if spawned < replication::SPAWNS_A_TICK => {
                         spawned += 1;
@@ -759,6 +765,7 @@ impl NetSession {
                     }
                     (false, Some(_)) => {
                         viewer.known.remove(&id);
+                        viewer.sent.remove(&id);
                         reliable.push(Message::Despawn { id, gone: false });
                     }
                     _ => {}
@@ -785,7 +792,8 @@ impl NetSession {
                     let _ = server.send(client, channel, &message.encode(self.origin));
                 }
             }
-            let snapshot = snapshot(tick, viewer, &replication.objects, self.origin);
+            let snapshot =
+                snapshot(tick, viewer, &replication.objects, self.origin, at.map(|(at, _)| at), crowd_rates);
             if let Some((bytes, carried)) = snapshot {
                 let tag = viewer.next_tag;
                 viewer.next_tag = viewer.next_tag.wrapping_add(1);
@@ -889,6 +897,8 @@ fn snapshot(
     viewer: &mut Viewer,
     objects: &std::collections::BTreeMap<NetId, Tracked>,
     origin: I64Vec3,
+    at: Option<Vec3>,
+    rates: replication::CrowdRates,
 ) -> Option<(Vec<u8>, Vec<(NetId, u8)>)> {
     let mut waiting: Vec<(NetId, f32)> =
         viewer.known.iter().filter(|(_, (pending, _))| *pending != 0).map(|(id, (_, waited))| (*id, *waited)).collect();
@@ -896,17 +906,29 @@ fn snapshot(
         return None;
     }
     waiting.sort_by(|a, b| b.1.total_cmp(&a.1));
+    // Anchored at the player, so what is near them goes in fewer bits.
+    let anchor = at.map(|at| replication::anchor_at(at, origin));
     let mut w = voxear_net::BitWriter::new();
     w.write_bits(messages::SNAPSHOT, messages::KIND_BITS);
     w.write_varint(tick);
+    replication::write_anchor(&mut w, anchor);
     let mut carried = Vec::new();
     for (id, _) in waiting {
         let Some(tracked) = objects.get(&id) else { continue };
+        // One of a crowd further from them goes less often; what changed meanwhile waits for its turn.
+        if tracked.crowd
+            && let Some(at) = at
+        {
+            let every = rates.every(at.distance(tracked.state.position));
+            if viewer.sent.get(&id).is_some_and(|&last| tick.saturating_sub(last) < every) {
+                continue;
+            }
+        }
         let Some((pending, waited)) = viewer.known.get_mut(&id) else { continue };
         let before = w.clone();
         w.write_bool(true);
         w.write_varint(u64::from(id.0));
-        replication::write_state(&mut w, &tracked.state, *pending, origin);
+        replication::write_state(&mut w, &tracked.state, *pending, origin, anchor);
         if *pending & replication::FIELDS != 0 {
             replication::write_fields(&mut w, &tracked.fields);
         }
@@ -917,6 +939,9 @@ fn snapshot(
         }
         carried.push((id, *pending));
         (*pending, *waited) = (0, 0.0);
+        if tracked.crowd {
+            viewer.sent.insert(id, tick);
+        }
     }
     w.write_bool(false);
     (!carried.is_empty()).then(|| (w.finish(), carried))
@@ -1098,6 +1123,7 @@ pub fn track(world: &mut World, entity: voxear_ecs::Entity, origin: Origin) -> O
         changed: 0,
         fields_changed: false,
         fields,
+        crowd: false,
     };
     session.replication.objects.insert(id, tracked);
     world.insert(entity, Networked { id, owner });

@@ -59,7 +59,7 @@ pub enum Message {
     },
     /// Objs' states on a server tick: each Obj's parts that changed, as a
     /// mask, over a state with the rest left as they were.
-    Snapshot { tick: u64, entries: Vec<(NetId, u8, ObjState, Option<Fields>)> },
+    Snapshot { tick: u64, anchor: Option<I64Vec3>, entries: Vec<(NetId, u8, ObjState, Option<Fields>)> },
     /// A script's call of a method on a networked Obj's behaviour, by a key:
     /// to the server from a player, or to players from the server, with the
     /// tick it was made on.
@@ -229,7 +229,7 @@ impl Message {
                 }
                 w.write_varint(u64::from(*dimension));
                 w.write_varint(*tick);
-                write_state(&mut w, state, super::replication::ALL, world_origin);
+                write_state(&mut w, state, super::replication::ALL, world_origin, None);
                 write_fields(&mut w, fields);
             }
             Message::Despawn { id, gone } => {
@@ -298,13 +298,14 @@ impl Message {
                     w.write_varint(u64::from(*dimension));
                 }
             }
-            Message::Snapshot { tick, entries } => {
+            Message::Snapshot { tick, anchor, entries } => {
                 w.write_bits(SNAPSHOT, KIND_BITS);
                 w.write_varint(*tick);
+                super::replication::write_anchor(&mut w, *anchor);
                 for (id, mask, state, fields) in entries {
                     w.write_bool(true);
                     w.write_varint(u64::from(id.0));
-                    write_state(&mut w, state, *mask, world_origin);
+                    write_state(&mut w, state, *mask, world_origin, *anchor);
                     if mask & FIELDS != 0 {
                         write_fields(&mut w, fields.as_ref().unwrap_or(&Fields::new()));
                     }
@@ -396,7 +397,7 @@ impl Message {
                 let dimension = read_number(&mut r)?;
                 let tick = r.read_varint()?;
                 let mut state = BLANK;
-                read_state(&mut r, &mut state, world_origin)?;
+                read_state(&mut r, &mut state, world_origin, None)?;
                 let fields = read_fields(&mut r)?;
                 Message::Spawn { id, owner: has_owner.then_some(owner), origin, dimension, tick, state, fields }
             }
@@ -451,15 +452,16 @@ impl Message {
             }
             SNAPSHOT => {
                 let tick = r.read_varint()?;
+                let anchor = super::replication::read_anchor(&mut r)?;
                 let mut entries = Vec::new();
                 while r.read_bool()? {
                     let id = NetId(r.read_varint()? as u32);
                     let mut state = BLANK;
-                    let mask = read_state(&mut r, &mut state, world_origin)?;
+                    let mask = read_state(&mut r, &mut state, world_origin, anchor)?;
                     let fields = if mask & FIELDS != 0 { Some(read_fields(&mut r)?) } else { None };
                     entries.push((id, mask, state, fields));
                 }
-                Message::Snapshot { tick, entries }
+                Message::Snapshot { tick, anchor, entries }
             }
             RPC => {
                 let id = NetId(r.read_varint()? as u32);

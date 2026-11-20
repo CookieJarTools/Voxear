@@ -4,7 +4,8 @@ Research for running hundreds to thousands of animated AI characters in Voxear's
 mesh levels, written 2026-11-19. Nothing here is built yet. It covers what the engine does now and where it
 stops (measured), the techniques that are published and what each costs, and a recommended plan in stages.
 
-**Progress.** Stages 1 to 5 are built (2026-11-19). Crowd Members far beyond the streamed world are kept as
+**Progress.** All six stages are built (2026-11-20). In co-op, a thousand characters near a player get 123 updates
+a tick, about 9 bytes each, and crowds go to each player more often the nearer they are. Stages 1 to 5 (2026-11-19): Crowd Members far beyond the streamed world are kept as
 records that walk on and are made again near: 10,000 cost 0.1 ms a frame and save in 180 KB. Far Animators play their clips from baked frames on the GPU:
 5,000 humanoids take 0.4 ms animating and 6.1 ms of renderer CPU, against 10.6 and 29.3 ms posed on the CPU. Skinning now has a pool of its own, poses where drawn
 what does not fit, skins in one dispatch, skips what no camera sees and shares poses: 1,000 humanoids posed where

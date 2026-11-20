@@ -4647,7 +4647,7 @@ engine's glue is `voxear_engine::navigation`.
   `LevelNav` whole; mesh agents search again when the mesh they found their way on is gone. Obstacles not carved
   join avoidance as movers that do not avoid.
 
-### Crowds *(tiers and records implemented; networked crowds planned, see `docs/research/crowds.md`)*
+### Crowds *(tiers, records and networked crowds implemented, see `docs/research/crowds.md`)*
 
 - **Tiers** (`voxear_engine::crowds`). Once a frame, before its fixed steps, every Obj with a Nav Agent, Block Mob,
   Mob Motion or Motion Matcher is put in a tier by its distance to the nearest viewpoint: the game's camera (or
@@ -4737,6 +4737,10 @@ The model is server-authoritative and ECS-native.
 - Prediction with rollback for owned entities, and interpolation for the rest.
 - Lag compensation.
 - Custom serialisers, with bit-packed delta compression against acknowledged snapshots.
+
+**Crowds.** Each player's snapshot is anchored at their place, so what is near them goes as short steps from it and
+upright turns as a yaw; Objs of a crowd go to each player more often the nearer they are, and not past the records'
+ring (`replication::CrowdRates`, from `crowds::CrowdSettings`). Poses never go: each machine animates from movement.
 
 **Dimensions.** Players may be in different dimensions at once; the server makes ground round each, sends each
 only the Objs of the dimensions they have, decides crossings and sends a dimension's edits as a player comes into

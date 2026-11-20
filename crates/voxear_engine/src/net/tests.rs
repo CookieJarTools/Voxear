@@ -904,3 +904,88 @@ fn with_shared_authority_a_crossing_is_taken_by_a_portal_and_refused_without_one
     assert_eq!(voxear_scene::dimension_of(&server, me), caves, "no Portal by it there");
     assert_eq!(voxear_scene::dimension_of(&clients[0], mine), ours, "and its machine was told where it is");
 }
+
+/// How many times each of `ids` went in player 1's snapshots over `frames`
+/// frames, every crowd Obj moved along Z each frame.
+fn sends(server: &mut World, clients: &mut [World], crowd: &[voxear_ecs::Entity], frames: u32) -> Vec<u32> {
+    let ids: Vec<NetId> = crowd.iter().map(|&e| server.get::<Networked>(e).unwrap().id).collect();
+    let mut counts = vec![0u32; ids.len()];
+    let mut last: Vec<Option<u64>> = vec![None; ids.len()];
+    for frame_number in 0..frames {
+        for &entity in crowd {
+            server.get_mut::<voxear_scene::Transform>(entity).unwrap().position.z = frame_number as f32 * 0.05;
+        }
+        frame(server, clients, &[(false, false)]);
+        make_spawns(clients);
+        let viewer = &session_of(server).replication.viewers[&PlayerId(1)];
+        for (k, id) in ids.iter().enumerate() {
+            let now = viewer.sent.get(id).copied();
+            if now.is_some() && now != last[k] {
+                counts[k] += 1;
+                last[k] = now;
+            }
+        }
+    }
+    counts
+}
+
+#[test]
+fn crowds_go_less_often_further_from_a_player_and_not_beyond_their_records_ring() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let me = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, me, Some(PlayerId(1)));
+    // Near, in the middle distance, far, and beyond the records' ring (250 m).
+    let places = [10.0, 100.0, 200.0, 400.0];
+    let crowd: Vec<_> = places
+        .iter()
+        .map(|&x| {
+            let entity = shared(&mut server, voxear_core::math::Vec3::new(x, 0.0, 0.0), NetObject::default());
+            server.insert(entity, crate::crowds::CrowdMember::default());
+            entity
+        })
+        .collect();
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    let counts = sends(&mut server, &mut clients, &crowd, 120);
+    // Two seconds at 60 ticks a second: every tick near, 20 a second in the middle, 5 far.
+    assert!(counts[0] >= 110, "near, every tick: {counts:?}");
+    assert!((36..=42).contains(&counts[1]), "in the middle distance, 20 a second: {counts:?}");
+    assert!((9..=11).contains(&counts[2]), "far, 5 a second: {counts:?}");
+    assert_eq!(counts[3], 0, "beyond the ring, never: {counts:?}");
+    let id = server.get::<Networked>(crowd[3]).unwrap().id;
+    assert!(!session_of(&server).replication.viewers[&PlayerId(1)].known.contains_key(&id), "nor made");
+}
+
+#[test]
+fn a_crowd_near_a_player_goes_in_small_updates() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let me = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, me, Some(PlayerId(1)));
+    let crowd: Vec<_> = (0..1000)
+        .map(|n| {
+            let at = voxear_core::math::Vec3::new((n % 40) as f32 - 20.0, 0.0, (n / 40) as f32 - 12.0);
+            let entity = shared(&mut server, at, NetObject::default());
+            server.insert(entity, crate::crowds::CrowdMember::default());
+            entity
+        })
+        .collect();
+    for _ in 0..120 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    let counts = sends(&mut server, &mut clients, &crowd, 120);
+    let a_tick = counts.iter().sum::<u32>() as f32 / 120.0;
+    println!("a thousand near: {a_tick:.1} updates a tick in 1,100 bytes");
+    // Each in about 11 bytes, where one took about 16.
+    assert!(a_tick > 85.0, "{a_tick} a tick");
+}

@@ -4006,7 +4006,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     sent when the camera comes back, and its save put back; a record's walk round a corner; records' bytes round
     trip to a centimetre and refuse what is not theirs. Not done: shared direction fields for many going to one
     place; ambient life made from seeds; records walking the regions where their ground is made.
-  - [ ] Networked crowds: compact updates, rates by tier, interest by ring.
+  - [x] **Networked crowds** (`net::replication`). Each player's snapshot is anchored at their place in the level to a
+    metre (`anchor_at`, written once a snapshot); a root within about 327 m of it goes as 16 bits an axis from the
+    anchor, to a centimetre, and a rotation that only turns about up as a 10-bit yaw, each with a bit saying so,
+    for every networked Obj: about 9 bytes an update where it took 16. An Obj of a crowd (`Tracked::crowd`:
+    a Nav Agent, Block Mob or Crowd Member) goes to each player by its distance from them (`CrowdRates`, from
+    Project Settings ▸ Crowds): every tick within Near, 20 a second out to Middle, 5 beyond, what changed meanwhile
+    waiting for its turn (`Viewer::sent`); and with no range of its own, only within Records beyond. Animation is
+    never sent: each machine animates from movement. Tests: a character near the anchor in 66 bits, one far from it
+    and one turned over as before; four characters at 10, 100, 200 and 400 m sent every tick, 20 a second, 5 a
+    second and never; a thousand near a player, 123 updates a tick within the 1,100-byte snapshot (about 65 before).
+    Not done: actions as timed reliable events; far crowds drawn on each machine from records and seeds; records
+    sent to joining players.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

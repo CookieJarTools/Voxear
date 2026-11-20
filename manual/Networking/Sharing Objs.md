@@ -33,7 +33,20 @@ A player's own Objs are always sent to them, and where their first one is counts
 There is only so much room in each update a player gets. What matters most goes first, and what does not fit goes next time, gaining in priority as it waits, so nothing is left behind for long. Nearer Objs count for more than far ones.
 
 - **Priority**: 1 as usual, 2 to be sent twice as often as others when there is not room for everything.
-- **Range**: how far, in metres, a player's own Objs may be from it for it to be sent to them. Further away, it is taken away from their machine, and made again when they come back in range. 0 sends it to everyone.
+- **Range**: how far, in metres, a player's own Objs may be from it for it to be sent to them. Further away, it is taken away from their machine, and made again when they come back in range. 0 sends it to everyone, but for one of a crowd (below).
+
+Updates are small. Each player's update is anchored where they are, so an Obj within about 300 m of them goes as how far it is from them, to a centimetre, and one turned only about up, as characters are, as its heading alone: about 9 bytes where it took 16.
+
+## Crowds
+
+An Obj with a **Nav Agent**, a **Block Mob** or a **Crowd Member** is one of a crowd, and goes to each player by how near it is to them, as **Project Settings ▸ Crowds** sets the distances:
+
+- within **Near** (40 m), every tick;
+- out to **Middle** (150 m), 20 times a second;
+- beyond, 5 times a second, their machine moving it smoothly between;
+- beyond **Records beyond** (250 m), not at all, unless it has a range of its own: there it would be a record on the server anyway (see [[Crowds]]).
+
+A player's machine animates every character from how it moves, so poses are never sent. Within the usual budget a player can follow over a hundred characters near them every tick, or a thousand spread over the distances.
 
 ## Dimensions
 

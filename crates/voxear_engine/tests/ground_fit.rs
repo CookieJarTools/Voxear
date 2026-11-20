@@ -105,12 +105,14 @@ fn a_graded_road_is_laid_through_the_streamed_world_with_its_blocks_and_found_fr
     let middle = Vec3::new((start.x + end.x) * 0.5, 0.0, start.z);
     let laid = |game: &Game| top_at(game, world, middle).is_some_and(|top| (top - height).abs() < 0.01);
     assert!(until(&mut game, &mut |game| laid(game)), "laid at {height}, not {:?}", top_at(&game, world, middle));
-    let number = game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world).unwrap().drawn.number_of(gravel);
+    let asset = game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world).unwrap();
+    let number = asset.drawn.number_of(gravel);
     assert_eq!(Some(block_at(&game, world, Vec3::new(middle.x, height - 0.5, middle.z))), number, "laid with gravel");
     // Found from a place beside it.
     let beside = Vec3::new(middle.x, height, middle.z + 6.0);
     let blocks = world;
-    let (found, point, _) = voxear_engine::roads::nearest(&game.engine.world, blocks, beside, 20.0, None).expect("a road near");
+    let near = voxear_engine::roads::nearest(&game.engine.world, blocks, beside, 20.0, None);
+    let (found, point, _) = near.expect("a road near");
     assert_eq!(game.engine.world.get::<Name>(found).unwrap().0, "Road");
     assert!((point.z - start.z).abs() < 0.5, "{point}");
     assert!(voxear_engine::roads::nearest(&game.engine.world, blocks, beside + Vec3::Z * 100.0, 20.0, None).is_none());

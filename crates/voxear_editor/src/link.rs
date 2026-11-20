@@ -601,14 +601,20 @@ pub const CALLS: &[CallInfo] = &[
     CallInfo {
         name: "area_fill.set_outline",
         about: "Sets the outline of an Obj's Area Fill along x and z, in metres in the Obj's own space, three corners at least. One step to undo.",
-        args: &[arg("obj", ArgKind::Obj, "The Obj with the Area Fill."), arg("outline", ArgKind::Value, "The corners, each `[x, z]`.")],
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the Area Fill."),
+            arg("outline", ArgKind::Value, "The corners, each `[x, z]`."),
+        ],
         changes: true,
         returns: "{ outline }",
     },
     CallInfo {
         name: "roads.nearest",
         about: "The road nearest a place along the ground, within `reach` metres (50 when left out), among those over the world of blocks there: its Obj, the nearest point of its middle, and how far along it that is in metres. Null where none is near.",
-        args: &[arg("at", ArgKind::Vector, "The place, in metres."), maybe("reach", ArgKind::Number, "How far off it may be, in metres.")],
+        args: &[
+            arg("at", ArgKind::Vector, "The place, in metres."),
+            maybe("reach", ArgKind::Number, "How far off it may be, in metres."),
+        ],
         changes: false,
         returns: "{ road, point, along }",
     },

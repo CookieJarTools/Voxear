@@ -499,7 +499,8 @@ mod tests {
         assert!(fit.fill.is_some() && fit.top.is_none());
         // A Road and an Area Fill, the same way.
         whole_values(&mut world, obj, ROAD << 2 | ADD, Some([0.0; 4])).unwrap();
-        let points = r#"{"points":[{"at":[0,0,0],"width":3},{"at":[0,0,9],"width":7}],"ground":"follow","bridge":true}"#;
+        let points =
+            r#"{"points":[{"at":[0,0,0],"width":3},{"at":[0,0,9],"width":7}],"ground":"follow","bridge":true}"#;
         whole_texts(&mut world, obj, ROAD << 1 | CHANGE, points).unwrap();
         let road = world.get::<Road>(obj).unwrap().clone();
         assert_eq!((road.points[1].width, road.ground, road.bridge), (7.0, crate::roads::RoadGround::Follow, true));

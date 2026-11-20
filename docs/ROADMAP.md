@@ -3850,8 +3850,19 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   Not done: slabs on the slope out, Fill and Top for blocks a world does not hold yet, more boxes in the Inspector,
   records kept in a game's save, smooth worlds and worlds of a set size. Ground cover grows on a plot's top as on
   any block of its kind: a Top without ground cover keeps the plot bare.
-- **Roads and Area Fill** (stage 2): a Road component holding a spline, widths per point, palettes and patterns,
-  edges and kerbs, Follow or Grade, steps, bridges, tunnels, canals, junctions; plazas as Area Fills.
+- ~~**Roads and Area Fill:**~~ done (stage 2). The Road component: points in its Obj's space with a width each,
+  dragged in the Scene view onto the ground, added halfway or past the end, taken away with Shift, widths dragged at
+  each side, an end let go of on another road snapped onto its middle; a mix of blocks by weight or a pattern of
+  them, an edge and a kerb; Follow or Grade (a straight line between its points, climbing no more than its grade)
+  with a slope out; whole-block or slab steps; bridges on piers over low ground and water, tunnels with roofs through
+  high ground (the ground over them kept), canals; the higher priority laid where two cross; stops square at its
+  ends. The Area Fill component: an outline paved with a mix or a pattern, following the ground or level. C#:
+  `Road`, `RoadPoint`, `MixBlock`, `RoadGround`, `RoadSteps`, `AreaFill`, `AreaLevel`, `Roads.Nearest`, `RoadHit`.
+  `vox editor call`: `road.set_points`, `road.set_mix`, `area_fill.set_outline`, `roads.nearest`. Tests: palettes,
+  patterns, grades, edges, slope out, tunnels, bridges, kerbs and canals per column; a graded road laid in a streamed
+  world with its blocks and found from a place; road calls set, found and undone in the editor; scripts' whole
+  components. Manual: World Building ▸ Roads. Not done: stairs as steps, junctions blending two grades, a road
+  asked of the generator's town roads, bridges kept over water of their own.
 - **Placing tools and nav for placed models** (stage 3): the Placement component, a palette of prefabs, lining up
   along a road, a prefab brush, scattering in an area; walkable mesh colliders in block nav, doors; box models with
   one bone and no clips drawn unskinned.

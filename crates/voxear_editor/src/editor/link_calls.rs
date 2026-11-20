@@ -1151,28 +1151,33 @@ impl Editor {
         };
         let answer = match call {
             "road.set_points" => {
-                let mut road = world.get::<Road>(entity).cloned().ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Road"))?;
+                let road = world.get::<Road>(entity).cloned();
+                let mut road = road.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Road"))?;
                 let given = need(args, "points")?.as_array().ok_or_else(|| bad("`points` is not a list"))?;
                 let points: Option<Vec<RoadPoint>> = given
                     .iter()
                     .map(|point| {
                         let v = numbers(point)?;
-                        (v.len() >= 3).then(|| RoadPoint { at: [v[0], v[1], v[2]], width: v.get(3).copied().unwrap_or(5.0).clamp(1.0, 64.0) })
+                        let width = v.get(3).copied().unwrap_or(5.0).clamp(1.0, 64.0);
+                        (v.len() >= 3).then(|| RoadPoint { at: [v[0], v[1], v[2]], width })
                     })
                     .collect();
-                let mut points = points.filter(|points| points.len() >= 2).ok_or_else(|| bad("two points at least, each `[x, y, z, width]`"))?;
+                let points = points.filter(|points| points.len() >= 2);
+                let mut points = points.ok_or_else(|| bad("two points at least, each `[x, y, z, width]`"))?;
                 if opt_bool(args, "land") == Some(true) {
                     let placed = voxear_scene::world_matrix(world, entity);
                     let game = &mut self.game;
                     for point in &mut points {
                         let at = placed.transform_point3(Vec3::from(point.at));
-                        let ground = voxear_engine::ground_fit::ground_under(&mut game.engine.world, &mut game.content, at, Some(entity));
+                        let (world, content) = (&mut game.engine.world, &mut game.content);
+                        let ground = voxear_engine::ground_fit::ground_under(world, content, at, Some(entity));
                         let landed = Vec3::new(at.x, ground.unwrap_or(at.y), at.z);
                         point.at = placed.inverse().transform_point3(landed).to_array();
                     }
                 }
                 road.points = points;
-                let answer = json!({ "points": road.points.iter().map(|p| [p.at[0], p.at[1], p.at[2], p.width]).collect::<Vec<_>>() });
+                let given: Vec<[f32; 4]> = road.points.iter().map(|p| [p.at[0], p.at[1], p.at[2], p.width]).collect();
+                let answer = json!({ "points": given });
                 self.game.engine.world.insert(entity, road);
                 answer
             }
@@ -1186,7 +1191,10 @@ impl Editor {
                     mix.push(MixBlock { block: Some(guid), weight });
                 }
                 let pattern: Vec<String> = match args.get("pattern") {
-                    Some(rows) => rows.as_array().ok_or_else(|| bad("`pattern` is not a list"))?.iter().filter_map(|row| row.as_str().map(str::to_string)).collect(),
+                    Some(rows) => {
+                        let rows = rows.as_array().ok_or_else(|| bad("`pattern` is not a list"))?;
+                        rows.iter().filter_map(|row| row.as_str().map(str::to_string)).collect()
+                    }
                     None => Vec::new(),
                 };
                 let world = &mut self.game.engine.world;
@@ -1203,7 +1211,8 @@ impl Editor {
                 let given = need(args, "outline")?.as_array().ok_or_else(|| bad("`outline` is not a list"))?;
                 let outline: Option<Vec<[f32; 2]>> =
                     given.iter().map(|corner| numbers(corner).filter(|v| v.len() == 2).map(|v| [v[0], v[1]])).collect();
-                let outline = outline.filter(|outline| outline.len() >= 3).ok_or_else(|| bad("three corners at least, each `[x, z]`"))?;
+                let outline = outline.filter(|outline| outline.len() >= 3);
+                let outline = outline.ok_or_else(|| bad("three corners at least, each `[x, z]`"))?;
                 let area = self.game.engine.world.get_mut::<AreaFill>(entity);
                 let area = area.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Area Fill"))?;
                 area.outline = outline.clone();

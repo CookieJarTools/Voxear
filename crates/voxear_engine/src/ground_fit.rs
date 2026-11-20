@@ -339,7 +339,12 @@ pub fn landing(world: &mut World, content: &mut crate::content::Content, obj: En
 /// The ground under `at` of the world of blocks without end in the dimension
 /// of `obj` (the level's without one), in metres up, as the generator and
 /// every layer but `obj`'s own make it.
-pub fn ground_under(world: &mut World, content: &mut crate::content::Content, at: Vec3, obj: Option<Entity>) -> Option<f32> {
+pub fn ground_under(
+    world: &mut World,
+    content: &mut crate::content::Content,
+    at: Vec3,
+    obj: Option<Entity>,
+) -> Option<f32> {
     let blocks = match obj {
         Some(obj) => crate::roads::world_of(world, obj)?,
         None => world

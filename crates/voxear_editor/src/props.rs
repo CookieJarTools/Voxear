@@ -4974,8 +4974,12 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::Plants(field) => return crate::plants_props::choices(game, *field),
         Prop::Heat(field) => return crate::heat_props::choices(game, *field),
         Prop::GroundFit(field) => return crate::fit_props::choices(game, *field),
-        Prop::Road(field) if crate::road_props::road_picked(*field) => return crate::road_props::block_choices(game),
-        Prop::AreaFill(field) if crate::road_props::area_picked(*field) => return crate::road_props::block_choices(game),
+        Prop::Road(field) if crate::road_props::road_picked(*field) => {
+            return crate::road_props::block_choices(game);
+        }
+        Prop::AreaFill(field) if crate::road_props::area_picked(*field) => {
+            return crate::road_props::block_choices(game);
+        }
         // The Obj's own Mesh Renderer's first, then any mesh.
         Prop::DryMesh => {
             let mut found = vec![(OWN_MESH.to_string(), Pick::Asset(None))];

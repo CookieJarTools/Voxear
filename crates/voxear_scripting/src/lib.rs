@@ -50,9 +50,9 @@ pub use interop::{
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
 pub use post::{
-    LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PROJECT_CHANGE, PROJECT_SECTION, PostCall, WORLD_ASK,
+    LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PROJECT_CHANGE, PROJECT_SECTION, PostCall,
     SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET, SKY_IN_EFFECT, SKY_RESET, SKY_SET, SUN_LOOK, SUN_LOOK_RESET,
-    SUN_LOOK_SET, set_post_call,
+    SUN_LOOK_SET, WORLD_ASK, set_post_call,
 };
 pub use plants::{FoliageCall, set_foliage_call};
 pub use crowds::{CrowdRecordsState, set_crowd_records};

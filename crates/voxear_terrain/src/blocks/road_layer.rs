@@ -265,7 +265,7 @@ impl RoadLayer {
             return Some(RoadColumn { top: road_top, on, block, along, across, half, level: road_top });
         }
         // Past its edge a graded road's ground eases back a block a step.
-        let steps = (near.distance - half).ceil() as i32;
+        let steps = ((near.distance - half).ceil() as i32).max(0);
         if self.grade.is_none() || steps > self.slope_out as i32 {
             return (self.clear_plants && steps <= self.slope_out as i32 + 1).then_some(RoadColumn {
                 top: ground,
@@ -381,6 +381,9 @@ mod tests {
         assert_eq!(road.shape([10, 3], 6).unwrap().top, 9);
         assert_eq!(road.shape([10, 4], 6).unwrap().top, 8);
         assert_eq!(road.shape([10, 9], 6), None);
+        // Past its end it stops: the ground eases out from its height there, with no kerb across it.
+        let past = road.shape([41, 0], 6).unwrap();
+        assert_eq!((past.on, past.top), (OnRoad::Out, 10));
         // The same block every time.
         assert_eq!(road.shape([10, 0], 6), road.shape([10, 0], 6));
     }

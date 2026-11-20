@@ -4471,8 +4471,8 @@ var edits = Terrain.CaptureEdits();                           // for a save, or 
 
 ## World building
 
-*Implemented: world layers, Ground Fit, Streams With Ground. Planned: roads, placing tools, painted maps, areas and
-routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
+*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills. Planned: placing tools, painted
+maps, areas and routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
 first and crafted on top, without storing blocks for what is placed.
 
 **World layers** (`voxear_terrain::blocks::world_layers`). A `WorldLayers` holds every layer of a world in the world's
@@ -4502,6 +4502,21 @@ become a `FitLayer` per world each frame (`layers_of`), the `WorldLayers` made a
 change (`KeptLayers`). A fit's id is the hash of what it is, so a moved fit touches where it was and where it is.
 `HiddenLayers` leaves them out (the Scene view's Bare Ground). `landing` sets an Obj down on the ground made without
 its own fit, for placing and `ground_fit.land`.
+
+**Roads and Area Fills** (`voxear_terrain::blocks::road_layer`, `voxear_engine::roads`). A `RoadLayer` is a line of
+points in the world's blocks with a width each, a `Palette` (a weighted mix picked by a stable hash of the column,
+or a pattern of mix entries by along and across), an edge and kerb, and either no grade (laid on the ground) or a
+grade: its top a straight line between its points' heights, climbing at the grade from the lower point where they
+are steeper. `RoadLayer::shape` finds the nearest point of its line (past the ends it stops square) and gives the
+column's top, block and whether it is road, edge or eased out. `WorldLayers::of` keeps fits and roads, fits first;
+`road_column` turns a road column into a `Shaped` with what a road adds: a tunnel (`open_to`, `roof`, the ground
+over it kept as the layers before made it, `over`), a bridge deck and piers (`hollow`, `pier`), a kerb (`raise`),
+canal water (`water`) and slab steps (`half`, from `BlockGenerate::halves`). Far off only the road's top shows, and
+over a tunnel the ground. An Area Fill is a `FitLayer` with a palette, levelling or following the ground
+(`FitLayer::follow`). The Road component keeps points in its Obj's space and blocks as `.block` GUIDs; `nearest`
+answers `Roads.Nearest` through the scripts' `WORLD_ASK` call and `roads.nearest`. In the editor `RoadHandles`
+drag points onto the ground without the road (`ground_fit::ground_under`), set widths, add and take away points, and
+snap an end onto another road's middle.
 
 **Streams With Ground** (`voxear_engine::ground_streaming`). The streamer keeps the near columns made and let go
 since it was last asked (`take_moves`); `blocks::stream` puts each world's into `GroundMoves` every frame. While

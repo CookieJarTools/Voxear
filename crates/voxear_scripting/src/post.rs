@@ -37,6 +37,9 @@ pub const LEVEL_COMPONENT: i32 = 13;
 /// a running game may change changed setting by setting (`ProjectSettings`).
 pub const PROJECT_SECTION: i32 = 14;
 pub const PROJECT_CHANGE: i32 = 15;
+/// Questions about a world of blocks' layers, through the same call: the
+/// road nearest a place (`Roads.Nearest`).
+pub const WORLD_ASK: i32 = 16;
 
 /// What answers `Post` for scripts: what `what` asks, given `text`, with
 /// the text of its answer.

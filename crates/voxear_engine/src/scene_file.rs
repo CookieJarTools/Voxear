@@ -476,6 +476,12 @@ pub struct ObjData {
     /// Makes it come and go with the ground of a world of blocks under it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub streams_with_ground: Option<crate::ground_streaming::StreamsWithGround>,
+    /// A road laid on the ground of a world of blocks along its points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub road: Option<crate::roads::Road>,
+    /// An area of a world of blocks laid with blocks, level or following the ground.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area_fill: Option<crate::roads::AreaFill>,
     /// A box agents go round, cut out of the nav where it stands still.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
@@ -639,6 +645,8 @@ impl ObjData {
             nav_link: None,
             ground_fit: None,
             streams_with_ground: None,
+            road: None,
+            area_fill: None,
             nav_obstacle: None,
             crowd_member: None,
             motion_matcher: None,
@@ -2399,6 +2407,12 @@ fn capture_instance(
     if root.streams_with_ground.is_some() && root.streams_with_ground != prefab_root.streams_with_ground {
         instance.streams_with_ground = root.streams_with_ground;
     }
+    if root.road.is_some() && root.road != prefab_root.road {
+        instance.road = root.road.clone();
+    }
+    if root.area_fill.is_some() && root.area_fill != prefab_root.area_fill {
+        instance.area_fill = root.area_fill.clone();
+    }
     if root.nav_obstacle.is_some() && root.nav_obstacle != prefab_root.nav_obstacle {
         instance.nav_obstacle = root.nav_obstacle;
     }
@@ -2678,6 +2692,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     let streams = actual.streams_with_ground.as_ref().filter(|s| Some(*s) != expected.streams_with_ground.as_ref());
     if let Some(streams) = streams {
         put("streams_with_ground", whole(streams, &crate::ground_streaming::StreamsWithGround::default())?);
+    }
+    if let Some(road) = actual.road.as_ref().filter(|r| Some(*r) != expected.road.as_ref()) {
+        put("road", whole(road, &crate::roads::Road::default())?);
+    }
+    if let Some(area) = actual.area_fill.as_ref().filter(|a| Some(*a) != expected.area_fill.as_ref()) {
+        put("area_fill", whole(area, &crate::roads::AreaFill::default())?);
     }
     if let Some(obstacle) = actual.nav_obstacle.as_ref().filter(|o| Some(*o) != expected.nav_obstacle.as_ref()) {
         put("nav_obstacle", whole(obstacle, &crate::nav_obstacle::NavObstacle::default())?);
@@ -3025,6 +3045,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.nav_link = world.get::<crate::navigation::NavLink>(entity).copied();
     obj.ground_fit = world.get::<crate::ground_fit::GroundFit>(entity).cloned();
     obj.streams_with_ground = world.get::<crate::ground_streaming::StreamsWithGround>(entity).copied();
+    obj.road = world.get::<crate::roads::Road>(entity).cloned();
+    obj.area_fill = world.get::<crate::roads::AreaFill>(entity).cloned();
     obj.nav_obstacle = world.get::<crate::nav_obstacle::NavObstacle>(entity).copied();
     obj.crowd_member = world.get::<crate::crowds::CrowdMember>(entity).copied();
     // As saved: where a game sent it is not part of the scene.

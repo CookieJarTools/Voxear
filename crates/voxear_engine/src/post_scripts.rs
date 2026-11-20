@@ -12,7 +12,7 @@ use voxear_render::{LampShadows, PostProcess, ScriptPost, ScriptShadows, Shadows
 use voxear_scripting::{
     LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PROJECT_CHANGE, PROJECT_SECTION,
     SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET, SKY_IN_EFFECT, SKY_RESET, SKY_SET, SUN_LOOK, SUN_LOOK_RESET,
-    SUN_LOOK_SET,
+    SUN_LOOK_SET, WORLD_ASK,
 };
 
 use crate::{
@@ -98,6 +98,7 @@ fn call(world: &mut World, what: i32, text: &str) -> Result<String> {
             crate::project_scripts::change(world, text)?;
             Ok(String::new())
         }
+        WORLD_ASK => crate::roads::answer(world, text),
         _ => bail!("no such call ({what})"),
     }
 }

@@ -42,8 +42,9 @@ fn done(editor: &mut Editor, renderer: &mut Renderer, call: &str, args: Value) -
     }
 }
 
-#[test]
-fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
+/// An editor on a new Infinite World project without its scripts, or none
+/// without a GPU; and the folder it is in.
+fn open() -> Option<(tempfile::TempDir, Renderer, Editor)> {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let folder = dir.path().join("Fits");
     let request = NewProject {
@@ -73,12 +74,54 @@ fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
 
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,
-        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+        Err(error) => {
+            eprintln!("skipping: no usable GPU ({error:#})");
+            return None;
+        }
     };
     let project = Project::open(&folder).unwrap();
     let mut editor = Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frames(&mut editor, &mut renderer, 2);
+    Some((dir, renderer, editor))
+}
 
+#[test]
+fn a_roads_points_are_set_on_the_ground_found_by_place_and_undone() {
+    let Some((_dir, mut renderer, mut editor)) = open() else { return };
+    let made = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "Road", "position": [120.0, 0.0, 100.0] }),
+    );
+    let road = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": road, "component": "road" }));
+    let points = json!([[0.0, 80.0, 0.0, 5.0], [30.0, 80.0, 0.0, 7.0], [30.0, 80.0, 30.0, 7.0]]);
+    let set =
+        done(&mut editor, &mut renderer, "road.set_points", json!({ "obj": road, "points": points, "land": true }));
+    let landed = set["points"].as_array().unwrap();
+    assert_eq!(landed.len(), 3);
+    assert!(landed.iter().all(|point| point[1].as_f64().unwrap() < 79.0), "set down on the ground: {set}");
+    assert_eq!(landed[1][3], 7.0);
+    let mix = json!([{ "block": { "path": "Blocks/Gravel.block" }, "weight": 1 }]);
+    done(&mut editor, &mut renderer, "road.set_mix", json!({ "obj": road, "mix": mix, "pattern": ["1"] }));
+    let near = done(&mut editor, &mut renderer, "roads.nearest", json!({ "at": [135.0, 0.0, 103.0], "reach": 10.0 }));
+    assert!(near["road"].is_object() || near["road"].is_string(), "{near}");
+    assert!((near["point"][2].as_f64().unwrap() - 100.0).abs() < 0.5, "{near}");
+    let far = done(&mut editor, &mut renderer, "roads.nearest", json!({ "at": [135.0, 0.0, 300.0], "reach": 10.0 }));
+    assert!(far.is_null());
+    // Each call one step to undo: the mix, then the points.
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    let world = &editor.game.engine.world;
+    let roads = world.query_ref::<(voxear_ecs::Entity, &voxear_engine::roads::Road)>();
+    let kept = roads.into_iter().next().map(|(_, road)| road.clone()).unwrap();
+    assert_eq!(kept, voxear_engine::roads::Road::default(), "back as it was added");
+}
+
+#[test]
+fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
+    let Some((_dir, mut renderer, mut editor)) = open() else { return };
     let made = done(
         &mut editor,
         &mut renderer,

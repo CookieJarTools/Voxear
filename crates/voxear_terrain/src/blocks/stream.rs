@@ -2427,6 +2427,7 @@ mod tests {
             top: AIR,
             clear_plants: true,
             priority: 0,
+            ..FitLayer::default()
         };
         let mut fitted = bare.clone();
         fitted.generate.layers = Layers(Some(Arc::new(WorldLayers::new(vec![fit]))));

@@ -22,6 +22,7 @@ use crate::{
     animation::BoneAttachment,
     ground_fit::GroundFit,
     ground_streaming::StreamsWithGround,
+    roads::{AreaFill, Road},
     heat::Climate,
     navigation::{NavArea, NavLink},
     scene_file::PostVolumeData,
@@ -54,6 +55,8 @@ const LIGHT_COOKIE: i32 = 7;
 const LIGHT_PROFILE: i32 = 8;
 const GROUND_FIT: i32 = 9;
 const STREAMS_WITH_GROUND: i32 = 10;
+const ROAD: i32 = 11;
+const AREA_FILL: i32 = 12;
 
 /// Whether an Obj has one, and adding and taking off those scripts may add:
 /// the component in the number's bits above the lowest two.
@@ -64,6 +67,8 @@ fn whole_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
         NAV_LINK => values::<NavLink>(world, entity, asked, written),
         GROUND_FIT => values::<GroundFit>(world, entity, asked, written),
         STREAMS_WITH_GROUND => values::<StreamsWithGround>(world, entity, asked, written),
+        ROAD => values::<Road>(world, entity, asked, written),
+        AREA_FILL => values::<AreaFill>(world, entity, asked, written),
         BONE_ATTACHMENT => has::<BoneAttachment>(world, entity, asked, written),
         PARTICLE_SYSTEM => has::<ParticleSystem>(world, entity, asked, written),
         FOLIAGE => has::<Foliage>(world, entity, asked, written),
@@ -83,6 +88,8 @@ fn whole_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opti
         NAV_LINK => texts::<NavLink>(world, entity, asked, text),
         GROUND_FIT => texts::<GroundFit>(world, entity, asked, text),
         STREAMS_WITH_GROUND => texts::<StreamsWithGround>(world, entity, asked, text),
+        ROAD => texts::<Road>(world, entity, asked, text),
+        AREA_FILL => texts::<AreaFill>(world, entity, asked, text),
         FOLIAGE => texts::<Foliage>(world, entity, asked, text),
         LOD_GROUP => texts::<LodGroup>(world, entity, asked, text),
         DRY_AREA_MESH | LIGHT_COOKIE | LIGHT_PROFILE => {
@@ -220,7 +227,9 @@ written_as_is!(
     NavArea,
     NavLink,
     GroundFit,
-    StreamsWithGround
+    StreamsWithGround,
+    Road,
+    AreaFill
 );
 
 /// A Foliage's settings scripts change: how far its plants are drawn, cast
@@ -488,6 +497,15 @@ mod tests {
         let fit = world.get::<GroundFit>(obj).unwrap().clone();
         assert_eq!((fit.mode, fit.slope_out, fit.margin), (crate::ground_fit::FitMode::Cut, 0, 1.0));
         assert!(fit.fill.is_some() && fit.top.is_none());
+        // A Road and an Area Fill, the same way.
+        whole_values(&mut world, obj, ROAD << 2 | ADD, Some([0.0; 4])).unwrap();
+        let points = r#"{"points":[{"at":[0,0,0],"width":3},{"at":[0,0,9],"width":7}],"ground":"follow","bridge":true}"#;
+        whole_texts(&mut world, obj, ROAD << 1 | CHANGE, points).unwrap();
+        let road = world.get::<Road>(obj).unwrap().clone();
+        assert_eq!((road.points[1].width, road.ground, road.bridge), (7.0, crate::roads::RoadGround::Follow, true));
+        whole_values(&mut world, obj, AREA_FILL << 2 | ADD, Some([0.0; 4])).unwrap();
+        whole_texts(&mut world, obj, AREA_FILL << 1 | CHANGE, r#"{"level":"level","pattern":["12"]}"#).unwrap();
+        assert_eq!(world.get::<AreaFill>(obj).unwrap().level, crate::roads::AreaLevel::Level);
 
         let near = world.spawn((voxear_scene::Transform::default(),));
         world.insert(obj, LodGroup::of(&[near]));

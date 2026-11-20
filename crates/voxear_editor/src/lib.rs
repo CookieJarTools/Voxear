@@ -121,6 +121,8 @@ mod volume_panel;
 mod heat_props;
 mod storm_props;
 mod fit_props;
+mod road_handles;
+mod road_props;
 mod nav_props;
 mod plants_props;
 mod plants_tools;

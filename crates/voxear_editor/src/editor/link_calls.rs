@@ -332,6 +332,24 @@ impl Editor {
             }
             "navigation.status" => self.navigation_status(),
             "ground_fit.land" => self.ground_fit_land(args),
+            "road.set_points" | "road.set_mix" | "area_fill.set_outline" => self.road_change(call, args),
+            "roads.nearest" => {
+                let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+                let reach = args.get("reach").and_then(Json::as_f64).unwrap_or(50.0) as f32;
+                let world = &self.game.engine.world;
+                let blocks = world
+                    .query_ref::<(Entity, &voxear_engine::blocks::BlockWorldAsset)>()
+                    .into_iter()
+                    .find(|(_, asset)| asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some()))
+                    .map(|(entity, _)| entity);
+                let found = blocks.and_then(|blocks| voxear_engine::roads::nearest(world, blocks, at, reach, None));
+                done(match found {
+                    Some((road, point, along)) => {
+                        json!({ "road": link::obj_ref(&self.game, road), "point": point.to_array(), "along": along })
+                    }
+                    None => Json::Null,
+                })
+            }
             "blocks.columns" => {
                 let world = &self.game.engine.world;
                 let moves = world.resource::<voxear_engine::ground_streaming::GroundMoves>().cloned().unwrap_or_default();
@@ -1119,6 +1137,81 @@ impl Editor {
         after.apply(world, entity);
         let changed = self.record_change(entity, before);
         done(json!({ "changed": changed }))
+    }
+
+    /// Sets a Road's points or blocks, or an Area Fill's outline or blocks, as
+    /// `call` says, as one step to undo.
+    fn road_change(&mut self, call: &str, args: &Json) -> Called {
+        use voxear_engine::roads::{AreaFill, MixBlock, Road, RoadPoint};
+        let entity = self.obj_arg(args)?;
+        let world = &self.game.engine.world;
+        let before = ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let numbers = |value: &Json| -> Option<Vec<f32>> {
+            value.as_array()?.iter().map(|v| v.as_f64().map(|v| v as f32)).collect()
+        };
+        let answer = match call {
+            "road.set_points" => {
+                let mut road = world.get::<Road>(entity).cloned().ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Road"))?;
+                let given = need(args, "points")?.as_array().ok_or_else(|| bad("`points` is not a list"))?;
+                let points: Option<Vec<RoadPoint>> = given
+                    .iter()
+                    .map(|point| {
+                        let v = numbers(point)?;
+                        (v.len() >= 3).then(|| RoadPoint { at: [v[0], v[1], v[2]], width: v.get(3).copied().unwrap_or(5.0).clamp(1.0, 64.0) })
+                    })
+                    .collect();
+                let mut points = points.filter(|points| points.len() >= 2).ok_or_else(|| bad("two points at least, each `[x, y, z, width]`"))?;
+                if opt_bool(args, "land") == Some(true) {
+                    let placed = voxear_scene::world_matrix(world, entity);
+                    let game = &mut self.game;
+                    for point in &mut points {
+                        let at = placed.transform_point3(Vec3::from(point.at));
+                        let ground = voxear_engine::ground_fit::ground_under(&mut game.engine.world, &mut game.content, at, Some(entity));
+                        let landed = Vec3::new(at.x, ground.unwrap_or(at.y), at.z);
+                        point.at = placed.inverse().transform_point3(landed).to_array();
+                    }
+                }
+                road.points = points;
+                let answer = json!({ "points": road.points.iter().map(|p| [p.at[0], p.at[1], p.at[2], p.width]).collect::<Vec<_>>() });
+                self.game.engine.world.insert(entity, road);
+                answer
+            }
+            "road.set_mix" => {
+                let given = need(args, "mix")?.as_array().ok_or_else(|| bad("`mix` is not a list"))?;
+                let mut mix = Vec::new();
+                for entry in given {
+                    let block = entry.get("block").ok_or_else(|| bad("each of `mix` needs a `block`"))?;
+                    let (guid, _, _) = link::resolve_project_asset(&self.game, block)?;
+                    let weight = entry.get("weight").and_then(Json::as_u64).unwrap_or(1).min(1000) as u32;
+                    mix.push(MixBlock { block: Some(guid), weight });
+                }
+                let pattern: Vec<String> = match args.get("pattern") {
+                    Some(rows) => rows.as_array().ok_or_else(|| bad("`pattern` is not a list"))?.iter().filter_map(|row| row.as_str().map(str::to_string)).collect(),
+                    None => Vec::new(),
+                };
+                let world = &mut self.game.engine.world;
+                if let Some(road) = world.get_mut::<Road>(entity) {
+                    (road.mix, road.pattern) = (mix, pattern.clone());
+                } else if let Some(area) = world.get_mut::<AreaFill>(entity) {
+                    (area.mix, area.pattern) = (mix, pattern.clone());
+                } else {
+                    return Err(refuse(ErrorKind::NoSuchComponent, "the Obj has neither a Road nor an Area Fill"));
+                }
+                json!({ "mix": given, "pattern": pattern })
+            }
+            _ => {
+                let given = need(args, "outline")?.as_array().ok_or_else(|| bad("`outline` is not a list"))?;
+                let outline: Option<Vec<[f32; 2]>> =
+                    given.iter().map(|corner| numbers(corner).filter(|v| v.len() == 2).map(|v| [v[0], v[1]])).collect();
+                let outline = outline.filter(|outline| outline.len() >= 3).ok_or_else(|| bad("three corners at least, each `[x, z]`"))?;
+                let area = self.game.engine.world.get_mut::<AreaFill>(entity);
+                let area = area.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Area Fill"))?;
+                area.outline = outline.clone();
+                json!({ "outline": outline })
+            }
+        };
+        self.record_change(entity, before);
+        done(answer)
     }
 
     fn ground_fit_land(&mut self, args: &Json) -> Called {

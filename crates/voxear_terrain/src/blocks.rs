@@ -42,6 +42,7 @@ pub mod map_known;
 pub mod mesh;
 pub mod path;
 pub mod plant;
+pub mod road_layer;
 pub mod sapling;
 pub mod shape;
 pub mod sight;

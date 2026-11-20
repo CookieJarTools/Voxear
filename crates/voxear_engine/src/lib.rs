@@ -61,6 +61,7 @@ pub mod packages;
 mod mist;
 pub mod particles;
 pub mod portals;
+pub mod roads;
 pub mod post_scripts;
 pub mod smoke;
 pub mod storm_sounds;

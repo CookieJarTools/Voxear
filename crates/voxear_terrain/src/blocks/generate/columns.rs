@@ -989,7 +989,8 @@ fn column_chunks_within(
                     crate::blocks::structure::put_block(&mut chunks, [cx, cz], bottom, [x, y, z], block);
                 }
             };
-            world_layers::shape_column(shaped, ground, highest, &block_at, &open, &mut put);
+            let slab_of = |block: BlockId| halves.and_then(|halves| halves.get(usize::from(block)).copied()).unwrap_or(AIR);
+            world_layers::shape_column(shaped, ground, highest, &block_at, &open, &slab_of, &mut put);
         }
         chunks.retain(|(_, chunk)| !chunk.is_air());
         chunks.sort_by_key(|(key, _)| key[1]);

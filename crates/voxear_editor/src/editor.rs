@@ -107,6 +107,7 @@ use crate::{
     entities_panel::EntitiesPanel,
     field_handles::FieldHandles,
     path_handles::PathHandles,
+    road_handles::RoadHandles,
     fields::{self, Pick},
     frame_debugger_panel::FrameDebuggerPanel,
     generator_panel::GeneratorPanel,
@@ -345,6 +346,7 @@ pub struct Editor {
     /// and the Obj as it was when a drag of one began, for undo.
     field_handles: FieldHandles,
     path_handles: PathHandles,
+    road_handles: RoadHandles,
     /// The selected Terrain's brush and layer handles (see `terrain_tools`).
     terrain_tools: crate::terrain_tools::TerrainTools,
     block_tools: crate::block_tools::BlockTools,
@@ -743,6 +745,7 @@ impl Editor {
             tools: SceneTools::new(),
             field_handles: FieldHandles::default(),
             path_handles: PathHandles::default(),
+            road_handles: RoadHandles::default(),
             terrain_tools: Default::default(),
             block_tools: Default::default(),
             plants_tools: Default::default(),
@@ -1899,6 +1902,12 @@ impl Editor {
             } else if let Some(owner) = self.script_handles.begin(&camera, point) {
                 // The gizmos' own handles may be on any Obj, and are dragged while playing too.
                 self.field_drag_start = ObjState::of(world, owner);
+            } else if let Some(entity) = editing.filter(|_| self.road_handles.is_hovered()) {
+                // A road's dots add or take away points as they are taken, so the step starts before.
+                let before = ObjState::of(world, entity);
+                if self.road_handles.begin(&mut self.game.engine.world, &camera, entity, point, self.shift) {
+                    self.field_drag_start = before;
+                }
             } else if let Some(entity) = editing.filter(|_| self.terrain_tools.is_hovered()) {
                 // A stroke may add a sculpt layer as it starts, so the step starts before.
                 let before = ObjState::of(world, entity);
@@ -1936,6 +1945,11 @@ impl Editor {
             let snap = (self.control, self.tools.snap);
             let types = self.inspector.types().clone();
             self.field_handles.drag_to(&mut self.game.engine.world, &types, &camera, point, snap);
+        }
+        if self.road_handles.is_dragging()
+            && let Some(point) = point
+        {
+            self.road_handles.drag_to(&mut self.game, &camera, point);
         }
         if self.path_handles.is_dragging()
             && let Some(point) = point
@@ -1976,6 +1990,8 @@ impl Editor {
             self.field_handles.hover(world, self.inspector.types(), &camera, editing, over_field);
             self.path_handles.hover(world, &camera, editing, over_field.filter(|_| !self.field_handles.is_hovered()));
             let free = !self.field_handles.is_hovered() && !self.path_handles.is_hovered();
+            self.road_handles.hover(world, &camera, editing, over_field.filter(|_| free));
+            let free = free && !self.road_handles.is_hovered();
             self.script_handles.hover(&camera, over_field.filter(|_| free));
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
@@ -2005,6 +2021,7 @@ impl Editor {
         }
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.path_handles.shapes(world, &camera, editing));
+        shapes.extend(self.road_handles.shapes(world, &camera, editing));
         shapes.extend(self.terrain_tools.shapes(&self.game, &camera, editing));
         shapes.extend(self.block_tools.shapes(&self.game, &camera, selected, self.shift));
         shapes.extend(self.plants_tools.shapes(&self.game, renderer, &camera, editing));
@@ -2056,6 +2073,7 @@ impl Editor {
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
+        let held = held.or_else(|| self.road_handles.end());
         let held = held.or_else(|| self.terrain_tools.end()).or_else(|| self.block_tools.end());
         let held = held.or_else(|| self.plants_tools.end());
         if let Some(entity) = held {
@@ -2767,6 +2785,7 @@ impl Editor {
             let over_handle = self.hovered_handle.is_some()
                 || self.field_handles.is_hovered()
                 || self.path_handles.is_hovered()
+                || self.road_handles.is_hovered()
                 || self.script_handles.is_hovered()
                 || self.terrain_tools.is_hovered()
                 || self.block_tools.is_hovered()
@@ -2779,6 +2798,7 @@ impl Editor {
             let dragging = self.tools.is_dragging()
                 || self.field_handles.is_dragging()
                 || self.path_handles.is_dragging()
+                || self.road_handles.is_dragging()
                 || self.script_handles.is_dragging()
                 || self.terrain_tools.is_dragging()
                 || self.block_tools.is_dragging()

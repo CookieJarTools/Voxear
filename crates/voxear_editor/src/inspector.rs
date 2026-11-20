@@ -1298,6 +1298,13 @@ impl Inspector {
                 if let Prop::Storm(field) = value {
                     meta.range = crate::storm_props::range(*field).map(|r| r.map(f64::from));
                 }
+                if let Prop::Road(field) = value {
+                    meta.range = crate::road_props::road_range(*field).map(|r| r.map(f64::from));
+                    meta.tooltip = Some(crate::road_props::road_tooltip(*field).to_string());
+                }
+                if let Prop::AreaFill(field) = value {
+                    meta.tooltip = Some(crate::road_props::area_tooltip(*field).to_string());
+                }
                 if let Prop::WhenUnloaded = value {
                     meta.tooltip = Some(crate::fit_props::STREAMS_TOOLTIP.to_string());
                 }
@@ -2339,6 +2346,8 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
         (Part::BlockMob, "Terrain"),
         (Part::GroundFit, "Terrain"),
         (Part::StreamsWithGround, "Terrain"),
+        (Part::Road, "Terrain"),
+        (Part::AreaFill, "Terrain"),
         (Part::NavAgent, "Navigation"),
         (Part::NavArea, "Navigation"),
         (Part::NavLink, "Navigation"),
@@ -3087,6 +3096,8 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::NavLink) => "nav_link",
         Some(Part::GroundFit) => "ground_fit",
         Some(Part::StreamsWithGround) => "streams_with_ground",
+        Some(Part::Road) => "road",
+        Some(Part::AreaFill) => "area_fill",
         Some(Part::NavObstacle) => "nav_obstacle",
         Some(Part::CrowdMember) => "crowd_member",
         Some(Part::MotionMatcher) => "motion_matcher",

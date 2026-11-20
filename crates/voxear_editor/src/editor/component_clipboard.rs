@@ -63,6 +63,8 @@ pub(super) enum Copied {
     NavLink(voxear_engine::navigation::NavLink),
     GroundFit(voxear_engine::ground_fit::GroundFit),
     StreamsWithGround(voxear_engine::ground_streaming::StreamsWithGround),
+    Road(voxear_engine::roads::Road),
+    AreaFill(voxear_engine::roads::AreaFill),
     NavObstacle(voxear_engine::nav_obstacle::NavObstacle),
     CrowdMember(voxear_engine::crowds::CrowdMember),
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
@@ -139,6 +141,8 @@ impl Copied {
             Part::NavArea => Self::NavArea(*world.get::<voxear_engine::navigation::NavArea>(entity)?),
             Part::NavLink => Self::NavLink(*world.get::<voxear_engine::navigation::NavLink>(entity)?),
             Part::GroundFit => Self::GroundFit(world.get::<voxear_engine::ground_fit::GroundFit>(entity)?.clone()),
+            Part::Road => Self::Road(world.get::<voxear_engine::roads::Road>(entity)?.clone()),
+            Part::AreaFill => Self::AreaFill(world.get::<voxear_engine::roads::AreaFill>(entity)?.clone()),
             Part::StreamsWithGround => {
                 Self::StreamsWithGround(*world.get::<voxear_engine::ground_streaming::StreamsWithGround>(entity)?)
             }
@@ -212,6 +216,8 @@ impl Copied {
             Self::NavLink(link) => drop(world.insert(entity, *link)),
             Self::GroundFit(fit) => drop(world.insert(entity, fit.clone())),
             Self::StreamsWithGround(streams) => drop(world.insert(entity, *streams)),
+            Self::Road(road) => drop(world.insert(entity, road.clone())),
+            Self::AreaFill(area) => drop(world.insert(entity, area.clone())),
             Self::NavObstacle(obstacle) => drop(world.insert(entity, *obstacle)),
             Self::CrowdMember(member) => drop(world.insert(entity, *member)),
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),

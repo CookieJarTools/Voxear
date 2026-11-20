@@ -21,6 +21,7 @@ internal static unsafe class NativePost
 	public const int LevelComponent = 13;
 	public const int ProjectSection = 14;
 	public const int ProjectChange = 15;
+	public const int WorldAsk = 16;
 
 	public static bool IsConnected => Native.IsConnected;
 

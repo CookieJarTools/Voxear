@@ -577,6 +577,42 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ worlds: [{ world, near, came, went }], kept }",
     },
     CallInfo {
+        name: "road.set_points",
+        about: "Sets every point of an Obj's Road, in the Obj's own space, each with how wide the road is there in blocks; with `land`, each point set down on the ground as it is without the road. One step to undo.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the Road."),
+            arg("points", ArgKind::Value, "The points, each `[x, y, z, width]`, two at least."),
+            maybe("land", ArgKind::Toggle, "Whether each point is set down on the ground."),
+        ],
+        changes: true,
+        returns: "{ points }",
+    },
+    CallInfo {
+        name: "road.set_mix",
+        about: "Sets the blocks an Obj's Road or Area Fill is laid with, each with its weight, and the pattern of them by their place from 1, a row a block along, 0 for the mix. One step to undo.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the Road or Area Fill."),
+            arg("mix", ArgKind::Value, "The blocks, each `{ \"block\": <asset>, \"weight\": n }`."),
+            maybe("pattern", ArgKind::Value, "Rows of digits, as `[\"1121\"]`."),
+        ],
+        changes: true,
+        returns: "{ mix, pattern }",
+    },
+    CallInfo {
+        name: "area_fill.set_outline",
+        about: "Sets the outline of an Obj's Area Fill along x and z, in metres in the Obj's own space, three corners at least. One step to undo.",
+        args: &[arg("obj", ArgKind::Obj, "The Obj with the Area Fill."), arg("outline", ArgKind::Value, "The corners, each `[x, z]`.")],
+        changes: true,
+        returns: "{ outline }",
+    },
+    CallInfo {
+        name: "roads.nearest",
+        about: "The road nearest a place along the ground, within `reach` metres (50 when left out), among those over the world of blocks there: its Obj, the nearest point of its middle, and how far along it that is in metres. Null where none is near.",
+        args: &[arg("at", ArgKind::Vector, "The place, in metres."), maybe("reach", ArgKind::Number, "How far off it may be, in metres.")],
+        changes: false,
+        returns: "{ road, point, along }",
+    },
+    CallInfo {
         name: "world_layers.status",
         about: "The world layers over each world of blocks without end's ground, as it was last streamed: how many Ground Fits, how many chunk columns they reach, and which kinds are hidden to show the bare ground.",
         args: &[],
@@ -1394,6 +1430,8 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::NavLink
             | Part::GroundFit
             | Part::StreamsWithGround
+            | Part::Road
+            | Part::AreaFill
             | Part::NavObstacle
             | Part::CrowdMember
             | Part::MotionMatcher

@@ -42,6 +42,80 @@ fn until(game: &mut Game, done: &mut dyn FnMut(&Game) -> bool) -> bool {
     done(game)
 }
 
+/// A game of the Infinite World template, played without its scripts, so the
+/// camera stays where the test puts it; and the folder it is in.
+fn game_of(name: &str) -> (Game, tempfile::TempDir) {
+    let parent = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let folder = parent.path().join(name);
+    let request = NewProject {
+        folder: folder.clone(),
+        name: name.into(),
+        template: "infinite-world".into(),
+        setup: None,
+        ide: None,
+        git: false,
+        modding: false,
+        steam_app_id: None,
+    };
+    create(&request, &mut |_| {}).unwrap();
+    let scene_path = folder.join("Scenes/Infinite World.scene");
+    let mut scene = voxear_engine::scene_file::read(&scene_path).unwrap();
+    for obj in &mut scene.objs {
+        obj.behaviours.clear();
+        obj.fields.clear();
+        obj.enabled.clear();
+    }
+    voxear_engine::scene_file::write(&scene_path, &scene).unwrap();
+    let mut game = Game::new(Project::open(&folder).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    (game, parent)
+}
+
+/// The block at `at` of the world, and its top's block.
+fn block_at(game: &Game, world: Entity, at: Vec3) -> u16 {
+    let corner = game.engine.world.get::<Transform>(world).unwrap().position;
+    let blocks = game.engine.world.get::<BlockWorld>(world).unwrap();
+    let local = (at - corner) / blocks.block_size;
+    blocks.blocks.get([local.x.floor() as i32, local.y.floor() as i32, local.z.floor() as i32])
+}
+
+#[test]
+fn a_graded_road_is_laid_through_the_streamed_world_with_its_blocks_and_found_from_a_place() {
+    use voxear_engine::roads::{MixBlock, Road, RoadGround, RoadPoint};
+    let (mut game, _folder) = game_of("Roads");
+    let world = named(&game, "World").expect("the template's world");
+    let camera = named(&game, "Main Camera").expect("the template's camera");
+    let eye = game.engine.world.get::<Transform>(camera).unwrap().position;
+    let (start, end) = (Vec3::new(eye.x - 10.0, 0.0, eye.z + 10.0), Vec3::new(eye.x + 30.0, 0.0, eye.z + 10.0));
+    assert!(until(&mut game, &mut |game| top_at(game, world, start).is_some() && top_at(game, world, end).is_some()));
+    // A road 40 m long at one height a few metres over the ground at its start, laid with gravel.
+    let height = top_at(&game, world, start).unwrap() + 3.0;
+    let gravel: voxear_assets::AssetGuid = "b15aba9a8e7047689d6bffb862d6679c".parse().unwrap();
+    let road = Road {
+        points: vec![
+            RoadPoint { at: [0.0, 0.0, 0.0], width: 5.0 },
+            RoadPoint { at: [end.x - start.x, 0.0, 0.0], width: 5.0 },
+        ],
+        mix: vec![MixBlock { block: Some(gravel), weight: 1 }],
+        ground: RoadGround::Grade,
+        tunnel: false,
+        ..Road::default()
+    };
+    game.engine.world.spawn((Name("Road".into()), Transform::from_position(Vec3::new(start.x, height, start.z)), road));
+    let middle = Vec3::new((start.x + end.x) * 0.5, 0.0, start.z);
+    let laid = |game: &Game| top_at(game, world, middle).is_some_and(|top| (top - height).abs() < 0.01);
+    assert!(until(&mut game, &mut |game| laid(game)), "laid at {height}, not {:?}", top_at(&game, world, middle));
+    let number = game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world).unwrap().drawn.number_of(gravel);
+    assert_eq!(Some(block_at(&game, world, Vec3::new(middle.x, height - 0.5, middle.z))), number, "laid with gravel");
+    // Found from a place beside it.
+    let beside = Vec3::new(middle.x, height, middle.z + 6.0);
+    let blocks = world;
+    let (found, point, _) = voxear_engine::roads::nearest(&game.engine.world, blocks, beside, 20.0, None).expect("a road near");
+    assert_eq!(game.engine.world.get::<Name>(found).unwrap().0, "Road");
+    assert!((point.z - start.z).abs() < 0.5, "{point}");
+    assert!(voxear_engine::roads::nearest(&game.engine.world, blocks, beside + Vec3::Z * 100.0, 20.0, None).is_none());
+}
+
 #[test]
 fn a_ground_fit_levels_the_streamed_ground_and_objs_kept_for_later_go_and_come_back_with_it() {
     let parent = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();

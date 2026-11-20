@@ -146,6 +146,10 @@ pub enum Part {
     GroundFit,
     /// Makes its Obj come and go with the ground under it (see `fit_props`).
     StreamsWithGround,
+    /// A road laid on a world of blocks along its points (see `road_props`).
+    Road,
+    /// An area of a world of blocks paved with blocks (see `road_props`).
+    AreaFill,
     /// A box agents go round, cut out of the nav where it stands still (see `nav_props`).
     NavObstacle,
     /// An Obj's own place in a crowd: its tier, or how much it matters (see `nav_props`).
@@ -235,6 +239,8 @@ impl Part {
             Part::NavLink => "nav_link".into(),
             Part::GroundFit => "ground_fit".into(),
             Part::StreamsWithGround => "streams_with_ground".into(),
+            Part::Road => "road".into(),
+            Part::AreaFill => "area_fill".into(),
             Part::NavObstacle => "nav_obstacle".into(),
             Part::CrowdMember => "crowd_member".into(),
             Part::HeatSource => "heat_source".into(),
@@ -324,6 +330,8 @@ impl Part {
             Part::NavLink => "Nav Link",
             Part::GroundFit => "Ground Fit",
             Part::StreamsWithGround => "Streams With Ground",
+            Part::Road => "Road",
+            Part::AreaFill => "Area Fill",
             Part::NavObstacle => "Nav Obstacle",
             Part::CrowdMember => "Crowd Member",
             Part::HeatSource => "Heat Source",
@@ -428,6 +436,8 @@ impl Part {
             Part::NavLink => "map-arrow",
             Part::GroundFit => "box",
             Part::StreamsWithGround => "map-arrow",
+            Part::Road => "map-town",
+            Part::AreaFill => "grid",
             Part::NavObstacle => "box",
             Part::CrowdMember => "map-player",
             Part::HeatSource | Part::HeatBody => "sun",
@@ -906,6 +916,10 @@ pub enum Prop {
     GroundFit(crate::fit_props::FitField),
     /// What happens to an Obj with Streams With Ground when its ground goes.
     WhenUnloaded,
+    /// A value of the Road component (see `road_props`).
+    Road(crate::road_props::RoadField),
+    /// A value of the Area Fill component (see `road_props`).
+    AreaFill(crate::road_props::AreaField),
     /// A value of an Obj's Nav Obstacle (see `nav_props`).
     NavObstacle(crate::nav_props::NavObstacleField),
     /// A value of an Obj's Crowd Member (see `nav_props`).
@@ -1065,6 +1079,8 @@ impl Prop {
             Prop::NavLink(_) => Part::NavLink,
             Prop::GroundFit(_) => Part::GroundFit,
             Prop::WhenUnloaded => Part::StreamsWithGround,
+            Prop::Road(_) => Part::Road,
+            Prop::AreaFill(_) => Part::AreaFill,
             Prop::NavObstacle(_) => Part::NavObstacle,
             Prop::CrowdMember(_) => Part::CrowdMember,
             Prop::LightKind
@@ -1470,6 +1486,8 @@ impl Prop {
             Prop::NavLink(field) => crate::nav_props::link_key(*field),
             Prop::GroundFit(field) => crate::fit_props::key(*field),
             Prop::WhenUnloaded => "when_unloaded",
+            Prop::Road(field) => crate::road_props::road_key(*field),
+            Prop::AreaFill(field) => crate::road_props::area_key(*field),
             Prop::NavObstacle(field) => crate::nav_props::obstacle_key(*field),
             Prop::CrowdMember(field) => crate::nav_props::crowd_key(*field),
             Prop::Mesh => "mesh",
@@ -1989,6 +2007,7 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     crate::nav_props::link_parts(world, entity, &mut parts);
     crate::fit_props::parts(world, entity, &mut parts);
     crate::fit_props::streams_parts(world, entity, &mut parts);
+    crate::road_props::parts(world, entity, &mut parts);
     crate::nav_props::obstacle_parts(world, entity, &mut parts);
     crate::nav_props::crowd_parts(world, entity, &mut parts);
     if world.has::<voxear_engine::net::NetObject>(entity) {
@@ -2289,6 +2308,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::NavLink => crate::nav_props::link_props(),
         Part::GroundFit => crate::fit_props::props(world, entity),
         Part::StreamsWithGround => vec![Prop::WhenUnloaded],
+        Part::Road => crate::road_props::road_props(world, entity),
+        Part::AreaFill => crate::road_props::area_props(),
         Part::NavObstacle => crate::nav_props::obstacle_props(),
         Part::CrowdMember => crate::nav_props::crowd_props(),
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
@@ -2712,6 +2733,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::NavLink(field) => return crate::nav_props::link_label(*field),
         Prop::GroundFit(field) => return crate::fit_props::label(*field),
         Prop::WhenUnloaded => return "When Unloaded".into(),
+        Prop::Road(field) => return crate::road_props::road_label(*field),
+        Prop::AreaFill(field) => return crate::road_props::area_label(*field),
         Prop::NavObstacle(field) => return crate::nav_props::obstacle_label(*field),
         Prop::CrowdMember(field) => return crate::nav_props::crowd_label(*field),
         Prop::Terrain(field) => crate::terrain_props::label(*field),
@@ -3170,6 +3193,8 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::PortalSize | Prop::PortalViewDistance, _) => Some("m"),
         (Prop::Heat(field), _) => crate::heat_props::unit(*field),
         (Prop::GroundFit(field), _) => crate::fit_props::unit(*field),
+        (Prop::Road(field), _) => crate::road_props::road_unit(*field),
+        (Prop::AreaFill(field), _) => crate::road_props::area_unit(*field),
         (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::Nav(field), _) => crate::nav_props::unit(*field),
         (Prop::NavArea(crate::nav_props::NavAreaField::Size), _) => Some("m"),
@@ -3346,6 +3371,8 @@ pub fn add(
         Part::NavLink => crate::nav_props::link_add(world, entity),
         Part::GroundFit => crate::fit_props::add(world, entity, None),
         Part::StreamsWithGround => drop(world.insert(entity, voxear_engine::ground_streaming::StreamsWithGround::default())),
+        Part::Road => drop(world.insert(entity, voxear_engine::roads::Road::default())),
+        Part::AreaFill => drop(world.insert(entity, voxear_engine::roads::AreaFill::default())),
         Part::NavObstacle => crate::nav_props::obstacle_add(world, entity),
         Part::CrowdMember => crate::nav_props::crowd_add(world, entity),
         Part::NetObject => {
@@ -3498,6 +3525,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::NavLink => crate::nav_props::link_remove(world, entity),
         Part::GroundFit => crate::fit_props::remove(world, entity),
         Part::StreamsWithGround => drop(world.remove::<voxear_engine::ground_streaming::StreamsWithGround>(entity)),
+        Part::Road => drop(world.remove::<voxear_engine::roads::Road>(entity)),
+        Part::AreaFill => drop(world.remove::<voxear_engine::roads::AreaFill>(entity)),
         Part::NavObstacle => crate::nav_props::obstacle_remove(world, entity),
         Part::CrowdMember => crate::nav_props::crowd_remove(world, entity),
         Part::NetObject => {
@@ -3616,6 +3645,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::NavLink(field) => return crate::nav_props::link_get(game, entity, *field),
         Prop::GroundFit(field) => return crate::fit_props::get(game, entity, *field),
         Prop::WhenUnloaded => return crate::fit_props::streams_get(game, entity),
+        Prop::Road(field) => return crate::road_props::road_get(game, entity, *field),
+        Prop::AreaFill(field) => return crate::road_props::area_get(game, entity, *field),
         Prop::NavObstacle(field) => return crate::nav_props::obstacle_get(game, entity, *field),
         Prop::CrowdMember(field) => return crate::nav_props::crowd_get(game, entity, *field),
         Prop::Shape2D => {
@@ -4418,6 +4449,16 @@ pub fn set(
         }
         (Prop::GroundFit(field), value) => crate::fit_props::set(game, entity, *field, value),
         (Prop::WhenUnloaded, value) => crate::fit_props::streams_set(game, entity, value),
+        (Prop::Road(field), Value::Asset(label)) if crate::road_props::road_picked(*field) => {
+            let choice = crate::road_props::block_choices(game).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::road_props::road_pick(game, entity, *field, &choice))
+        }
+        (Prop::Road(field), value) => crate::road_props::road_set(game, entity, *field, value),
+        (Prop::AreaFill(field), Value::Asset(label)) if crate::road_props::area_picked(*field) => {
+            let choice = crate::road_props::block_choices(game).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::road_props::area_pick(game, entity, *field, &choice))
+        }
+        (Prop::AreaFill(field), value) => crate::road_props::area_set(game, entity, *field, value),
         (Prop::Storm(field), value) => crate::storm_props::set(game, entity, *field, value),
         (Prop::Nav(field), value) => crate::nav_props::set(game, entity, *field, value),
         (Prop::NavArea(field), value) => crate::nav_props::area_set(game, entity, *field, value),
@@ -4474,6 +4515,12 @@ pub fn pick(
     }
     if let Prop::GroundFit(field) = prop {
         return crate::fit_props::pick(game, entity, *field, choice);
+    }
+    if let Prop::Road(field) = prop {
+        return crate::road_props::road_pick(game, entity, *field, choice);
+    }
+    if let Prop::AreaFill(field) = prop {
+        return crate::road_props::area_pick(game, entity, *field, choice);
     }
     match (prop, choice) {
         (Prop::Mesh, Pick::Asset(Some(reference))) => {
@@ -4927,6 +4974,8 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::Plants(field) => return crate::plants_props::choices(game, *field),
         Prop::Heat(field) => return crate::heat_props::choices(game, *field),
         Prop::GroundFit(field) => return crate::fit_props::choices(game, *field),
+        Prop::Road(field) if crate::road_props::road_picked(*field) => return crate::road_props::block_choices(game),
+        Prop::AreaFill(field) if crate::road_props::area_picked(*field) => return crate::road_props::block_choices(game),
         // The Obj's own Mesh Renderer's first, then any mesh.
         Prop::DryMesh => {
             let mut found = vec![(OWN_MESH.to_string(), Pick::Asset(None))];
@@ -5155,6 +5204,8 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         }
         Prop::Heat(field) if crate::heat_props::is_picked(*field) => crate::heat_props::takes_name(*field).into(),
         Prop::GroundFit(field) if crate::fit_props::is_picked(*field) => crate::fit_props::takes_name(*field).into(),
+        Prop::Road(field) if crate::road_props::road_picked(*field) => "Block".into(),
+        Prop::AreaFill(field) if crate::road_props::area_picked(*field) => "Block".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),

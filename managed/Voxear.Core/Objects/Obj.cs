@@ -544,6 +544,26 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new StreamsWithGround(this);
 	}
 
+	/// <summary>The Obj's Road, laid on the ground of a world of blocks along its points; null when it has none.</summary>
+	public Road? Road => Road.Of(this);
+
+	/// <summary>Gives the Obj a Road, two points 16 metres apart, graded, unless it has one, and returns it.</summary>
+	public Road AddRoad()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Road, this, true);
+		return new Road(this);
+	}
+
+	/// <summary>The Obj's Area Fill, an area of a world of blocks paved with blocks; null when it has none.</summary>
+	public AreaFill? AreaFill => AreaFill.Of(this);
+
+	/// <summary>Gives the Obj an Area Fill, a 12 metre square on the ground, unless it has one, and returns it.</summary>
+	public AreaFill AddAreaFill()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.AreaFill, this, true);
+		return new AreaFill(this);
+	}
+
 	/// <summary>The Obj's LOD Group; null when it has none.</summary>
 	public LodGroup? LodGroup => LodGroup.Of(this);
 

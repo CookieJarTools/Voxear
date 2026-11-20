@@ -25,7 +25,7 @@ use voxear_ecs::{Entity, World};
 use voxear_scene::WorldTransform;
 use voxear_terrain::blocks::{
     chunk::{AIR, BlockId},
-    world_layers::{FitLayer, WorldLayers},
+    world_layers::{FitLayer, RoadLayer, WorldLayers},
 };
 
 /// How a Ground Fit meets the ground: the same as a generated structure's.
@@ -185,6 +185,7 @@ impl GroundFit {
             top: block(self.top),
             clear_plants: self.clear_plants,
             priority: self.priority,
+            ..FitLayer::default()
         })
     }
 }
@@ -214,21 +215,22 @@ pub fn layers_of(
     number: &dyn Fn(AssetGuid) -> Option<BlockId>,
     leave_out: Option<Entity>,
 ) -> Option<Arc<WorldLayers>> {
-    let fits = fits_of(world, entity, place, number, leave_out);
-    if fits.is_empty() {
+    let (fits, roads) = fits_of(world, entity, place, number, leave_out);
+    if fits.is_empty() && roads.is_empty() {
         if leave_out.is_none() {
             world.resource_mut::<KeptLayers>().map(|kept| kept.0.remove(&entity));
         }
         return None;
     }
-    let made_from = voxear_terrain::layers::stable_hash(&fits.iter().flat_map(FitLayer::bytes).collect::<Vec<u8>>());
+    let bytes: Vec<u8> = fits.iter().flat_map(FitLayer::bytes).chain(roads.iter().flat_map(RoadLayer::bytes)).collect();
+    let made_from = voxear_terrain::layers::stable_hash(&bytes);
     if leave_out.is_none() {
         let kept = world.resource::<KeptLayers>().and_then(|kept| kept.0.get(&entity));
         if let Some((_, layers)) = kept.filter(|(was, _)| *was == made_from) {
             return Some(layers.clone());
         }
     }
-    let layers = Arc::new(WorldLayers::new(fits));
+    let layers = Arc::new(WorldLayers::of(fits, roads));
     if leave_out.is_none() {
         if world.resource::<KeptLayers>().is_none() {
             world.insert_resource(KeptLayers::default());
@@ -245,12 +247,15 @@ fn fits_of(
     place: WorldPlace,
     number: &dyn Fn(AssetGuid) -> Option<BlockId>,
     leave_out: Option<Entity>,
-) -> Vec<FitLayer> {
+) -> (Vec<FitLayer>, Vec<RoadLayer>) {
     let here = voxear_scene::dimension_of(world, entity);
     let hidden = world.resource::<HiddenLayers>().is_some_and(|hidden| hidden.fits);
     if hidden {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
+    let shown = |obj: Entity| {
+        Some(obj) != leave_out && voxear_scene::is_active(world, obj) && voxear_scene::dimension_of(world, obj) == here
+    };
     let mut fits: Vec<FitLayer> = world
         .query_ref::<(Entity, &GroundFit, &WorldTransform)>()
         .without::<voxear_scene::Destroying>()
@@ -262,7 +267,14 @@ fn fits_of(
     // Those of Objs kept while their ground is away still shape it.
     let kept = crate::ground_streaming::kept_fits(world, here);
     fits.extend(kept.iter().filter_map(|(fit, placed)| fit.layer(placed, place, number)));
-    fits
+    // Area Fills are fits that lay their tops with a palette (see `roads`).
+    let areas = world.query_ref::<(Entity, &crate::roads::AreaFill, &WorldTransform)>();
+    let areas = areas.without::<voxear_scene::Destroying>().into_iter().filter(|(obj, ..)| shown(*obj));
+    fits.extend(areas.filter_map(|(_, area, placed)| area.layer(&placed.0, place, number)));
+    let roads = world.query_ref::<(Entity, &crate::roads::Road, &WorldTransform)>();
+    let roads = roads.without::<voxear_scene::Destroying>().into_iter().filter(|(obj, ..)| shown(*obj));
+    let roads = roads.filter_map(|(_, road, placed)| road.layer(&placed.0, place, number)).collect();
+    (fits, roads)
 }
 
 /// World layers of a kind left out of every world's ground, to see the bare
@@ -322,6 +334,21 @@ pub fn landing(world: &mut World, content: &mut crate::content::Content, obj: En
     };
     let size = world.get::<crate::blocks::BlockWorldAsset>(blocks).map_or(1.0, |asset| asset.file.block_size);
     Some(Vec3::new(at.x, ground - lift - fit.sink as f32 * size, at.z))
+}
+
+/// The ground under `at` of the world of blocks without end in the dimension
+/// of `obj` (the level's without one), in metres up, as the generator and
+/// every layer but `obj`'s own make it.
+pub fn ground_under(world: &mut World, content: &mut crate::content::Content, at: Vec3, obj: Option<Entity>) -> Option<f32> {
+    let blocks = match obj {
+        Some(obj) => crate::roads::world_of(world, obj)?,
+        None => world
+            .query_ref::<(Entity, &crate::blocks::BlockWorldAsset)>()
+            .into_iter()
+            .find(|(_, asset)| asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some()))?
+            .0,
+    };
+    bare_ground(world, content, blocks, at, obj)
 }
 
 /// The corner of the world of blocks on `entity`, where its block 0 is.

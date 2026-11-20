@@ -27,6 +27,8 @@ internal static class NativeWhole
 	public const int LightProfile = 8;
 	public const int GroundFit = 9;
 	public const int StreamsWithGround = 10;
+	public const int Road = 11;
+	public const int AreaFill = 12;
 
 	private const int ReadAll = 0;
 	private const int ChangeSome = 1;

@@ -87,6 +87,7 @@ fn field(renderer: &mut Renderer, world: &mut World, color: [f32; 3], height: u3
         voxels: Default::default(),
         motions: Default::default(),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()))
 }

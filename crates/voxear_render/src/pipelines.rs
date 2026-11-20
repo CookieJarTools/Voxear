@@ -241,10 +241,15 @@ pub struct Pipelines {
     /// shaded writing depth, and shaded over the depth passes'.
     pub grass_reset: vk::Pipeline,
     pub grass_scatter: vk::Pipeline,
+    pub ground_cover_scatter: vk::Pipeline,
     pub grass_clamp: vk::Pipeline,
     pub grass_depth: vk::Pipeline,
     pub grass_forward: vk::Pipeline,
     pub grass_forward_on_depth: vk::Pipeline,
+    /// The grass passes' for ground cover, whose plants are closed cubes: their backs never show.
+    pub cover_depth: vk::Pipeline,
+    pub cover_forward: vk::Pipeline,
+    pub cover_forward_on_depth: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     pub dry_mesh_wall: vk::Pipeline,
@@ -1038,6 +1043,7 @@ impl Pipelines {
             })?,
             grass_reset: maker.compute("Grass reset", grass, c"grassReset")?,
             grass_scatter: maker.compute("Grass scatter", grass, c"grassScatter")?,
+            ground_cover_scatter: maker.compute("Ground cover scatter", grass, c"groundCoverScatter")?,
             grass_clamp: maker.compute("Grass clamp", grass, c"grassClamp")?,
             // Blades are thin cards and tufts, seen from both sides.
             grass_depth: graphics(&GraphicsPipelineDesc {
@@ -1061,6 +1067,26 @@ impl Pipelines {
                 depth_format: Some(DEPTH_FORMAT),
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Opaque (grass)", grass, c"grassVertex", c"fragmentMain")
+            })?,
+            cover_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: surface_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Depth (grass)", grass, c"grassVertex", c"depthFragment")
+            })?,
+            cover_forward: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (grass)", grass, c"grassVertex", c"fragmentMain")
+            })?,
+            cover_forward_on_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Opaque (grass)", grass, c"grassVertex", c"fragmentMain")
             })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
@@ -1362,10 +1388,14 @@ impl Pipelines {
             self.block_local_shadow,
             self.grass_reset,
             self.grass_scatter,
+            self.ground_cover_scatter,
             self.grass_clamp,
             self.grass_depth,
             self.grass_forward,
             self.grass_forward_on_depth,
+            self.cover_depth,
+            self.cover_forward,
+            self.cover_forward_on_depth,
             self.dry_mesh,
             self.water_wall,
             self.dry_mesh_wall,

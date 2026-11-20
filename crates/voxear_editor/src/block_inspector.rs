@@ -6,8 +6,9 @@
 //! by hand, the kind of tool that breaks it fast, and the tier of that tool
 //! that gets its drops, and for a log, how many hits cut it through and
 //! whether that fells the tree it holds up. A sapling has the **Plant** it
-//! grows into. Its **Drops**, each an item, how many and how
-//! often. Its **Sounds**, and the **Data** asset a game gives it. A block of
+//! grows into. Its **Ground Cover**, the plants growing on its top, each a
+//! model, how many to a block, how large and how far off they show. Its
+//! **Drops**, each an item, how many and how often. Its **Sounds**, and the **Data** asset a game gives it. A block of
 //! parts has its **Use** (whether a player uses it, how long a button stays
 //! on, how far a hanging block swings), its **Motion**'s keys, and a block
 //! of its own boxes its **Boxes**. Each
@@ -16,7 +17,8 @@
 
 use voxear_terrain::blocks::{
     block::{
-        BlockDef, BlockDrop, BlockHeat, BlockNavArea, BlockShape, BlockTint, BoxHinge, Liquid, MAX_HEAT_REACH, MOST_BLOCK_LIGHT,
+        BlockDef, BlockDrop, BlockHeat, BlockNavArea, BlockShape, BlockTint, BoxHinge, GroundCover, Liquid,
+        MAX_HEAT_REACH, MOST_BLOCK_LIGHT, MOST_COVER,
     },
     shape::{BlockFacing, BlockMotion, BoxDef, MOST_BOXES, MOST_KEYS, MOST_SWING, MotionEase, MotionKey, UseKind},
 };
@@ -62,6 +64,8 @@ pub enum BlockRef {
     Grows,
     /// The block it shows as while a block covers its top.
     Covered,
+    /// The plant of the ground cover at this place in its list.
+    Cover(usize),
 }
 
 impl BlockRef {
@@ -84,6 +88,7 @@ impl BlockRef {
             BlockRef::Data => block.data.as_deref(),
             BlockRef::Grows => block.grows.as_deref(),
             BlockRef::Covered => block.covered.as_deref(),
+            BlockRef::Cover(at) => Some(block.ground_cover.get(at)?.plant.as_str()).filter(|plant| !plant.is_empty()),
         }
     }
 
@@ -105,6 +110,11 @@ impl BlockRef {
             BlockRef::Data => block.data = reference,
             BlockRef::Grows => block.grows = reference,
             BlockRef::Covered => block.covered = reference,
+            BlockRef::Cover(at) => {
+                if let Some(cover) = block.ground_cover.get_mut(at) {
+                    cover.plant = reference.unwrap_or_default();
+                }
+            }
         }
     }
 
@@ -118,6 +128,7 @@ impl BlockRef {
             BlockRef::Data => ("Data Asset", "file"),
             BlockRef::Grows => ("Plant", "sprout"),
             BlockRef::Covered => ("Block", "block"),
+            BlockRef::Cover(_) => ("Model", "sprout"),
         }
     }
 }
@@ -128,6 +139,15 @@ const LIQUIDS: [(Liquid, &str); 2] = [(Liquid::None, "None"), (Liquid::Water, "W
 struct DropRow {
     count: [NodeId; 2],
     chance: NodeId,
+    remove: Option<NodeId>,
+}
+
+/// One kind of ground cover's row: how many to a block, its smallest and
+/// largest size, and how far off it shows.
+struct CoverRow {
+    density: NodeId,
+    sizes: [NodeId; 2],
+    distance: NodeId,
     remove: Option<NodeId>,
 }
 
@@ -209,6 +229,8 @@ pub struct BlockFields {
     heat: NodeId,
     celsius: Option<NodeId>,
     reach: Option<NodeId>,
+    covers: Collection,
+    cover_rows: Vec<CoverRow>,
     drops: Collection,
     drop_rows: Vec<DropRow>,
     make_item: Option<NodeId>,
@@ -348,6 +370,28 @@ impl BlockFields {
         let celsius = block.heat.map(|heat| number_field(ui, rows, "Temperature", heat.celsius));
         let reach = block.heat.map(|heat| number_field(ui, rows, "Reach", heat.reach));
 
+        let rows = part(ui, root, "Ground Cover", "sprout");
+        let covers = collection::collection(ui, rows, block.ground_cover.len(), true, Some("Add Plant"));
+        ui.set_reorderable(covers.items, false);
+        ui.set_text(covers.empty, "Grows nothing on its top");
+        let mut cover_rows = Vec::new();
+        for (place, cover) in block.ground_cover.iter().enumerate() {
+            let item = collection::fixed_item(ui, covers.items, place);
+            field(ui, item.body, BlockRef::Cover(place), "Plant");
+            let density = number_field(ui, item.body, "Density", cover.density);
+            let row = prop(ui, item.body, "Size");
+            let pair = ui.panel(row, Style::row());
+            ui.add_class(pair, "vector");
+            let sizes = cover.scale.map(|size| {
+                let shown = ui.text_field(pair, &number(size));
+                ui.add_class(shown, "value-input");
+                ui.add_class(shown, "number-input");
+                shown
+            });
+            let distance = number_field(ui, item.body, "Draw Distance", cover.draw_distance);
+            cover_rows.push(CoverRow { density, sizes, distance, remove: item.remove });
+        }
+
         let rows = part(ui, root, "Drops", "box");
         let drops = collection::collection(ui, rows, block.drops.len(), true, Some("Add Drop"));
         ui.set_reorderable(drops.items, false);
@@ -379,33 +423,34 @@ impl BlockFields {
         let rows = part(ui, root, "Data", "file");
         field(ui, rows, BlockRef::Data, "Data");
 
-        let fields =
-            Self {
-                block,
-                color,
-                swatch,
-                liquid,
-                hardness,
-                unbreakable,
-                sways,
-                tint,
-                nav_area,
-                climbable,
-                overlap,
-                light,
-                shape,
-                tier,
-                chops,
-                fells,
-                heat,
-                celsius,
-                reach,
-                drops,
-                drop_rows,
-                make_item,
-                slots,
-                parts,
-            };
+        let fields = Self {
+            block,
+            color,
+            swatch,
+            liquid,
+            hardness,
+            unbreakable,
+            sways,
+            tint,
+            nav_area,
+            climbable,
+            overlap,
+            light,
+            shape,
+            tier,
+            chops,
+            fells,
+            heat,
+            celsius,
+            reach,
+            covers,
+            cover_rows,
+            drops,
+            drop_rows,
+            make_item,
+            slots,
+            parts,
+        };
         let covered = fields.slots.iter().find(|(which, ..)| *which == BlockRef::Covered);
         if let Some(row) = covered.and_then(|(_, shown, _)| ui.parent(shown.field)) {
             let tip = "What it shows as while a block lies on it, as grass is dirt under a block: a block of the same \
@@ -431,6 +476,14 @@ impl BlockFields {
         }
         if self.make_item.is_some_and(|button| ui.clicked(button)) {
             return Some(BlockChange::MakeItem);
+        }
+        if self.covers.add.is_some_and(|add| ui.clicked(add)) {
+            self.block.ground_cover.push(GroundCover::default());
+            return Some(BlockChange::Shape);
+        }
+        if let Some(gone) = self.cover_rows.iter().position(|row| row.remove.is_some_and(|remove| ui.clicked(remove))) {
+            self.block.ground_cover.remove(gone);
+            return Some(BlockChange::Shape);
         }
         if self.drops.add.is_some_and(|add| ui.clicked(add)) {
             self.block.drops.push(BlockDrop::default());
@@ -514,6 +567,19 @@ impl BlockFields {
         }
         if let Some(fells) = self.fells.filter(|&fells| ui.changed(fells)) {
             (block.fells, typed) = (ui.is_checked(fells), true);
+        }
+        for (row, cover) in self.cover_rows.iter().zip(&mut block.ground_cover) {
+            if let Some(density) = changed_number(ui, row.density) {
+                (cover.density, typed) = (density.clamp(0.0, MOST_COVER), true);
+            }
+            let sizes = row.sizes.map(|field| changed_number(ui, field));
+            if sizes.iter().any(Option::is_some) {
+                let [low, high] = [0, 1].map(|at| sizes[at].map_or(cover.scale[at], |size| size.max(0.0)));
+                (cover.scale, typed) = ([low.min(high), low.max(high)], true);
+            }
+            if let Some(distance) = changed_number(ui, row.distance) {
+                (cover.draw_distance, typed) = (distance.clamp(0.0, 1000.0), true);
+            }
         }
         for (row, drop) in self.drop_rows.iter().zip(&mut block.drops) {
             let counts = row.count.map(|field| changed_number(ui, field));
@@ -742,4 +808,52 @@ fn number_field(ui: &mut Ui, rows: NodeId, label: &str, value: f32) -> NodeId {
 
 fn changed_number(ui: &Ui, field: NodeId) -> Option<f32> {
     ui.changed(field).then(|| ui.text(field).trim().parse().ok()).flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use voxear_ui::{Key, Modifiers};
+
+    use super::*;
+
+    /// Types `text` over what `field` holds, as a user does, in a frame of its own.
+    fn type_in(ui: &mut Ui, field: NodeId, text: &str) {
+        ui.frame(800, 600, 1.0);
+        ui.focus(field);
+        ui.set_modifiers(Modifiers { shift: false, control: true });
+        ui.key_down(Key::Char('a'));
+        ui.set_modifiers(Modifiers::default());
+        ui.text_input(text);
+    }
+
+    #[test]
+    fn a_blocks_ground_cover_rows_show_each_plant_and_keep_what_is_typed_within_bounds() {
+        let mut ui = Ui::new();
+        let root = ui.root();
+        let rows = ui.panel(root, Style::column().width(320.0));
+        let tufts = GroundCover { plant: "Plants/Tuft.boxmodel".into(), density: 2.0, ..GroundCover::default() };
+        let block = BlockDef { ground_cover: vec![tufts], ..BlockDef::default() };
+        let mut fields = BlockFields::new(&mut ui, rows, block, &|reference| Some(reference.to_string()), false);
+        assert_eq!(fields.cover_rows.len(), 1);
+        let shown =
+            fields.slots.iter().find(|(which, ..)| *which == BlockRef::Cover(0)).map(|(_, _, path)| path.clone());
+        assert_eq!(shown, Some(Some("Plants/Tuft.boxmodel".to_string())), "its plant in a field of its own");
+        assert_eq!(ui.text(fields.cover_rows[0].distance), "60");
+
+        // A density past the most is held to it; sizes typed the wrong way round are put the right way.
+        type_in(&mut ui, fields.cover_rows[0].density, "12");
+        assert!(matches!(fields.update(&mut ui), Some(BlockChange::Typed)));
+        assert_eq!(fields.block.ground_cover[0].density, MOST_COVER);
+        type_in(&mut ui, fields.cover_rows[0].sizes[1], "0.5");
+        assert!(matches!(fields.update(&mut ui), Some(BlockChange::Typed)));
+        assert_eq!(fields.block.ground_cover[0].scale, [0.5, 0.8]);
+
+        // Picked, or cleared, the plant goes into the row's own place in the list.
+        BlockRef::Cover(0).set(&mut fields.block, Some("Plants/Fern.boxmodel".into()));
+        assert_eq!(fields.block.ground_cover[0].plant, "Plants/Fern.boxmodel");
+        BlockRef::Cover(0).set(&mut fields.block, None);
+        assert_eq!(BlockRef::Cover(0).of(&fields.block), None);
+        BlockRef::Cover(3).set(&mut fields.block, Some("Plants/Lost.boxmodel".into()));
+        assert_eq!(fields.block.ground_cover.len(), 1, "a row that is not there is left alone");
+    }
 }

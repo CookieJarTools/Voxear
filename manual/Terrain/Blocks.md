@@ -109,6 +109,29 @@ Grass grows only where nothing lies on it. Give a grass block a **Covered** bloc
 - A world drawn smooth draws its own surface, and takes none of this.
 - `vox editor call blocks.get` says what a block shows as (`shows`) where it is another block.
 
+### Ground cover
+
+A block can grow plants on its top: grass tufts on a meadow's grass, flowers among them, ferns on a forest floor. Under **Ground Cover** in its Inspector, **Add Plant** adds a row:
+
+| Setting | What it does |
+|---|---|
+| Plant | The model that grows, a [[Box Models\|box model]] of cubes such as the starter Grass Tuft, so the meadow stays made of cubes |
+| Density | How many grow on a block, on average, up to 8: 0.5 is one block in two, 3 is three to every block |
+| Size | The smallest and largest each grows, as a share of the model's size |
+| Draw Distance | How far from the camera they show, in metres; they thin out over the last fifth of it |
+
+The plants are grown on the GPU round the camera every frame, from the faces of the world's blocks drawn there, so they cost nothing to keep:
+
+- They grow wherever the block's top shows: in the open, under trees, in a clearing. Lay a block on them, or dig the block out, and they go the same frame; take it away and they are back.
+- Each stands in the same place, turned and sized the same, every time you come back, and on every player's screen, worked out from its block alone. Nothing of them is saved or sent over the network.
+- Nothing collides with them, picks them or mines them: they are the ground's look. For bushes, rocks and trees that a character bumps into, or a script cuts down, use a [[Foliage]] that grows on the world instead.
+- They move in the wind and lean away from what walks through them, as a Foliage's plants do, and lie down where a Track Maker treads, standing up again over three seconds. They cast no shadow of their own.
+- Far off they are drawn with the plant's coarser levels of detail, its cubes larger (see [[Levels of Detail]]).
+- Blocks growing the same plant at the same settings are one kind, drawn together. A world grows up to 64 kinds of grass and ground cover round each camera, its terrains' together.
+- A world drawn smooth, and blocks that came loose, grow none.
+
+In the Infinite World template, Grass and Wild Grass grow the Grass Tuft, one and a half to a block. In the file it is a row of its own, as `[[ground_cover]]` with `plant`, `density`, `scale` and `draw_distance`; `vox editor call asset.get` reads a block's rows.
+
 ### Bushy leaves
 
 Set a leaf block's **Shape** to **Bushy** and its leaves reach out past its cube: three sheets of leaves cross through the block's middle, two upright from corner to corner and one that leans, each nearly twice as wide as the block and thinning out to a ragged edge. Leaves overhang the blocks beside and below, and a crown of such blocks is a soft mass of leaves with no straight edge to it.

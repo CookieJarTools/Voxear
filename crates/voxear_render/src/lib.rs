@@ -185,8 +185,11 @@ pub use particles::{
 };
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
-pub use grass::GrassLook;
-pub use blocks::{BlockCounts, BlockLight, BlockLook, BlockTints, BlockVoxels, GpuBlockMotion, GpuMotionKey, GpuMovingBlock, MAX_MOTIONS, MAX_MOVING};
+pub use grass::{GrassLook, GroundCoverLook};
+pub use blocks::{
+    BlockCounts, BlockLight, BlockLook, BlockTints, BlockVoxels, GpuBlockMotion, GpuMotionKey, GpuMovingBlock, MAX_BLOCK_SURFACES,
+    MAX_MOTIONS, MAX_MOVING,
+};
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone, plants_wind};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -3474,18 +3477,22 @@ impl View {
         let buffers = &self.buffers[slot];
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
-        let gathered = grass::gather(terrains, &extracted.frame, extracted.origin, &buffers.grass);
-        let view_grass = gathered.map(|(jobs, dispatches)| {
-            grass::ViewGrass {
-                jobs: dispatches,
-                draws: jobs.iter().map(|job| job.lod_count).sum(),
-                args: buffers.grass_args.handle,
-                args_id: fg.import_buffer(&buffers.grass_args),
-                blades_id: fg.import_buffer(&buffers.grass_blades),
-                grounds: setup.terrains.iter().filter_map(|terrain| terrain.heights_id).collect(),
-                tracks: tracks_id,
-                index_buffer: assets.indices.handle,
-            }
+        let gathered =
+            grass::gather(terrains, (&seen_blocks[..], offset), &extracted.frame, extracted.origin, &buffers.grass);
+        let view_grass = gathered.map(|(jobs, dispatches)| grass::ViewGrass {
+            jobs: dispatches,
+            draws: jobs.iter().map(|job| job.lod_count).sum(),
+            args: buffers.grass_args.handle,
+            args_id: fg.import_buffer(&buffers.grass_args),
+            blades_id: fg.import_buffer(&buffers.grass_blades),
+            grounds: setup
+                .terrains
+                .iter()
+                .filter_map(|terrain| terrain.heights_id)
+                .chain(view_blocks.iter().flat_map(|blocks| blocks.pools.iter().copied()))
+                .collect(),
+            tracks: tracks_id,
+            index_buffer: assets.indices.handle,
         });
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let (hdr, velocity, depth) = match portal {

@@ -9,7 +9,10 @@ It covers:
 - how textured, cut-out cards compare;
 - a recommended plan in stages.
 
-**Progress.** Stages 1 and 2 are built (2026-11-20). Plants of cubes have coarser LODs of their own cubes halved, and
+**Progress.** Stages 1 to 3 are built (2026-11-20). Stage 3: a block's **Ground Cover** rows grow plants on its
+top, made on the GPU round each camera from the chunks' faces looking up and slabs' tops, with nothing kept and no
+instance per plant: three tufts a block to 60 m take 1.7 ms, and eight a block to 90 m 3.8 ms with no renderer CPU,
+where Foliage would pass its 64K instances. Stages 1 and 2 (2026-11-20). Plants of cubes have coarser LODs of their own cubes halved, and
 lean as one sheared solid while each blade sways on its own, so their faces are merged up their height again. Three
 tufts a block to 60 m (7,430 on screen) went from 3.67 to 2.10 ms, and 42,900 tufts from 18.8 to 8.9 ms, about
 0.2–0.3 ms per 1,000 against 0.45–0.5. That is short of the 1.5 ms stage 1 aimed at: LODs taking over sooner (cubes

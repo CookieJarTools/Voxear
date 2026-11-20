@@ -9,3 +9,7 @@ covered = "d0a80bdd0dffbaa75ce66751c6b9b5a5"
 item = "bdc14b91a4f4554c32198f895c88e15d"
 count = [1, 1]
 chance = 1.0
+
+[[ground_cover]]
+plant = "9824c7fca50f40108b44f50381d56fea"
+density = 1.5

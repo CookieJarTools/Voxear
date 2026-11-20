@@ -34,7 +34,7 @@ use voxear_scene::Destroying;
 use voxear_terrain::{
     blocks::{
         BlockMap, BlockWorld,
-        block::{BlockHeat, BlockShape, Liquid, MISSING},
+        block::{BlockHeat, BlockShape, GroundCover, Liquid, MISSING},
         shape::{BlockState, StateUse},
         chunk::BlockId,
         edits::{BlockEdits, blocks_file},
@@ -1073,6 +1073,12 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
         "light": block.light.min(voxear_terrain::blocks::block::MOST_BLOCK_LIGHT),
         "grows": block.grows,
         "covered": block.covered,
+        "ground_cover": block.ground_cover.iter().map(|cover| serde_json::json!({
+            "plant": cover.plant,
+            "density": cover.density,
+            "scale": cover.scale,
+            "draw_distance": cover.draw_distance,
+        })).collect::<Vec<_>>(),
         "usable": block.part_look().usable || matches!(
             block.shape,
             BlockShape::Door | BlockShape::TrapDoor | BlockShape::FenceGate | BlockShape::Lever | BlockShape::Button
@@ -1266,7 +1272,88 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
         glow: voxear_core::math::Vec3::from(crate::content::linear(file.glow_color))
             * file.glow.clamp(0.0, voxear_render::BlockLight::BRIGHTEST),
     };
-    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels, motions: motions.into(), light })
+    let ground_cover = ground_cover(content, renderer, file).into();
+    Ok(BlockLook {
+        material: fallback,
+        surfaces: surfaces.into(),
+        voxels,
+        motions: motions.into(),
+        light,
+        ground_cover,
+    })
+}
+
+/// The plants a world's blocks grow on their tops (see
+/// `BlockDef::ground_cover`), each kind with its model loaded and the
+/// surfaces it grows on (see [`ground_cover_kinds`]). One whose model
+/// cannot be loaded grows nothing, with a warning.
+pub fn ground_cover(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    file: &Resolved,
+) -> Vec<voxear_render::GroundCoverLook> {
+    let mut looks = Vec::new();
+    for (cover, surfaces) in ground_cover_kinds(content, file) {
+        let loaded = content.parse(&cover.plant).ok().and_then(|reference| reference.guid()).and_then(|guid| {
+            let nodes = content.model(renderer, guid);
+            let nodes = nodes.map_err(|error| tracing::warn!("ground cover {}: {error:#}", cover.plant)).ok()?;
+            let node = nodes.first()?;
+            Some((node.mesh, node.material))
+        });
+        let Some((mesh, material)) = loaded else {
+            tracing::warn!("a block grows {}, which is no model the project has", cover.plant);
+            continue;
+        };
+        looks.push(voxear_render::GroundCoverLook {
+            mesh,
+            material,
+            density: cover.density,
+            scale: cover.scale,
+            draw_distance: cover.draw_distance,
+            surfaces,
+        });
+    }
+    looks
+}
+
+/// Each kind of plant a world's blocks grow on their tops, its numbers kept
+/// within bounds, with the surfaces it grows on, a bit each: the top of
+/// every block that grows it, and that top's twin, which it is drawn with
+/// where another block's picture creeps over it. Blocks growing the same
+/// plant alike share a kind.
+pub fn ground_cover_kinds(content: &mut Content, file: &Resolved) -> Vec<(GroundCover, [u32; 8])> {
+    use voxear_terrain::blocks::file::MIXED_LOOK;
+    let (looks, faces) = file.faces();
+    let mut kinds: Vec<(GroundCover, [u32; 8])> = Vec::new();
+    for (at, kind) in file.blocks.iter().enumerate().filter(|(_, kind)| kind.is_live()) {
+        let Some((_, block)) = kind.block.as_deref().and_then(|reference| content.block(reference)) else { continue };
+        let Some(top) = faces.get(at + 1).map(|faces| usize::from(faces.top)) else { continue };
+        for cover in &block.ground_cover {
+            let cover = GroundCover {
+                density: cover.density.clamp(0.0, voxear_terrain::blocks::block::MOST_COVER),
+                scale: [cover.scale[0].max(0.0), cover.scale[1].max(cover.scale[0]).max(0.0)],
+                draw_distance: cover.draw_distance.max(0.0),
+                plant: cover.plant.clone(),
+            };
+            if cover.plant.is_empty() || cover.density <= 0.0 {
+                continue;
+            }
+            let index = match kinds.iter().position(|(kept, _)| *kept == cover) {
+                Some(index) => index,
+                None => {
+                    kinds.push((cover, [0; 8]));
+                    kinds.len() - 1
+                }
+            };
+            let twin = top + usize::from(MIXED_LOOK);
+            for surface in [Some(top), (looks.len() > twin).then_some(twin)].into_iter().flatten() {
+                if surface < voxear_render::MAX_BLOCK_SURFACES {
+                    kinds[index].1[surface >> 5] |= 1 << (surface & 31);
+                }
+            }
+        }
+    }
+    kinds
 }
 
 /// Keeps every world of blocks' file and blocks in `content` as its

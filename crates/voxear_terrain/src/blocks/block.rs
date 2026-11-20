@@ -28,6 +28,12 @@
 //! ```toml
 //! color = [0.33, 0.52, 0.2]
 //! covered = "Blocks/Dirt.block"  # what it shows as while a block lies on it: grass is earth under a block
+//!
+//! [[ground_cover]]               # plants growing on its top where it is open to the air
+//! plant = "Plants/Grass Tuft.boxmodel"
+//! density = 2.0                  # how many to a block
+//! scale = [0.8, 1.2]
+//! draw_distance = 60.0
 //! ```
 //!
 //! ```toml
@@ -103,6 +109,12 @@ pub struct BlockDef {
     /// shows as itself always.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub covered: Option<String>,
+    /// The plants that grow on its top wherever it lies open to the air,
+    /// grass and flowers on a meadow's ground: worked out on the GPU round
+    /// each camera from the faces drawn, never kept, so nothing of them is
+    /// saved, sent or collided with (see `GroundCover`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ground_cover: Vec<GroundCover>,
     /// Which liquid it is, where it is one.
     #[serde(skip_serializing_if = "Liquid::is_none")]
     pub liquid: Liquid,
@@ -592,6 +604,7 @@ impl Default for BlockDef {
             bottom: None,
             overlap: 0,
             covered: None,
+            ground_cover: Vec::new(),
             liquid: Liquid::None,
             sways: false,
             shape: BlockShape::Cube,
@@ -618,6 +631,31 @@ impl Default for BlockDef {
             fells: true,
             grows: None,
         }
+    }
+}
+
+/// One kind of plant growing on a block's top (see [`BlockDef::ground_cover`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GroundCover {
+    /// The plant, a reference to a model: a box model of cubes, as the
+    /// starter grass tuft is, keeps the world's look.
+    pub plant: String,
+    /// How many grow on a block, on average, from none to [`MOST_COVER`].
+    pub density: f32,
+    /// The smallest and largest each grows, as a share of the model's size.
+    pub scale: [f32; 2],
+    /// How far from the camera they are drawn, in metres; they thin out over
+    /// the last fifth of it.
+    pub draw_distance: f32,
+}
+
+/// The most plants of one kind a block's top grows.
+pub const MOST_COVER: f32 = 8.0;
+
+impl Default for GroundCover {
+    fn default() -> Self {
+        Self { plant: String::new(), density: 1.0, scale: [0.8, 1.2], draw_distance: 60.0 }
     }
 }
 
@@ -673,7 +711,8 @@ impl BlockDef {
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
         let shape = |block: &Self| (block.liquid, block.overlap, block.shape, block.covered.clone(), block.light);
-        look(self) == look(other) && shape(self) == shape(other) && self.part_look() == other.part_look()
+        let cover = self.ground_cover == other.ground_cover;
+        look(self) == look(other) && shape(self) == shape(other) && cover && self.part_look() == other.part_look()
     }
 
     /// What a world draws of it as a block of parts: whether it is used,
@@ -769,6 +808,17 @@ mod tests {
         assert!(covered.to_text().contains("covered = \"Blocks/Dirt.block\"") && !grass.to_text().contains("covered"));
         assert_eq!(BlockDef::parse(&covered.to_text()).unwrap(), covered);
         assert!(!covered.looks_like(&grass), "it is drawn otherwise");
+        // Plants growing on its top are written as rows, read back alike, and draw it otherwise.
+        let plant = GroundCover { plant: "Plants/Grass Tuft.boxmodel".into(), density: 2.0, ..GroundCover::default() };
+        let meadow = BlockDef { ground_cover: vec![plant], ..grass.clone() };
+        let text = meadow.to_text();
+        assert!(
+            text.contains("[[ground_cover]]") && text.contains("density = 2.0") && !grass.to_text().contains("ground")
+        );
+        assert_eq!(BlockDef::parse(&text).unwrap(), meadow);
+        assert!(!meadow.looks_like(&grass));
+        let defaults = BlockDef::parse("[[ground_cover]]\nplant = \"Plants/Flower.boxmodel\"\n").unwrap();
+        assert_eq!((defaults.ground_cover[0].density, defaults.ground_cover[0].draw_distance), (1.0, 60.0));
     }
 
     #[test]

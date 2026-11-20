@@ -4,6 +4,8 @@ order: 11
 
 A terrain's **grass** is what grows thickly all over it: grass, weeds, flowers, pebbles, millions of them. There are far too many to place one by one or to keep a list of, so each kind of grass only says how thickly it grows where, and the GPU grows the blades round the camera each frame: the same blade in the same place every time you come back, sized and turned its own way, leaning with the ground. Grass far off thins out to nothing at its draw distance.
 
+A world of blocks grows its grass the same way, from its blocks: see [[Blocks#Ground cover|Ground cover]].
+
 Grass is for small things that nothing collides with. Trees, bushes and rocks that a character bumps into, or a script cuts down, are a [[Foliage]]'s plants instead (see [[Painting and Cutting Plants]]).
 
 ## Adding grass

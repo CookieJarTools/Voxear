@@ -143,6 +143,7 @@ fn scene(renderer: &mut Renderer, file: &BlockFile, blocks: BlockMap) -> (World,
         voxels: Default::default(),
         motions: motions.into(),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     let entity = world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));

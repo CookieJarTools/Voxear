@@ -608,6 +608,10 @@ impl InUse {
         for look in world.query_ref::<&voxear_render::BlockLook>().without::<Destroying>() {
             used.materials.insert(look.material);
             used.materials.extend(look.surfaces.iter().map(|surface| surface.material));
+            for cover in look.ground_cover.iter() {
+                used.meshes.insert(cover.mesh);
+                used.materials.insert(cover.material);
+            }
         }
         used.prefabs = world.query_ref::<&PrefabInstance>().without::<Destroying>().into_iter().map(|p| p.0).collect();
         let heard = world.query_ref::<&AudioSource>().without::<Destroying>().into_iter().filter_map(|s| s.sound);

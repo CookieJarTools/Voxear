@@ -4133,7 +4133,11 @@ with or without a renderer, so trunks collide on servers too, as capsules, or as
 such as rocks (`Trunk::solid`, a Foliage's Collider row); one cut down is only marked gone, so nothing is built
 again and saves name it by its number. Grass and details are densities a byte a kind a sample, scattered on the GPU
 each frame round each view's camera on a grid fixed to the world, into runs of blades per kind and ring of
-distance, drawn by indirect draws outside the scene's instances (`grass.rs`, `shaders/grass.slang`).
+distance, drawn by indirect draws outside the scene's instances (`grass.rs`, `shaders/grass.slang`). A world of
+blocks' ground cover goes the same way: a `.block`'s `[[ground_cover]]` rows become kinds on its world's look, each
+with the surfaces of the tops that grow it, and each view's **Ground cover scatter** walks its own chunks' faces
+looking up, and its blocks of parts' (slabs' tops), growing plants hashed from each block on those faces, so they
+follow every edit and nothing of them is kept, saved or sent.
 
 **Tracks.** Only drawn, so on the GPU: each view keeps a map of the ground round its camera (1024 texels of 6 cm a
 side), holding the world's cells modulo its size so it scrolls without copying; a compute pass clears what came

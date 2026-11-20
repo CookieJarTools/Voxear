@@ -469,6 +469,7 @@ fn trees_at_evening(renderer: &mut Renderer) -> World {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     // From the grass, looking along +z a little up at the crowns, the sun low behind them.
@@ -991,6 +992,7 @@ fn pond_in_the_sea(renderer: &mut Renderer) -> World {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     let corner = Transform::from_position(Vec3::new(-12.0, 0.0, -12.0));

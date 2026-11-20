@@ -4,3 +4,7 @@ overlap = 3
 hardness = 1.0
 tint = "grass"
 covered = "d0a80bdd0dffbaa75ce66751c6b9b5a5"
+
+[[ground_cover]]
+plant = "9824c7fca50f40108b44f50381d56fea"
+density = 1.5

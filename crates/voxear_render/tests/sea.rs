@@ -110,6 +110,7 @@ fn sea(renderer: &mut Renderer) -> World {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));

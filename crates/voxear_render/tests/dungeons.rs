@@ -232,6 +232,7 @@ fn scene(
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     scene.spawn((BlockWorld::made(map.clone(), &faces, 1.0, false), look, Transform::default()));
     for light in &layout.lights {

@@ -819,7 +819,7 @@ pub fn record(
             if let Some(grass) = &frame.grass {
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
-                let pipeline = pipelines.grass_forward;
+                let pipeline = [pipelines.grass_forward, pipelines.cover_forward];
                 crate::grass::record_opaque(fg, shading_push, pipeline, grass, images, targets, &shading_buffers);
             }
         }
@@ -942,7 +942,7 @@ pub fn record(
                 crate::blocks::record_opaque(fg, shading_push, pipeline, blocks, images, targets, &shading_buffers);
             }
             if let Some(grass) = &frame.grass {
-                let pipeline = pipelines.grass_forward_on_depth;
+                let pipeline = [pipelines.grass_forward_on_depth, pipelines.cover_forward_on_depth];
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::grass::record_opaque(fg, shading_push, pipeline, grass, images, targets, &shading_buffers);

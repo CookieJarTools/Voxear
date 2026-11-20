@@ -605,6 +605,7 @@ fn fields(renderer: &mut Renderer) -> (World, [Entity; 3]) {
         voxels: Default::default(),
         motions: Default::default(),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
@@ -723,6 +724,7 @@ fn timing_world(renderer: &mut Renderer) -> (World, Entity) {
         voxels: Default::default(),
         motions: Default::default(),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::from_position(Vec3::new(0.0, -10.0, 0.0))));

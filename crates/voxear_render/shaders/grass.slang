@@ -15,6 +15,7 @@
 #include "shading.slang"
 #include "culling.slang"
 #include "terrain_ground.slang"
+#include "block_quads.slang"
 
 // A cell's own numbers, 0 to 1, the same every frame.
 float grassHash(int2 cell, uint seed, uint salt)
@@ -93,6 +94,181 @@ void grassScatter(uint3 id : SV_DispatchThreadID)
     buffers()->grassBlades[job.offsets[lod] + slot] = blade;
 }
 
+// A job's `terrain` with this bit is a world of blocks' ground cover, the world's place among the view's under it
+// (src/grass.rs, BLOCK_COVER).
+static const uint GRASS_BLOCK_COVER = 0x80000000u;
+// How many workgroups share each chunk's faces looking up (src/grass.rs, COVER_SLICES).
+static const uint GRASS_COVER_SLICES = 8;
+// A run of a chunk's blocks of parts' words, two quads' a face, has this bit over its length (src/grass.rs,
+// COVER_PARTS).
+static const uint GRASS_COVER_PARTS = 0x80000000u;
+// How much of a block a face of a block of parts looking up must cover to grow plants, in 256ths: a slab's top does,
+// a fence's post does not.
+static const uint GRASS_PART_LEAST = 64;
+// How many draws a view's grass has room for (src/grass.rs, MAX_GRASS_DRAWS): its ground cover's words follow them.
+static const uint GRASS_MAX_DRAWS = 256;
+
+// The words of a view's ground cover (src/grass.rs, COVER_AT): each job's eight words of the surfaces it grows on,
+// then its chunks' runs of faces looking up, a run's first quad in its world's pool and how many.
+uint* grassCoverWords()
+{
+    return (uint*)(buffers()->grassDraws + GRASS_MAX_DRAWS);
+}
+
+// A world of blocks' ground cover (src/grass.rs, ground_cover_jobs): workgroup x is one of the job's chunks, y which
+// share of that chunk's faces looking up it takes, a face in every GRASS_COVER_SLICES. Each face whose surface grows
+// the job's plant grows them on each block it covers, as many as the job's density says on average, each where a
+// hash of its block puts it: the same plants in the same places every frame and on every machine. Faces drawn one
+// block each, as those that join their neighbours' pictures or that another block's picture creeps over, are one
+// block whatever their size says, and a face drawn over another to show what creeps over it grows nothing.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void groundCoverScatter(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
+{
+    GrassJob job = buffers()->grassJobs[push.list];
+    uint runs = uint(job.firstCell.y);
+    if (group.x >= runs)
+    {
+        return;
+    }
+    uint* words = grassCoverWords() + uint(job.firstCell.x);
+    uint2 run = uint2(words[8 + group.x * 2], words[8 + group.x * 2 + 1]);
+    if ((run.y & GRASS_COVER_PARTS) != 0)
+    {
+        groundCoverParts(job, words, run, group.y, thread.x);
+        return;
+    }
+    BlockWorld world = buffers()->blockWorlds[job.terrain & 0xFF];
+    Frame* frame = push.frame;
+    Mesh mesh = buffers()->meshes[job.mesh];
+    for (uint index = group.y; index < run.y; index += GRASS_COVER_SLICES)
+    {
+        uint2 quad = world.quads[run.x + index];
+        uint surface = quad.y & 0xFF;
+        if (((words[surface >> 5] >> (surface & 31)) & 1) == 0)
+        {
+            continue;
+        }
+        uint first = quad.x;
+        int4 chunk = world.origins[quad.y >> 16];
+        if (chunk.w != 0)
+        {
+            continue;
+        }
+        // Looking up, a face runs along z first and x second (block_quads.slang, BLOCK_AXES).
+        uint2 size = uint2(((first >> 15) & 31) + 1, ((first >> 20) & 31) + 1);
+        if (world.surfaceCount > 0)
+        {
+            TerrainSurface drawn = world.surfaces[min(surface, world.surfaceCount - 1)];
+            if ((drawn.flags & TERRAIN_SURFACE_MIXED) != 0)
+            {
+                // A quad more over a face drawn already (voxear_terrain::blocks::mesh::mixing's `over`).
+                if (((first >> 23) & 1) != 0)
+                {
+                    continue;
+                }
+                size = uint2(1, 1);
+            }
+            else if ((buffers()->materials[drawn.material].flags & MATERIAL_CONNECTED) != 0)
+            {
+                size = uint2(1, 1);
+            }
+        }
+        int3 at = chunk.xyz * 32 + int3(first & 31, (first >> 5) & 31, (first >> 10) & 31);
+        // Whole blocks, its top a block up: z along it first, then x.
+        groundCoverGrow(job, frame, mesh, world, at, uint4(0, 16, 0, 16), 16, size, thread.x);
+    }
+}
+
+// Plants of `job` on a face looking up whose first block is `at`, `size` blocks along z and x: on each block, the
+// part of it from `span.x` to `span.y` along z and `span.z` to `span.w` along x, in sixteenths, at `height`
+// sixteenths over its foot. Threads take its plants `thread` apart, 64 at a time.
+void groundCoverGrow(GrassJob job, Frame* frame, Mesh mesh, BlockWorld world, int3 at, uint4 span, uint height, uint2 size, uint thread)
+{
+    float density = job.corner.x;
+    uint most = uint(ceil(density));
+    uint plants = size.x * size.y * most;
+    for (uint each = thread; each < plants; each += 64)
+    {
+        uint cell = each / most;
+        uint one = each % most;
+        int3 block = at + int3(cell / size.x, 0, cell % size.x);
+        uint number = blockNumber(block, 0x5EED + job.kind * 16 + one);
+        // As many on average as its density says: the last of a block's tries grows only so often.
+        if (float(number & 0xFFFF) / 65535.0 >= density - float(one))
+        {
+            continue;
+        }
+        uint placed = blockNumber(block, 0xC0DE + job.kind * 16 + one);
+        float2 within = float2(placed & 0xFFFF, placed >> 16) / 65535.0;
+        float2 sixteenths = float2(lerp(float(span.z), float(span.w), within.x), lerp(float(span.x), float(span.y), within.y));
+        float3 foot = world.corner + (float3(block) + float3(sixteenths.x, float(height), sixteenths.y) / 16.0) * world.blockSize;
+        float away = distance(foot, frame->cameraPosition);
+        float thinned = float((number >> 16) & 0xFF) / 255.0;
+        if (away > job.drawDistance || thinned < smoothstep(job.drawDistance * 0.8, job.drawDistance, away))
+        {
+            continue;
+        }
+        float grown = float(number >> 24) / 255.0;
+        float scale = lerp(job.scale.x, job.scale.y, grown);
+        if (!insidePlanes(frame->planes, foot + mesh.center * scale, mesh.radius * scale))
+        {
+            continue;
+        }
+        uint lod = 0;
+        while (lod + 1 < job.lodCount && away > job.lodReach[lod])
+        {
+            lod++;
+        }
+        uint slot;
+        InterlockedAdd(buffers()->grassArgs[job.draws + lod].instanceCount, 1, slot);
+        if (slot >= job.capacities[lod])
+        {
+            continue;
+        }
+        // Turned by quarter turns, as the blocks are, standing upright.
+        uint turn = ((placed >> 3) & 3) * 256;
+        GrassBlade blade;
+        blade.position = foot;
+        blade.packed = turn | uint(grown * 255.0) << 10 | 64u << 18 | 64u << 25;
+        buffers()->grassBlades[job.offsets[lod] + slot] = blade;
+    }
+}
+
+// Ground cover on the faces looking up of a chunk's blocks of parts (`run`, its words, two quads' a face;
+// voxear_terrain::blocks::mesh::PartQuad): a slab's top and the like, still and covering enough of its block.
+void groundCoverParts(GrassJob job, uint* words, uint2 run, uint slice, uint thread)
+{
+    BlockWorld world = buffers()->blockWorlds[job.terrain & 0xFF];
+    Frame* frame = push.frame;
+    Mesh mesh = buffers()->meshes[job.mesh];
+    uint faces = (run.y & ~GRASS_COVER_PARTS) / 2;
+    for (uint index = slice; index < faces; index += GRASS_COVER_SLICES)
+    {
+        uint2 head = world.quads[run.x + index * 2];
+        uint2 tail = world.quads[run.x + index * 2 + 1];
+        uint surface = head.y & 0xFF;
+        bool moves = ((head.x >> 23) & 1) != 0;
+        if (((head.x >> 15) & 7) != 2 || moves || ((words[surface >> 5] >> (surface & 31)) & 1) == 0)
+        {
+            continue;
+        }
+        int4 chunk = world.origins[head.y >> 16];
+        if (chunk.w != 0)
+        {
+            continue;
+        }
+        // Along z and then x, in sixteenths of its block, as partPoint reads it.
+        uint4 span = uint4(head.x >> 28, tail.x & 31, (head.y >> 8) & 15, (tail.x >> 5) & 31);
+        if ((span.y - min(span.x, span.y)) * (span.w - min(span.z, span.w)) < GRASS_PART_LEAST)
+        {
+            continue;
+        }
+        int3 at = chunk.xyz * 32 + int3(head.x & 31, (head.x >> 5) & 31, (head.x >> 10) & 31);
+        groundCoverGrow(job, frame, mesh, world, at, span, (head.x >> 18) & 31, uint2(1, 1), thread);
+    }
+}
+
 // Each draw's command made afresh from its mesh's LOD, counting no blades yet; push.list is how many draws.
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -110,10 +286,12 @@ void grassReset(uint3 id : SV_DispatchThreadID)
     float near = ring == 0 ? 0.0 : job.lodReach[ring - 1];
     float size = (job.scale.x + job.scale.y) * 0.5;
     Frame* frame = push.frame;
+    // Ground cover's plants are as other meshes: their coarser LODs are of larger cubes, which show.
+    float coarser = (job.terrain & GRASS_BLOCK_COVER) != 0 ? 1.0 : 2.0;
     uint pick = 0;
     for (uint each = 1; each < mesh.lodCount; each++)
     {
-        if (mesh.lods[each].error * size * frame->lodScale > frame->lodThreshold * 2.0 * max(near, 1e-3))
+        if (mesh.lods[each].error * size * frame->lodScale > frame->lodThreshold * coarser * max(near, 1e-3))
         {
             break;
         }
@@ -217,7 +395,6 @@ VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instance
     float3 now = world + windOffset(frame, material, blade.position, height, scale, world, normal, v.wind, frame->time) * sway;
     float earlier = frame->time - frame->deltaTime;
     float3 before = world + windOffset(frame, material, blade.position, height, scale, world, normal, v.wind, earlier) * sway;
-    Terrain terrain = buffers()->terrains[job.terrain];
 
     VertexOut o;
     o.position = transform(frame->viewProj, float4(now, 1.0));
@@ -228,8 +405,10 @@ VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instance
     o.uv = v.uv;
     o.material = job.material;
     o.lod = 0;
-    // The terrain's own instance stands in for a blade's, for what the fragment shaders read of one.
-    o.instance = terrain.anchor;
+    // The terrain's own instance, or the world of blocks', stands in for a blade's, for what the fragment shaders read
+    // of one.
+    bool blocks = (job.terrain & GRASS_BLOCK_COVER) != 0;
+    o.instance = blocks ? buffers()->blockWorlds[job.terrain & 0xFF].anchor : buffers()->terrains[job.terrain].anchor;
     o.fade = 0;
     o.cluster = 0;
     o.currentClip = transform(frame->unjitteredViewProj, float4(now, 1.0));

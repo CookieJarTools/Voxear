@@ -1940,12 +1940,31 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     (the rule that a bending plant's faces stay one cube tall is gone), and a plant's bottoms on the ground are
     left out. A tuft went from about 140 faces in 10 meshlets to 90 in 6. `windOffset` takes the instance's scale.
     `COOKED_VERSION` 19.
-  - [ ] Ground cover grown on the GPU per chunk in worlds of blocks.
+  - [x] **Ground cover grown on the GPU** (`grass::ground_cover_jobs`, `groundCoverScatter` in `shaders/grass.slang`,
+    `blocks::ground_cover_kinds`): a `.block` lists `[[ground_cover]]` rows (a model, `density` up to 8 a block,
+    `scale`, `draw_distance`), the Block Inspector's **Ground Cover** section with a plant picker. A world's kinds
+    are `BlockLook::ground_cover`, each with the surfaces of the tops that grow it, a top and its twin; blocks
+    growing the same plant alike share a kind. Each view lists its own chunks' runs of faces looking up, and of
+    blocks of parts, within reach and in the frustum; the scatter takes a workgroup to an eighth of a chunk's, and
+    grows plants on every block of each face whose surface carries the kind (a face another block creeps over is
+    one block, and a quad drawn over it none), and on slabs' tops at their height, hashed from the block, turned by
+    quarter turns. Plants go through the terrain grass's runs, rings, LODs, wind, pushes and trodden ground
+    (springing back over 3 s); ground cover draws cull backs (`cover_depth`, `cover_forward`). Nothing is kept,
+    saved or sent; plants go the frame a block covers them. The infinite-world template's Grass and Wild Grass
+    grow the Grass Tuft at 1.5 a block, in place of its scene's Grass Tuft Foliage. `blocks.get` and the block's
+    JSON list `ground_cover`. Not in C#, which has no model type to name the plant by. Measured as above (the GPU
+    held at 99% by an open editor, so frames are rough): three a block to 60 m 1.70 ms GPU (scatter 0.19, depth
+    0.48, shading 1.04), slabs covered too, against 1.75 ms for Foliage's tufts with slabs bare and their
+    instances; three to 90 m 1.86 ms; eight to 90 m 3.78 ms, past what Foliage's 64K instances hold; no renderer
+    CPU per plant. Drawing both sides, as terrain grass does, cost 1.98 and 4.80 ms.
   - [ ] Cheaper instances for placed plants.
   - [ ] Voxel impostors for bushes and trees.
   - [ ] Plant shadows by tier.
   - [ ] Far grass from the ground's small-cube relief.
   - [ ] A vegetation stress scene and `foliage.stats`/`foliage.set`.
+  - Tests (ground cover): the `.block` rows written and read back and drawn otherwise; a world's kinds and their
+    surfaces (shared, held to 8, never stone or sides); the Inspector's rows; a GPU picture of flowers on grass
+    and on slabs of grass, none under stone laid over it, none where the block grows nothing.
   - Tests: unit tests of the parts (feet, phases, merged faces, no bottom on the ground), halving (thin blades
     kept, lone cubes gone, commonest colour, odd sides), and every starter plant's LODs (fewer triangles, further
     off, bound to the bone; none for a model of more bones); the GPU tests of plants of cubes in wind and pushes.

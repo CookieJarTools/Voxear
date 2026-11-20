@@ -997,3 +997,57 @@ fn leaves_cut_out_of_their_picture_show_the_sky_and_the_trunk_through_them() {
     let share = lit.count() as f32 / shaded.len() as f32;
     assert!(share > 0.1, "{:.0}% of the shadow is lit through the leaves", share * 100.0);
 }
+
+#[test]
+fn a_blocks_ground_cover_grows_on_its_top_and_blocks_growing_the_same_plant_share_a_kind() {
+    use voxear_engine::blocks::{BlockWorldAsset, ground_cover_kinds};
+    use voxear_terrain::blocks::{
+        block::{BlockDef, GroundCover},
+        file::BlockKind,
+    };
+    let dir = project();
+    let grows = |plant: &str, density: f32| GroundCover { plant: plant.into(), density, ..GroundCover::default() };
+    let write = |path: &str, block: BlockDef| std::fs::write(dir.path().join(path), block.to_text()).unwrap();
+    // Grass grows tufts and flowers; moss the same tufts; stone nothing.
+    let tufts = grows("Plants/Tuft.boxmodel", 2.0);
+    let grass = BlockDef {
+        top: Some("Materials/Grass.material".into()),
+        ground_cover: vec![tufts.clone(), grows("Plants/Flower.boxmodel", 0.25)],
+        ..BlockDef::colored([0.2, 0.6, 0.1])
+    };
+    write("Blocks/Grass.block", grass);
+    write("Blocks/Moss.block", BlockDef { ground_cover: vec![tufts.clone()], ..BlockDef::colored([0.3, 0.5, 0.2]) });
+    // A density past the most is held to it.
+    write(
+        "Blocks/Meadow.block",
+        BlockDef { ground_cover: vec![grows("Plants/Tuft.boxmodel", 50.0)], ..BlockDef::colored([0.1, 0.7, 0.1]) },
+    );
+    let mut file = BlockFile::default();
+    (file.ground.size, file.ground.height) = ([32, 32], 6);
+    file.blocks[0] = BlockKind::of("Blocks/Grass.block");
+    file.blocks[1] = BlockKind::of("Blocks/Moss.block");
+    file.blocks.push(BlockKind::of("Blocks/Meadow.block"));
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = {
+        let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        named.into_iter().find(|(_, name)| name.0 == "Blocks").unwrap().0
+    };
+    let drawn = game.engine.world.get::<BlockWorldAsset>(field).unwrap().drawn.clone();
+    let (_, faces) = drawn.faces();
+    let kinds = ground_cover_kinds(&mut game.content, &drawn);
+    let plants: Vec<(&str, f32)> = kinds.iter().map(|(cover, _)| (cover.plant.as_str(), cover.density)).collect();
+    assert_eq!(
+        plants,
+        [("Plants/Tuft.boxmodel", 2.0), ("Plants/Flower.boxmodel", 0.25), ("Plants/Tuft.boxmodel", 8.0)]
+    );
+    let has = |mask: &[u32; 8], surface: u8| mask[usize::from(surface) >> 5] >> (surface & 31) & 1 != 0;
+    let (grass_top, moss_top, stone_top) = (faces[1].top, faces[2].top, faces[3].top);
+    assert!(has(&kinds[0].1, grass_top) && has(&kinds[0].1, moss_top), "tufts on grass and moss alike");
+    assert!(has(&kinds[1].1, grass_top) && !has(&kinds[1].1, moss_top), "flowers on the grass alone");
+    assert!(
+        kinds.iter().all(|(_, mask)| !has(mask, stone_top) && !has(mask, faces[1].sides)),
+        "never stone, nor sides"
+    );
+}

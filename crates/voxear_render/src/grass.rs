@@ -12,6 +12,14 @@
 //! keeps each count within its room. **Depth (grass)** and **Opaque
 //! (grass)** draw them after the terrain, with no instance of the scene's
 //! each, so millions are no more than the GPU can draw.
+//!
+//! **Ground cover** on worlds of blocks goes the same way (see
+//! [`GroundCoverLook`]): each kind of plant a world's blocks grow on their
+//! tops is a job of its own, and **Ground cover scatter** walks the faces
+//! looking up of the chunks near enough, a workgroup to a share of a
+//! chunk's, growing plants on each block of those whose surface carries it.
+//! Plants grow wherever a face shows, under trees too, and go the frame a
+//! block is laid over them: nothing of them is kept.
 
 use std::sync::Arc;
 
@@ -41,6 +49,36 @@ pub struct GrassLook {
     /// flat, in seconds; 0 for it to stay flat.
     pub springs_back: f32,
 }
+
+/// One kind of plant a world of blocks grows on its blocks' tops (see
+/// `voxear_terrain::blocks::block::GroundCover`): its mesh and material,
+/// how many to a block where it grows, its smallest and largest size, how
+/// far from the camera it is drawn, and the surfaces it grows on, a bit
+/// each of a world's [`MAX_BLOCK_SURFACES`](crate::blocks::MAX_BLOCK_SURFACES):
+/// the tops of the blocks that grow it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundCoverLook {
+    pub mesh: MeshHandle,
+    pub material: MaterialHandle,
+    pub density: f32,
+    pub scale: [f32; 2],
+    pub draw_distance: f32,
+    pub surfaces: [u32; 8],
+}
+
+/// A job's `terrain` with this bit is a world of blocks' ground cover, the
+/// world's place among the view's under it (see `ground_cover_jobs`).
+pub const BLOCK_COVER: u32 = 1 << 31;
+
+/// How long ground cover trodden flat takes to stand up again, in seconds.
+const COVER_SPRINGS_BACK: f32 = 3.0;
+
+/// How many workgroups share each chunk's faces looking up.
+pub const COVER_SLICES: u32 = 8;
+
+/// How many words a view keeps for its ground cover jobs' surfaces and
+/// chunks: each job its eight words of surfaces, then two a chunk.
+const COVER_WORDS: usize = 32 * 1024;
 
 /// How many kinds of grass, over every terrain, a view scatters.
 pub const MAX_GRASS_JOBS: usize = 64;
@@ -98,8 +136,12 @@ pub struct GpuGrassDraw {
 
 const JOBS_SIZE: usize = MAX_GRASS_JOBS * size_of::<GpuGrassJob>();
 
-/// How large a view's buffer of jobs and draws is.
-pub const FRAME_SIZE: u64 = (JOBS_SIZE + MAX_GRASS_DRAWS * size_of::<GpuGrassDraw>()) as u64;
+/// Where a view's ground cover's words start in its grass buffer, after its
+/// draws (`grassCoverWords` in `shaders/grass.slang`).
+const COVER_AT: usize = JOBS_SIZE + MAX_GRASS_DRAWS * size_of::<GpuGrassDraw>();
+
+/// How large a view's buffer of jobs, draws and ground cover words is.
+pub const FRAME_SIZE: u64 = (COVER_AT + COVER_WORDS * 4) as u64;
 
 /// How large a view's indirect commands for its grass are.
 pub const ARGS_SIZE: u64 = (MAX_GRASS_DRAWS * DRAW_COMMAND) as u64;
@@ -116,12 +158,15 @@ pub(crate) fn addresses(buffer: &Buffer) -> [u64; 2] {
 /// many draws there are, and the buffers its passes wait on.
 #[derive(Clone)]
 pub(crate) struct ViewGrass {
-    pub jobs: Vec<[u32; 2]>,
+    /// Each job's dispatch, and whether it is a world of blocks' ground
+    /// cover, which the ground cover scatter makes.
+    pub jobs: Vec<([u32; 2], bool)>,
     pub draws: u32,
     pub args: vk::Buffer,
     pub args_id: BufferId,
     pub blades_id: BufferId,
-    /// The terrains' buffers, which the scatter reads.
+    /// The terrains' buffers and the worlds of blocks' pools, which the
+    /// scatters read.
     pub grounds: Vec<BufferId>,
     /// The map of tracks round the camera, which lays blades down where
     /// something trod.
@@ -148,21 +193,37 @@ const RINGS: [f32; MAX_LODS] = [0.125, 0.25, 0.5, 1.0];
 /// is none.
 pub(crate) fn gather(
     drawn: &[Drawn],
+    (blocks, offset): (&[crate::blocks::DrawnBlocks], Vec3),
     frame: &crate::gpu::GpuFrame,
     origin: voxear_core::math::I64Vec3,
     buffer: &Buffer,
-) -> Option<(Vec<GpuGrassJob>, Vec<[u32; 2]>)> {
+) -> Option<(Vec<GpuGrassJob>, Vec<([u32; 2], bool)>)> {
     let camera = Vec3::from(frame.camera_position);
-    let mut wanted: Vec<(usize, usize, GrassLook)> = Vec::new();
+    let mut wanted: Vec<(Source, GrassLook)> = Vec::new();
     for (number, terrain) in drawn.iter().enumerate().take(crate::terrain::MAX_TERRAINS) {
         if terrain.grass.is_none() {
             continue;
         }
         for (kind, look) in terrain.look.grass.iter().enumerate().take(voxear_terrain::grass::MAX_GRASS) {
             if let Some(look) = look.filter(|look| look.density > 0.0) {
-                wanted.push((number, kind, look));
+                wanted.push((Source::Terrain(number, kind), look));
             }
         }
+    }
+    // Each world of blocks' ground cover, as a terrain's kind of grass is drawn: a blade a cell of a block's
+    // share of a plant, numbered past the terrains.
+    let covers = ground_cover_jobs(blocks, offset, frame);
+    for (number, (world, _, look, _)) in covers.iter().enumerate() {
+        let cell = blocks[*world].block_size / look.density.max(1e-3).sqrt();
+        let grass = GrassLook {
+            mesh: look.mesh,
+            material: look.material,
+            density: 1.0 / (cell * cell),
+            scale: look.scale,
+            draw_distance: look.draw_distance,
+            springs_back: COVER_SPRINGS_BACK,
+        };
+        wanted.push((Source::Cover(number), grass));
     }
     wanted.truncate(MAX_GRASS_JOBS);
     if wanted.is_empty() {
@@ -172,7 +233,7 @@ pub(crate) fn gather(
     let cell_of = |look: &GrassLook| (1.0 / look.density.max(1e-3).sqrt()).max(0.02);
     let reach_of = |look: &GrassLook, near: f32| look.draw_distance.min(cell_of(look) * MAX_CELLS as f32 * 0.5) * near;
     let room = |near: f32| -> u64 {
-        wanted.iter().map(|(_, _, look)| ring_cells(0.0, reach_of(look, near), cell_of(look))).sum()
+        wanted.iter().map(|(_, look)| ring_cells(0.0, reach_of(look, near), cell_of(look))).sum()
     };
     let mut near = 1.0f32;
     while room(near) > MAX_GRASS_BLADES && near > 0.05 {
@@ -182,9 +243,53 @@ pub(crate) fn gather(
     let mut dispatches = Vec::with_capacity(wanted.len());
     let mut draws: Vec<GpuGrassDraw> = Vec::new();
     let mut next = 0u32;
-    for (index, (number, kind, look)) in wanted.into_iter().enumerate() {
-        let terrain = &drawn[number];
+    let mut words: Vec<u32> = Vec::new();
+    for (index, (source, look)) in wanted.into_iter().enumerate() {
         let (cell, reach) = (cell_of(&look), reach_of(&look, near));
+        let (number, kind) = match source {
+            Source::Terrain(number, kind) => (number, kind),
+            Source::Cover(cover) => {
+                // A world of blocks' ground cover: its surfaces and its chunks' faces looking up, within its reach.
+                let (world, kind, cover, chunks) = &covers[cover];
+                let runs: Vec<[u32; 2]> =
+                    chunks.iter().filter(|(away, _)| *away <= reach).map(|(_, run)| *run).collect();
+                if runs.is_empty() || words.len() + 8 + runs.len() * 2 > COVER_WORDS {
+                    continue;
+                }
+                let first = words.len();
+                words.extend_from_slice(&cover.surfaces);
+                words.extend(runs.iter().flatten());
+                let mut job = GpuGrassJob {
+                    terrain: BLOCK_COVER | *world as u32,
+                    kind: *kind as u32,
+                    first_cell: [first as i32, runs.len() as i32],
+                    cell_size: blocks[*world].block_size,
+                    draw_distance: reach,
+                    scale: look.scale,
+                    mesh: look.mesh.0,
+                    material: look.material.0,
+                    lod_count: MAX_LODS as u32,
+                    draws: draws.len() as u32,
+                    springs_back: look.springs_back,
+                    ..GpuGrassJob::default()
+                };
+                job.corner = [cover.density, 0.0];
+                for lod in 0..MAX_LODS {
+                    let inner = if lod == 0 { 0.0 } else { RINGS[lod - 1] * reach };
+                    let outer = RINGS[lod] * reach;
+                    let capacity = ring_cells(inner, outer, cell).min(MAX_GRASS_BLADES - u64::from(next)) as u32;
+                    job.lod_reach[lod] = outer;
+                    job.offsets[lod] = next;
+                    job.capacities[lod] = capacity;
+                    draws.push(GpuGrassDraw { offset: next, job: index as u32 });
+                    next += capacity;
+                }
+                dispatches.push(([runs.len() as u32, COVER_SLICES], true));
+                jobs.push(job);
+                continue;
+            }
+        };
+        let terrain = &drawn[number];
         let lod_count = MAX_LODS;
         let mut job = GpuGrassJob {
             terrain: number as u32,
@@ -226,7 +331,7 @@ pub(crate) fn gather(
             draws.push(GpuGrassDraw { offset: next, job: index as u32 });
             next += capacity;
         }
-        dispatches.push([job.cells[0].div_ceil(8), job.cells[1].div_ceil(8)]);
+        dispatches.push(([job.cells[0].div_ceil(8), job.cells[1].div_ceil(8)], false));
         jobs.push(job);
     }
     if jobs.is_empty() {
@@ -243,8 +348,80 @@ pub(crate) fn gather(
     }
     buffer.write(0, &jobs);
     buffer.write(JOBS_SIZE as u64, &renumbered);
+    if !words.is_empty() {
+        buffer.write(COVER_AT as u64, &words);
+    }
     Some((jobs, dispatches))
 }
+
+/// Each kind of ground cover of each world of blocks a view draws, as
+/// `blocks::gather` numbers the worlds: the world, the kind, its look, and
+/// the runs of faces looking up, and of blocks of parts, of its own chunks
+/// (no coarser ring's) whose boxes the frustum meets, each with how far its
+/// box is from the camera, nearest first. A world drawn smooth or turned grows none.
+fn ground_cover_jobs(
+    blocks: &[crate::blocks::DrawnBlocks],
+    offset: Vec3,
+    frame: &crate::gpu::GpuFrame,
+) -> Vec<(usize, usize, GroundCoverLook, Vec<(f32, [u32; 2])>)> {
+    let camera = Vec3::from(frame.camera_position);
+    let mut jobs = Vec::new();
+    for (number, world) in blocks.iter().take(crate::blocks::MAX_BLOCK_WORLDS).enumerate() {
+        if world.look.ground_cover.is_empty() || world.smooth || world.turn.is_some() {
+            continue;
+        }
+        let corner = world.corner - offset;
+        let local = camera - corner;
+        let planes = crate::blocks::turned_planes(&frame.planes, corner, voxear_core::math::Quat::IDENTITY);
+        let farthest = world.look.ground_cover.iter().map(|cover| cover.draw_distance).fold(0.0, f32::max);
+        // A plant stands over its block: a chunk is looked at as reaching a few metres higher than its faces.
+        let mut chunks: Vec<(f32, [u32; 2])> = Vec::new();
+        for chunk in world.chunks.iter() {
+            let ([first, count], [parts, words]) = (chunk.facings[UP], chunk.parts);
+            if chunk.key[0] != 0 || chunk.cone.is_some() || count == 0 && words == 0 {
+                continue;
+            }
+            let [low, high] = chunk.bounds;
+            let away = (local.clamp(low, high) - local).length();
+            let grown = [low, high + Vec3::new(0.0, PLANT_HEADROOM, 0.0)];
+            if away <= farthest && crate::blocks::within(&planes, grown) {
+                if count > 0 {
+                    chunks.push((away, [first, count]));
+                }
+                // Its blocks of parts, among them slabs, whose tops grow plants as a block's do.
+                if words > 0 {
+                    chunks.push((away, [parts, words | COVER_PARTS]));
+                }
+            }
+        }
+        chunks.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (kind, cover) in world.look.ground_cover.iter().enumerate() {
+            if cover.density > 0.0 && cover.draw_distance > 0.0 && !chunks.is_empty() {
+                jobs.push((number, kind, *cover, chunks.clone()));
+            }
+        }
+    }
+    jobs
+}
+
+/// What a job grows: a terrain's kind of grass, by the terrain's place and
+/// the kind's, or a world of blocks' kind of ground cover, by its place
+/// among [`ground_cover_jobs`].
+#[derive(Clone, Copy)]
+enum Source {
+    Terrain(usize, usize),
+    Cover(usize),
+}
+
+/// A run of a chunk's blocks of parts' words, two quads' a face, in place of
+/// its faces looking up, has this bit over its length (`grassCoverParts`).
+const COVER_PARTS: u32 = 1 << 31;
+
+/// Which of a chunk's facings looks up (see `voxear_terrain::blocks::mesh`).
+const UP: usize = 2;
+
+/// How far over its faces a chunk's plants may reach, in metres.
+const PLANT_HEADROOM: f32 = 3.0;
 
 /// **Grass reset**, **Grass scatter** and **Grass clamp**: each draw's
 /// command made afresh, the blades that grow this frame written and
@@ -260,10 +437,15 @@ pub(crate) fn record_scatter(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipeli
     buffers.extend([(grass.args_id, BufferAccess::ComputeWrite), (grass.blades_id, BufferAccess::ComputeWrite)]);
     let jobs = grass.jobs.clone();
     fg.add_pass("Grass scatter", &[], &buffers, move |ctx| {
-        bind(ctx, pipelines.grass_scatter, vk::PipelineBindPoint::COMPUTE, &push);
-        for (job, [x, z]) in jobs.iter().enumerate() {
-            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: job as u32, ..push });
-            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, *x, *z, 1) };
+        for (blocks, pipeline) in [(false, pipelines.grass_scatter), (true, pipelines.ground_cover_scatter)] {
+            if !jobs.iter().any(|(_, cover)| *cover == blocks) {
+                continue;
+            }
+            bind(ctx, pipeline, vk::PipelineBindPoint::COMPUTE, &push);
+            for (job, ([x, z], _)) in jobs.iter().enumerate().filter(|(_, (_, cover))| *cover == blocks) {
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: job as u32, ..push });
+                unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, *x, *z, 1) };
+            }
         }
     });
     fg.add_pass("Grass clamp", &[], &[(grass.args_id, BufferAccess::ComputeWrite)], move |ctx| {
@@ -272,10 +454,19 @@ pub(crate) fn record_scatter(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipeli
     });
 }
 
-/// Draws every grass draw with `pipeline`, each by its indirect command.
-fn draw_all(ctx: &crate::graph::PassContext, grass: &ViewGrass, push: &Push) {
+/// Draws every grass draw, each by its indirect command: a terrain's grass
+/// with the first of `pipelines`, seen from both sides, and ground cover
+/// with the second, which culls the backs of its closed cubes.
+fn draw_all(ctx: &crate::graph::PassContext, grass: &ViewGrass, push: &Push, pipelines: [vk::Pipeline; 2]) {
     unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, grass.index_buffer, 0, vk::IndexType::UINT32) };
+    let mut bound = None;
     for draw in 0..grass.draws {
+        // Every job has a draw for each of its LODs.
+        let cover = grass.jobs.get(draw as usize / MAX_LODS).is_some_and(|(_, cover)| *cover);
+        if bound != Some(cover) {
+            bind(ctx, pipelines[usize::from(cover)], vk::PipelineBindPoint::GRAPHICS, push);
+            bound = Some(cover);
+        }
         ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: draw, ..*push });
         let offset = u64::from(draw) * DRAW_COMMAND as u64;
         unsafe { ctx.gpu.device.cmd_draw_indexed_indirect(ctx.cmd, grass.args, offset, 1, DRAW_COMMAND as u32) };
@@ -303,18 +494,18 @@ pub(crate) fn record_depth(
     let grass = grass.clone();
     fg.add_pass("Depth (grass)", &targets.images(), &reads(&grass, more), move |ctx| {
         targets.begin(ctx);
-        bind(ctx, pipelines.grass_depth, vk::PipelineBindPoint::GRAPHICS, &push);
-        draw_all(ctx, &grass, &push);
+        draw_all(ctx, &grass, &push, [pipelines.grass_depth, pipelines.cover_depth]);
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }
 
 /// **Opaque (grass)**: the blades shaded, over what the opaque passes drew;
-/// `pipeline` writes depth or tests against the depth passes'.
+/// `pipelines`, a terrain's grass's and ground cover's, write depth or test
+/// against the depth passes'.
 pub(crate) fn record_opaque(
     fg: &mut FrameGraph<'_>,
     push: Push,
-    pipeline: vk::Pipeline,
+    pipelines: [vk::Pipeline; 2],
     grass: &ViewGrass,
     images: Vec<(ImageId, ImageAccess)>,
     (hdr, velocity, depth): (ImageId, ImageId, ImageId),
@@ -326,8 +517,7 @@ pub(crate) fn record_opaque(
         let color = [attachment(ctx.view(hdr), layout, None), attachment(ctx.view(velocity), layout, None)];
         let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, ctx.extent(hdr), &color, Some(&target));
-        bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
-        draw_all(ctx, &grass, &push);
+        draw_all(ctx, &grass, &push, pipelines);
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }
@@ -342,6 +532,8 @@ mod tests {
     #[test]
     fn a_ring_has_room_for_a_blade_in_every_cell_it_reaches() {
         const { assert!(size_of::<GpuGrassJob>() == 116 && size_of::<GpuGrassDraw>() == 8) };
+        // The shaders find the ground cover's words past room for 256 draws (`grassCoverWords`).
+        const { assert!(MAX_GRASS_DRAWS == 256 && COVER_AT == JOBS_SIZE + 256 * 8 && COVER_AT % 4 == 0) };
         // A disc 10 m round of half-metre cells: about 1,257 cells, and its edge's.
         let room = ring_cells(0.0, 10.0, 0.5);
         assert!((1257..1600).contains(&room), "{room}");

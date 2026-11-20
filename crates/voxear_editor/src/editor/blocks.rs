@@ -288,6 +288,7 @@ impl Editor {
             BlockRef::Data => (Takes::Kind(AssetKind::Data), "Select Data Asset"),
             BlockRef::Grows => (Takes::Kind(AssetKind::Plant), "Select Plant"),
             BlockRef::Covered => (Takes::Kind(AssetKind::Block), "Select Block"),
+            BlockRef::Cover(_) => (Takes::Kind(AssetKind::Model), "Select Plant"),
         }
     }
 

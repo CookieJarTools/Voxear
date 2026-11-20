@@ -61,6 +61,8 @@ pub struct BlockLook {
     pub motions: Arc<[GpuBlockMotion]>,
     /// How its faces take the light from all round them.
     pub light: BlockLight,
+    /// The plants its blocks grow on their tops (see `grass`).
+    pub ground_cover: Arc<[crate::grass::GroundCoverLook]>,
 }
 
 /// How a world of cubes' faces take the light from all round them (see
@@ -597,7 +599,7 @@ fn in_sight(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> InSight {
 }
 
 /// Whether the box from `low` to `high` is within `planes`, inward.
-fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
+pub(crate) fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
     planes.iter().all(|&[x, y, z, d]| {
         let corner = Vec3::new(
             if x >= 0.0 { high.x } else { low.x },
@@ -611,7 +613,7 @@ fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
 /// `planes`, inward, from the world's space into that of a world of blocks
 /// whose corner is at `corner` and which is turned back into its own space
 /// by `back`.
-fn turned_planes(planes: &[[f32; 4]], corner: Vec3, back: Quat) -> Vec<[f32; 4]> {
+pub(crate) fn turned_planes(planes: &[[f32; 4]], corner: Vec3, back: Quat) -> Vec<[f32; 4]> {
     planes
         .iter()
         .map(|&[x, y, z, d]| {
@@ -1620,6 +1622,7 @@ impl BlockWorlds {
                 voxels: BlockVoxels::default(),
                 motions: Arc::from([]),
                 light: BlockLight::default(),
+                ground_cover: Arc::from([]),
             });
             let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
             if self.resident.get(&entity).is_some_and(changed) {

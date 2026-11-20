@@ -100,6 +100,7 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     // Straight down onto its middle from 40 m over the grass, +z up the screen.
@@ -183,6 +184,7 @@ fn torchlit_field(
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let field = world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -291,6 +293,7 @@ fn a_world_too_large_to_upload_in_a_frame_comes_over_several_the_old_one_drawn_t
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     let field = world.spawn((BlockWorld::new(file.make_ground(None), &faces, 1.0), look, Transform::default()));
@@ -374,6 +377,7 @@ fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((world_blocks, look, Transform::default()));
     // Straight down from 90 m over (64, ·, 16): +x to the right.
@@ -459,6 +463,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::made(blocks, &faces, 1.0, true), look, Transform::default()));
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -550,6 +555,7 @@ fn hollow_ball_render(gi: bool) -> Option<Vec<u8>> {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::made(blocks, &faces, 1.0, true), look, Transform::default()));
     world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 30.0, 32.0), Quat::IDENTITY, Vec3::ONE)));
@@ -630,6 +636,7 @@ fn bounce_off_floor_render(floor: [f32; 3]) -> Option<Vec<u8>> {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
@@ -734,6 +741,7 @@ fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted(
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut draw = |blocks: BlockMap, name: &str| {
         let mut world = World::new();
@@ -821,6 +829,7 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((blocks, look, Transform::default()));
     // From in front, level with the water, looking along +z: +x to the right.
@@ -901,6 +910,7 @@ fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
@@ -1031,6 +1041,7 @@ fn waterfall(renderer: &mut Renderer) -> World {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
@@ -1206,6 +1217,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((blocks, look, Transform::default()));
     // From 40 m over the ground at the middle, looking along +x and a little down, the sun low from one side so
@@ -1293,6 +1305,7 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((blocks, look, Transform::default()));
     // From 150 m over the ground at the middle, looking along +x at the horizon, the sun low from one side.
@@ -1431,6 +1444,7 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let made = BlockWorld::made(file.make_ground(Some(&world)), &faces, 8.0, false);
     assert!(made.meshes.len() > 40, "{} chunks drawn", made.meshes.len());
@@ -1602,6 +1616,7 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     scene.spawn((made, look, Transform::default()));
     // From over one corner of the hills, 30 m up, looking across them and a little down.
@@ -1824,6 +1839,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     scene.spawn((made, look, Transform::default()));
     // From 70 m over the village's south-west, looking at its middle; cameras look along +z.
@@ -1978,6 +1994,7 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     scene.spawn((made, look, Transform::default()));
     // From high over the middle of the 800 m square, looking down at it; cameras look along +z.
@@ -2094,6 +2111,7 @@ fn generated_view_with(
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut ground = file.make_ground(Some(world));
     if let Some(cut) = cut {
@@ -2745,6 +2763,7 @@ fn small_cubes_render(voxels: voxear_render::BlockVoxels, eye: Vec3, towards: Ve
         voxels,
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     let towards = towards.normalize();
@@ -2861,6 +2880,7 @@ fn leaves_render(sways: bool, wind: Option<f32>) -> Option<[Vec<u8>; 2]> {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(16.5, 7.5, 4.0))));
@@ -2969,6 +2989,7 @@ fn pushed_leaves_render(pusher: Option<Vec3>, motion: Option<voxear_render::Foli
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(16.5, 7.5, 2.0))));
@@ -3140,6 +3161,7 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let made = BlockWorld::new(blocks, &faces, 1.0);
     let loose = made.meshes.values().map(|mesh| mesh.loose().1).sum();
@@ -3398,6 +3420,7 @@ fn plant_render(
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     if let Some(turn) = fallen {
         use voxear_terrain::blocks::fell::{LooseBlocks, loose_map};
@@ -3550,6 +3573,7 @@ fn a_sapling_stands_crossed_on_the_ground_and_grows_into_its_tree_stage_by_stage
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let made = BlockWorld::new(blocks, &faces, 1.0);
     // The sapling's chunk has its crossed sheets.
@@ -3729,6 +3753,7 @@ fn sealed_room_render(kept: bool, lamp: bool, gi: bool) -> Option<Vec<u8>> {
         voxels: Default::default(),
         motions: Arc::from([]),
         light,
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::made(blocks, &faces, 1.0, false), look, Transform::default()));
@@ -3815,6 +3840,7 @@ fn filled_world() -> Option<(Renderer, World)> {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     let mut world = World::new();
     world.spawn((BlockWorld::new(bumpy_field(256), &faces, 1.0), look, Transform::default()));
@@ -3968,6 +3994,7 @@ fn creeping_wall_render() -> Option<Vec<u8>> {
         voxels: Default::default(),
         motions: Arc::from([]),
         light: Default::default(),
+        ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     world.spawn((Camera::default(), Transform::new(Vec3::new(16.0, 8.0, 12.0), Quat::IDENTITY, Vec3::ONE)));
@@ -3996,4 +4023,116 @@ fn grass_creeping_down_over_the_dirt_under_it_brings_its_sides_foot_not_the_gree
         let greens = (200..440).filter(|&x| green(rgb_at(&pixels, x, row(y)))).count();
         assert_eq!(greens, 0, "green on the dirt {:.2} m under the grass", 8.0 - y);
     }
+}
+
+/// A field of grass blocks 64 a side with stone laid over its east half and
+/// slabs of grass over a strip of its west, red flowers growing on the
+/// grass's tops as ground cover where `cover` says, seen straight down from
+/// 20 m over its middle. How many pixels are a flower's red, west of the
+/// middle, east of it, and over the slabs.
+fn flowers_on_grass(renderer: &mut Renderer, cover: bool) -> (usize, usize, usize) {
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    file.blocks.push(voxear_terrain::blocks::file::BlockKind::slab_of(file.kind(1).unwrap()));
+    let slab = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    for x in 32..64 {
+        for z in 0..64 {
+            blocks.set([x, 4, z], 3);
+        }
+    }
+    for x in 12..20 {
+        for z in 0..64 {
+            blocks.set([x, 4, z], slab);
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: false,
+                tint: 0,
+            }
+        })
+        .collect();
+    let text = voxear_render::StarterPlant::Flower.model().to_text();
+    let model = voxear_render::prepare_model("Flower.boxmodel", &mut |file| match file {
+        "Flower.boxmodel" => Ok(text.clone().into_bytes()),
+        other => anyhow::bail!("no {other}"),
+    })
+    .unwrap();
+    let flower = renderer.upload_model(&model).unwrap();
+    // On the grass's top alone, and its slab's.
+    let mut grows_on = [0u32; 8];
+    for top in [usize::from(faces[1].top), usize::from(faces[usize::from(slab)].top)] {
+        grows_on[top >> 5] |= 1 << (top & 31);
+    }
+    let ground_cover = match cover {
+        true => Arc::from([voxear_render::GroundCoverLook {
+            mesh: flower.nodes[0].mesh,
+            material: flower.nodes[0].material,
+            density: 1.0,
+            scale: [1.0, 1.0],
+            draw_distance: 60.0,
+            surfaces: grows_on,
+        }]),
+        false => Arc::from([]),
+    };
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+        light: Default::default(),
+        ground_cover,
+    };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 24.0, 32.0), down, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.9, 0.3).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(renderer, &world, 4);
+    keep_image(if cover { "ground cover flowers.png" } else { "ground cover none.png" }, &pixels);
+    let red = |x: u32, y: u32| {
+        let [r, g, b] = rgb_at(&pixels, x, y);
+        r > g + 40 && r > b + 40
+    };
+    let count = |xs: std::ops::Range<u32>| {
+        xs.flat_map(|x| (0..HEIGHT).map(move |y| (x, y))).filter(|&(x, y)| red(x, y)).count()
+    };
+    // A margin either side of the middle, where the stone begins; the slabs from x 12 to 20, at the left edge.
+    let (west, east) = (count(WIDTH / 4..WIDTH / 2 - 12), count(WIDTH / 2 + 12..WIDTH));
+    let (left, _) = from_above(20.5, 12.5, 32.0);
+    let (right, _) = from_above(20.5, 19.5, 32.0);
+    (west, east, count(left..right))
+}
+
+#[test]
+fn ground_cover_grows_on_the_tops_of_the_blocks_that_say_and_nowhere_a_block_lies_over_them() {
+    let Some(mut renderer) = renderer() else { return };
+    let (west, east, slabs) = flowers_on_grass(&mut renderer, true);
+    assert!(west > 1000, "flowers on the open grass: {west} red pixels");
+    assert!(east < west / 50, "none under the stone laid over the grass: {east} red pixels");
+    assert!(slabs > 300, "and on the slabs of grass, half a block up: {slabs} red pixels");
+    let (bare, _, none) = flowers_on_grass(&mut renderer, false);
+    assert!(bare + none < 20, "no flowers on grass that grows none: {bare} red pixels");
 }

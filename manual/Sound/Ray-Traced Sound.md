@@ -30,7 +30,7 @@ A level can set its own, over the project's, in its `.level` file. Each one left
 ray_quality = "high"
 ```
 
-The level's Inspector shows under **Sound** whether it is ray-traced, at what quality, and whether the setting is the level's own or the project's.
+The level's Inspector shows under **Sound** whether it is ray-traced, at what quality, and whether the setting is the level's own or the project's. Under **Audio** it changes the level's own: **Ray Traced**, **Ray Quality** and **Ray Budget**, each **Project's** or empty for the project's, written into the `.level` file at once.
 
 A script can change it while the game runs, for a sound options menu (see [[Playing Sounds from Scripts]]):
 

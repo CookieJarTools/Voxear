@@ -69,6 +69,10 @@ pub enum AssetAction {
     ShaderPack(crate::shader_pack_inspector::PackChange),
     /// A setting of the lighting settings shown, written into their file.
     Lighting(LightingAction),
+    /// A setting of a look pack's look shader, written into its file at
+    /// this path: the shader it names, or one of its properties, with its
+    /// value as the file writes it, or none to take it out.
+    LookShader(std::path::PathBuf, Vec<String>, Option<String>),
     /// A change to the lighting of the scene at this path: the lighting
     /// settings it names, a setting of theirs, or a copy of them.
     SceneLighting(String, LightingAction),
@@ -337,6 +341,10 @@ pub struct AssetView {
     shader_state: Option<(NodeId, voxear_render::CustomShaderState)>,
     /// A shader pack's page: whether it is worn, its passes and options.
     shader_pack: Option<crate::shader_pack_inspector::ShaderPackFields>,
+    /// A look pack's look shader, and the pack's file.
+    look_shader: Option<(crate::look_shader_inspector::LookShaderFields, std::path::PathBuf)>,
+    /// A level's own ray-traced audio.
+    level_audio: Option<LevelAudioFields>,
     /// A scene's lighting: the lighting settings it names, and theirs.
     scene_lighting: Option<LightingPanel>,
     /// Whether server builds take it whole, for what they leave out or
@@ -530,6 +538,8 @@ impl AssetView {
             scene_lighting: None,
             shader_state: None,
             shader_pack: None,
+            look_shader: None,
+            level_audio: None,
             server: None,
         };
         match item.kind {
@@ -649,6 +659,7 @@ impl AssetView {
                 fields.set_pictures(ui, lighting_panel::pictures(game));
                 fields.show_file(ui, &file);
                 view.lighting = Some((fields, file.clone()));
+                view.look_shader = Some((crate::look_shader_inspector::rows(ui, root, game, &file), file.clone()));
             }
             ItemKind::Asset(AssetKind::TexturePack) => {
                 texture_pack_rows(ui, root, game, &file);
@@ -679,6 +690,7 @@ impl AssetView {
             }
             ItemKind::Asset(AssetKind::Level) => {
                 view.level = scenes(ui, root, &file, game);
+                view.level_audio = Some(level_audio(ui, root, &file));
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
                 view.bake_nav = Some(navigation_bake(ui, root, &item.path, game));
                 view.bake_probes = Some(reflection_probes(ui, root, &item.path, game));
@@ -766,6 +778,8 @@ impl AssetView {
             scene_lighting: None,
             shader_state: None,
             shader_pack: None,
+            look_shader: None,
+            level_audio: None,
             server: None,
         })
     }
@@ -784,6 +798,15 @@ impl AssetView {
         }
         if let Some(change) = self.shader_pack.as_mut().and_then(|fields| fields.update(ui)) {
             return Some(AssetAction::ShaderPack(change));
+        }
+        if let Some(audio) = self.level_audio.as_mut().and_then(|fields| fields.update(ui)) {
+            return Some(AssetAction::EditLevel(self.item.path.clone(), crate::level_files::LevelEdit::Audio(audio)));
+        }
+        if let Some((fields, file)) = self.look_shader.as_mut() {
+            if let Some((path, value)) = fields.update(ui) {
+                let written = value.map(|value| value.to_string().trim().to_string());
+                return Some(AssetAction::LookShader(file.clone(), path, written));
+            }
         }
         if let Some((toggle, meta)) = self.server.as_ref().filter(|(toggle, _)| ui.changed(*toggle)) {
             let server = ui.is_checked(*toggle);
@@ -1815,6 +1838,81 @@ fn kind_label(kind: voxear_engine::shaders::PropertyKind) -> String {
 }
 
 /// The level a level stands on, and its own scenes, to change.
+/// A level's own ray-traced audio, each row the project's where it leaves
+/// it: whether sound is traced by rays, how finely, and its budget.
+struct LevelAudioFields {
+    traced: NodeId,
+    quality: NodeId,
+    budget: NodeId,
+    shown: voxear_engine::sound_tracing::LevelAudio,
+}
+
+const PROJECTS_OWN: &str = "Project's";
+
+fn level_audio(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> LevelAudioFields {
+    use voxear_engine::sound_tracing::RayQualityName;
+    let read = std::fs::read_to_string(file).ok();
+    let shown = read.and_then(|text| crate::level_files::audio(&text).ok()).unwrap_or_default();
+    let rows = part(ui, root, "Audio", "audio");
+    let tip = |ui: &mut Ui, row: NodeId, text: &str| {
+        if let Some(&label) = ui.children(row).first() {
+            ui.set_tooltip(label, text, None);
+        }
+    };
+    let row = crate::inspector::prop(ui, rows, "Ray Traced");
+    let on = match shown.ray_traced {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    };
+    let traced = ui.dropdown(row, &[PROJECTS_OWN, "On", "Off"], on);
+    ui.add_class(traced, "value-choice");
+    tip(ui, row, "Whether sound in this level is traced by rays on the GPU, over Project Settings' Audio");
+    let row = crate::inspector::prop(ui, rows, "Ray Quality");
+    let at = match shown.ray_quality {
+        None => 0,
+        Some(RayQualityName::Low) => 1,
+        Some(RayQualityName::Medium) => 2,
+        Some(RayQualityName::High) => 3,
+    };
+    let quality = ui.dropdown(row, &[PROJECTS_OWN, "Low", "Medium", "High"], at);
+    ui.add_class(quality, "value-choice");
+    tip(ui, row, "How many rays at most");
+    let row = crate::inspector::prop(ui, rows, "Ray Budget");
+    let text = shown.ray_budget.map(crate::inspector::number).unwrap_or_default();
+    let budget = ui.text_field(row, &text);
+    ui.add_class(budget, "value-input");
+    ui.add_class(budget, "number-input");
+    tip(ui, row, "The most GPU time a frame, in milliseconds; empty for the project's");
+    LevelAudioFields { traced, quality, budget, shown }
+}
+
+impl LevelAudioFields {
+    /// The level's audio as the rows now say, when one changed.
+    fn update(&mut self, ui: &mut Ui) -> Option<voxear_engine::sound_tracing::LevelAudio> {
+        use voxear_engine::sound_tracing::RayQualityName;
+        if !(ui.changed(self.traced) || ui.changed(self.quality) || ui.changed(self.budget)) {
+            return None;
+        }
+        let budget = ui.text(self.budget).trim().to_string();
+        let audio = voxear_engine::sound_tracing::LevelAudio {
+            ray_traced: [None, Some(true), Some(false)].get(ui.selected_option(self.traced)).copied().flatten(),
+            ray_quality: [None, Some(RayQualityName::Low), Some(RayQualityName::Medium), Some(RayQualityName::High)]
+                .get(ui.selected_option(self.quality))
+                .copied()
+                .flatten(),
+            ray_budget: match budget.is_empty() {
+                true => None,
+                false => Some(budget.parse::<f32>().ok()?.max(0.0)),
+            },
+        };
+        (audio != self.shown).then(|| {
+            self.shown = audio;
+            audio
+        })
+    }
+}
+
 fn scenes(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> Option<LevelFields> {
     let text = std::fs::read_to_string(file).ok()?;
     let table = text.parse::<toml::Table>().ok()?;

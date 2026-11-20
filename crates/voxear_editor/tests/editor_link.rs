@@ -986,6 +986,50 @@ fn a_tool_reads_and_sets_the_world_quality_by_preset_number_and_for_this_machine
 }
 
 #[test]
+fn tools_name_and_copy_the_scenes_lighting_and_write_a_look_packs_shader() {
+    let dir = hello_copy();
+    let print = "struct Print\n{\n    [Property, Range(2, 16)] float steps = 6.0;\n    \
+                 [Property, Color] float3 paper = float3(1.0, 1.0, 1.0);\n}\n\
+                 float3 look(Print print, LookInput input)\n{\n    \
+                 return floor(input.color * print.steps) / print.steps * print.paper;\n}\n";
+    std::fs::create_dir_all(dir.path().join("Shaders")).unwrap();
+    std::fs::write(dir.path().join("Shaders/Print.shader"), print).unwrap();
+    std::fs::create_dir_all(dir.path().join("Looks")).unwrap();
+    std::fs::write(dir.path().join("Looks/Printed.lookpack"), "description = \"Printed.\"\n").unwrap();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+
+    // The scene lit by built-in lighting, then by a copy of it, then by its own again.
+    let lit = done(&mut editor, &mut renderer, "lighting.scene", json!({ "lighting": "builtin:golden_hour" }));
+    assert_eq!(lit["lighting"], "builtin:golden_hour", "{lit}");
+    assert!(ask(&mut editor, &mut renderer, "lighting.scene", json!({ "lighting": "Scenes/Day.scene" })).is_err());
+    let copied = done(&mut editor, &mut renderer, "lighting.copy", json!({}));
+    let named = copied["lighting"].as_str().unwrap_or_default().to_string();
+    assert!(named.starts_with("Lighting/") && copied["changeable"] == true, "{copied}");
+    assert!(std::fs::read_to_string(dir.path().join(&named)).unwrap().contains("golden_hour"));
+    let own = done(&mut editor, &mut renderer, "lighting.scene", json!({ "lighting": null }));
+    assert!(own["own"] == true, "{own}");
+
+    // A pack's settings, its look shader and that shader's property, each written as its Inspector page does.
+    let pack = json!({ "path": "Looks/Printed.lookpack" });
+    let read = done(&mut editor, &mut renderer, "look_pack.get", json!({ "pack": pack }));
+    let shaders = read["shaders"].as_array().unwrap();
+    assert!(shaders.iter().any(|shader| shader["shader"] == "Shaders/Print.shader"), "{read}");
+    let set = |path: &str, value: serde_json::Value| json!({ "pack": pack, "path": path, "value": value });
+    done(&mut editor, &mut renderer, "look_pack.set", set("water.murk", json!(3)));
+    done(&mut editor, &mut renderer, "look_pack.set", set("shader.shader", json!("Shaders/Print.shader")));
+    let read = done(&mut editor, &mut renderer, "look_pack.set", set("shader.steps", json!(4)));
+    assert_eq!(read["settings"]["shader"]["steps"], 4, "{read}");
+    assert_eq!(read["settings"]["water"]["murk"], 3, "{read}");
+    assert!(ask(&mut editor, &mut renderer, "look_pack.set", set("shader.ink", json!(1))).is_err(), "no such property");
+    assert!(ask(&mut editor, &mut renderer, "look_pack.set", set("weather.kind", json!("rain"))).is_err());
+    let text = std::fs::read_to_string(dir.path().join("Looks/Printed.lookpack")).unwrap();
+    assert!(!text.contains("ink") && text.contains("steps = 4"), "left as it was after a refusal: {text}");
+    done(&mut editor, &mut renderer, "look_pack.set", set("shader.shader", json!(null)));
+    let text = std::fs::read_to_string(dir.path().join("Looks/Printed.lookpack")).unwrap();
+    assert!(!text.contains("shader") && text.contains("Printed."), "the shader taken off: {text}");
+}
+
+#[test]
 fn a_portal_shows_a_row_for_each_named_layer_it_lets_through() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

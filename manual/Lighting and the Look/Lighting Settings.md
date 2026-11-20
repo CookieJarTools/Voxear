@@ -10,7 +10,7 @@ Click the sun on the left-hand rail to open the **Lighting** page. At its top, *
 
 Rest the pointer on a setting's name, or on a tab, to read what it does. Below, a tab for each part of the settings shows them all: **Sky**, **Clouds**, **Weather**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading**, **Lens** and **Quality**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value. **Ctrl+Z** takes a change back, and **Ctrl+Shift+Z** makes it again, as for any edit. Every post-processing setting is there; see [[Post-Processing]].
 
-Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by.
+Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by. Tools do both with `vox editor call`: `lighting.scene` names the lighting settings the scene is lit by, or none, and `lighting.copy` makes the copy.
 
 With **Lighting** set to None, the scene lights itself, and the same tabs change its own settings: every one of them, the sun's shadows and the weather among them. They are kept in the scene file once you save it, and **Ctrl+Z** takes them back as any edit. A level of several scenes is lit by the active scene's own settings, or, where it has none, by the last scene that has. **New Lighting Settings** carries a scene's own settings over into new lighting settings, to share them with other scenes.
 

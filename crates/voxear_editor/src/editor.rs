@@ -1446,6 +1446,18 @@ impl Editor {
             AssetAction::Open(item) => self.open_item(&item, renderer),
             AssetAction::Lighting(action) => self.lighting_action(action, renderer),
             AssetAction::ShaderPack(change) => self.shader_pack_change(change),
+            AssetAction::LookShader(file, path, value) => {
+                let path: Vec<&str> = path.iter().map(String::as_str).collect();
+                let value = value.and_then(|written| written.parse::<toml_edit::Value>().ok());
+                if let Err(error) = self.set_pack_setting(&file, &path, value) {
+                    self.notify(&format!("{error:#}"));
+                }
+                // Another shader has other properties to show.
+                let shown = self.inspector.asset_view().map(|view| view.item().clone());
+                if let Some(item) = shown {
+                    self.inspector.show_asset(&mut self.ui, &self.game, &item);
+                }
+            }
             AssetAction::SceneLighting(scene, action) => self.scene_lighting_action(&scene, action, renderer),
             AssetAction::SaveMaterial(path, data) => {
                 if let Err(error) = self.game.content.save_material(renderer, &path, &data) {

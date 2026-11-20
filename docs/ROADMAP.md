@@ -1231,6 +1231,11 @@ Done:
 - **Project Settings from scripts:** C# `ProjectSettings` reads Time, FloatingOrigin, Quality and Network, fixed once
   the game has started, and reads and changes Portals, WaterTrails and NavigationCosts, put where the game reads
   them from the next frame (`project_scripts::ProjectInEffect`). Tests: engine lib, a script on Hello, C#.
+- **Editor actions for tools, and file-only settings:** `lighting.scene` names the scene's lighting settings, or
+  none, and `lighting.copy` copies them, as the Lighting page does; `look_pack.get`/`set` read and write a pack's
+  settings, its `[shader]` among them, as steps to undo, refused where the pack could not be worn. A look pack's
+  Inspector page has a Look Shader part, a menu of look shaders and a row per property; a level's has an Audio
+  part for its own ray-traced audio. Tests: the calls on Hello, the level's `[audio]` edit.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

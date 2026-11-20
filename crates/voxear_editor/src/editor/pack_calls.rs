@@ -1,7 +1,9 @@
 //! What a game's options menu changes, for tools through `vox editor call`
 //! and `vox mcp`: the look pack and the texture pack worn, as the Lighting
 //! page's menus wear them (`look_pack.list`, `look_pack.wear`,
-//! `texture_pack.list`, `texture_pack.wear`); and while the game plays, its
+//! `texture_pack.list`, `texture_pack.wear`); a look pack's own settings,
+//! its look shader's among them, as its Inspector page writes them
+//! (`look_pack.get`, `look_pack.set`); and while the game plays, its
 //! volumes as `Audio` sets them (`audio.mix`) and its display as `Screen`
 //! does (`display`).
 
@@ -43,6 +45,67 @@ impl Editor {
             .map_err(|error| bad(format!("{error:#}")))?;
         self.refresh_lighting_page();
         done(json!({ "worn": voxear_engine::look_packs::worn(&self.game.engine.world) }))
+    }
+
+    /// A look pack of the project's as its file writes it, the paths
+    /// `look_pack.set` takes, and the project's look shaders with their
+    /// properties, for its `[shader]`.
+    pub(super) fn look_pack_get(&mut self, args: &Json) -> Called {
+        let (path, file) = self.look_pack_file(args)?;
+        let text = std::fs::read_to_string(&file).map_err(|error| bad(format!("reading {path}: {error}")))?;
+        let shaders: Vec<Json> = self
+            .game
+            .content
+            .shaders()
+            .shaders
+            .iter()
+            .filter_map(|shader| Some((shader, shader.info.as_ref().ok().filter(|info| info.look)?)))
+            .map(|(shader, info)| {
+                let properties: Vec<Json> = info
+                    .properties
+                    .iter()
+                    .map(|property| json!({ "name": property.name, "kind": format!("{:?}", property.kind) }))
+                    .collect();
+                json!({ "shader": shader.path, "properties": properties })
+            })
+            .collect();
+        done(json!({
+            "pack": path,
+            "settings": crate::link::toml_json(&text),
+            "paths": crate::lighting_panel::pack_setting_paths(),
+            "shaders": shaders,
+        }))
+    }
+
+    /// Writes one setting of a look pack of the project's, as its Inspector
+    /// page does, as a step to undo; null takes it out, to the level's.
+    pub(super) fn look_pack_set(&mut self, args: &Json) -> Called {
+        let (_, file) = self.look_pack_file(args)?;
+        let dotted = crate::link::need_text(args, "path")?;
+        let path: Vec<&str> = dotted.split('.').collect();
+        let given = args.get("value").ok_or_else(|| bad("`value` is missing: a setting's value, or null"))?;
+        let value = match given {
+            Json::Null => None,
+            value => Some(
+                super::lighting_calls::toml_value(value)
+                    .ok_or_else(|| bad(format!("{value} is not a setting's value")))?,
+            ),
+        };
+        self.set_pack_setting(&file, &path, value).map_err(|error| bad(format!("{error:#}")))?;
+        self.refresh_lighting_page();
+        self.look_pack_get(args)
+    }
+
+    /// The look pack `pack` names: its project path and its file.
+    fn look_pack_file(
+        &self,
+        args: &Json,
+    ) -> Result<(String, std::path::PathBuf), voxear_engine::local_link::LinkError> {
+        let (_, path, kind) = crate::link::resolve_project_asset(&self.game, crate::link::need(args, "pack")?)?;
+        if kind != voxear_assets::AssetKind::LookPack {
+            return Err(bad(format!("{path} is not a look pack")));
+        }
+        Ok((path.clone(), self.game.project.root.join(&path)))
     }
 
     /// Every texture pack there is to wear, and the one worn.

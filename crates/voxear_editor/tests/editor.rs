@@ -6908,6 +6908,55 @@ fn a_new_car_has_a_vehicle_on_four_wheels() {
 }
 
 #[test]
+fn a_packs_page_picks_its_look_shader_and_a_levels_page_its_own_ray_traced_audio() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let print = "struct Print\n{\n    [Property, Range(2, 16)] float steps = 6.0;\n}\n\
+                 float3 look(Print print, LookInput input)\n{\n    \
+                 return floor(input.color * print.steps) / print.steps;\n}\n";
+    std::fs::create_dir_all(dir.path().join("Shaders")).unwrap();
+    std::fs::write(dir.path().join("Shaders/Print.shader"), print).unwrap();
+    std::fs::create_dir_all(dir.path().join("Looks")).unwrap();
+    let file = dir.path().join("Looks/Printed.lookpack");
+    std::fs::write(&file, "description = \"Printed.\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+
+    // The pack's Look Shader: the shader picked from the menu, then its property's row.
+    assert!(editor.inspect_path("Looks/Printed.lookpack"));
+    frame(&mut editor, &mut renderer);
+    let row = prop_row(&editor.ui, "Shader").expect("a Shader row");
+    let menu = first_with(&editor.ui, row, "value-choice").expect("its menu");
+    editor.ui.focus(menu);
+    editor.ui.key_down(Key::Down);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("shader = \"Shaders/Print.shader\"") && text.contains("Printed."), "{text}");
+    let steps = prop_row(&editor.ui, "steps").expect("a row for the shader's property");
+    let field = first_with(&editor.ui, steps, "value-input").unwrap();
+    type_into(&mut editor.ui, field, "4");
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("steps = 4"));
+
+    // A level's own ray-traced audio, over the project's.
+    editor.ui.blur();
+    assert!(editor.inspect_path("Levels/Night.level"));
+    frame(&mut editor, &mut renderer);
+    let row = prop_row(&editor.ui, "Ray Quality").expect("a Ray Quality row");
+    let menu = first_with(&editor.ui, row, "value-choice").unwrap();
+    editor.ui.focus(menu);
+    editor.ui.key_down(Key::Down);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(dir.path().join("Levels/Night.level")).unwrap();
+    assert!(text.contains("[audio]") && text.contains("ray_quality = \"low\""), "{text}");
+}
+
+#[test]
 fn tools_wear_look_and_texture_packs_and_read_the_games_volumes_and_display() {
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,

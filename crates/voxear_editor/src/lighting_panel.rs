@@ -1126,6 +1126,20 @@ pub fn setting_path(dotted: &str) -> Option<&'static [&'static str]> {
     SETTINGS.iter().map(|info| info.path).find(|path| path.join(".") == dotted)
 }
 
+/// A look pack's setting by its path, as tools name it: lighting's but for
+/// the weather, or the pack's own.
+pub fn pack_setting_path(dotted: &str) -> Option<&'static [&'static str]> {
+    let lighting = SETTINGS.iter().filter(|info| info.group != "Weather");
+    lighting.chain(PACK_SETTINGS).map(|info| info.path).find(|path| path.join(".") == dotted)
+}
+
+/// Every look pack setting's path, for tools to list: lighting's but for
+/// the weather, and the pack's own.
+pub fn pack_setting_paths() -> Vec<String> {
+    let lighting = SETTINGS.iter().filter(|info| info.group != "Weather");
+    lighting.chain(PACK_SETTINGS).map(|info| info.path.join(".")).collect()
+}
+
 /// Every setting's path as the page has it, for tools to list.
 pub fn setting_paths() -> Vec<String> {
     SETTINGS.iter().map(|info| info.path.join(".")).collect()

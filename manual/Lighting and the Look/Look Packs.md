@@ -107,7 +107,7 @@ Select a pack in the Project panel and the Inspector shows it as it shows lighti
 - A colour the pack sets has a small **×** beside it, which gives it back to the level.
 - What the pack sets has its name in bold.
 
-Every change is written into the pack's file at once, and a scene shown under the pack changes with it. So does a file saved from your text editor. A few settings have no row, such as the grade's lift and gain: write those in the file.
+Every change is written into the pack's file at once, and a scene shown under the pack changes with it; tools write the same settings with `vox editor call look_pack.set`. So does a file saved from your text editor. A few settings have no row, such as the grade's lift and gain: write those in the file.
 
 ## A shader of the pack's own
 
@@ -148,6 +148,8 @@ steps = 4
 
 A property the pack leaves out has the shader's own value. A shader that is not a look shader, or a property the shader has not, is reported and the pack is not worn.
 
+The pack's Inspector page picks it too: under **Look Shader**, **Shader** lists the project's look shaders, and a row for each of its properties shows the pack's value or the shader's own. Picking another shader starts its properties afresh, and **None** takes it off. Each change is a step to undo. Tools write the same with `vox editor call look_pack.set`, `shader.shader` for the shader and `shader.` and a property's name for its value; `look_pack.get` lists the look shaders and their properties.
+
 Look shaders are compiled with the game's other shaders, in the editor as you save them and into a build. A player's own pack can name one of the game's look shaders and set its properties; it cannot bring a shader of its own, since a pack is settings and nothing else.
 
 Every look pack of a project goes into its builds, whether or not a level names it, since players pick from all there are.
@@ -167,5 +169,4 @@ Any `.lookpack` file there is listed with the game's, marked **Yours** on the re
 
 - Bring pictures of its own. New pictures for blocks and materials are a [[Texture Packs|texture pack]]'s.
 - Give a look shader anything but the pixel itself: it cannot read the pixels round it or how far away things are, so outlines and blurs are out of its reach.
-- Pick its look shader from a menu in the Inspector: the `[shader]` part is written in the file.
 - Change the clarity or ripples of Block Worlds' water, which follow from its colour.

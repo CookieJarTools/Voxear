@@ -201,9 +201,11 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `audio.mix` | Read the running game's volumes, headphones and reverb, or set them there as a script's `Audio` does |
 | `display` | Read the game's window and its HDR output, and ask for HDR while it plays as `Screen.SetHdr` does |
 | `lighting.get`, `lighting.set` | Read the open scene's lighting as the Lighting page shows it, and change one of its settings |
+| `lighting.scene`, `lighting.copy` | Name the lighting settings the open scene is lit by, or none, and make a copy of them, or of the scene's own, that it is then lit by |
 | `lighting.bake`, `lighting.bake_status`, `lighting.bake_cancel`, `lighting.probe_light` | Bake the open level's lightmaps and light probes beside it, see how a bake goes or give it up, and read the baked probes' light at a point |
 | `shader_pack.list`, `shader_pack.wear`, `shader_pack.options` | List the shader packs there are, wear one in the Scene view and the game, and read or set the worn pack's options |
 | `look_pack.list`, `look_pack.wear`, `texture_pack.list`, `texture_pack.wear` | List the look packs and texture packs there are, and wear one, as the Lighting page's menus do |
+| `look_pack.get`, `look_pack.set` | Read a look pack of the project's, and write one of its settings, its look shader and that shader's properties among them, as its Inspector page does |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |

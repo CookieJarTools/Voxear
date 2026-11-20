@@ -55,6 +55,57 @@ impl Editor {
         }
     }
 
+    /// Writes a setting of the look pack at `file` as a step to undo, worn
+    /// again as it now is: one lighting settings have, one of the pack's own,
+    /// or its `[shader]`, the look shader it names (`shader.shader`, which
+    /// starts its properties afresh, and with none takes the shader off) or
+    /// one of that shader's properties by its name. Refused, and the file
+    /// left as it was, where the pack could not then be worn.
+    pub(super) fn set_pack_setting(
+        &mut self,
+        file: &std::path::Path,
+        path: &[&str],
+        value: Option<toml_edit::Value>,
+    ) -> anyhow::Result<()> {
+        use anyhow::{Context, bail};
+        let before = std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+        let text = match path {
+            ["shader", "shader"] => {
+                // Another shader has other properties: the old ones go with the old shader.
+                let cleared = lighting_panel::set_in_text(&before, &["shader"], None)?;
+                match &value {
+                    Some(_) => lighting_panel::set_in_text(&cleared, path, value.clone())?,
+                    None => cleared,
+                }
+            }
+            ["shader", _] => lighting_panel::set_in_text(&before, path, value)?,
+            _ if lighting_panel::pack_setting_path(&path.join(".")).is_some() => {
+                lighting_panel::set_in_text(&before, path, value)?
+            }
+            _ => bail!("a look pack has no setting `{}`", path.join(".")),
+        };
+        let pack = voxear_engine::look_packs::LookPackFile::parse(&text)?;
+        if let Some(named) = &pack.shader {
+            let shaders = self.game.content.shaders();
+            let found = shaders.shaders.iter().find(|shader| shader.path == named.shader);
+            let shader = found.with_context(|| format!("no shader {}", named.shader))?;
+            let info = shader.info.as_ref().map_err(|error| anyhow::anyhow!("{}: {error}", shader.path))?;
+            if !info.look {
+                bail!("{} has no look function, so it cannot draw a look pack's picture", shader.path);
+            }
+            if let Some(stray) = named.values.keys().find(|name| !info.properties.iter().any(|p| &p.name == *name)) {
+                bail!("{} has no property named {stray}", shader.path);
+            }
+        }
+        std::fs::write(file, &text).with_context(|| format!("writing {}", file.display()))?;
+        if text != before {
+            self.history.record_step(crate::history::Edit::File { path: file.to_path_buf(), before, after: text });
+        }
+        self.files_seen();
+        self.look_pack_changed();
+        Ok(())
+    }
+
     /// The Lighting page's menu of look packs to show the scene under.
     pub fn lighting_look_menu(&self) -> voxear_ui::NodeId {
         self.lighting_panel.look_menu()
@@ -212,7 +263,7 @@ impl Editor {
     /// Makes new lighting settings in the Lighting folder, a copy of those
     /// the scene at `scene` names, or of its own sky and post-processing,
     /// and names them in the scene in their place.
-    fn copy_lighting_of(&mut self, scene: &str, renderer: &mut Renderer) -> anyhow::Result<()> {
+    pub(super) fn copy_lighting_of(&mut self, scene: &str, renderer: &mut Renderer) -> anyhow::Result<()> {
         let (current, own) = lighting_panel::scene_lighting(&self.game, scene)?;
         let text = match current {
             Some(reference) => lighting_panel::copy_text(&self.game, Some(&reference))?,
@@ -224,7 +275,7 @@ impl Editor {
 
     /// Names other lighting settings in the active scene, which it keeps
     /// when it is saved.
-    fn set_scene_lighting(&mut self, reference: Option<&str>) -> anyhow::Result<()> {
+    pub(super) fn set_scene_lighting(&mut self, reference: Option<&str>) -> anyhow::Result<()> {
         let game = &mut self.game;
         game.levels.set_scene_lighting(&mut game.engine, &mut game.content, reference)?;
         if !self.is_playing() {

@@ -56,6 +56,18 @@ pub enum LevelEdit {
     /// The level this one stands on, by its GUID with its path for the
     /// comment, or none.
     StandsOn(Option<(String, String)>),
+    /// The level's own ray-traced audio, over the project's: its `[audio]`,
+    /// left out where it takes the project's in all.
+    Audio(voxear_engine::sound_tracing::LevelAudio),
+}
+
+/// The level's own ray-traced audio, as its file writes it.
+pub fn audio(text: &str) -> Result<voxear_engine::sound_tracing::LevelAudio> {
+    let file: toml::Table = toml::from_str(text).context("reading the level")?;
+    match file.get("audio") {
+        Some(audio) => audio.clone().try_into().context("reading the level's [audio]"),
+        None => Ok(Default::default()),
+    }
 }
 
 /// The level a level's file says it stands on, as written: a GUID or a path.
@@ -102,8 +114,21 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
         }
         return Ok(document.to_string());
     }
+    if let LevelEdit::Audio(audio) = edit {
+        match audio.is_empty() {
+            true => drop(document.remove("audio")),
+            false => {
+                let table = toml::Table::try_from(audio).context("writing the level's [audio]")?;
+                let written: DocumentMut =
+                    toml::to_string(&toml::Table::from_iter([("audio".to_string(), toml::Value::Table(table))]))?
+                        .parse()?;
+                document["audio"] = written["audio"].clone();
+            }
+        }
+        return Ok(document.to_string());
+    }
     let index = match edit {
-        LevelEdit::Add { .. } | LevelEdit::StandsOn(_) => None,
+        LevelEdit::Add { .. } | LevelEdit::StandsOn(_) | LevelEdit::Audio(_) => None,
         LevelEdit::Replace { at, .. }
         | LevelEdit::Remove(at)
         | LevelEdit::Move { from: at, .. }
@@ -176,7 +201,7 @@ pub fn edit(text: &str, edit: &LevelEdit) -> Result<String> {
                 false => table["weight"] = value(f64::from(*weight)),
             }
         }
-        LevelEdit::StandsOn(_) => {}
+        LevelEdit::StandsOn(_) | LevelEdit::Audio(_) => {}
     }
     if list.is_empty() {
         document.remove("scene");
@@ -275,5 +300,17 @@ mod tests {
         let file: voxear_engine::LevelFile = toml::from_str(&text).unwrap();
         assert_eq!(file.scenes.len(), 1, "{text}");
         assert_eq!(file.scenes[0].scene, "abc");
+    }
+
+    #[test]
+    fn a_levels_own_audio_is_written_into_its_file_and_taken_out_when_it_is_the_projects() {
+        use voxear_engine::sound_tracing::{LevelAudio, RayQualityName};
+        let own = LevelAudio { ray_traced: Some(true), ray_quality: Some(RayQualityName::High), ray_budget: None };
+        let written = edit(DAY, &LevelEdit::Audio(own)).unwrap();
+        assert!(written.starts_with("# Voxear level\n") && written.contains("[audio]"), "{written}");
+        assert_eq!(audio(&written).unwrap(), own, "read back");
+        assert_eq!(entries(&written).unwrap().len(), 1, "its scenes as they were");
+        let projects = edit(&written, &LevelEdit::Audio(LevelAudio::default())).unwrap();
+        assert!(!projects.contains("audio"), "{projects}");
     }
 }

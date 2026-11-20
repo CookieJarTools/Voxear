@@ -1,7 +1,10 @@
 //! The open scene's lighting for tools, `vox editor call` and `vox mcp`:
 //! `lighting.get` reads every setting in effect, as the Lighting page shows
 //! them, and which upscalers run on this GPU; `lighting.set` changes one, as
-//! the page does, written into the lighting settings' file as a step to undo.
+//! the page does, written into the lighting settings' file as a step to undo;
+//! `lighting.scene` names the lighting settings the scene is lit by, as the
+//! page's Lighting menu does, and `lighting.copy` makes a copy of them the
+//! scene is then lit by, as Make a Copy does.
 
 use serde_json::{Value as Json, json};
 use voxear_engine::local_link::ErrorKind;
@@ -56,11 +59,47 @@ impl Editor {
         self.lighting_action(LightingAction::Set { of, path, value }, renderer);
         self.lighting_get(renderer)
     }
+
+    /// Names the lighting settings the open scene is lit by: built-in ones,
+    /// the project's, or with null none, so it lights itself.
+    pub(super) fn lighting_scene(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        let given = args.get("lighting").ok_or_else(|| bad("`lighting` is missing: lighting settings, or null"))?;
+        let reference = match given {
+            Json::Null => None,
+            Json::String(text) => Some(text.clone()),
+            Json::Object(asset) => {
+                let named = asset.get("path").or(asset.get("guid")).and_then(Json::as_str);
+                Some(named.ok_or_else(|| bad("`lighting` names an asset by `path` or `guid`"))?.to_string())
+            }
+            other => return Err(bad(format!("`lighting` is lighting settings or null, not {other}"))),
+        };
+        if let Some(reference) = &reference {
+            let named = self.game.content.parse(reference).map_err(|e| bad(format!("{e:#}")))?;
+            let guid = named.guid();
+            let kind = guid.and_then(|guid| self.game.content.db().get(guid)).map(|entry| entry.kind);
+            if !reference.starts_with("builtin:") && kind != Some(voxear_assets::AssetKind::Lighting) {
+                return Err(bad(format!("{reference} is not lighting settings")));
+            }
+        }
+        self.set_scene_lighting(reference.as_deref()).map_err(|e| bad(format!("{e:#}")))?;
+        self.refresh_lighting_page();
+        self.lighting_get(renderer)
+    }
+
+    /// Makes new lighting settings in the Lighting folder, a copy of those
+    /// the open scene is lit by, or of its own, and lights the scene by them.
+    pub(super) fn lighting_copy(&mut self, renderer: &mut Renderer) -> Called {
+        let scene = self.game.levels.active_scene().map(str::to_string);
+        let scene = scene.ok_or_else(|| refuse(ErrorKind::NotAllowed, "no scene is open"))?;
+        self.copy_lighting_of(&scene, renderer).map_err(|e| bad(format!("{e:#}")))?;
+        self.refresh_lighting_page();
+        self.lighting_get(renderer)
+    }
 }
 
 /// A setting's value from JSON: a switch, a number, a word, or a list of
 /// numbers.
-fn toml_value(json: &Json) -> Option<toml_edit::Value> {
+pub(super) fn toml_value(json: &Json) -> Option<toml_edit::Value> {
     Some(match json {
         Json::Bool(on) => (*on).into(),
         Json::Number(number) => match number.as_i64() {

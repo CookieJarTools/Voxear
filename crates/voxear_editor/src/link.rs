@@ -742,6 +742,24 @@ pub const CALLS: &[CallInfo] = &[
         returns: "As lighting.get",
     },
     CallInfo {
+        name: "lighting.scene",
+        about: "Names the lighting settings the open scene is lit by, as the Lighting page's Lighting menu does: \
+                built-in ones such as `builtin:golden_hour`, a .lighting file of the project's, or null for none, \
+                so the scene lights itself by its own settings. The scene keeps them when it is saved.",
+        args: &[arg("lighting", ArgKind::Value, "`builtin:` and a look's name, a .lighting asset, or null.")],
+        changes: true,
+        returns: "As lighting.get",
+    },
+    CallInfo {
+        name: "lighting.copy",
+        about: "Makes new lighting settings in the Lighting folder, a copy of those the open scene is lit by, or of \
+                its own, and lights the scene by them, as the Lighting page's Make a Copy and New Lighting Settings \
+                do: a way to change built-in lighting.",
+        args: &[],
+        changes: true,
+        returns: "As lighting.get",
+    },
+    CallInfo {
         name: "look_pack.list",
         about: "Every look pack there is to wear, the engine's and the project's, each with what `look_pack.wear` \
                 takes to wear it, and the pack the Scene view and the game wear.",
@@ -760,6 +778,28 @@ pub const CALLS: &[CallInfo] = &[
         )],
         changes: true,
         returns: "{ worn }",
+    },
+    CallInfo {
+        name: "look_pack.get",
+        about: "A look pack of the project's as its file writes it, the setting paths `look_pack.set` takes, and the \
+                project's look shaders with their properties, for the pack's `[shader]`.",
+        args: &[arg("pack", ArgKind::Asset, "A .lookpack of the project's.")],
+        changes: false,
+        returns: "{ pack, settings, paths: [path], shaders: [{ shader, properties: [{ name, kind }] }] }",
+    },
+    CallInfo {
+        name: "look_pack.set",
+        about: "Writes one setting of a look pack of the project's, as its Inspector page does, as a step to undo, \
+                and wears it again where it is worn: `sun.tint`, `water.deep`, `blocks.voxels`, `description`; \
+                `shader.shader` names its look shader, starting its properties afresh, and `shader.` and a \
+                property's name sets one. Refused where the pack could not then be worn.",
+        args: &[
+            arg("pack", ArgKind::Asset, "A .lookpack of the project's."),
+            arg("path", ArgKind::Text, "As `look_pack.get` lists them under `paths`, or `shader.` and a name."),
+            arg("value", ArgKind::Value, "A switch, a number, a word or a list of numbers; null takes it out."),
+        ],
+        changes: true,
+        returns: "As look_pack.get",
     },
     CallInfo {
         name: "texture_pack.list",

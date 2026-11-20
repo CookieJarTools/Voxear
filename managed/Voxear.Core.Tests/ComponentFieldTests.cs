@@ -31,4 +31,15 @@ internal static class ComponentFieldTests
 		Check.True(obj.PostVolume is null && obj.WindZone is null && obj.Ocean is null && obj.Pool is null, "none");
 		Check.True(!Climate.Exists && Storms.Seed == 0u, "no level settings");
 	}
+
+	[Test]
+	private static void ProjectSettingsAreTheDefaultsAwayFromTheEngine()
+	{
+		Check.Near(0.02f, ProjectSettings.Time.FixedStep);
+		Check.True(ProjectSettings.FloatingOrigin.Mode == FloatingOriginMode.Off, "no floating origin");
+		Check.True(ProjectSettings.Portals.Views == 4 && ProjectSettings.WaterTrails.Look == WaterTrailLook.MatchWater, "the defaults");
+		var read = PortalSettings.Read(new System.Text.Json.Nodes.JsonObject { ["view_distance"] = 40, ["water"] = false });
+		Check.True(read.ViewDistance == 40f && !read.Water && read.Depth == 1, "read over the defaults");
+		Check.True(read.ToNode().ToJsonString().Contains("\"view_distance\":40"), read.ToNode().ToJsonString());
+	}
 }

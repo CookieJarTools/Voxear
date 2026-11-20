@@ -1228,6 +1228,9 @@ Done:
   through the services lent scripts (`ObjAsset`); the rest through `ComponentKind::Whole`. A Portal's Passes have
   an Inspector row per named layer. Tests: engine lib, a C# script on Hello with a renderer, the guns script,
   the Portal's rows by `field.set`, C# away from the engine.
+- **Project Settings from scripts:** C# `ProjectSettings` reads Time, FloatingOrigin, Quality and Network, fixed once
+  the game has started, and reads and changes Portals, WaterTrails and NavigationCosts, put where the game reads
+  them from the next frame (`project_scripts::ProjectInEffect`). Tests: engine lib, a script on Hello, C#.
 - **Seeing in the dark:** auto exposure leaves dark scenes darker the darker they are, at most three stops, and
   where the scene or a pixel is dark, colour fades to grey-blue (night vision), so moonlight reads as night. GPU
   tests: a courtyard from dawn to midnight and by torchlight.

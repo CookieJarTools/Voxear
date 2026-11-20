@@ -19,6 +19,8 @@ internal static unsafe class NativePost
 	public const int SunLookSet = 11;
 	public const int SunLookReset = 12;
 	public const int LevelComponent = 13;
+	public const int ProjectSection = 14;
+	public const int ProjectChange = 15;
 
 	public static bool IsConnected => Native.IsConnected;
 

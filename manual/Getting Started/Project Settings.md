@@ -83,6 +83,29 @@ A project with several `.inputactions` files picks the one the game plays with i
 
 `voxear.toml` keeps only what differs from the default: change a setting back and its line goes, and a section with nothing left in it goes too. The rest of the file, comments and all, is kept as you wrote it, so the file reads well in version control and can be edited by hand. The editor reads it again when it changes on disk.
 
+## From a script
+
+`ProjectSettings` reads the settings the game runs by, a section at a time, each a copy. Portals, water trails and navigation costs change while the game runs, as a game's options do, from the next frame until it starts again; the time steps, the floating origin, the quality budgets and the network are fixed once it has started, and read only.
+
+```csharp
+// A slow machine: Portals show their far side from nearer, and the water keeps no trails.
+ProjectSettings.ChangePortals(portals => portals.ViewDistance = 48f);
+ProjectSettings.ChangeWaterTrails(trails => trails.Quality = WaterTrailQuality.Off);
+ProjectSettings.ChangeNavigationCosts(costs => costs.Road = 0.4f);
+
+var step = ProjectSettings.Time.FixedStep;
+```
+
+| Section | What it has |
+| --- | --- |
+| `Time` | `FixedStep`, `MaxStep` and `MaxFixedSteps`, read only |
+| `FloatingOrigin` | `Mode`, `Distance` and `Step`, read only |
+| `Quality` | `Particles`, `BlockLighting` and `PosedVertices`, read only |
+| `Network` | `TickRate`, `Port`, `MaxPlayers` and `KilobytesPerSecond`, read only |
+| `Portals` | Every Portals setting, changed with `ChangePortals` |
+| `WaterTrails` | `Quality`, `Area` and `Look`, changed with `ChangeWaterTrails` |
+| `NavigationCosts` | What roads, water, swimming, doors and the project's own four areas cost, changed with `ChangeNavigationCosts` |
+
 ## From the command line
 
 Every setting here can be read and changed by tools, as `vox editor call` and `vox mcp` reach the editor (see [[Driving the Editor from a Terminal]]):

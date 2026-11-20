@@ -10,8 +10,9 @@ use anyhow::{Context, Result, bail, ensure};
 use voxear_ecs::World;
 use voxear_render::{LampShadows, PostProcess, ScriptPost, ScriptShadows, ShadowsInEffect, SunShadows, WornLook};
 use voxear_scripting::{
-    LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, SHADOWS_IN_EFFECT, SHADOWS_RESET,
-    SHADOWS_SET, SKY_IN_EFFECT, SKY_RESET, SKY_SET, SUN_LOOK, SUN_LOOK_RESET, SUN_LOOK_SET,
+    LEVEL_COMPONENT, POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PROJECT_CHANGE, PROJECT_SECTION,
+    SHADOWS_IN_EFFECT, SHADOWS_RESET, SHADOWS_SET, SKY_IN_EFFECT, SKY_RESET, SKY_SET, SUN_LOOK, SUN_LOOK_RESET,
+    SUN_LOOK_SET,
 };
 
 use crate::{
@@ -92,6 +93,11 @@ fn call(world: &mut World, what: i32, text: &str) -> Result<String> {
         }
         // Answered with nothing where the level has none.
         LEVEL_COMPONENT => Ok(crate::script_components::level_component(world, text)?.unwrap_or_default()),
+        PROJECT_SECTION => crate::project_scripts::section(world, text),
+        PROJECT_CHANGE => {
+            crate::project_scripts::change(world, text)?;
+            Ok(String::new())
+        }
         _ => bail!("no such call ({what})"),
     }
 }

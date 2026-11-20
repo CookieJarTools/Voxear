@@ -179,6 +179,8 @@ impl Game {
         game.engine.world.insert_resource(game.project.file.foliage.bounded());
         game.project.file.physics.put(&mut game.engine.world);
         game.project.file.time.put(&mut game.engine);
+        let in_effect = crate::project_scripts::ProjectInEffect::of(&game.project.file);
+        game.engine.world.insert_resource(in_effect);
         game
     }
 

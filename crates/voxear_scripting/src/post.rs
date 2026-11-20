@@ -33,6 +33,10 @@ pub const SUN_LOOK_RESET: i32 = 12;
 /// The level's Seasons or Climate, through the same call: read whole, and
 /// changed setting by setting (`Seasons` and `Climate`).
 pub const LEVEL_COMPONENT: i32 = 13;
+/// Project Settings, through the same call: a section read whole, and one
+/// a running game may change changed setting by setting (`ProjectSettings`).
+pub const PROJECT_SECTION: i32 = 14;
+pub const PROJECT_CHANGE: i32 = 15;
 
 /// What answers `Post` for scripts: what `what` asks, given `text`, with
 /// the text of its answer.

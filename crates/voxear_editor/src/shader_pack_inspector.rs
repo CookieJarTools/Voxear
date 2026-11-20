@@ -108,6 +108,7 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
                 }
                 "leaves" => ("Leaves", "Lights faces of leaves, and sheets of leaves and of vines"),
                 "water" => ("Water", "Lights the sea, Pools, Streams and worlds of blocks' water"),
+                "models" => ("Models", "Lights characters, props, creatures and anything else drawn from a mesh"),
                 _ => ("Sky", "Draws the sky behind everything, and the clouds and far weather in front of it"),
             };
             let row = prop(ui, rows, label);

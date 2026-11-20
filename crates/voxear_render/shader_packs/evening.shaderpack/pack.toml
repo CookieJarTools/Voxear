@@ -12,14 +12,16 @@ curve = { kind = "choice", choices = ["Soft", "Filmic", "Neutral"], default = "S
 glow = { kind = "number", range = [0.0, 3.0], default = 1.0, label = "Glow", about = "How much bright light glows round itself, where the bloom is on" }
 vignette = { kind = "number", range = [0.0, 1.0], default = 0.5, label = "Vignette", about = "How much darker the corners are" }
 long_shadows = { kind = "number", range = [0.0, 1.0], default = 0.6, label = "Long shadows", about = "How much paler shadows are the farther they fall from what casts them" }
+rim = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Rim light", about = "How bright the edges of characters and things are against a low sun" }
 leaf_light = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Light through leaves", about = "How much of the sun comes through leaves, tinted their colour" }
 
-# How block faces are lit: warm sun, cool shade, warm torchlight, and leaves lit through from behind; water: the sun's
-# path on it golden; and the sky, gold round a low sun.
+# How block faces and models are lit: warm sun, cool shade, warm torchlight, leaves lit through from behind and a rim of
+# light round what stands against a low sun; water: the sun's path on it golden; and the sky, gold round a low sun.
 [surface]
 blocks = "faces.slang"
 water = "water.slang"
 sky = "sky.slang"
+models = "models.slang"
 
 # The sun's shadows paler the farther they fall from what casts them, and a little of it through leaves.
 [shadows]

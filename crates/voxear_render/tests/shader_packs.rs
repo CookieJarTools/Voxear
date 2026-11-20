@@ -801,6 +801,50 @@ fn a_pass_reads_what_each_pixels_surface_is_a_model_a_block_face_or_leaves() {
 }
 
 #[test]
+fn a_models_program_lights_models_and_is_given_the_engines_light_whole_and_by_its_terms() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = cube_world(&mut renderer, false, false);
+    let plain = render(&mut renderer, &world, 3);
+    // `level` 1 red; 0 the engine's own; 2 how far the engine's terms are from adding up to it.
+    let program = "float3 run(ModelSurface surface, ModelLighting light)
+{
+    float level = options().level;
+    if (level < 0.5)
+    {
+        return light.engine;
+    }
+    if (level < 1.5)
+    {
+        return float3(level, 0.0, 0.0);
+    }
+    float3 terms = light.sunTerm + light.ambientTerm + light.reflectionTerm + light.lamps + light.emission;
+    return abs(terms - light.engine) * 100.0;
+}
+";
+    let manifest = "[options]\nlevel = { kind = \"number\", range = [0.0, 2.0], default = 1.0 }\n\
+                    [surface]\nmodels = \"models.slang\"\n";
+    let compiled = pack(manifest, &[("models.slang", program)]).unwrap_or_else(|error| panic!("{error:#}"));
+    let mut modules: Vec<&str> = compiled.modules.iter().map(|(module, _)| module.as_str()).collect();
+    modules.sort_unstable();
+    assert_eq!(modules, ["dice", "forward", "meshlets"], "every shader that draws models");
+    wear(&mut world, compiled);
+    let red = render(&mut renderer, &world, 3);
+    keep_image("models red.png", &red, (WIDTH, HEIGHT));
+    let [r, g, b] = rgb_at(&red, CUBE.0, CUBE.1);
+    assert!(r > g + 120 && g == b, "the model lit red by its program: {r} {g} {b}");
+    let (sky, before) = (rgb_at(&red, SKY.0, SKY.1), rgb_at(&plain, SKY.0, SKY.1));
+    assert!((0..3).all(|c| (sky[c] - before[c]).abs() <= 2), "the sky as it was: {sky:?} against {before:?}");
+    set_level(&mut world, 0.0);
+    let engine = render(&mut renderer, &world, 3);
+    let (off, mean) = alike(&plain, &engine);
+    assert!(off < (WIDTH * HEIGHT / 200) as usize && mean < 1.5, "the engine's own: {off} off, {mean:.2} on average");
+    set_level(&mut world, 2.0);
+    let terms = render(&mut renderer, &world, 3);
+    let [r, g, b] = rgb_at(&terms, CUBE.0, CUBE.1);
+    assert!(r.max(g).max(b) <= 3, "its terms add up to the engine's colour: {r} {g} {b}");
+}
+
+#[test]
 fn a_packs_shadow_settings_set_the_suns_width_and_maps() {
     let Some(mut renderer) = renderer() else { return };
     let mut world = trees_plain(&mut renderer);

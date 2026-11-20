@@ -1523,7 +1523,8 @@ again from its shaders with that module in place (`pack_modules`), and back with
 (`terrainKind` from `terrainShading` says what it is), to the pack, which reads its `PackFrame` through
 `Buffers::packFrame`, written for every view. A `water` program is compiled the same way into `water.slang` with
 `VOXEAR_PACK_WATER` (`project_pack_water.slang`, `packWaterColor`), handed the water by `waterFragment` and
-`blockWaterLit` before the air's haze; a `sky` program into `sky.slang` with `VOXEAR_PACK_SKY` (`packSkyColor`),
+`blockWaterLit` before the air's haze; a `models` program into `forward`, `meshlets` and `dice` with
+`VOXEAR_PACK_MODELS` (`packModelColor`, the engine's terms kept apart as for blocks); a `sky` program into `sky.slang` with `VOXEAR_PACK_SKY` (`packSkyColor`),
 handed the sky by `skyFragment` by its parts, the disc and the stars apart, before its colour is written
 (`SURFACE_MODULES` lists the modules). A pack's `[shadows]` settings take the look's place in `scene.rs`'s
 extraction (the sun's width and tint, the cascades' reach, count and split through `shadows::cascades_in`, virtual

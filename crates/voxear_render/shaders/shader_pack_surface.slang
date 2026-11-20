@@ -4,6 +4,10 @@
 //
 //     float3 run(BlockSurface surface, BlockLighting light)
 //
+// a models program
+//
+//     float3 run(ModelSurface surface, ModelLighting light)
+//
 // a water program
 //
 //     float3 run(WaterSurface surface, WaterLighting light)
@@ -98,6 +102,43 @@ struct BlockLighting
     float3 emission;
     float3 engine;
 };
+
+// What a model's surface is, as ModelSurface.kind has it, a bit each.
+// A foliage material's, lit through from behind as leaves are.
+static const uint MODEL_FOLIAGE = PACK_MODEL_FOLIAGE;
+// A material with a custom shader's own lighting; `engine` is what that lighting made.
+static const uint MODEL_CUSTOM = PACK_MODEL_CUSTOM;
+// It gives off light of its own.
+static const uint MODEL_GLOWS = PACK_MODEL_GLOWS;
+
+// A model's surface a models program lights, at one pixel: characters, props, creatures, anything drawn from a mesh.
+// Places and ways are in the world; colours are linear.
+struct ModelSurface
+{
+    float3 position;
+    // The way it faces with its normal map's bumps, and the way its triangle faces.
+    float3 normal;
+    float3 faceNormal;
+    // The way from it to the camera.
+    float3 view;
+    // Its colour, after the seasons and the wet; how rough and how metallic it is; and the light it gives off.
+    float3 color;
+    float alpha;
+    float roughness;
+    float metallic;
+    float3 emission;
+    // The sky light and block light round it, each from 0 to 1, in a world of blocks; 1 and 0 elsewhere.
+    float skyLight;
+    float blockLight;
+    // Its material's number, the same for every model of that material, and what it is (MODEL_FOLIAGE and the rest).
+    uint material;
+    uint kind;
+    // Where it shows in the picture, in pixels.
+    float2 pixel;
+};
+
+// The light a model's surface sees: the same as a block face's.
+typedef BlockLighting ModelLighting;
 
 // What water is, as WaterSurface.kind has it, a bit each: the sea, a Pool, a Stream, a world of blocks' water, and
 // whether it is seen from under it.

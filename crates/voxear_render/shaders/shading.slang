@@ -1424,6 +1424,15 @@ FragmentOut unlitOutput(Frame* frame, VertexOut input, float3 color)
 // packBlockColor, which lights a face in place of the engine.
 #include "project_pack_blocks.slang"
 #endif
+#if !defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_MODELS)
+// A worn shader pack's models program, as src/shader_packs.rs's `surface_wrapper` writes it: it defines packModelColor,
+// which lights a model's surface in place of the engine.
+#include "project_pack_models.slang"
+#endif
+// The engine's terms of a surface's colour are kept apart for a pack's program that lights it.
+#if (defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)) || (!defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_MODELS))
+#define PACK_KEEPS_TERMS
+#endif
 
 [shader("fragment")]
 FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
@@ -1584,7 +1593,7 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         color += foliageLight(s, -frame->sunDirection, sunThrough, leafShadow);
     }
     color += shadowTint(frame, s, -frame->sunDirection, sunThrough, shadow);
-#if defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)
+#ifdef PACK_KEEPS_TERMS
     // The engine's terms, kept apart for a shader pack's surface program.
     float3 packSun = color;
     float3 packLamps = 0.0;
@@ -1612,7 +1621,7 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         }
         float3 lit = shadeLocalLight(s, buffers()->lights[light], input.worldPosition) * wet;
         color += lit;
-#if defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)
+#ifdef PACK_KEEPS_TERMS
         packLamps += lit;
 #endif
     }
@@ -1700,6 +1709,42 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         packLight.emission = emission;
         packLight.engine = color;
         color = packBlockColor(packed, packLight);
+    }
+#endif
+#if !defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_MODELS)
+    // A worn shader pack's models program lights the surface, from what the engine has worked out of it.
+    {
+        ModelSurface packed;
+        packed.position = input.worldPosition;
+        packed.normal = s.normal;
+        packed.faceNormal = normalize(input.normal);
+        packed.view = s.view;
+        packed.color = base.rgb;
+        packed.alpha = base.a;
+        packed.roughness = roughness;
+        packed.metallic = metallic;
+        packed.emission = emission;
+        packed.skyLight = blockLitHere ? blockLit.x : 1.0;
+        packed.blockLight = blockLitHere ? blockLit.y : 0.0;
+        packed.material = input.material;
+        packed.kind = ((material.flags & MATERIAL_FOLIAGE) != 0 ? PACK_MODEL_FOLIAGE : 0)
+            | (customLit ? PACK_MODEL_CUSTOM : 0) | (any(emission > 0.0) ? PACK_MODEL_GLOWS : 0);
+        packed.pixel = input.position.xy;
+        ModelLighting packLight;
+        packLight.sunDirection = -frame->sunDirection;
+        packLight.sunLight = sunThrough;
+        packLight.shadow = shadow;
+        packLight.sky = packSky;
+        packLight.glow = packGlow;
+        packLight.occlusion = occlusion.diffuse;
+        packLight.reflection = reflected;
+        packLight.sunTerm = packSun;
+        packLight.ambientTerm = ambientTerm;
+        packLight.reflectionTerm = reflectionTerm;
+        packLight.lamps = packLamps;
+        packLight.emission = emission;
+        packLight.engine = color;
+        color = packModelColor(packed, packLight);
     }
 #endif
     if (atmosphere)

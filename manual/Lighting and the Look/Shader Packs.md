@@ -2,7 +2,7 @@
 order: 8
 ---
 
-A **shader pack** is a set of small programs that change how a game is lit and finished. A **pass** runs over the picture as each frame is drawn: shafts of sun through leaves, a fog of your own, outlines round blocks, a painted look, a colour grade. It reads what the frame has drawn so far (its colour, how far away each pixel is, which way each surface faces, how it moved, the light kept for the blocks round the camera) and writes a new colour, or a picture of its own for a later pass to read. A **surface program** lights the faces of blocks or the water, or draws the sky, in place of the engine: warmer sun, bluer shade, leaves that glow with the sun behind them, torchlight of another colour, a golden path of sun across the sea, a sky of another colour. A pack can also fit the picture to the screen with a tonemap and grade of its own.
+A **shader pack** is a set of small programs that change how a game is lit and finished. A **pass** runs over the picture as each frame is drawn: shafts of sun through leaves, a fog of your own, outlines round blocks, a painted look, a colour grade. It reads what the frame has drawn so far (its colour, how far away each pixel is, which way each surface faces, how it moved, the light kept for the blocks round the camera) and writes a new colour, or a picture of its own for a later pass to read. A **surface program** lights the faces of blocks, models or the water, or draws the sky, in place of the engine: warmer sun, bluer shade, leaves that glow with the sun behind them, torchlight of another colour, a golden path of sun across the sea, a sky of another colour. A pack can also fit the picture to the screen with a tonemap and grade of its own.
 
 A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds passes of its own to it. A player can wear one of each, and anything a shader pack leaves out the engine draws as it always does. With none worn nothing of this runs, and a frame costs what it did.
 
@@ -17,6 +17,7 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 | **Haze** | How much warm haze the air holds, most towards the sun, 0 to 2 |
 | **Warmth** | How far the grade warms the picture, 0 to 1 |
 | **Leaf glow** | How much leaves glow with the sun through them, seen against a low sun, 0 to 2 |
+| **Rim light** | How bright the edges of characters and things are against a low sun, 0 to 2 |
 | **Sky glow** | How gold the sky turns near the horizon and round a low sun, 0 to 2 |
 | **Curve** | How the light is fitted to the screen: **Soft** as the engine's, **Filmic** with more contrast, **Neutral** keeping colours as they are |
 | **Glow** | How much bright light glows round itself, where the level's bloom is on, 0 to 3 |
@@ -257,6 +258,26 @@ float3 run(BlockSurface surface, BlockLighting light)
 | `engine` | The colour the engine gives the face |
 
 Surface programs have the pack's `options()` and `frame()` as passes do. A world drawn smooth, a block of parts and a face cut into small cubes are all lit by `blocks`, told apart by `kind`.
+
+### Lighting models
+
+`models` in `[surface]` names a program that lights everything drawn from a mesh: characters, creatures, props, ships.
+
+```toml
+[surface]
+models = "models.slang"
+```
+
+```slang
+// models.slang: the engine's light, with a cool rim round the edges of what the camera sees.
+float3 run(ModelSurface surface, ModelLighting light)
+{
+	float edge = pow(1.0 - saturate(dot(surface.normal, surface.view)), 3.0);
+	return light.engine + float3(0.2, 0.3, 0.5) * edge * surface.skyLight;
+}
+```
+
+`light` is as a block face's: the sun's way and light and its shadow, the sky's light and the blocks' glow, occlusion, what it reflects, and the engine's terms and colour. `surface` has its place, normals, view, colour, alpha, roughness, metallic and emission, as a block face's; `skyLight` and `blockLight` round it in a world of blocks (1 and 0 elsewhere); `material`, its material's number; and `kind`, a bit each: `MODEL_FOLIAGE` for a foliage material, `MODEL_CUSTOM` for a material whose custom shader lights it (`light.engine` is that light), and `MODEL_GLOWS`. A models program is compiled into each of the engine's shaders that draw models, so a pack with one takes a little longer to compile the first time.
 
 ### Lighting water
 

@@ -3,9 +3,8 @@
 A **shader pack** is a set of shader programs that replaces how a game is lit and finished: its light on block faces,
 leaves and water, its shadows, its sky, and passes over the whole picture, such as fog, rays through leaves, a
 coloured grade or a painted look. It is chosen by whoever plays, as a look pack or a texture pack is, and anything
-it leaves out is the engine's own. This page is the plan. Its first stage, a pack's own passes over the frame, is
-built ([What stage 1 built](#what-stage-1-built)), and so is the second, programs that light block faces, leaves and
-water ([What stage 2 built](#what-stage-2-built)); the rest is not yet.
+it leaves out is the engine's own. This page is the plan, and all five of its stages are built: what each settled is
+under [What stage 1 built](#what-stage-1-built) and the four after it.
 
 ## What Voxear has today
 
@@ -243,7 +242,12 @@ A pack's own tonemap, and a program for the sky. Settled on the way:
   camera sees them. What the sky moves as, for TAA, stays the engine's.
 - **Evening** tonemaps for itself, with a choice of curve, a little glow and a vignette, and turns a low sun's sky
   and the clouds on its side gold.
-- **Not yet:** models' surface programs; reflections, the sea's mirror and the GI still see the engine's sky.
+- **Not yet:** reflections, the sea's mirror and the GI still see the engine's sky.
+- **Models, later:** `[surface] models`, `float3 run(ModelSurface surface, ModelLighting light)`, compiled into the
+  three shaders that draw models (`forward`, `meshlets`, `dice`) with `VOXEAR_PACK_MODELS`. `fragmentMain` keeps the
+  engine's terms apart for it as for block faces (`PACK_KEEPS_TERMS`); `ModelLighting` is `BlockLighting`, and
+  `ModelSurface` has a model's material and whether it is foliage, custom-lit or glowing. Evening's `models.slang`
+  warms the sun, cools the shade and lays a rim of light round what stands against a low sun.
 
 ## What stage 4 built
 

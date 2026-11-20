@@ -4144,6 +4144,9 @@ Done:
 - **Players' packs** (stage 5). C# `ShaderPacks` and `ShaderPack`; `ShaderPackScreen`, a ready-made menu of packs and
   the worn one's options; the choice and options kept beside the saves and worn again at start; compiled programs
   kept on disk by a hash that is the same on any machine; a game's packs compiled when it is built.
+- **Models lit by a pack's program.** `[surface] models`, `float3 run(ModelSurface surface, ModelLighting light)`, in
+  every shader that draws models, given the engine's light whole and by its terms; Evening warms them and lays a rim
+  of light round what stands against a low sun.
 - **What each pixel's surface is, and packs' own includes in a built game.** `reads = ["surface_id"]`: the depth
   passes write each pixel's surface id beside its normal (a model's material, a block face's look and what it is, a
   terrain's), only while a worn pack reads them, the depth pipelines made again with the target. A built game reads

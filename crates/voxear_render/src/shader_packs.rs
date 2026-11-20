@@ -84,6 +84,7 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 1] = [(
         ("faces.slang", include_str!("../shader_packs/evening.shaderpack/faces.slang")),
         ("water.slang", include_str!("../shader_packs/evening.shaderpack/water.slang")),
         ("sky.slang", include_str!("../shader_packs/evening.shaderpack/sky.slang")),
+        ("models.slang", include_str!("../shader_packs/evening.shaderpack/models.slang")),
         ("shadows.slang", include_str!("../shader_packs/evening.shaderpack/shadows.slang")),
     ],
 )];
@@ -420,12 +421,22 @@ pub struct PackSurfaces {
     /// front of it; its program defines `float3 run(SkySurface surface,
     /// SkyLighting light)`.
     pub sky: Option<String>,
+    /// Models: characters, props, creatures, anything drawn from a mesh; its
+    /// program defines `float3 run(ModelSurface surface, ModelLighting
+    /// light)`.
+    pub models: Option<String>,
 }
 
 impl PackSurfaces {
     /// Its programs, as the manifest names them.
     pub fn named(&self) -> Vec<(&'static str, &str)> {
-        let named = [("blocks", &self.blocks), ("leaves", &self.leaves), ("water", &self.water), ("sky", &self.sky)];
+        let named = [
+            ("blocks", &self.blocks),
+            ("leaves", &self.leaves),
+            ("water", &self.water),
+            ("sky", &self.sky),
+            ("models", &self.models),
+        ];
         named.into_iter().filter_map(|(key, program)| program.as_deref().map(|program| (key, program))).collect()
     }
 }
@@ -675,15 +686,12 @@ impl PackManifest {
         let file: ManifestFile = toml::from_str(text)?;
         ensure!(file.format <= PACK_FORMAT, "written by a newer Voxear (format {})", file.format);
         let surface = &file.surface;
-        ensure!(
-            surface.models.is_none(),
-            "[surface] models: programs that light models are not drawn yet, only blocks', water and the sky"
-        );
         let surfaces = PackSurfaces {
             blocks: surface.blocks.clone(),
             leaves: surface.leaves.clone(),
             water: surface.water.clone(),
             sky: surface.sky.clone(),
+            models: surface.models.clone(),
         };
         for (key, program) in surfaces.named() {
             check_program(program).with_context(|| format!("[surface] {key}"))?;
@@ -946,10 +954,14 @@ fn options_code(manifest: &PackManifest) -> String {
 /// The engine's shader modules a pack's surface programs are compiled
 /// into: each module's name, what it is compiled with defined, and the file
 /// it then includes, which [`surface_wrapper`] writes.
-pub const SURFACE_MODULES: [(&str, &str, &str); 3] = [
+pub const SURFACE_MODULES: [(&str, &str, &str); 6] = [
     ("blocks", "VOXEAR_PACK_BLOCKS", "project_pack_blocks.slang"),
     ("water", "VOXEAR_PACK_WATER", "project_pack_water.slang"),
     ("sky", "VOXEAR_PACK_SKY", "project_pack_sky.slang"),
+    // Models, drawn by vertices, by mesh shaders and diced into pieces.
+    ("forward", "VOXEAR_PACK_MODELS", "project_pack_models.slang"),
+    ("meshlets", "VOXEAR_PACK_MODELS", "project_pack_models.slang"),
+    ("dice", "VOXEAR_PACK_MODELS", "project_pack_models.slang"),
 ];
 
 impl PackSurfaces {
@@ -959,6 +971,7 @@ impl PackSurfaces {
             "blocks" => self.blocks.is_some() || self.leaves.is_some(),
             "water" => self.water.is_some(),
             "sky" => self.sky.is_some(),
+            "forward" | "meshlets" | "dice" => self.models.is_some(),
             _ => false,
         }
     }
@@ -982,6 +995,7 @@ pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&st
     let programs = match module {
         "water" => vec![("pack_water", &surfaces.water)],
         "sky" => vec![("pack_sky", &surfaces.sky)],
+        "forward" | "meshlets" | "dice" => vec![("pack_models", &surfaces.models)],
         _ => vec![("pack_blocks", &surfaces.blocks), ("pack_leaves", &surfaces.leaves)],
     };
     for (space, program) in programs {
@@ -993,6 +1007,9 @@ pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&st
     let others = [
         ("water", "packWaterColor", "WaterSurface surface, WaterLighting light", "pack_water"),
         ("sky", "packSkyColor", "SkySurface surface, SkyLighting light", "pack_sky"),
+        ("forward", "packModelColor", "ModelSurface surface, ModelLighting light", "pack_models"),
+        ("meshlets", "packModelColor", "ModelSurface surface, ModelLighting light", "pack_models"),
+        ("dice", "packModelColor", "ModelSurface surface, ModelLighting light", "pack_models"),
     ];
     for (named, function, types, space) in others {
         if module == named {
@@ -2091,7 +2108,7 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         fails(&pass.replace("a.slang", "../a.slang"), "not a file in the pack's folder");
         fails(&pass.replace("a.slang", "a.hlsl"), "not a .slang file");
         fails(&pass.replace("final", "after_sky"), "unknown variant");
-        fails(&format!("[surface]\nmodels = \"m.slang\"\n{pass}"), "[surface] models");
+        fails("[surface]\nmodels = \"../m.slang\"", "[surface] models");
         fails("[surface]\nsky = \"../s.slang\"", "[surface] sky");
         let tonemap = pass.replace("final", "tonemap");
         let second = tonemap.replace("\"A\"", "\"B\"");

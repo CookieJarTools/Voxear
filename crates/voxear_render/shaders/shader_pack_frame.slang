@@ -13,6 +13,12 @@ static const uint PACK_BLOCK_GLOWS = 16;
 static const uint PACK_BLOCK_SMOOTH = 32;
 static const uint PACK_BLOCK_CUBES = 64;
 
+// What a model's surface is, for a pack's models program (shader_pack_surface.slang names them MODEL_FOLIAGE and the
+// rest).
+static const uint PACK_MODEL_FOLIAGE = 1;
+static const uint PACK_MODEL_CUSTOM = 2;
+static const uint PACK_MODEL_GLOWS = 4;
+
 // What water is, for a pack's water program (shader_pack_surface.slang names them WATER_IS_SEA and the rest).
 static const uint PACK_WATER_SEA = 1;
 static const uint PACK_WATER_POOL = 2;

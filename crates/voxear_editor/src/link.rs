@@ -901,6 +901,13 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, gpu_frame_ms, blocks: { draws, triangles, shadow_draws }, mesh_pool: { … as mesh_pool.get }, posed: { skinned, by_bones, weighted, unseen, shared, baked, at_rest }, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
     },
     CallInfo {
+        name: "crowds.get",
+        about: "The crowd as the game plays: whether tiers are on, the Near, Middle and Records beyond distances (Project Settings ▸ Crowds), how many characters are near, middle and far this frame and kept as records far off, and how the renderer posed models' parts (skinned, by their bones where drawn, where drawn for want of room, unseen, sharing a pose, from baked clips, at rest).",
+        args: &[],
+        changes: false,
+        returns: "{ enabled, near, middle, records_beyond, counts: { near, middle, far, records }, posed: { skinned, by_bones, weighted, unseen, shared, baked, at_rest } }",
+    },
+    CallInfo {
         name: "mesh_pool.get",
         about: "The vertex and index space every mesh shares, and who holds it: models (with built-in meshes and skinned parts' poses), worlds of blocks' lighting (their chunks' meshes for the GI's and sound's rays, and how far from the camera the farthest is), what is being freed, and what is free; the share lighting may take (Project Settings ▸ Quality ▸ Block Worlds ▸ Lighting share), and how many lighting chunks have been given back for models to fit, of those at once.",
         args: &[],

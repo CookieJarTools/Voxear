@@ -67,7 +67,20 @@ pub(super) struct Rpcs {
     warned: HashMap<PlayerId, f64>,
     /// The tick the RPC scripts took last was made on.
     pub tick: u64,
+    /// On a client, the engine's own events for Objs here, each waiting for
+    /// the tick it happened on to be shown, or `ENGINE_WAIT` at most: the
+    /// Obj, its key, the tick, its bytes, and when it came.
+    pub engine: Vec<(Entity, u32, u64, Vec<u8>, f64)>,
 }
+
+/// The first key of the engine's own events, sent as RPCs are; scripts'
+/// keys are below it.
+pub const ENGINE_KEYS: u32 = 0xFFFF_FF00;
+/// The longest the engine's own events wait for their tick to be shown, in
+/// seconds: no snapshot comes while nothing moves.
+pub const ENGINE_WAIT: f64 = 0.2;
+/// A Mob Motion's attacks and flinches: two bytes, how many of each.
+pub const MOB_ACTS: u32 = ENGINE_KEYS + 1;
 
 impl Rpcs {
     /// Whether `player` may make another RPC now, and if so, counts it.

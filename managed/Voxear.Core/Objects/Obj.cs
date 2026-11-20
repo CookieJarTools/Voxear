@@ -615,6 +615,16 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new NavObstacle(this);
 	}
 
+	/// <summary>The Obj's Crowd Member, its own place in a crowd. Not valid when it has none.</summary>
+	public CrowdMember CrowdMember => new CrowdMember(this);
+
+	/// <summary>Gives the Obj a Crowd Member, its tier by its distance, unless it has one, and returns it.</summary>
+	public CrowdMember AddCrowdMember()
+	{
+		NativeComponent.Set(NativeComponent.CrowdMember, this, NativeComponent.Add, Vector4.Zero);
+		return new CrowdMember(this);
+	}
+
 	/// <summary>The Obj's Block Mob, which walks it through a Block World. Not valid when it has none.</summary>
 	public BlockMob BlockMob => new BlockMob(this);
 

@@ -698,10 +698,16 @@ pub enum ComponentKind {
     /// What keeps water out of its shape, and the water standing in it, its
     /// bilge.
     DryArea = 39,
+    /// An Obj's own place in a crowd: its tier, importance and whether it
+    /// is kept as a record far off.
+    CrowdMember = 40,
+    /// The crowd as a whole: its distances, and how many are in each tier
+    /// and kept as records.
+    Crowds = 41,
 }
 
 /// The most kinds `kind_value` answers.
-const KINDS: usize = 40;
+const KINDS: usize = 42;
 static KIND_VALUES: [std::sync::OnceLock<ComponentValues>; KINDS] = [const { std::sync::OnceLock::new() }; KINDS];
 
 /// Sets what answers a kind of component in scripts; the first set is kept.

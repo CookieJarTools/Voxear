@@ -503,10 +503,22 @@ pub fn match_motion(world: &mut World, delta: f32) {
         .collect();
     let crowd = world.resource::<crate::crowds::CrowdSettings>().cloned().unwrap_or_default();
     let frame = world.resource::<crate::crowds::CrowdTiers>().map_or(0, |tiers| tiers.frame);
+    // Objs something hangs from, whose bones it may follow, are always posed.
+    let held: std::collections::HashSet<Entity> =
+        world.query_ref::<&voxear_scene::Parent>().into_iter().map(|parent| parent.0).collect();
     for (entity, mut matcher, animation) in matchers {
         // Further out in a crowd, it searches less often and lets its feet go with its clips; and where nothing it
         // plays moves its Obj, it is posed every few frames, the time between taken at once.
         let tier = world.resource::<crate::crowds::CrowdTiers>().map_or_else(Default::default, |tiers| tiers.of(entity));
+        // Far off, with nothing it plays moving its Obj and nothing hanging from it, it plays one of its state's clips
+        // on the GPU (see `voxear_render::PlayedClip`).
+        let plain = !matcher.root_motion && matcher.commands.is_empty() && !held.contains(&entity);
+        if tier == crate::crowds::CrowdTier::Far && plain && play_far(world, entity, &matcher, delta) {
+            continue;
+        }
+        if world.has::<voxear_render::PlayedClip>(entity) {
+            world.remove::<voxear_render::PlayedClip>(entity);
+        }
         if tier != crate::crowds::CrowdTier::Near {
             matcher.search_every *= crowd.middle_search_every;
             matcher.foot_locking = false;
@@ -969,6 +981,65 @@ fn fade(state: &mut MotionMatcherState, matcher: &MotionMatcher, standing: bool,
         state.weights.iter_mut().for_each(|w| *w /= total);
     }
     state.idle_weight += (f32::from(u8::from(standing)) - state.idle_weight) * k;
+}
+
+/// A far character's state played on the GPU: the clip of its state whose
+/// speed is nearest how fast its Obj goes, as far through its loop as the
+/// ground it covered takes it, so its feet keep pace; standing, the clip it
+/// stands with. False where it cannot be: it plays nothing yet, an action
+/// plays, or a bone is hidden.
+fn play_far(world: &mut World, entity: Entity, matcher: &MotionMatcher, delta: f32) -> bool {
+    let Some(mut state) = world.get::<MotionMatcherState>(entity).cloned() else { return false };
+    let Some(play) = state.play.clone() else { return false };
+    if state.taken || state.action.is_some() || world.has::<voxear_render::HiddenBones>(entity) || delta <= 0.0 {
+        return false;
+    }
+    let at = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+    let moved = state.last.map_or(Vec3::ZERO, |last| Vec3::new(at.x - last.x, 0.0, at.z - last.z));
+    state.last = Some(at);
+    state.velocity = moved / delta;
+    let speed = state.velocity.length();
+    let database = &play.database;
+    let walking = database.runs.iter().filter(|run| run.moves()).min_by(|a, b| {
+        (a.velocity.length() - speed).abs().total_cmp(&(b.velocity.length() - speed).abs())
+    });
+    let standing = play.idle.filter(|_| speed < matcher.idle_speed || walking.is_none());
+    let (clip, time) = match (standing, walking) {
+        (Some(idle), _) => {
+            state.idle_time += delta;
+            (idle, state.idle_time)
+        }
+        (None, Some(run)) => {
+            let (pace, duration) = (run.velocity.length().max(0.1), run.duration().max(1e-3));
+            state.phase = (state.phase + speed * delta / pace / duration).rem_euclid(1.0);
+            (run.clip, run.start as f32 / voxear_render::CLIP_RATE + state.phase * duration)
+        }
+        (None, None) => return false,
+    };
+    let Some(clip) = stable_clip(world, &play.animation, clip) else { return false };
+    world.insert(entity, voxear_render::PlayedClip { clip, time, looping: true });
+    world.insert(entity, state);
+    true
+}
+
+/// The clips of states' animations played on the GPU, each kept as one
+/// `Arc` so the renderer bakes it once.
+#[derive(Default)]
+struct FarClips(Vec<(std::sync::Weak<voxear_render::ModelAnimation>, usize, Arc<voxear_render::Clip>)>);
+
+fn stable_clip(world: &mut World, animation: &Arc<voxear_render::ModelAnimation>, index: usize) -> Option<Arc<voxear_render::Clip>> {
+    if world.resource::<FarClips>().is_none() {
+        world.insert_resource(FarClips::default());
+    }
+    let kept = world.resource_mut::<FarClips>()?;
+    kept.0.retain(|(made, ..)| made.strong_count() > 0);
+    let found = kept.0.iter().find(|(made, at, _)| *at == index && made.upgrade().is_some_and(|a| Arc::ptr_eq(&a, animation)));
+    if let Some((.., clip)) = found {
+        return Some(clip.clone());
+    }
+    let clip = Arc::new(animation.clips.get(index)?.clone());
+    kept.0.push((Arc::downgrade(animation), index, clip.clone()));
+    Some(clip)
 }
 
 /// Moves the clips playing on through their loops, together, as fast as
@@ -1598,6 +1669,44 @@ mod tests {
         steady.match_speed = false;
         drive(&mut state, &steady, &play, 0.1, Vec3::Z * 1.6);
         assert_eq!(state.rate(), 1.0);
+    }
+
+    /// Far off, a matcher plays the clip of its state nearest how fast its
+    /// Obj goes on the GPU, as far through it as the ground covered takes
+    /// it, and its standing clip when it stops; and one clip is kept for
+    /// every character playing it.
+    #[test]
+    fn far_off_it_plays_the_clip_its_speed_picks_on_the_gpu() {
+        let animation = Arc::new(moves());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(animation.clone(), database.clone()));
+        let mut world = World::new();
+        let matcher = MotionMatcher::default();
+        let state = MotionMatcherState { play: Some(play.clone()), ..MotionMatcherState::default() };
+        let jogger = world.spawn((matcher.clone(), state, voxear_scene::Transform::IDENTITY));
+        let mut at = Vec3::ZERO;
+        for _ in 0..30 {
+            at += Vec3::Z * 3.4 * DT;
+            world.get_mut::<voxear_scene::Transform>(jogger).unwrap().position = at;
+            assert!(play_far(&mut world, jogger, &matcher, DT));
+        }
+        let played = world.get::<voxear_render::PlayedClip>(jogger).unwrap().clone();
+        assert_eq!(played.clip.name, "Jog", "the clip nearest its pace");
+        let run = database.runs.iter().find(|run| animation.clips[run.clip].name == "Jog").unwrap();
+        // Half a second at 3.4 m/s over a loop covering 3.5 m a second.
+        let phase = world.get::<MotionMatcherState>(jogger).unwrap().phase;
+        let expected = (29.0 * DT * 3.4 / 3.5 / run.duration()).rem_euclid(1.0);
+        assert!((phase - expected).abs() < 0.02, "as far through as its steps took it: {phase} against {expected}");
+        for _ in 0..5 {
+            assert!(play_far(&mut world, jogger, &matcher, DT));
+        }
+        assert_eq!(world.get::<voxear_render::PlayedClip>(jogger).unwrap().clip.name, "Stand", "standing still");
+        let again = stable_clip(&mut world, &animation, played_index(&animation, "Jog")).unwrap();
+        assert!(Arc::ptr_eq(&again, &played.clip), "one clip kept for every character");
+    }
+
+    fn played_index(animation: &ModelAnimation, name: &str) -> usize {
+        animation.clips.iter().position(|clip| clip.name == name).unwrap()
     }
 
     /// Drives the model at `VOXEAR_TEST_MODEL`, when set, through a walk, a

@@ -19,7 +19,7 @@ Every Obj with a **Nav Agent**, a **Block Mob**, a **Mob Motion**, a **Motion Ma
 - **Planning:** between its plans, a Nav Agent goes on the way it last planned, at the velocity it last chose. It plans at once whenever it is sent somewhere new or a search it asked for is waiting.
 - **Moving:** a far Nav Agent moves every few steps, each move covering the time of the steps it missed.
 - **Posing:** a Mob Motion or Motion Matcher keeps its pose between poses, then poses for the whole time since. A Motion Matcher whose clips move its Obj (root motion), or that is playing an action, is posed every frame wherever it is.
-- **Motion matching:** beyond the near tier a Motion Matcher searches less often (its **Search Every** times **Search time ×**), and lets its feet follow its clips rather than holding them where they came down.
+- **Motion matching:** beyond the near tier a Motion Matcher searches less often (its **Search Every** times **Search time ×**), and lets its feet follow its clips rather than holding them where they came down. In the far tier it plays the clip of its state nearest how fast it goes, on the GPU, its feet in step with the ground it covers, and the clip it stands with when it stops.
 
 Box models are cheap to pose and draw however many there are: each box follows its bone where it is drawn, with no skinning. Mob Motion poses them on several threads.
 
@@ -46,6 +46,30 @@ Choose **Add Component ▸ Navigation ▸ Crowd Member** on an Obj to put its ti
 - **Tier:** **By Distance** as the rest, or always **Near**, **Middle** or **Far**. A boss that must never stutter is always Near; a flock of birds overhead can always be Far.
 - **Importance:** scales the distances it is measured by. At 2 it stays near twice as far out; at 0.5, half as far.
 - **Keep as Record:** far beyond the streamed world, its Obj goes and it is kept as a record (see below).
+
+## From a script
+
+```csharp
+// The boss never stutters; villagers go as records when no one is near.
+boss.AddCrowdMember().Tier = CrowdTier.Near;
+villager.AddCrowdMember().KeepAsRecord = true;
+
+// Fewer characters near on a slow machine, and how many there are.
+Crowds.Near = 25f;
+var counts = Crowds.Counts;
+Log.Info($"{counts.Near} near, {counts.Middle} middle, {counts.Far} far, {counts.Records} kept as records");
+```
+
+| Member | What it does |
+| --- | --- |
+| `Obj.CrowdMember`, `Obj.AddCrowdMember()` | The Obj's Crowd Member, or a new one |
+| `Tier`, `Importance`, `KeepAsRecord` | Its settings |
+| `TierNow` | The tier it is in this frame |
+| `Crowds.Near`, `Crowds.Middle`, `Crowds.RecordsBeyond`, `Crowds.Enabled` | The distances, set for the game as it plays |
+| `Crowds.Counts` | How many are near, middle and far, and kept as records |
+| `CrowdRecords.Capture()`, `CrowdRecords.Apply(bytes)` | The records, for a game's own saves |
+
+The editor link's `crowds.get` (and `vox editor call crowds.get`) gives the same counts and distances, with how the renderer posed the frame's characters.
 
 ## Characters far away
 

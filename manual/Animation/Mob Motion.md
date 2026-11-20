@@ -55,6 +55,8 @@ motion.Attack();
 | `MoveAs(velocity)` | Walks as if it moved at this velocity, for an Obj that is moved in jumps, such as one a network places. `FollowObj()` goes back to watching the Obj |
 | `LegSwing`, `ArmSwing`, `Stride`, `Bounce`, `Idle`, `LookSpeed`, `LookLimit`, `Lag` | Its settings |
 
+On a server, `Attack()` and `Hurt()` reach every player's machine too, and play there as the creature gets to where it struck, so everyone sees the swing in step with it.
+
 To have a creature walk about by itself in a Block World, add a [[Block Mobs|Block Mob]] as well.
 
 ## With clips of your own

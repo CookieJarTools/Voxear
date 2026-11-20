@@ -4741,6 +4741,8 @@ The model is server-authoritative and ECS-native.
 **Crowds.** Each player's snapshot is anchored at their place, so what is near them goes as short steps from it and
 upright turns as a yaw; Objs of a crowd go to each player more often the nearer they are, and not past the records'
 ring (`replication::CrowdRates`, from `crowds::CrowdSettings`). Poses never go: each machine animates from movement.
+What movement cannot show goes as the engine's own events, sent as RPCs are with keys of their own and held on a
+player's machine until their tick is shown: a Mob Motion's attacks and flinches (`net::MOB_ACTS`).
 
 **Dimensions.** Players may be in different dimensions at once; the server makes ground round each, sends each
 only the Objs of the dimensions they have, decides crossings and sends a dimension's edits as a player comes into

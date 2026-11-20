@@ -54,7 +54,7 @@ pub use messages::DimensionWhat;
 pub use nav::{NavAsked, ask_nav, take_nav_asked};
 pub use prediction::{Correction, Predicting, begin_replay, corrections, end_replay, mark_predicting, record, replay_tick};
 pub use rewind::{MOST_REWIND, raycast_as_seen_by};
-pub use rpcs::{Rpc, RpcTarget};
+pub use rpcs::{ENGINE_KEYS, MOB_ACTS, Rpc, RpcTarget};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
 use messages::{Message, REPEATS};
@@ -603,6 +603,12 @@ impl NetSession {
                 }
                 Message::Snapshot { tick, entries, .. } => self.take_snapshot(tick, entries),
                 Message::Owner { id, owner } => self.authority.owners.push((id, owner)),
+                // The engine's own wait for their tick to be shown; one for an Obj not made here yet is let go.
+                Message::Rpc { id, key, tick, bytes } if key >= rpcs::ENGINE_KEYS => {
+                    if let Some(entity) = self.replication.remote.get(&id).and_then(|r| r.entity) {
+                        self.rpcs.engine.push((entity, key, tick, bytes, self.now));
+                    }
+                }
                 Message::Rpc { id, key, tick, bytes } => match self.replication.remote.get(&id).and_then(|r| r.entity) {
                     Some(entity) => self.rpcs.incoming.push_back(Rpc { entity, key, caller: None, tick, bytes }),
                     None => self.rpcs.early.push((self.now, id, key, tick, bytes)),
@@ -1281,6 +1287,34 @@ pub fn rpc(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes: Vec<u
             true
         }
     }
+}
+
+/// On the server, sends one of the engine's own events about a networked
+/// Obj to every player who has it, reliably, with this tick: never to the
+/// host's own player, whose machine it happened on. False where there is
+/// no session, it is not the server, or the Obj is not shared.
+pub(crate) fn engine_event(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes: Vec<u8>) -> bool {
+    let Some(id) = world.get::<Networked>(entity).map(|n| n.id).filter(|id| id.0 != 0) else { return false };
+    let Some(session) = world.resource_mut::<NetSession>() else { return false };
+    if !matches!(session.end, End::Server(_)) || session.prediction.replaying() {
+        return false;
+    }
+    session.rpcs.outgoing.push(rpcs::Outgoing { id, key, target: RpcTarget::Players, reliable: true, bytes });
+    true
+}
+
+/// On a client, the engine's own events whose tick is now shown, or that
+/// have waited `ENGINE_WAIT`, taken: each its Obj, key and bytes, in the
+/// order they came.
+pub(crate) fn take_engine_events(world: &mut World) -> Vec<(voxear_ecs::Entity, u32, Vec<u8>)> {
+    let Some(session) = world.resource_mut::<NetSession>() else { return Vec::new() };
+    let (shown, now) = (session.replication.shown, session.now);
+    let due = |(_, _, tick, _, came): &(voxear_ecs::Entity, u32, u64, Vec<u8>, f64)| {
+        *tick as f64 <= shown || now - came >= rpcs::ENGINE_WAIT
+    };
+    let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut session.rpcs.engine).into_iter().partition(due);
+    session.rpcs.engine = waiting;
+    due.into_iter().map(|(entity, key, _, bytes, _)| (entity, key, bytes)).collect()
 }
 
 /// The next RPC that came, for scripts to run.

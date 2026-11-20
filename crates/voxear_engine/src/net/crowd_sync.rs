@@ -44,7 +44,8 @@ pub(super) fn send(world: &World, session: &mut NetSession) {
     if session.role == NetRole::Client || crate::crowd_records::count(world) == 0 && session.records.sent.is_empty() {
         return;
     }
-    let within = world.resource::<crate::crowds::CrowdSettings>().map_or(600.0, |settings| settings.draw_records_within);
+    let within =
+        world.resource::<crate::crowds::CrowdSettings>().map_or(600.0, |settings| settings.draw_records_within);
     let now = session.now;
     let clients: Vec<(ClientId, super::PlayerId)> = session.by_client.iter().map(|(c, p)| (*c, *p)).collect();
     for (client, player) in clients {

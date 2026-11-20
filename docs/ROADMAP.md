@@ -4032,8 +4032,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     (`crowd_records::RecordGhost`, `Game::draw_crowd_records`): the prefab's models under one Obj moved smoothly to
     its record, playing on the GPU their Animator's clip, or one named for walking or idling as the record walks or
     stands. Tests: a player sent the two records within 600 m, nearest first with the server's numbers, and after
-    walking over, the far one in place of the first; a record drawn 400 m off and not 2 km off. Not done: far crowds
-    made from seeds; ghosts seen through a renderer in a test.
+    walking over, the far one in place of the first; a record drawn 400 m off and not 2 km off; on the GPU, a record
+    400 m off drawn as its prefab's box-model player through the haze, and from 6 m, facing the camera with its right
+    arm held up by its baked clip. Records put back from a save or sent by the server are the open level's, not
+    cleared as another level's on their first frame. Not done: far crowds made from seeds.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

@@ -61,6 +61,9 @@ pub struct CrowdRecords {
     /// Counts each time records are made or made Objs again, or put in
     /// place: players are sent them again when it moves on.
     pub version: u64,
+    /// Put in place from a save or by the server: they are the open level's,
+    /// whichever it is when they are next walked.
+    adopting: bool,
 }
 
 impl CrowdRecords {
@@ -244,6 +247,9 @@ fn viewpoints(world: &World) -> Vec<DVec3> {
 pub fn update(world: &mut World, delta: f32, level: Option<&str>, makes: bool) -> (RecordChanges, Vec<Entity>) {
     let settings = world.resource::<CrowdSettings>().cloned().unwrap_or_default();
     let mut records = world.remove_resource::<CrowdRecords>().unwrap_or_default();
+    if records.adopting {
+        (records.level, records.adopting) = (level.map(str::to_string), false);
+    }
     if records.level.as_deref() != level {
         let version = records.version + 1;
         records = CrowdRecords { level: level.map(str::to_string), version, ..CrowdRecords::default() };
@@ -345,7 +351,10 @@ pub(crate) fn near_bytes(world: &World, at: Vec3, within: f32, most: usize) -> (
     near.sort_by(|a, b| a.0.total_cmp(&b.0));
     // About 20 bytes a record, and a prefab's GUID now and then: as many as fit.
     let fit = (most.saturating_sub(64) / 40).max(1);
-    let sent = CrowdRecords { records: near.into_iter().take(fit).map(|(_, r)| r.clone()).collect(), ..CrowdRecords::default() };
+    let sent = CrowdRecords {
+        records: near.into_iter().take(fit).map(|(_, r)| r.clone()).collect(),
+        ..CrowdRecords::default()
+    };
     (sent.to_bytes(), records.version)
 }
 
@@ -356,6 +365,7 @@ pub(crate) fn take_from_server(world: &mut World, bytes: &[u8]) -> bool {
     let mut records = world.remove_resource::<CrowdRecords>().unwrap_or_default();
     records.records = sent;
     records.version += 1;
+    records.adopting = true;
     world.insert_resource(records);
     true
 }
@@ -423,6 +433,7 @@ pub fn state(world: &mut World, given: Option<&[u8]>) -> Option<Vec<u8>> {
     records.records = restored;
     records.walked = 0.0;
     records.version += 1;
+    records.adopting = true;
     world.insert_resource(records);
     Some(Vec::new())
 }
@@ -464,7 +475,9 @@ pub(crate) fn move_ghost(world: &mut World, ghost: &mut Ghost, drawn: &Drawn, de
     for (part, walk, stand) in &ghost.parts {
         let clip = if drawn.speed > 0.05 { walk.clone().or(stand.clone()) } else { stand.clone().or(walk.clone()) };
         match clip {
-            Some(clip) => drop(world.insert(*part, voxear_render::PlayedClip { clip, time: ghost.time, looping: true })),
+            Some(clip) => {
+                drop(world.insert(*part, voxear_render::PlayedClip { clip, time: ghost.time, looping: true }))
+            }
             None => drop(world.remove::<voxear_render::PlayedClip>(*part)),
         }
     }

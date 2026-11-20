@@ -259,9 +259,8 @@ fn a_walker_far_off_is_kept_as_a_record_walks_on_and_is_made_again_near() {
     voxear_engine::crowd_records::state(&mut game.engine.world, Some(&saved)).unwrap();
     assert_eq!(voxear_engine::crowd_records::count(&game.engine.world), 1);
     // Drawn while the camera is within 600 m of it, and not beyond.
-    let ghosts = |game: &Game| {
-        game.engine.world.query_ref::<&voxear_engine::crowd_records::RecordGhost>().into_iter().count()
-    };
+    let ghosts =
+        |game: &Game| game.engine.world.query_ref::<&voxear_engine::crowd_records::RecordGhost>().into_iter().count();
     // 400 m off, the walker made again goes as a record too: both drawn.
     game.engine.world.get_mut::<Transform>(eye).unwrap().position = Vec3::new(400.0, 10.0, 16.0);
     game.tick(FRAME, None);
@@ -270,4 +269,123 @@ fn a_walker_far_off_is_kept_as_a_record_walks_on_and_is_made_again_near() {
     game.engine.world.get_mut::<Transform>(eye).unwrap().position = Vec3::new(2000.0, 10.0, 16.0);
     game.tick(FRAME, None);
     assert_eq!(ghosts(&game), 0, "too far to draw");
+}
+
+/// A project with a camera at (0, 1, 0) looking along +Z through a narrow lens, a sun, and a prefab of the
+/// infinite-world template's player playing a clip, `Wave`, its right arm held straight up.
+fn drawing_project() -> tempfile::TempDir {
+    use voxear_render::{BoxClip, BoxKey, BoxModel, BoxTrack};
+    let dir = tempfile::tempdir().unwrap();
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../templates/infinite-world/Characters/Player.boxmodel");
+    let mut model = BoxModel::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let up = Vec3::new(180.0, 0.0, 0.0);
+    let held = BoxTrack { bone: "RightArm".into(), keys: vec![BoxKey::turned(0.0, up), BoxKey::turned(1.0, up)] };
+    model.clips.push(BoxClip { tracks: vec![held], ..BoxClip::new("Wave") });
+    let scene = "format = 1\n\n[[obj]]\nid = 1\nname = \"Eye\"\nposition = [0.0, 1.0, 0.0]\n[obj.camera]\nfov = 4.0\n\n\
+                 [[obj]]\nid = 2\nname = \"Sun\"\nrotation = [50.0, 160.0, 0.0]\n[obj.light]\ntype = \"directional\"\n";
+    let prefab = "format = 1\n\n[[obj]]\nid = 1\nname = \"Waver\"\n[obj.model]\nmodel = \"Characters/Player.boxmodel\"\n\
+                  [obj.animator]\nclip = \"Wave\"\n[obj.crowd_member]\nkeep_as_record = true\n";
+    let files = [
+        ("voxear.toml", "[project]\nname = \"Drawn\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Main.scene\"\n".to_string()),
+        ("Scenes/Main.scene", scene.to_string()),
+        ("Characters/Player.boxmodel", model.to_text()),
+        ("Characters/Waver.prefab", prefab.to_string()),
+    ];
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn a_record_far_off_is_drawn_as_its_prefabs_model_playing_its_clip() {
+    use voxear_engine::crowd_records::{CrowdRecord, CrowdRecords, RecordGhost, state};
+    use voxear_render::{Renderer, RendererSettings};
+    let Ok(mut renderer) = Renderer::new_offscreen(640, 360, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = drawing_project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    // One record, standing 400 m straight ahead: beyond where records are made Objs, within where they are drawn.
+    let prefab = game.content.db().guid_of("Characters/Waver.prefab").unwrap();
+    let mut records = CrowdRecords::default();
+    let at = voxear_core::math::DVec3::new(0.0, 0.0, 400.0);
+    let yaw = std::f32::consts::PI;
+    records.records.push(CrowdRecord {
+        id: 1,
+        prefab,
+        position: at,
+        yaw,
+        destination: None,
+        way: Vec::new(),
+        speed: 0.0,
+    });
+    state(&mut game.engine.world, Some(&records.to_bytes())).unwrap();
+    for _ in 0..30 {
+        game.tick(FRAME, Some(&mut renderer));
+        renderer.render(&game.engine.world, 1.0).unwrap();
+    }
+    let ghosts = game.engine.world.query_ref::<&RecordGhost>().into_iter().count();
+    assert_eq!(ghosts, 2, "the ghost and its model");
+    let played = game.engine.world.query_ref::<&voxear_render::PlayedClip>().into_iter().count();
+    assert_eq!(played, 1, "its model plays Wave on the GPU");
+    assert_eq!(renderer.stats().posed.baked, 1, "{:?}", renderer.stats().posed);
+    // 400 m off, a figure about 24 pixels tall just under the middle of the picture, darker than the haze beside it.
+    let far = picture(&mut renderer, "record ghost far.png");
+    let haze = count(&far, (200, 179, 201, 180), |_| true);
+    assert_eq!(haze, 1);
+    let at = ((180 * far.0 + 200) * 4) as usize;
+    let beside = [far.1[at], far.1[at + 1], far.1[at + 2]].map(i32::from);
+    let figure = count(&far, (300, 160, 340, 200), |rgb| (0..3).all(|c| rgb[c] + 6 < beside[c]));
+    assert!(figure > 60, "a figure shows: {figure} pixels");
+    // Up close, still a ghost (no record made an Obj), facing the camera with its right arm raised by its clip.
+    voxear_engine::crowds::CrowdSettings { records_beyond: 0.0, ..Default::default() }.put(&mut game.engine.world);
+    let eye = game.engine.world.query_ref::<(Entity, &voxear_render::Camera)>().into_iter().next().unwrap().0;
+    game.engine.world.get_mut::<Transform>(eye).unwrap().position = Vec3::new(0.0, 1.0, 394.0);
+    game.engine.world.insert(eye, voxear_render::Camera { fov_y_degrees: 60.0, ..Default::default() });
+    for _ in 0..10 {
+        game.tick(FRAME, Some(&mut renderer));
+        renderer.render(&game.engine.world, 1.0).unwrap();
+    }
+    assert_eq!(game.engine.world.query_ref::<&RecordGhost>().into_iter().count(), 2, "still a ghost");
+    let near = picture(&mut renderer, "record ghost near.png");
+    let shirt = count(&near, (300, 160, 345, 195), |[r, g, b]| r > 2 * g + 20 && r > 2 * b + 20);
+    assert!(shirt > 200, "its red shirt: {shirt} pixels");
+    // Where its right arm hangs at rest is beside its body; held up, beside its head.
+    let raised = count(&near, (296, 136, 306, 156), |[r, _, b]| b + 15 < r);
+    assert!(raised > 40, "its arm held up beside its head: {raised} pixels");
+}
+
+/// The picture drawn last, kept as `name` where `VOXEAR_TEST_OUTPUT` says.
+fn picture(renderer: &mut voxear_render::Renderer, name: &str) -> (u32, Vec<u8>) {
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    if let Ok(out) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    }
+    (width, pixels)
+}
+
+/// How many pixels in a rectangle, left, top, right and bottom, are as `wanted` says of their colour.
+fn count(
+    (width, pixels): &(u32, Vec<u8>),
+    (left, top, right, bottom): (u32, u32, u32, u32),
+    wanted: impl Fn([i32; 3]) -> bool,
+) -> usize {
+    let mut found = 0;
+    for y in top..bottom {
+        for x in left..right {
+            let at = ((y * width + x) * 4) as usize;
+            let rgb = [pixels[at], pixels[at + 1], pixels[at + 2]].map(i32::from);
+            found += usize::from(wanted(rgb));
+        }
+    }
+    found
 }

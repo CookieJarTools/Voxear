@@ -512,7 +512,8 @@ impl Assets {
             device_local,
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
-        let skins = gpu.create_buffer("skins", FIRST_SKIN_VERTICES * size_of::<SkinVertex>() as u64, storage, device_local)?;
+        let skins =
+            gpu.create_buffer("skins", FIRST_SKIN_VERTICES * size_of::<SkinVertex>() as u64, storage, device_local)?;
         // Read back for a lightmap bake.
         let lightmap_uvs = gpu.create_buffer("lightmap uvs", MAX_VERTICES * 8, storage | read, device_local)?;
         let meshlets =

@@ -24,6 +24,12 @@ public readonly struct ShaderPack : IEquatable<ShaderPack>, IAsset<ShaderPack>
 	/// </summary>
 	public static readonly ShaderPack Evening = new("builtin:evening", "Evening");
 
+	/// <summary>
+	/// Bright, rich colour: deep blue skies, lush greens, glowing warm light and dark, rich shade, the dullest colours
+	/// lifted most.
+	/// </summary>
+	public static readonly ShaderPack Vivid = new("builtin:vivid", "Vivid");
+
 	private readonly string? reference;
 	private readonly string? name;
 	private readonly string? description;

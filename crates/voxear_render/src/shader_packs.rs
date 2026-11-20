@@ -73,21 +73,32 @@ pub const MAX_OPTIONS: usize = 32;
 
 /// The engine's own packs: what each is named by after `builtin:`, what a
 /// menu calls it, and its files.
-pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 1] = [(
-    "evening",
-    "Evening",
-    &[
-        ("pack.toml", include_str!("../shader_packs/evening.shaderpack/pack.toml")),
-        ("rays.slang", include_str!("../shader_packs/evening.shaderpack/rays.slang")),
-        ("light.slang", include_str!("../shader_packs/evening.shaderpack/light.slang")),
-        ("grade.slang", include_str!("../shader_packs/evening.shaderpack/grade.slang")),
-        ("faces.slang", include_str!("../shader_packs/evening.shaderpack/faces.slang")),
-        ("water.slang", include_str!("../shader_packs/evening.shaderpack/water.slang")),
-        ("sky.slang", include_str!("../shader_packs/evening.shaderpack/sky.slang")),
-        ("models.slang", include_str!("../shader_packs/evening.shaderpack/models.slang")),
-        ("shadows.slang", include_str!("../shader_packs/evening.shaderpack/shadows.slang")),
-    ],
-)];
+pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 2] = [
+    (
+        "evening",
+        "Evening",
+        &[
+            ("pack.toml", include_str!("../shader_packs/evening.shaderpack/pack.toml")),
+            ("rays.slang", include_str!("../shader_packs/evening.shaderpack/rays.slang")),
+            ("light.slang", include_str!("../shader_packs/evening.shaderpack/light.slang")),
+            ("grade.slang", include_str!("../shader_packs/evening.shaderpack/grade.slang")),
+            ("faces.slang", include_str!("../shader_packs/evening.shaderpack/faces.slang")),
+            ("water.slang", include_str!("../shader_packs/evening.shaderpack/water.slang")),
+            ("sky.slang", include_str!("../shader_packs/evening.shaderpack/sky.slang")),
+            ("models.slang", include_str!("../shader_packs/evening.shaderpack/models.slang")),
+            ("shadows.slang", include_str!("../shader_packs/evening.shaderpack/shadows.slang")),
+        ],
+    ),
+    (
+        "vivid",
+        "Vivid",
+        &[
+            ("pack.toml", include_str!("../shader_packs/vivid.shaderpack/pack.toml")),
+            ("grade.slang", include_str!("../shader_packs/vivid.shaderpack/grade.slang")),
+            ("sky.slang", include_str!("../shader_packs/vivid.shaderpack/sky.slang")),
+        ],
+    ),
+];
 
 /// Where a built-in pack's files are in a source checkout, to be watched
 /// and read again as they change while the engine is worked on.

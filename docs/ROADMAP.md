@@ -4217,6 +4217,8 @@ Done:
 - **Players' packs** (stage 5). C# `ShaderPacks` and `ShaderPack`; `ShaderPackScreen`, a ready-made menu of packs and
   the worn one's options; the choice and options kept beside the saves and worn again at start; compiled programs
   kept on disk by a hash that is the same on any machine; a game's packs compiled when it is built.
+- **Vivid**, a second built-in pack: bright, rich colour, a deeper blue sky, vibrance that lifts the dullest colours
+  most, warm sunlit colours and dark corners, by its own tonemap and a sky program.
 - **Models lit by a pack's program.** `[surface] models`, `float3 run(ModelSurface surface, ModelLighting light)`, in
   every shader that draws models, given the engine's light whole and by its terms; Evening warms them and lays a rim
   of light round what stands against a low sun.

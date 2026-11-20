@@ -1,0 +1,21 @@
+format = 1
+description = "Bright, rich colour: deep blue skies, lush greens, glowing warm light and dark, rich shade, the dullest colours lifted most."
+
+[options]
+vibrance = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Vibrance", about = "How much richer the colours are, the dull ones lifted most so nothing turns garish" }
+contrast = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Contrast", about = "How far light and shade are pushed apart" }
+sky_blue = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Sky blue", about = "How deep a blue the sky is overhead" }
+warmth = { kind = "number", range = [0.0, 1.0], default = 0.5, label = "Warmth", about = "How warm the sunlit colours are" }
+glow = { kind = "number", range = [0.0, 3.0], default = 1.0, label = "Glow", about = "How much bright light glows round itself, where the bloom is on" }
+vignette = { kind = "number", range = [0.0, 1.0], default = 0.6, label = "Vignette", about = "How much darker the corners are" }
+
+# The sky a deeper, cleaner blue overhead, the engine's clouds and sun kept.
+[surface]
+sky = "sky.slang"
+
+# Its own tonemap and grade in the engine's place.
+[[pass]]
+name = "Vivid grade"
+program = "grade.slang"
+at = "tonemap"
+reads = ["color", "bloom"]

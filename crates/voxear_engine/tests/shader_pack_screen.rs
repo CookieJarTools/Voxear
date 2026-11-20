@@ -137,13 +137,13 @@ fn players_pick_a_shader_pack_and_set_its_options_from_the_ready_made_screen() {
     assert!(left == 0.0 && top == 0.0 && tall == 720.0 && (300.0..=520.0).contains(&wide), "{:?}", ui.rect(screen[0]));
     let rows = find(ui, |n| ui.has_class(n, "sps-row"));
     let names: Vec<String> = rows.iter().map(|&row| said(ui, row, "sps-name")).collect();
-    assert_eq!(names, ["None", "Evening", "Warm", "Mine"]);
-    assert_eq!(said(ui, rows[2], "sps-description"), "A test grade.");
-    assert_eq!(said(ui, rows[3], "sps-source"), "Yours");
+    assert_eq!(names, ["None", "Evening", "Vivid", "Warm", "Mine"]);
+    assert_eq!(said(ui, rows[3], "sps-description"), "A test grade.");
+    assert_eq!(said(ui, rows[4], "sps-source"), "Yours");
     assert!(find(ui, |n| ui.has_class(n, "sps-option")).is_empty(), "no options with none worn");
 
     // The project's pack clicked: compiling, then drawn, its options under the list.
-    click(game.ui.ui(), rows[2]);
+    click(game.ui.ui(), rows[3]);
     let started = std::time::Instant::now();
     while game.engine.world.resource::<WornShaderPack>().is_none() && started.elapsed().as_secs() < 300 {
         frame(&mut game);

@@ -6,7 +6,7 @@ A **shader pack** is a set of small programs that change how a game is lit and f
 
 A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds passes of its own to it. A player can wear one of each, and anything a shader pack leaves out the engine draws as it always does. With none worn nothing of this runs, and a frame costs what it did.
 
-## The pack Voxear comes with
+## The packs Voxear comes with
 
 **Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, a golden path of sun on the water, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, a sky turned gold near the horizon and round a low sun with the clouds on its side gold too, long shadows paled by the evening sky, a little green-gold sun through leaves, and a tonemap and grade of its own that warm the light and cool the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
 
@@ -68,6 +68,17 @@ ShaderPacks.SetOption("curve", "Filmic");
 | `ShaderPacks.Changed` | An event: the pack worn changed |
 
 A `ShaderPack` field of a script picks one of your project's packs in the Inspector, as `ShaderPack.Evening` names Voxear's own.
+
+**Vivid** gives bright, rich colour: a deeper blue sky overhead, lush greens and warm sunlit colours, the dullest colours lifted most so nothing turns garish, firm contrast and dark corners. It costs next to nothing: a tonemap of its own and a sky program.
+
+| Option | What it does |
+| --- | --- |
+| **Vibrance** | How much richer the colours are, the dull ones lifted most, 0 to 2 |
+| **Contrast** | How far light and shade are pushed apart, 0 to 2 |
+| **Sky blue** | How deep a blue the sky is overhead, 0 to 2 |
+| **Warmth** | How warm the sunlit colours are, 0 to 1 |
+| **Glow** | How much bright light glows round itself, where the level's bloom is on, 0 to 3 |
+| **Vignette** | How much darker the corners are, 0 to 1 |
 
 ## Seeing a level under a pack
 

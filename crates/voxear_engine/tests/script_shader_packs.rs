@@ -137,7 +137,7 @@ fn a_script_lists_shader_packs_wears_one_sets_its_options_and_the_game_starts_in
 
     // The engine's own first, then the project's, then the player's; none worn to begin with.
     (0..2).for_each(|_| game.tick(1.0 / 60.0, None));
-    assert!(said(&log, "shaders has Evening:BuiltIn, Warm:Game, Mine:Player"), "{:#?}", lines(&log));
+    assert!(said(&log, "shaders has Evening:BuiltIn, Vivid:BuiltIn, Warm:Game, Mine:Player"), "{:#?}", lines(&log));
     assert!(said(&log, "shaders says A test grade."), "{:#?}", lines(&log));
     assert!(said(&log, "shaders wears no shader pack None folder True"), "{:#?}", lines(&log));
 

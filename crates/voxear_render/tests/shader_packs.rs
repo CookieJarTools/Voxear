@@ -845,6 +845,35 @@ fn a_models_program_lights_models_and_is_given_the_engines_light_whole_and_by_it
 }
 
 #[test]
+fn the_vivid_pack_makes_a_world_of_blocks_more_colourful_and_its_sky_bluer() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let plain = render(&mut renderer, &world, 3);
+    let files = match shader_packs::builtin_folder("vivid") {
+        Some(folder) => PackFiles::Folder(folder),
+        None => PackFiles::Embedded(shader_packs::builtin_files("vivid").unwrap()),
+    };
+    let manifest = PackManifest::parse(&files.read("pack.toml").unwrap()).unwrap();
+    wear(&mut world, shader_packs::compile(&manifest, &files).unwrap_or_else(|error| panic!("{error:#}")));
+    let vivid = render(&mut renderer, &world, 3);
+    keep_image("vivid.png", &vivid, (WIDTH, HEIGHT));
+    // How far from grey the colours are, on average, over a band of the picture.
+    let colourful = |pixels: &[u8], rows: std::ops::Range<u32>| {
+        let spread = |[r, g, b]: [i32; 3]| (r.max(g).max(b) - r.min(g).min(b)) as f32;
+        let places = rows.flat_map(|y| (0..WIDTH).map(move |x| (x, y)));
+        let all: Vec<f32> = places.map(|(x, y)| spread(rgb_at(pixels, x, y))).collect();
+        all.iter().sum::<f32>() / all.len() as f32
+    };
+    let (ground, crowns) = (HEIGHT - 40..HEIGHT, 40..90);
+    let (before, after) = (colourful(&plain, ground.clone()), colourful(&vivid, ground.clone()));
+    eprintln!("the ground from {before:.1} to {after:.1}");
+    assert!(colourful(&vivid, ground.clone()) > colourful(&plain, ground) * 1.2, "the ground more colourful");
+    assert!(colourful(&vivid, crowns.clone()) > colourful(&plain, crowns) * 1.2, "the leaves more colourful");
+    let ([pr, _, pb], [vr, _, vb]) = (rgb_at(&plain, OVER.0, OVER.1), rgb_at(&vivid, OVER.0, OVER.1));
+    assert!(vb - vr > pb - pr, "the sky overhead bluer: {pr} {pb} to {vr} {vb}");
+}
+
+#[test]
 fn a_packs_shadow_settings_set_the_suns_width_and_maps() {
     let Some(mut renderer) = renderer() else { return };
     let mut world = trees_plain(&mut renderer);

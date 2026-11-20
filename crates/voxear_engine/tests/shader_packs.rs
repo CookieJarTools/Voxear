@@ -82,19 +82,25 @@ fn the_engines_the_projects_and_a_players_packs_are_listed_and_worn() {
     std::fs::write(own.join("grade.slang"), GRADE).unwrap();
     let packs = shader_packs::list(&mut game.content, Some(players.path()));
     let names: Vec<(&str, PackSource)> = packs.iter().map(|pack| (pack.name.as_str(), pack.source)).collect();
-    assert_eq!(names, [("Evening", PackSource::Builtin), ("Warm", PackSource::Game), ("Mine", PackSource::Player)]);
-    assert_eq!(packs[1].description, "A test grade.");
+    let listed = [
+        ("Evening", PackSource::Builtin),
+        ("Vivid", PackSource::Builtin),
+        ("Warm", PackSource::Game),
+        ("Mine", PackSource::Player),
+    ];
+    assert_eq!(names, listed);
+    assert_eq!(packs[2].description, "A test grade.");
 
     // The project's, by its manifest's path: known by its GUID from then on, and drawn.
     let world = &mut game.engine.world;
     shader_packs::wear(world, &mut game.content, "Packs/Warm.shaderpack/pack.toml").unwrap();
-    assert_eq!(shader_packs::worn(&game.engine.world), Some(packs[1].reference.as_str()));
+    assert_eq!(shader_packs::worn(&game.engine.world), Some(packs[2].reference.as_str()));
     assert_eq!(shader_packs::standing(&game.engine.world), Some(Standing::Drawn));
     let worn = game.engine.world.resource::<WornShaderPack>().expect("handed to the renderer");
     assert_eq!((worn.pack.passes.len(), worn.options[..2].to_vec()), (1, vec![1.0, 0.0]));
 
     // The player's, by its folder; the engine's, by its name; and none.
-    for reference in [packs[2].reference.as_str(), "builtin:evening"] {
+    for reference in [packs[3].reference.as_str(), "builtin:evening"] {
         shader_packs::wear(&mut game.engine.world, &mut game.content, reference).unwrap();
         assert_eq!(shader_packs::worn(&game.engine.world), Some(reference));
         assert!(drawn(&game).is_some(), "{reference} drawn");

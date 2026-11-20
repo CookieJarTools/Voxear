@@ -39,8 +39,8 @@ pub(crate) use bone_attachment::{hide, hide_only, show_all};
 pub use clips::{CLIP_PART, ClipSource, Clips, clips_found_for_scripts, give_clips};
 pub use follow::{FollowSkeleton, follow_skeletons, followed};
 pub use mob_motion::{
-    MobBones, MobMotion, MobMotionState, MobPoser, MotionInput, animate_mobs, give_mob_bones,
-    register as register_mob_motion,
+    MobBones, MobMotion, MobMotionState, MobPoser, MotionInput, animate_mobs, attack as mob_attack, give_mob_bones,
+    hurt as mob_hurt, register as register_mob_motion,
 };
 pub use motion_database::{ClipRun, MotionDatabase};
 pub use motion_matching::{MotionMatcher, MotionMatcherState, StateChoice, match_motion, register};
@@ -177,6 +177,12 @@ pub fn animate(world: &mut World, delta: f32) {
         world.insert(entity, Pose { bones });
         world.insert(entity, state);
     }
+}
+
+/// The clip a reference names, made to fit `model`'s skeleton, for what
+/// plays it elsewhere, as a record's ghost does (see `crowd_records`).
+pub(crate) fn fitted_clip(world: &mut World, reference: &str, model: &Arc<ModelAnimation>) -> Option<Arc<Clip>> {
+    clip_for(world, reference, model)
 }
 
 /// The clip a reference names, made to fit `model`'s skeleton: a clip

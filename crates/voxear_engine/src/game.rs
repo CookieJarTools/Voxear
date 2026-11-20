@@ -1101,7 +1101,10 @@ impl Game {
     /// where it was going.
     fn keep_crowd_records(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
         let level = self.levels.current().map(str::to_string);
-        let (changes, gone) = crate::crowd_records::update(&mut self.engine.world, delta, level.as_deref());
+        // A player's machine keeps the server's records, walked on, and only draws them.
+        let makes = !crate::net::is_client(&self.engine.world);
+        let (changes, gone) = crate::crowd_records::update(&mut self.engine.world, delta, level.as_deref(), makes);
+        self.draw_crowd_records(delta, renderer.as_deref_mut());
         if !gone.is_empty() {
             self.engine.destroy_objs(&gone);
         }
@@ -1130,6 +1133,82 @@ impl Game {
             world.insert(root, crate::crowds::CrowdMember { keep_as_record: true, ..member });
             crate::crowd_records::send_on(world, root, &record);
         }
+    }
+
+    /// Draws the records within Project Settings ▸ Crowds ▸ Draw records
+    /// within of the camera, each as its prefab's models with nothing else
+    /// of it there, playing their clips on the GPU (see `crowd_records`).
+    fn draw_crowd_records(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        use crate::crowd_records::{Ghost, Ghosts, RecordGhost};
+        let world = &mut self.engine.world;
+        let within = world.resource::<crate::crowds::CrowdSettings>().map_or(600.0, |s| s.draw_records_within);
+        let drawn = match within > 0.0 {
+            true => crate::crowd_records::to_draw(world, within, crate::crowd_records::MOST_DRAWN),
+            false => Vec::new(),
+        };
+        let mut ghosts = world.remove_resource::<Ghosts>().unwrap_or_default();
+        let wanted: std::collections::HashSet<u32> = drawn.iter().map(|drawn| drawn.id).collect();
+        ghosts.0.retain(|id, ghost| {
+            let keep = wanted.contains(id) && world.is_alive(ghost.root);
+            if !keep {
+                ghost.parts.iter().for_each(|(part, ..)| drop(world.despawn(*part)));
+                world.despawn(ghost.root);
+            }
+            keep
+        });
+        for drawn in &drawn {
+            if !ghosts.0.contains_key(&drawn.id) {
+                let prefab = drawn.prefab.to_string();
+                let template = self
+                    .content
+                    .prefab(renderer.as_deref_mut(), &prefab)
+                    .and_then(|id| self.content.loaded_template(renderer.as_deref_mut(), id));
+                let Ok(template) = template else { continue };
+                let world = &mut self.engine.world;
+                let root = world.spawn((Transform::from_position(drawn.at), RecordGhost));
+                let mut parts = Vec::new();
+                for obj in &template.objs {
+                    let Some(model) = obj.model.as_ref().and_then(|model| model.0.clone()) else { continue };
+                    // Where it is under the prefab's root, every parent between taken in.
+                    let mut placed = if obj.parent.is_some() { obj.transform.matrix() } else { voxear_core::math::Mat4::IDENTITY };
+                    let mut up = obj.parent;
+                    while let Some(parent) = up.filter(|&parent| template.objs[parent].parent.is_some()) {
+                        placed = template.objs[parent].transform.matrix() * placed;
+                        up = template.objs[parent].parent;
+                    }
+                    let (scale, rotation, position) = placed.to_scale_rotation_translation();
+                    let clips = model.animation.clone().map(|animation| {
+                        let mut named = |words: &[&str]| {
+                            let found = animation.clips.iter().find(|clip| {
+                                let name = clip.name.to_lowercase();
+                                words.iter().any(|word| name.contains(word))
+                            })?;
+                            crate::animation::fitted_clip(world, &found.name.clone(), &animation)
+                        };
+                        match obj.animator.as_ref().filter(|animator| !animator.clip.is_empty()) {
+                            Some(animator) => {
+                                let clip = crate::animation::fitted_clip(world, &animator.clip, &animation);
+                                (clip.clone(), clip)
+                            }
+                            None => (named(&["walk", "run"]), named(&["idle", "stand"])),
+                        }
+                    });
+                    let (walk, stand) = clips.unwrap_or((None, None));
+                    let part = world.spawn((
+                        model,
+                        Transform::new(position, rotation, scale),
+                        voxear_scene::Parent(root),
+                        RecordGhost,
+                    ));
+                    parts.push((part, walk, stand));
+                }
+                ghosts.0.insert(drawn.id, Ghost { root, parts, time: (drawn.id % 97) as f32 * 0.37 });
+            }
+            if let Some(ghost) = ghosts.0.get_mut(&drawn.id) {
+                crate::crowd_records::move_ghost(&mut self.engine.world, ghost, drawn, delta);
+            }
+        }
+        self.engine.world.insert_resource(ghosts);
     }
 
     /// Makes what Heat Bodies' changes became this frame, each in its Obj's

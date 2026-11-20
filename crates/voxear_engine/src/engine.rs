@@ -113,6 +113,7 @@ impl Engine {
         crate::block_mob::register();
         crate::nav_agent::register();
         crate::nav_obstacle::register();
+        crate::crowds::register();
         voxear_scripting::set_kind_texts(voxear_scripting::ComponentKind::Vehicle, voxear_scripting::vehicle_curve_texts);
         let mut world = World::new();
         register_obj_components(&mut world);

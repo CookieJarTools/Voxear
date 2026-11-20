@@ -536,6 +536,20 @@ impl Editor {
             }
             "capture" => self.capture(args),
             "mesh_pool.get" => done(serde_json::to_value(renderer.mesh_pool()).unwrap_or_default()),
+            "crowds.get" => {
+                let world = &self.game.engine.world;
+                let settings = world.resource::<voxear_engine::crowds::CrowdSettings>().cloned().unwrap_or_default();
+                let tiers = world.resource::<voxear_engine::crowds::CrowdTiers>().map_or([0; 3], |tiers| tiers.counts);
+                let records = voxear_engine::crowd_records::count(world);
+                done(json!({
+                    "enabled": settings.enabled,
+                    "near": settings.near,
+                    "middle": settings.middle,
+                    "records_beyond": settings.records_beyond,
+                    "counts": { "near": tiers[0], "middle": tiers[1], "far": tiers[2], "records": records },
+                    "posed": renderer.stats().posed,
+                }))
+            }
             "scripts.build" => {
                 self.rebuild_scripts = true;
                 self.link.scripts_failed = None;

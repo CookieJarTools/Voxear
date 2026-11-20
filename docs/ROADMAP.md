@@ -3976,8 +3976,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     of 60 steps, 2,000 agents crossing a square both ways): along the nav 5.2 ms all near, 3.8 ms all far; by
     Character Controller 12.8 and 7.8 ms. Tests: tiers by distance, by a Crowd Member and switched off; a crowd
     of twenty seen from far off arriving as soon as one seen near, both ways of moving; 2,000 far agents in less
-    of the step; Mob Motion posed over threads as each alone. Manual: Navigation ▸ Crowds. Not done: Crowd
-    Member from C#; between a far character's poses the GPU does not yet blend.
+    of the step; Mob Motion posed over threads as each alone. Manual: Navigation ▸ Crowds. From C#:
+    `Obj.CrowdMember`, `AddCrowdMember` (`Tier`, `Importance`, `KeepAsRecord`, `TierNow`), `Crowds` (`Near`,
+    `Middle`, `RecordsBeyond`, `Enabled`, `Counts`); a Crowd Member alone puts its Obj in a tier; the editor link's
+    `crowds.get`. Not done: between a far character's poses the GPU does not yet blend.
   - [x] **Far crowds on baked clips** (`voxear_render::baked_clips`). An Obj with a **PlayedClip** (`clip`, `time`,
     `looping`) in place of a Pose is posed on the GPU from its clip's baked frames: the first time a clip plays on
     a model it is baked, 30 frames a second, each frame every skin's joints' matrices, into a buffer of their own
@@ -3989,8 +3991,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     10.6 ms animating, 29.3 ms renderer CPU, 10.1 ms GPU frame; played baked, 0.4, 6.1 and 4.6 ms; 1,000 baked, 0.1,
     1.7 and 2.0 ms. Tests: a bar playing its clip baked drawn as the clip sampled on the CPU, at its end and half
     way; a far Animator playing on the GPU and not posed, one held and one near posed, and one come near posed
-    again. Not done: pictures for the furthest humanoids; the Motion Matcher's far tier playing its Motion Set's
-    states baked, picked by speed.
+    again. A far Motion Matcher plays on the GPU too (`play_far`): its state's clip nearest how fast its Obj goes,
+    its phase moved on by the ground covered so its feet keep pace, its standing clip when still; each clip kept
+    as one `Arc` so it is baked once. Test: a far jogger playing Jog in step with the ground, then Stand. Not done:
+    pictures for the furthest humanoids.
   - [x] **Crowd records** (`voxear_engine::crowd_records`). A Crowd Member with **Keep as Record** on, a root made from a
     prefab (`Spawned` or `PrefabInstance`) in the level's dimension, with authority, becomes a `CrowdRecord` beyond
     Project Settings ▸ Crowds ▸ **Records beyond** (`records_beyond`, 250 m, kept 60 m past the middle tier; 0 for
@@ -4016,8 +4020,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     never sent: each machine animates from movement. Tests: a character near the anchor in 66 bits, one far from it
     and one turned over as before; four characters at 10, 100, 200 and 400 m sent every tick, 20 a second, 5 a
     second and never; a thousand near a player, 123 updates a tick within the 1,100-byte snapshot (about 65 before).
-    Not done: actions as timed reliable events; far crowds drawn on each machine from records and seeds; records
-    sent to joining players.
+    A Mob Motion's `Attack` and `Hurt` on a server reach every player's machine as the engine's own reliable events
+    (`net::MOB_ACTS`, keys from `ENGINE_KEYS` up), each with its tick, and play there once that tick is shown (or a
+    fifth of a second at most), never twice on a host. Test: two strikes and a flinch reach a player, played once
+    their tick is shown. Records reach players and are drawn: each record has a number the same on every machine
+    (saved too: `VXCR` 2, 1 still read); the server sends each player the records within Project Settings ▸ Crowds ▸
+    **Draw records within** (`draw_records_within`, 600 m) of them as they join, whenever records are made or made
+    Objs again (`CrowdRecords::version`, at most once a second) and every 5 s (`net::crowd_sync`,
+    `Message::CrowdRecords`, the nearest that fit 64 KB); a player's machine walks them on and never makes or takes
+    one. Every machine draws the records within that distance of its camera, up to 2,000, as ghosts
+    (`crowd_records::RecordGhost`, `Game::draw_crowd_records`): the prefab's models under one Obj moved smoothly to
+    its record, playing on the GPU their Animator's clip, or one named for walking or idling as the record walks or
+    stands. Tests: a player sent the two records within 600 m, nearest first with the server's numbers, and after
+    walking over, the far one in place of the first; a record drawn 400 m off and not 2 km off. Not done: far crowds
+    made from seeds; ghosts seen through a renderer in a test.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

@@ -19,7 +19,7 @@ Every Obj with a **Nav Agent**, a **Block Mob**, a **Mob Motion**, a **Motion Ma
 - **Planning:** between its plans, a Nav Agent goes on the way it last planned, at the velocity it last chose. It plans at once whenever it is sent somewhere new or a search it asked for is waiting.
 - **Moving:** a far Nav Agent moves every few steps, each move covering the time of the steps it missed.
 - **Posing:** a Mob Motion or Motion Matcher keeps its pose between poses, then poses for the whole time since. A Motion Matcher whose clips move its Obj (root motion), or that is playing an action, is posed every frame wherever it is.
-- **Motion matching:** beyond the near tier a Motion Matcher searches less often (its **Search Every** times **Search time ×**), and lets its feet follow its clips rather than holding them where they came down.
+- **Motion matching:** beyond the near tier a Motion Matcher searches less often (its **Search Every** times **Search time ×**), and lets its feet follow its clips rather than holding them where they came down. In the far tier it plays the clip of its state nearest how fast it goes, on the GPU, its feet in step with the ground it covers, and the clip it stands with when it stops.
 
 Box models are cheap to pose and draw however many there are: each box follows its bone where it is drawn, with no skinning. Mob Motion poses them on several threads.
 
@@ -47,6 +47,30 @@ Choose **Add Component ▸ Navigation ▸ Crowd Member** on an Obj to put its ti
 - **Importance:** scales the distances it is measured by. At 2 it stays near twice as far out; at 0.5, half as far.
 - **Keep as Record:** far beyond the streamed world, its Obj goes and it is kept as a record (see below).
 
+## From a script
+
+```csharp
+// The boss never stutters; villagers go as records when no one is near.
+boss.AddCrowdMember().Tier = CrowdTier.Near;
+villager.AddCrowdMember().KeepAsRecord = true;
+
+// Fewer characters near on a slow machine, and how many there are.
+Crowds.Near = 25f;
+var counts = Crowds.Counts;
+Log.Info($"{counts.Near} near, {counts.Middle} middle, {counts.Far} far, {counts.Records} kept as records");
+```
+
+| Member | What it does |
+| --- | --- |
+| `Obj.CrowdMember`, `Obj.AddCrowdMember()` | The Obj's Crowd Member, or a new one |
+| `Tier`, `Importance`, `KeepAsRecord` | Its settings |
+| `TierNow` | The tier it is in this frame |
+| `Crowds.Near`, `Crowds.Middle`, `Crowds.RecordsBeyond`, `Crowds.Enabled` | The distances, set for the game as it plays |
+| `Crowds.Counts` | How many are near, middle and far, and kept as records |
+| `CrowdRecords.Capture()`, `CrowdRecords.Apply(bytes)` | The records, for a game's own saves |
+
+The editor link's `crowds.get` (and `vox editor call crowds.get`) gives the same counts and distances, with how the renderer posed the frame's characters.
+
 ## Characters far away
 
 A world can hold thousands of characters, most of them nowhere near anyone. A Crowd Member with **Keep as Record** on, made from a prefab, becomes a **record** once it is further than **Project Settings ▸ Crowds ▸ Records beyond** (250 m) from the camera and every player: a few numbers saying which prefab it is, where it is, where it was sent and the rest of its way there, and how fast it walks. Its Obj goes.
@@ -54,6 +78,9 @@ A world can hold thousands of characters, most of them nowhere near anyone. A Cr
 - **It walks on.** Once a second a record walks along its way, then straight on to where it was sent, and stops there. The ground round it need not be there.
 - **It comes back.** Within Records beyond less 30 m, it is made again from its prefab where it got to, a few a frame, and sent on where it was going.
 - **Saves keep it.** A save of the scene keeps every record, in about 18 bytes each; `CrowdRecords.Capture` and `CrowdRecords.Apply` keep them in a game's own saves.
+
+- **It is drawn far off.** Records within **Draw records within** (600 m) of the camera are drawn as their prefab's models, nothing else of them there, walking smoothly where their record walks and playing their clips on the GPU: their Animator's clip, or else a clip named for walking while they walk and one named for idling or standing while they stand. Up to 2,000 are drawn, the nearest first.
+- **Players see them too.** On a server each player is sent the records within Draw records within of them as they join, whenever records come and go, and every five seconds as they move about. Their machine walks them on between and draws them, but never makes Objs of them: that is the server's to do.
 
 A record comes back as a new Obj, so a script that held the old one sees it gone: keep what a character is in its prefab, and find it again by what it is rather than holding on to it. Records are kept on the server, or by a game playing alone, and only in the level's own dimension.
 

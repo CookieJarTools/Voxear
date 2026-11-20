@@ -299,6 +299,10 @@ fn a_tool_reads_the_profilers_frames_with_its_panel_hidden() {
     let pool = done(&mut editor, &mut renderer, "mesh_pool.get", json!({}));
     let capacity = pool["vertex_capacity"].as_u64().unwrap();
     assert!(pool["free_vertices"].as_u64().unwrap() <= capacity && pool["lighting_share"] == 75, "{pool}");
+    // The crowd, its distances and counts, and how parts were posed.
+    let crowds = done(&mut editor, &mut renderer, "crowds.get", json!({}));
+    assert!(crowds["enabled"] == true && crowds["near"] == 40.0 && crowds["records_beyond"] == 250.0, "{crowds}");
+    assert!(crowds["counts"]["records"] == 0 && crowds["posed"]["at_rest"] == 0, "{crowds}");
 }
 
 #[test]

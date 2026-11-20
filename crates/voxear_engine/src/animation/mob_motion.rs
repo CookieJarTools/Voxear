@@ -406,11 +406,36 @@ pub fn give_mob_bones(world: &mut World, content: &mut Content) {
     }
 }
 
+/// Makes an Obj's Mob Motion strike once; on a server, every player's
+/// machine is told, and it strikes there as the Obj gets to where it did.
+/// False where it has no Mob Motion.
+pub fn attack(world: &mut World, entity: Entity) -> bool {
+    let Some(motion) = world.get_mut::<MobMotion>(entity) else { return false };
+    motion.attack();
+    crate::net::engine_event(world, entity, crate::net::MOB_ACTS, vec![1, 0]);
+    true
+}
+
+/// Makes an Obj's Mob Motion flinch once, told to players as [`attack`] is.
+pub fn hurt(world: &mut World, entity: Entity) -> bool {
+    let Some(motion) = world.get_mut::<MobMotion>(entity) else { return false };
+    motion.hurt();
+    crate::net::engine_event(world, entity, crate::net::MOB_ACTS, vec![0, 1]);
+    true
+}
+
 /// Poses every Obj with a Mob Motion `delta` seconds on, from how it moved
 /// since it was last posed. In a crowd's middle and far tiers an Obj is
 /// posed every few frames, the time between taken at once (see `crowds`);
 /// the posing itself is shared over threads.
 pub fn animate_mobs(world: &mut World, delta: f32) {
+    // On a player's machine, the attacks and flinches the server's mobs made, as their tick is shown.
+    for (entity, key, bytes) in crate::net::take_engine_events(world) {
+        if let (crate::net::MOB_ACTS, Some(motion)) = (key, world.get_mut::<MobMotion>(entity)) {
+            motion.attacks += u32::from(bytes.first().copied().unwrap_or(0));
+            motion.hurts += u32::from(bytes.get(1).copied().unwrap_or(0));
+        }
+    }
     let mobs: Vec<(Entity, MobMotion, Arc<voxear_render::ModelAnimation>, Arc<[BoneRole]>)> = world
         .query_ref::<(Entity, &MobMotion, &ModelRenderer, &MobBones)>()
         .without::<Destroying>()
@@ -620,20 +645,14 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             return Some(point(motion.velocity));
         }
         ATTACK => {
-            return written.map(|_| {
-                number(f32::from(u8::from({
-                    motion.attack();
-                    true
-                })))
-            });
+            written?;
+            let _ = motion;
+            return attack(world, entity).then_some(number(1.0));
         }
         HURT => {
-            return written.map(|_| {
-                number(f32::from(u8::from({
-                    motion.hurt();
-                    true
-                })))
-            });
+            written?;
+            let _ = motion;
+            return hurt(world, entity).then_some(number(1.0));
         }
         _ => return None,
     };

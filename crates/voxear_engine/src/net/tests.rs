@@ -989,3 +989,84 @@ fn a_crowd_near_a_player_goes_in_small_updates() {
     // Each in about 11 bytes, where one took about 16.
     assert!(a_tick > 85.0, "{a_tick} a tick");
 }
+
+#[test]
+fn a_mobs_attack_on_the_server_plays_on_a_players_machine_as_its_tick_is_shown() {
+    use crate::animation::{MobMotion, mob_attack, mob_hurt};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let mob = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    server.insert(mob, MobMotion::default());
+    let id = server.get::<Networked>(mob).unwrap().id;
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    let theirs = clients[0].query_ref::<(voxear_ecs::Entity, &Networked)>().into_iter().find(|(_, n)| n.id == id).unwrap().0;
+    clients[0].insert(theirs, MobMotion::default());
+    assert!(mob_attack(&mut server, mob) && mob_attack(&mut server, mob) && mob_hurt(&mut server, mob));
+    let told_at = session_of(&server).tick;
+    let mut seen = None;
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        // The mob moves, so snapshots come and its tick is shown.
+        server.get_mut::<voxear_scene::Transform>(mob).unwrap().position.x += 0.05;
+        for (entity, key, bytes) in take_engine_events(&mut clients[0]) {
+            assert_eq!((entity, key), (theirs, MOB_ACTS));
+            let motion = clients[0].get_mut::<MobMotion>(entity).unwrap();
+            motion.attacks += u32::from(bytes[0]);
+            motion.hurts += u32::from(bytes[1]);
+            seen.get_or_insert(session_of(&clients[0]).replication.shown);
+        }
+    }
+    let motion = clients[0].get::<MobMotion>(theirs).unwrap();
+    assert_eq!((motion.attacks, motion.hurts), (2, 1), "two strikes and a flinch");
+    let shown = seen.expect("told");
+    assert!(shown >= told_at as f64, "played once its tick was shown: {shown} for tick {told_at}");
+    // A server's own Mob Motion keeps its strikes; it is not told again.
+    assert_eq!(server.get::<MobMotion>(mob).unwrap().attacks, 2);
+}
+
+#[test]
+fn a_player_is_sent_the_crowd_records_within_drawing_distance_of_them() {
+    use crate::crowd_records::{CrowdRecord, CrowdRecords, count, state};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let me = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, me, Some(PlayerId(1)));
+    // Records 250, 500 and 900 m off: the first two within the 600 m drawn.
+    let mut records = CrowdRecords::default();
+    for (id, x) in [(1, 250.0), (2, 500.0), (3, 900.0)] {
+        records.records.push(CrowdRecord {
+            id,
+            prefab: voxear_assets::AssetGuid::from_u128(5),
+            position: voxear_core::math::DVec3::new(x, 0.0, 0.0),
+            yaw: 0.0,
+            destination: None,
+            way: Vec::new(),
+            speed: 1.5,
+        });
+    }
+    state(&mut server, Some(&records.to_bytes())).unwrap();
+    for _ in 0..10 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    assert_eq!(count(&clients[0]), 2, "the two within drawing distance");
+    let ids: Vec<u32> = clients[0].resource::<CrowdRecords>().unwrap().records.iter().map(|r| r.id).collect();
+    assert_eq!(ids, [1, 2], "nearest first, with the server's numbers");
+    // The player walks over: after the next send, the far one instead of the first.
+    server.get_mut::<voxear_scene::Transform>(me).unwrap().position.x = 900.0;
+    for _ in 0..(60.0 * (crowd_sync::RESEND + 1.0)) as usize {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    let ids: Vec<u32> = clients[0].resource::<CrowdRecords>().unwrap().records.iter().map(|r| r.id).collect();
+    assert_eq!(ids, [3, 2], "{ids:?}");
+}

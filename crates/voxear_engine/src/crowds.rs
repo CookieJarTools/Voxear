@@ -1,8 +1,8 @@
 //! Crowds: how much of the frame each character that finds its way or is
 //! animated gets, by how near it is to whoever is looking.
 //!
-//! Every Obj with a Nav Agent, a Block Mob, a Mob Motion, a Motion Matcher
-//! or an Animator is in a **tier** each frame, by its distance to the nearest
+//! Every Obj with a Nav Agent, a Block Mob, a Mob Motion, a Motion Matcher,
+//! an Animator or a Crowd Member is in a **tier** each frame, by its distance to the nearest
 //! viewpoint: the game's camera (or the terrain's viewer), and on a server
 //! each player's Obj too. Near, everything is done every step and frame, as
 //! it always was. In the middle distance an agent plans its way less often
@@ -81,6 +81,7 @@ impl Component for CrowdMember {}
 /// far_pose_every = 4
 /// middle_search_every = 3.0  # a Motion Matcher's time between searches, times this
 /// records_beyond = 250.0   # metres beyond which Crowd Members kept as records go; 0 for never
+/// draw_records_within = 600.0  # metres within which records are drawn far off; 0 for none
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -96,6 +97,7 @@ pub struct CrowdSettings {
     pub far_pose_every: u32,
     pub middle_search_every: f32,
     pub records_beyond: f32,
+    pub draw_records_within: f32,
 }
 
 impl Default for CrowdSettings {
@@ -111,6 +113,7 @@ impl Default for CrowdSettings {
             far_pose_every: 4,
             middle_search_every: 3.0,
             records_beyond: 250.0,
+            draw_records_within: 600.0,
         }
     }
 }
@@ -139,6 +142,11 @@ impl CrowdSettings {
             records_beyond: match self.records_beyond.is_finite() && self.records_beyond > 0.0 {
                 true => self.records_beyond.clamp(middle + crate::crowd_records::RECORD_MARGIN * 2.0, 1_000_000.0),
                 false => 0.0,
+            },
+            draw_records_within: if self.draw_records_within.is_finite() {
+                self.draw_records_within.clamp(0.0, 100_000.0)
+            } else {
+                600.0
             },
         }
     }
@@ -254,6 +262,7 @@ pub fn update(world: &mut World) {
             .without::<Destroying>()
             .into_iter()
             .for_each(|(e, _)| add(e));
+        world.query_ref::<(Entity, &CrowdMember)>().without::<Destroying>().into_iter().for_each(|(e, _)| add(e));
     }
     members.sort_unstable();
     members.dedup();
@@ -295,6 +304,100 @@ pub(crate) fn count_step(world: &mut World) -> u64 {
     }
 }
 
+/// Sets what answers `CrowdMember` and `Crowds` in scripts.
+pub(crate) fn register() {
+    voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::CrowdMember, member_values);
+    voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::Crowds, crowd_values);
+}
+
+// What `member_values` reads or writes, as `CrowdMember` in Voxear.Core numbers them.
+const HAS: i32 = 0;
+const ADD: i32 = 1;
+const REMOVE: i32 = 2;
+const TIER: i32 = 3;
+const IMPORTANCE: i32 = 4;
+const KEEP_AS_RECORD: i32 = 5;
+const TIER_NOW: i32 = 6;
+
+const CHOICES: [CrowdTierChoice; 4] =
+    [CrowdTierChoice::ByDistance, CrowdTierChoice::Near, CrowdTierChoice::Middle, CrowdTierChoice::Far];
+
+/// Reads value `what` of `entity`'s Crowd Member, or with `written`,
+/// writes it: `None` when it has none, or is gone. Its tier now is told for
+/// any Obj in a crowd, a Crowd Member or not: 1 near, 2 middle, 3 far.
+fn member_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    if !world.is_alive(entity) {
+        return None;
+    }
+    let number = |n: f32| [n, 0.0, 0.0, 0.0];
+    match (what, written) {
+        (HAS, None) => return Some(number(f32::from(u8::from(world.has::<CrowdMember>(entity))))),
+        (ADD, Some(_)) => {
+            if !world.has::<CrowdMember>(entity) {
+                world.insert(entity, CrowdMember::default());
+            }
+            return Some([0.0; 4]);
+        }
+        (REMOVE, Some(_)) => return world.remove::<CrowdMember>(entity).map(|_| [0.0; 4]),
+        (TIER_NOW, None) => {
+            let tier = world.resource::<CrowdTiers>().map_or(CrowdTier::Near, |tiers| tiers.of(entity));
+            return Some(number(tier as u8 as f32 + 1.0));
+        }
+        _ => {}
+    }
+    let member = world.get_mut::<CrowdMember>(entity)?;
+    match (what, written) {
+        (TIER, None) => Some(number(CHOICES.iter().position(|c| *c == member.tier).unwrap_or(0) as f32)),
+        (IMPORTANCE, None) => Some(number(member.importance)),
+        (KEEP_AS_RECORD, None) => Some(number(f32::from(u8::from(member.keep_as_record)))),
+        (TIER, Some([choice, ..])) => {
+            member.tier = CHOICES.get(choice.max(0.0) as usize).copied().unwrap_or_default();
+            Some([0.0; 4])
+        }
+        (IMPORTANCE, Some([importance, ..])) => {
+            member.importance = if importance.is_finite() { importance.clamp(0.01, 100.0) } else { 1.0 };
+            Some([0.0; 4])
+        }
+        (KEEP_AS_RECORD, Some([on, ..])) => {
+            member.keep_as_record = on != 0.0;
+            Some([0.0; 4])
+        }
+        _ => None,
+    }
+}
+
+// What `crowd_values` reads or writes, as `Crowds` in Voxear.Core numbers them.
+const COUNTS: i32 = 0;
+const DISTANCES: i32 = 1;
+const ENABLED: i32 = 2;
+
+/// The crowd as a whole: how many are near, middle and far, and kept as
+/// records; its near, middle and records' distances, which a script may
+/// set for the game as it plays; and whether tiers are on.
+fn crowd_values(world: &mut World, _: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    let mut settings = world.resource::<CrowdSettings>().cloned().unwrap_or_default();
+    match (what, written) {
+        (COUNTS, None) => {
+            let [near, middle, far] = world.resource::<CrowdTiers>().map_or([0; 3], |tiers| tiers.counts);
+            let records = crate::crowd_records::count(world);
+            Some([near as f32, middle as f32, far as f32, records as f32])
+        }
+        (DISTANCES, None) => Some([settings.near, settings.middle, settings.records_beyond, 0.0]),
+        (ENABLED, None) => Some([f32::from(u8::from(settings.enabled)), 0.0, 0.0, 0.0]),
+        (DISTANCES, Some([near, middle, beyond, _])) => {
+            (settings.near, settings.middle, settings.records_beyond) = (near, middle, beyond);
+            settings.put(world);
+            Some([0.0; 4])
+        }
+        (ENABLED, Some([on, ..])) => {
+            settings.enabled = on != 0.0;
+            settings.put(world);
+            Some([0.0; 4])
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +427,24 @@ mod tests {
         assert_eq!(kept.middle, 2.0);
         assert_eq!(kept.far_plan_every, 1);
         assert_eq!(kept.middle_search_every, 3.0);
+    }
+
+    #[test]
+    fn scripts_read_and_set_a_crowd_member_and_the_crowd() {
+        let mut world = World::new();
+        let walker = world.spawn(());
+        assert_eq!(member_values(&mut world, walker, HAS, None), Some([0.0; 4]));
+        member_values(&mut world, walker, ADD, Some([0.0; 4])).unwrap();
+        member_values(&mut world, walker, TIER, Some([3.0, 0.0, 0.0, 0.0])).unwrap();
+        member_values(&mut world, walker, KEEP_AS_RECORD, Some([1.0, 0.0, 0.0, 0.0])).unwrap();
+        member_values(&mut world, walker, IMPORTANCE, Some([f32::NAN, 0.0, 0.0, 0.0])).unwrap();
+        let member = *world.get::<CrowdMember>(walker).unwrap();
+        assert_eq!((member.tier, member.keep_as_record, member.importance), (CrowdTierChoice::Far, true, 1.0));
+        update(&mut world);
+        assert_eq!(member_values(&mut world, walker, TIER_NOW, None).unwrap()[0], 3.0, "far, by its own choice");
+        crowd_values(&mut world, walker, DISTANCES, Some([20.0, 100.0, 300.0, 0.0])).unwrap();
+        let settings = world.resource::<CrowdSettings>().unwrap().clone();
+        assert_eq!((settings.near, settings.middle, settings.records_beyond), (20.0, 100.0, 300.0));
+        assert_eq!(crowd_values(&mut world, walker, COUNTS, None), Some([0.0, 0.0, 1.0, 0.0]));
     }
 }

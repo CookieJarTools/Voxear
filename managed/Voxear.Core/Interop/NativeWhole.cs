@@ -29,9 +29,10 @@ internal static class NativeWhole
 	public const int StreamsWithGround = 10;
 	public const int Road = 11;
 	public const int AreaFill = 12;
-	public const int Placement = 13;
-	public const int PrefabBrush = 14;
-	public const int Walkable = 15;
+	public const int Animator = 13;
+	public const int Placement = 14;
+	public const int PrefabBrush = 15;
+	public const int Walkable = 16;
 
 	private const int ReadAll = 0;
 	private const int ChangeSome = 1;

@@ -12,4 +12,16 @@ An **Animator** plays one clip on its Obj's model. Add one with **Add Component 
 
 The bones are posed after `Update` and before `LateUpdate`, so a camera placed in `LateUpdate` sees this frame's pose.
 
+A script reaches it through `Obj.Animator`, or adds one with `Obj.AddAnimator()`. Its fields are the Inspector's, with **Blend Time** as `BlendTime`:
+
+```csharp
+if (Obj.Animator is { } animator)
+{
+	animator.Speed = 1.5f;
+	animator.Play(new AnimationClip("Models/Guard.glb#clip:Wave"), looping: false);
+}
+```
+
+`Stop()` clears the clip and holds the model at rest. From a terminal, `field.set` sets the same fields on an Obj in the editor: `vox editor call field.set obj=Guard component=animator field=speed value=1.5`, with the fields named `clip`, `speed`, `looping`, `blend` and `root_motion` (see [[Driving the Editor from a Terminal]]).
+
 For a character the game moves, use a [[Motion Matching|Motion Matcher]] instead.

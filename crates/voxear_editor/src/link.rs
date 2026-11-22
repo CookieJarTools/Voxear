@@ -1500,6 +1500,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Road
             | Part::AreaFill
             | Part::Placement
+            | Part::PrefabBrush
             | Part::NavObstacle
             | Part::CrowdMember
             | Part::MotionMatcher

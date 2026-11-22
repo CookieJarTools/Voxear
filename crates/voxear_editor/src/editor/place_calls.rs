@@ -9,7 +9,6 @@ use voxear_ecs::Entity;
 use voxear_engine::{
     local_link::{ErrorKind, LinkError},
     prefab_placing::{self, Candidate, LineUp, Placed, Placement, Side},
-    roads::Road,
 };
 use voxear_render::Renderer;
 
@@ -24,9 +23,9 @@ use crate::{
 };
 
 /// A prefab to place: its project path, as often as its weight.
-struct Choice {
-    path: String,
-    weight: u32,
+pub(super) struct Choice {
+    pub(super) path: String,
+    pub(super) weight: u32,
 }
 
 impl Editor {
@@ -50,7 +49,7 @@ impl Editor {
     }
 
     /// The Placement on a prefab's root, where it has one.
-    fn placement_of(&mut self, path: &str, renderer: &mut Renderer) -> Option<Placement> {
+    pub(super) fn placement_of(&mut self, path: &str, renderer: &mut Renderer) -> Option<Placement> {
         let content = &mut self.game.content;
         let id = content.prefab(Some(&mut *renderer), path).ok()?;
         let template = content.loaded_template(Some(renderer), id).ok()?;
@@ -59,7 +58,7 @@ impl Editor {
 
     /// Makes `choice` at `at` along x and z, turned `yaw`, on the ground
     /// (its Ground Fit's own left out), under `parent`.
-    fn place_on_ground(
+    pub(super) fn place_on_ground(
         &mut self,
         choice: &Choice,
         (at, yaw): ([f32; 2], f32),
@@ -172,7 +171,7 @@ impl Editor {
     }
 
     /// `spot` turned to face the road nearest `at`, set back from its edge.
-    fn facing_road(&self, spot: Placed, placement: &Placement, at: Vec3, setback: f32) -> Placed {
+    pub(super) fn facing_road(&self, spot: Placed, placement: &Placement, at: Vec3, setback: f32) -> Placed {
         let world = &self.game.engine.world;
         let Some(blocks) = world
             .query_ref::<(Entity, &voxear_engine::blocks::BlockWorldAsset)>()
@@ -196,23 +195,14 @@ impl Editor {
     /// A road's points along x and z in the world, and its width at each in
     /// metres.
     fn road_points(&self, road: Entity) -> Result<Vec<([f32; 2], f32)>, LinkError> {
-        let world = &self.game.engine.world;
-        let component = world.get::<Road>(road).ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Road"))?;
-        let size = voxear_engine::roads::world_of(world, road)
-            .and_then(|blocks| world.get::<voxear_engine::blocks::BlockWorldAsset>(blocks).map(|a| a.file.block_size))
-            .unwrap_or(1.0);
-        let placed = voxear_scene::world_matrix(world, road);
-        let points = component.world_points(&placed);
-        Ok(points.iter().zip(&component.points).map(|(at, point)| ([at.x, at.z], point.width * size)).collect())
+        prefab_placing::road_line(&self.game.engine.world, road)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Road"))
     }
 
     /// An Area Fill's outline along x and z in the world.
     fn area_outline(&self, area: Entity) -> Result<Vec<[f32; 2]>, LinkError> {
-        let world = &self.game.engine.world;
-        let fill = world.get::<voxear_engine::roads::AreaFill>(area);
-        let fill = fill.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Area Fill"))?;
-        let placed = voxear_scene::world_matrix(world, area);
-        Ok(fill.outline.iter().map(|&[x, z]| placed.transform_point3(Vec3::new(x, 0.0, z))).map(|p| [p.x, p.z]).collect())
+        prefab_placing::area_outline(&self.game.engine.world, area)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Area Fill"))
     }
 
     /// Takes away the instances of `choices` within `radius` of `at`, as one

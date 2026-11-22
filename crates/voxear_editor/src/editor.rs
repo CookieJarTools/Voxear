@@ -28,6 +28,7 @@ mod grown_plants;
 mod heat_view;
 mod fit_view;
 mod place_calls;
+mod prefab_brushes;
 mod nav_view;
 mod river_water;
 mod hierarchies;
@@ -348,6 +349,7 @@ pub struct Editor {
     field_handles: FieldHandles,
     path_handles: PathHandles,
     road_handles: RoadHandles,
+    prefab_brushes: prefab_brushes::PrefabBrushes,
     /// The selected Terrain's brush and layer handles (see `terrain_tools`).
     terrain_tools: crate::terrain_tools::TerrainTools,
     block_tools: crate::block_tools::BlockTools,
@@ -747,6 +749,7 @@ impl Editor {
             field_handles: FieldHandles::default(),
             path_handles: PathHandles::default(),
             road_handles: RoadHandles::default(),
+            prefab_brushes: prefab_brushes::PrefabBrushes::default(),
             terrain_tools: Default::default(),
             block_tools: Default::default(),
             plants_tools: Default::default(),
@@ -1921,6 +1924,9 @@ impl Editor {
                 if self.block_tools.begin(&mut self.game, renderer, &camera, entity, point, self.shift) {
                     self.field_drag_start = before;
                 }
+            } else if let Some(entity) = editing.filter(|_| self.prefab_brushes.is_hovered()) {
+                // Prefabs it places are each a step of their own, folded into one as the stroke ends.
+                self.begin_prefab_brush(entity, self.shift, renderer);
             } else if let Some(entity) = editing.filter(|_| self.plants_tools.is_hovered()) {
                 let before = ObjState::of(world, entity);
                 if self.plants_tools.begin(&mut self.game, renderer, entity, self.shift) {
@@ -1973,6 +1979,11 @@ impl Editor {
         {
             self.block_tools.drag_to(&mut self.game, &camera, point, self.shift);
         }
+        if self.prefab_brushes.is_dragging()
+            && let Some(point) = point
+        {
+            self.drag_prefab_brush(&camera, point, renderer);
+        }
         if self.plants_tools.is_dragging()
             && let Some(point) = point
         {
@@ -2004,6 +2015,8 @@ impl Editor {
             self.block_tools.hover(&self.game, &camera, selected, over_field.filter(|_| free));
             let free = free && !self.block_tools.is_hovered();
             self.plants_tools.hover(&self.game, renderer, &camera, editing, over_field.filter(|_| free));
+            let free = free && !self.plants_tools.is_hovered();
+            self.hover_prefab_brush(renderer, &camera, editing, over_field.filter(|_| free));
             let world = &self.game.engine.world;
             let markers = self.markers(self.scene.show_gizmos);
             self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point, markers));
@@ -2026,6 +2039,7 @@ impl Editor {
         shapes.extend(self.terrain_tools.shapes(&self.game, &camera, editing));
         shapes.extend(self.block_tools.shapes(&self.game, &camera, selected, self.shift));
         shapes.extend(self.plants_tools.shapes(&self.game, renderer, &camera, editing));
+        shapes.extend(self.prefab_brush_shapes(renderer, &camera));
         shapes.extend(self.script_handles.shapes(&camera));
         shapes.extend(self.selection_shapes(renderer, &camera));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
@@ -2073,6 +2087,9 @@ impl Editor {
 
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
+        if self.end_prefab_brush() {
+            return;
+        }
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
         let held = held.or_else(|| self.road_handles.end());
         let held = held.or_else(|| self.terrain_tools.end()).or_else(|| self.block_tools.end());
@@ -2790,7 +2807,8 @@ impl Editor {
                 || self.script_handles.is_hovered()
                 || self.terrain_tools.is_hovered()
                 || self.block_tools.is_hovered()
-                || self.plants_tools.is_hovered();
+                || self.plants_tools.is_hovered()
+                || self.prefab_brushes.is_hovered();
             if pressed && over_handle && self.over_viewport() {
                 self.pressed_handle = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
                 return true;
@@ -2803,7 +2821,8 @@ impl Editor {
                 || self.script_handles.is_dragging()
                 || self.terrain_tools.is_dragging()
                 || self.block_tools.is_dragging()
-                || self.plants_tools.is_dragging();
+                || self.plants_tools.is_dragging()
+                || self.prefab_brushes.is_dragging();
             if !pressed && (dragging || self.pressed_handle.is_some()) {
                 self.released_handle = true;
                 return true;
@@ -2871,6 +2890,18 @@ impl Editor {
             && key.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)
         {
             self.commands.push(Command::Delete);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && text.to_lowercase() == "r"
+            && self.prefab_brushes.is_hovered()
+        {
+            // Over the Prefab Brush, R turns the prefab a click places.
+            self.turn_prefab_brush();
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event

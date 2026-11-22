@@ -37,6 +37,97 @@ impl Default for Placement {
     }
 }
 
+/// A prefab a Prefab Brush paints, as often as its weight.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BrushPrefab {
+    pub prefab: Option<voxear_assets::AssetGuid>,
+    pub weight: u32,
+}
+
+impl Default for BrushPrefab {
+    fn default() -> Self {
+        Self { prefab: None, weight: 1 }
+    }
+}
+
+/// What a Prefab Brush does with a click or a stroke.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BrushMode {
+    /// Strokes scatter prefabs within its radius, by its density.
+    #[default]
+    Paint,
+    /// A click places one, turned by its Turn, R turning it a step more.
+    Single,
+}
+
+impl BrushMode {
+    pub const ALL: [BrushMode; 2] = [BrushMode::Paint, BrushMode::Single];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BrushMode::Paint => "Paint",
+            BrushMode::Single => "Single",
+        }
+    }
+}
+
+/// Paints prefabs as real Objs onto the ground, under its own Obj, while its
+/// Obj is selected in the Scene view: strokes scatter them, a click places
+/// one, Shift takes them away. An editing tool kept with the scene.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PrefabBrush {
+    pub prefabs: Vec<BrushPrefab>,
+    pub mode: BrushMode,
+    /// The brush's radius, in metres, and how many it scatters each 100
+    /// square metres.
+    pub radius: f32,
+    pub density: f32,
+    /// Whether each is turned any way, or as `turn` says, in degrees.
+    pub random_turn: bool,
+    pub turn: f32,
+    /// How far R turns it, in degrees.
+    pub turn_step: f32,
+    /// The least and most each is scaled by.
+    pub scale: [f32; 2],
+    /// Whether each leans with the slope of the ground under it.
+    pub lean: bool,
+    /// The steepest ground one is put on, in degrees.
+    pub steepest: f32,
+    /// In Single, turned to face the road nearest and set back from it.
+    pub face_road: bool,
+    pub setback: f32,
+}
+
+impl voxear_ecs::Component for PrefabBrush {}
+
+impl Default for PrefabBrush {
+    fn default() -> Self {
+        Self {
+            prefabs: Vec::new(),
+            mode: BrushMode::Paint,
+            radius: 6.0,
+            density: 3.0,
+            random_turn: true,
+            turn: 0.0,
+            turn_step: 90.0,
+            scale: [1.0, 1.0],
+            lean: false,
+            steepest: 40.0,
+            face_road: false,
+            setback: 1.0,
+        }
+    }
+}
+
+/// How much one placed with `seed` is scaled by, between the least and most.
+pub fn scale_for(range: [f32; 2], seed: u64) -> f32 {
+    let [low, high] = [range[0].max(0.01), range[1].max(range[0].max(0.01))];
+    low + (high - low) * unit(seed, 0x51, 0x7)
+}
+
 /// A rectangle of ground along x and z: its middle, half its size along its
 /// own two ways, and how far it is turned about up, in radians.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -310,6 +401,82 @@ pub fn taken(world: &World, skip: &[Entity]) -> Vec<Footprint> {
         }
     }
     prints
+}
+
+/// A Road's points along x and z in the world, and its width at each in
+/// metres.
+pub fn road_line(world: &World, road: Entity) -> Option<Vec<([f32; 2], f32)>> {
+    let component = world.get::<crate::roads::Road>(road)?;
+    let size = crate::roads::world_of(world, road)
+        .and_then(|blocks| world.get::<crate::blocks::BlockWorldAsset>(blocks).map(|asset| asset.file.block_size))
+        .unwrap_or(1.0);
+    let points = component.world_points(&voxear_scene::world_matrix(world, road));
+    Some(points.iter().zip(&component.points).map(|(at, point)| ([at.x, at.z], point.width * size)).collect())
+}
+
+/// An Area Fill's outline along x and z in the world.
+pub fn area_outline(world: &World, area: Entity) -> Option<Vec<[f32; 2]>> {
+    let fill = world.get::<crate::roads::AreaFill>(area)?;
+    let placed = voxear_scene::world_matrix(world, area);
+    Some(fill.outline.iter().map(|&[x, z]| placed.transform_point3(Vec3::new(x, 0.0, z))).map(|p| [p.x, p.z]).collect())
+}
+
+/// Answers a script's `line_up` or `scatter` question (see `roads::answer`):
+/// where each prefab of `prefabs` goes, by its place in the list, along x
+/// and z, and turned how far about up in radians, as JSON.
+pub fn answer(world: &World, asked: &serde_json::Value) -> anyhow::Result<String> {
+    let prefabs = asked["prefabs"].as_array().ok_or_else(|| anyhow::anyhow!("`prefabs` is not a list"))?;
+    let candidates: Vec<Candidate> = prefabs
+        .iter()
+        .map(|entry| {
+            let reference = entry["prefab"].as_str().unwrap_or_default();
+            let placement = voxear_scripting::prefab_placement(reference)
+                .and_then(|json| serde_json::from_str::<Placement>(&json).ok())
+                .unwrap_or_default();
+            Candidate { weight: entry["weight"].as_u64().unwrap_or(1).min(1000) as u32, placement }
+        })
+        .collect();
+    let number = |key: &str, default: f32| asked[key].as_f64().map_or(default, |v| v as f32);
+    let seed = asked["seed"].as_u64().unwrap_or(1);
+    let obj = |key: &str| asked[key].as_u64().map(Entity::from_bits).filter(|entity| world.is_alive(*entity));
+    let taken = taken(world, &[]);
+    let placed = match asked["ask"].as_str() {
+        Some("line_up") => {
+            let road = obj("road").ok_or_else(|| anyhow::anyhow!("`road` is not an Obj"))?;
+            let points = road_line(world, road).ok_or_else(|| anyhow::anyhow!("the Obj has no Road"))?;
+            let side = match asked["side"].as_str() {
+                Some("left") => Side::Left,
+                Some("right") => Side::Right,
+                _ => Side::Both,
+            };
+            let how = LineUp {
+                side,
+                from: number("from", 0.0),
+                to: number("to", 0.0),
+                setback: number("setback", 1.0),
+                jitter: number("jitter", 0.5),
+                gap: number("gap", 1.0),
+                seed,
+            };
+            line_up(&points, &candidates, &how, &taken)
+        }
+        _ => {
+            let area = obj("area").and_then(|area| area_outline(world, area));
+            let given = asked["outline"].as_array().map(|corners| {
+                corners
+                    .iter()
+                    .filter_map(|c| Some([c.get(0)?.as_f64()? as f32, c.get(1)?.as_f64()? as f32]))
+                    .collect::<Vec<[f32; 2]>>()
+            });
+            let outline = area.or(given).ok_or_else(|| anyhow::anyhow!("give an `area` or an `outline`"))?;
+            scatter(&outline, &candidates, number("density", 1.0), seed, &taken)
+        }
+    };
+    let spots: Vec<serde_json::Value> = placed
+        .iter()
+        .map(|spot| serde_json::json!({ "which": spot.which, "position": spot.position, "yaw": spot.yaw }))
+        .collect();
+    Ok(serde_json::Value::Array(spots).to_string())
 }
 
 #[cfg(test)]

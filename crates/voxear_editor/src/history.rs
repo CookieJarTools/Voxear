@@ -81,6 +81,7 @@ pub struct ObjState {
     pub road: Option<voxear_engine::roads::Road>,
     pub area_fill: Option<voxear_engine::roads::AreaFill>,
     pub placement: Option<voxear_engine::prefab_placing::Placement>,
+    pub prefab_brush: Option<voxear_engine::prefab_placing::PrefabBrush>,
     pub nav_obstacle: Option<voxear_engine::nav_obstacle::NavObstacle>,
     pub crowd_member: Option<voxear_engine::crowds::CrowdMember>,
     pub motion_matcher: Option<Box<voxear_engine::animation::MotionMatcher>>,
@@ -213,6 +214,7 @@ impl ObjState {
             road: world.get::<voxear_engine::roads::Road>(entity).cloned(),
             area_fill: world.get::<voxear_engine::roads::AreaFill>(entity).cloned(),
             placement: world.get::<voxear_engine::prefab_placing::Placement>(entity).copied(),
+            prefab_brush: world.get::<voxear_engine::prefab_placing::PrefabBrush>(entity).cloned(),
             nav_obstacle: world.get::<voxear_engine::nav_obstacle::NavObstacle>(entity).copied(),
             crowd_member: world.get::<voxear_engine::crowds::CrowdMember>(entity).copied(),
             motion_matcher: world.get::<voxear_engine::animation::MotionMatcher>(entity).cloned().map(Box::new),
@@ -329,6 +331,7 @@ impl ObjState {
         put(world, entity, self.road.clone());
         put(world, entity, self.area_fill.clone());
         put(world, entity, self.placement);
+        put(world, entity, self.prefab_brush.clone());
         put(world, entity, self.nav_obstacle);
         put(world, entity, self.crowd_member);
         put(world, entity, self.motion_matcher.as_deref().cloned());

@@ -457,3 +457,184 @@ pub fn parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
         parts.push(Part::Placement);
     }
 }
+
+use voxear_engine::prefab_placing::{BrushMode, BrushPrefab, PrefabBrush};
+
+/// How many prefabs the Prefab Brush's Inspector shows a picker for; more,
+/// and weights, from scripts and the scene file.
+pub const BRUSH_PREFABS: u8 = 6;
+
+/// A value the Prefab Brush component shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BrushField {
+    Mode,
+    Prefab(u8),
+    Radius,
+    Density,
+    RandomTurn,
+    Turn,
+    TurnStep,
+    Scale,
+    Lean,
+    Steepest,
+    FaceRoad,
+    Setback,
+}
+
+use BrushField as B;
+
+pub fn brush_props(world: &World, entity: Entity) -> Vec<Prop> {
+    let Some(brush) = world.get::<PrefabBrush>(entity) else { return Vec::new() };
+    let mut fields = vec![B::Mode];
+    fields.extend((0..BRUSH_PREFABS).map(B::Prefab));
+    match brush.mode {
+        BrushMode::Paint => fields.extend([B::Radius, B::Density, B::RandomTurn]),
+        BrushMode::Single => fields.extend([B::FaceRoad, B::Setback]),
+    }
+    if !brush.random_turn || brush.mode == BrushMode::Single {
+        fields.extend([B::Turn, B::TurnStep]);
+    }
+    fields.extend([B::Scale, B::Lean, B::Steepest]);
+    fields.into_iter().map(Prop::PrefabBrush).collect()
+}
+
+pub fn brush_label(field: BrushField) -> String {
+    match field {
+        B::Mode => "Mode".into(),
+        B::Prefab(at) => format!("Prefab {}", at + 1),
+        B::Radius => "Radius".into(),
+        B::Density => "Density".into(),
+        B::RandomTurn => "Random Turn".into(),
+        B::Turn => "Turn".into(),
+        B::TurnStep => "Turn Step".into(),
+        B::Scale => "Scale".into(),
+        B::Lean => "Lean With Ground".into(),
+        B::Steepest => "Steepest".into(),
+        B::FaceRoad => "Face Road".into(),
+        B::Setback => "Setback".into(),
+    }
+}
+
+pub fn brush_tooltip(field: BrushField) -> &'static str {
+    match field {
+        B::Mode => "Paint scatters prefabs where a stroke goes; Single places one where you click, R turning it. Shift takes them away.",
+        B::Prefab(_) => "A prefab it paints, as often as the others; weights come from scripts. Placed under this Obj.",
+        B::Radius => "The brush's radius, in metres. [ and ] size it. Default: 6.",
+        B::Density => "How many it scatters each 100 square metres. Default: 3.",
+        B::RandomTurn => "Whether each is turned any way, or as Turn says. Default: on.",
+        B::Turn => "How far each is turned about up, in degrees. R turns it a step more.",
+        B::TurnStep => "How far R turns it, in degrees. Default: 90.",
+        B::Scale => "The least and most each is scaled by. Default: 1, 1.",
+        B::Lean => "Whether each leans with the slope of the ground under it. Default: off.",
+        B::Steepest => "The steepest ground one is put on, in degrees. Default: 40.",
+        B::FaceRoad => "Whether one placed faces the road nearest, set back from its edge. Default: off.",
+        B::Setback => "How far back from the road's edge, in metres. Default: 1.",
+    }
+}
+
+pub fn brush_key(field: BrushField) -> &'static str {
+    match field {
+        B::Mode => "mode",
+        B::Prefab(_) => "prefabs",
+        B::Radius => "radius",
+        B::Density => "density",
+        B::RandomTurn => "random_turn",
+        B::Turn => "turn",
+        B::TurnStep => "turn_step",
+        B::Scale => "scale",
+        B::Lean => "lean",
+        B::Steepest => "steepest",
+        B::FaceRoad => "face_road",
+        B::Setback => "setback",
+    }
+}
+
+pub fn brush_unit(field: BrushField) -> Option<&'static str> {
+    match field {
+        B::Radius | B::Setback => Some("m"),
+        B::Turn | B::TurnStep | B::Steepest => Some("°"),
+        _ => None,
+    }
+}
+
+pub fn brush_picked(field: BrushField) -> bool {
+    matches!(field, B::Prefab(_))
+}
+
+pub fn prefab_choices(game: &Game) -> Vec<(String, Pick)> {
+    let mut found = vec![("None".to_string(), Pick::Asset(None))];
+    found.extend(fields::assets_of(game, Some(AssetKind::Prefab)).into_iter().filter(|(_, pick)| *pick != Pick::Asset(None)));
+    found
+}
+
+pub fn brush_pick(game: &mut Game, entity: Entity, field: BrushField, choice: &Pick) -> bool {
+    let (B::Prefab(at), Some(guid)) = (field, picked_guid(game, choice)) else { return false };
+    let Some(brush) = game.engine.world.get_mut::<PrefabBrush>(entity) else { return false };
+    let at = usize::from(at);
+    match guid {
+        Some(guid) => {
+            while brush.prefabs.len() <= at {
+                brush.prefabs.push(BrushPrefab::default());
+            }
+            brush.prefabs[at].prefab = Some(guid);
+        }
+        None if at < brush.prefabs.len() => brush.prefabs[at].prefab = None,
+        None => {}
+    }
+    // Empty entries at the end go.
+    while brush.prefabs.last().is_some_and(|entry| entry.prefab.is_none()) {
+        brush.prefabs.pop();
+    }
+    true
+}
+
+pub fn brush_get(game: &Game, entity: Entity, field: BrushField) -> Option<Value> {
+    let brush = game.engine.world.get::<PrefabBrush>(entity)?;
+    Some(match field {
+        B::Mode => choice(&BrushMode::ALL, brush.mode, BrushMode::name),
+        B::Prefab(at) => {
+            let guid = brush.prefabs.get(usize::from(at)).and_then(|entry| entry.prefab);
+            let path = guid.and_then(|guid| game.content.db().get(guid).map(|entry| entry.path.clone()));
+            Value::Asset(path.unwrap_or_else(|| "None".into()))
+        }
+        B::Radius => Value::Number(brush.radius),
+        B::Density => Value::Number(brush.density),
+        B::RandomTurn => Value::Toggle(brush.random_turn),
+        B::Turn => Value::Number(brush.turn),
+        B::TurnStep => Value::Number(brush.turn_step),
+        B::Scale => Value::Vector(brush.scale.to_vec()),
+        B::Lean => Value::Toggle(brush.lean),
+        B::Steepest => Value::Number(brush.steepest),
+        B::FaceRoad => Value::Toggle(brush.face_road),
+        B::Setback => Value::Number(brush.setback),
+    })
+}
+
+pub fn brush_set(game: &mut Game, entity: Entity, field: BrushField, value: Value) -> bool {
+    let Some(brush) = game.engine.world.get_mut::<PrefabBrush>(entity) else { return false };
+    match (field, value) {
+        (B::Mode, Value::Choice(at, _)) => brush.mode = BrushMode::ALL.get(at).copied().unwrap_or_default(),
+        (B::Radius, Value::Number(v)) => brush.radius = v.clamp(0.5, 500.0),
+        (B::Density, Value::Number(v)) => brush.density = v.clamp(0.01, 400.0),
+        (B::RandomTurn, Value::Toggle(on)) => brush.random_turn = on,
+        (B::Turn, Value::Number(v)) => brush.turn = v.rem_euclid(360.0),
+        (B::TurnStep, Value::Number(v)) => brush.turn_step = v.clamp(1.0, 180.0),
+        (B::Scale, Value::Vector(v)) if v.len() == 2 => {
+            let low = v[0].clamp(0.01, 100.0);
+            brush.scale = [low, v[1].clamp(low, 100.0)];
+        }
+        (B::Lean, Value::Toggle(on)) => brush.lean = on,
+        (B::Steepest, Value::Number(v)) => brush.steepest = v.clamp(0.0, 90.0),
+        (B::FaceRoad, Value::Toggle(on)) => brush.face_road = on,
+        (B::Setback, Value::Number(v)) => brush.setback = v.clamp(0.0, 100.0),
+        _ => return false,
+    }
+    true
+}
+
+/// Adds the Prefab Brush part where `entity` has the component.
+pub fn brush_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
+    if world.has::<PrefabBrush>(entity) {
+        parts.push(Part::PrefabBrush);
+    }
+}

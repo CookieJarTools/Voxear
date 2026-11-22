@@ -22,7 +22,7 @@ use crate::{
     animation::BoneAttachment,
     ground_fit::GroundFit,
     ground_streaming::StreamsWithGround,
-    prefab_placing::Placement,
+    prefab_placing::{Placement, PrefabBrush},
     roads::{AreaFill, Road},
     heat::Climate,
     navigation::{NavArea, NavLink},
@@ -59,6 +59,7 @@ const STREAMS_WITH_GROUND: i32 = 10;
 const ROAD: i32 = 11;
 const AREA_FILL: i32 = 12;
 const PLACEMENT: i32 = 13;
+const PREFAB_BRUSH: i32 = 14;
 
 /// Whether an Obj has one, and adding and taking off those scripts may add:
 /// the component in the number's bits above the lowest two.
@@ -72,6 +73,7 @@ fn whole_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
         ROAD => values::<Road>(world, entity, asked, written),
         AREA_FILL => values::<AreaFill>(world, entity, asked, written),
         PLACEMENT => values::<Placement>(world, entity, asked, written),
+        PREFAB_BRUSH => values::<PrefabBrush>(world, entity, asked, written),
         BONE_ATTACHMENT => has::<BoneAttachment>(world, entity, asked, written),
         PARTICLE_SYSTEM => has::<ParticleSystem>(world, entity, asked, written),
         FOLIAGE => has::<Foliage>(world, entity, asked, written),
@@ -94,6 +96,7 @@ fn whole_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opti
         ROAD => texts::<Road>(world, entity, asked, text),
         AREA_FILL => texts::<AreaFill>(world, entity, asked, text),
         PLACEMENT => texts::<Placement>(world, entity, asked, text),
+        PREFAB_BRUSH => texts::<PrefabBrush>(world, entity, asked, text),
         FOLIAGE => texts::<Foliage>(world, entity, asked, text),
         LOD_GROUP => texts::<LodGroup>(world, entity, asked, text),
         DRY_AREA_MESH | LIGHT_COOKIE | LIGHT_PROFILE => {
@@ -234,7 +237,8 @@ written_as_is!(
     StreamsWithGround,
     Road,
     AreaFill,
-    Placement
+    Placement,
+    PrefabBrush
 );
 
 /// A Foliage's settings scripts change: how far its plants are drawn, cast

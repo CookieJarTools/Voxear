@@ -366,6 +366,9 @@ pub fn world_of(world: &voxear_ecs::World, obj: voxear_ecs::Entity) -> Option<vo
 /// "along": metres }`, or nothing where none is within reach.
 pub fn answer(world: &mut voxear_ecs::World, text: &str) -> anyhow::Result<String> {
     let asked: serde_json::Value = serde_json::from_str(text)?;
+    if asked["ask"] == "line_up" || asked["ask"] == "scatter" {
+        return crate::prefab_placing::answer(world, &asked);
+    }
     anyhow::ensure!(asked["ask"] == "nearest_road", "no such question about the world: {}", asked["ask"]);
     let at = asked["at"].as_array().map(|v| v.iter().filter_map(serde_json::Value::as_f64).collect::<Vec<f64>>());
     let Some([x, y, z]) = at.and_then(|at| <[f64; 3]>::try_from(at).ok()) else { anyhow::bail!("`at` is not a place") };

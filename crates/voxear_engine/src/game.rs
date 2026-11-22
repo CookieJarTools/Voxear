@@ -2147,6 +2147,13 @@ impl ScriptServices for GameServices<'_> {
         Ok(self.content.prefab(self.renderer.as_deref_mut(), reference)?.0)
     }
 
+    fn prefab_placement(&mut self, reference: &str) -> Option<String> {
+        let id = self.content.prefab(self.renderer.as_deref_mut(), reference).ok()?;
+        let template = self.content.loaded_template(self.renderer.as_deref_mut(), id).ok()?;
+        let placement = template.objs.get(template.root()?)?.placement?;
+        serde_json::to_string(&placement).ok()
+    }
+
     fn set_model(&mut self, world: &mut World, entity: Entity, reference: &str) -> Result<()> {
         crate::model_renderers::set_model(world, self.content, self.renderer.as_deref_mut(), entity, reference)
     }

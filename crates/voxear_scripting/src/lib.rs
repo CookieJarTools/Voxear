@@ -72,7 +72,7 @@ pub use saves::{
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, ModelChange, ObjAsset, PreviewOptions,
     PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
-    UiAnswer, UiAsk, change_model, model_part_name, obj_asset, set_model, set_parent, ui_panel_document,
+    UiAnswer, UiAsk, change_model, model_part_name, obj_asset, prefab_placement, set_model, set_parent, ui_panel_document,
     ui_screen_document,
 };
 pub use trees::FelledInfo;

@@ -23,6 +23,13 @@ pub trait ScriptServices {
         anyhow::bail!("{reference}: there are no prefabs to load here")
     }
 
+    /// The Placement on a prefab's root, by GUID or project path, as its
+    /// scene file writes it in JSON: how much ground it takes up, its front
+    /// and its door. None where it has none or there are no prefabs here.
+    fn prefab_placement(&mut self, _reference: &str) -> Option<String> {
+        None
+    }
+
     /// Creates a loaded prefab's Objs, without behaviours. The root goes
     /// under `parent`, and takes `placement`, relative to it, when it is
     /// given.
@@ -775,6 +782,12 @@ impl Drop for ServicesScope<'_> {
 }
 
 /// Runs `f` with the lent services, or returns `None` outside any scope.
+/// The Placement on a prefab's root through the lent services (see
+/// [`ScriptServices::prefab_placement`]); none outside them.
+pub fn prefab_placement(reference: &str) -> Option<String> {
+    with_services(|services| services.prefab_placement(reference)).flatten()
+}
+
 pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> Option<R> {
     let mut services = SERVICES.get()?;
     Some(f(unsafe { services.as_mut() }))

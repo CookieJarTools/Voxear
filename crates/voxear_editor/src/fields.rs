@@ -804,6 +804,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "Road" => |world, entity| world.has::<voxear_engine::roads::Road>(entity),
         "AreaFill" => |world, entity| world.has::<voxear_engine::roads::AreaFill>(entity),
         "Placement" => |world, entity| world.has::<voxear_engine::prefab_placing::Placement>(entity),
+        "PrefabBrush" => |world, entity| world.has::<voxear_engine::prefab_placing::PrefabBrush>(entity),
         "StreamsWithGround" => |world, entity| world.has::<voxear_engine::ground_streaming::StreamsWithGround>(entity),
         "NavObstacle" => |world, entity| world.has::<voxear_engine::nav_obstacle::NavObstacle>(entity),
         "CrowdMember" => |world, entity| world.has::<voxear_engine::crowds::CrowdMember>(entity),

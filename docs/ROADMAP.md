@@ -4159,6 +4159,20 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     400 m off drawn as its prefab's box-model player through the haze, and from 6 m, facing the camera with its right
     arm held up by its baked clip. Records put back from a save or sent by the server are the open level's, not
     cleared as another level's on their first frame. Not done: far crowds made from seeds.
+- A living society: residents with daily routines (home, work, shop, tavern, bed) who keep their day while their
+  ground is unloaded and are where they should be when a player comes back. Researched, nothing built yet: what
+  the engine has, measured limits and the plan are in [research/society.md](research/society.md). A resident's
+  place is worked out from its schedule and the world time, not simulated (9 ns a resident in a prototype), on
+  top of crowd records; aimed at 100,000 residents known to a world, and saves of only what differs from a
+  town's seed. In stages:
+  - [ ] World time counting days, Schedule and Activity assets, Building and Spot components, the Resident
+    component following its schedule.
+  - [ ] Residents while unloaded: records holding a schedule, places and changes, woken at their spots.
+  - [ ] Places known without loading, and generated towns peopled from their seed.
+  - [ ] Needs, interrupts and reactions.
+  - [ ] A society tick per settlement, with stock, money and deliveries.
+  - [ ] Co-op: every machine working out the same plan from the world time, only changes sent.
+  - [ ] The Society view, Profiler rows, `society.*` calls and a sample town.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

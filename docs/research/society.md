@@ -381,6 +381,100 @@ the player. The engine provides the data types, the working out, the handover, t
 **Where to start:** stages 1 and 2 together give a town whose people keep their day, wake in their beds and cost
 nothing while far.
 
+## Building it in the game instead
+
+Decided 2026-11-22: the society is built by the game in C#, on the engine, rather than into the engine. The stages
+above stay as the plan, but nearly all of them move into CubeGame. The engine gives four hooks the game cannot make
+itself. Everything else the game already has.
+
+### What the game builds with what is there
+
+| Part | With |
+|---|---|
+| Schedules, activities, needs, settlements, the economy | Plain C# data and assets of the game's own types, picked by typed fields |
+| World time with days | `Clock.TimeOfDay`, counting a day each time it wraps; time skips go through the game's own code, which sets the clock |
+| Residents while unloaded | An array of structs in a society class; positions worked out from the schedule, never stored |
+| Waking hand-placed houses' residents | A behaviour on each house prefab, which has Streams With Ground: `OnGroundLoaded` comes once the house and its furniture are back, and spawns its residents at their spots (`Prefab.Instantiate`). `OnGroundUnloading` notes what changed and destroys them |
+| Spots and claims | A Spot component of the game's own on child Objs of the prefab; claims kept in the society |
+| Present residents | Nav Agents and the crowd tiers, as any character |
+| Travel | `Roads.Nearest` and road points; straight lines elsewhere until Routes land |
+| Saves | `Save` and `SaveFile`, writing only what differs from each resident's seed |
+| Co-op | Voxear.Networking: the host owns the society and sends its events as RPCs; players work out schedules themselves from the clock |
+
+### The four hooks
+
+**Built** (2026-11-22): hooks 3 and 1, as column events (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`, one event a
+column) and `FarFigures`. The manual's Streams With Ground and Crowds pages show them.
+
+**1. Far figures: ghosts drawn from the game's positions.**
+- **Why.** Past Records beyond (250 m) a resident has no Obj, and only the engine's crowd records are drawn far off.
+  C# can only save and restore those as bytes, and the engine moves them, not the game.
+- **What.** A second source for the ghosts beside the records: a list the game sets of figures, each an id, a
+  prefab, a position, a yaw and a speed (0 standing). `crowd_records::to_draw` takes the nearest of both, within
+  Draw records within and up to `MOST_DRAWN`. `move_ghost` already eases a ghost towards where it should be and
+  plays walk or stand by speed, so figures set once a second move smoothly.
+- **C#.** `FarFigures.Set(ReadOnlySpan<FarFigure>)`, replacing the list, and `FarFigures.Clear()`. A figure's id
+  ties it to its ghost from one set to the next, so the game can send only figures near players, a few thousand.
+- **Co-op.** Each machine sets its own figures from the society it works out, so nothing is sent.
+- **Tests:** a figure is drawn with its prefab's model and clip; set again further on, the ghost walks there rather
+  than jumping; a figure dropped from the list goes.
+- **Size:** small.
+
+**2. Generated towns' plans.**
+- **Why.** A generated town's houses are blocks made with its chunks, not Objs, so nothing tells the game a house
+  is there, which kind it is or where its door is. `Town::layout` works all of it out from the seed alone, but it
+  is private, and its parts do not keep which house kind they were.
+- **What.** Parts keep their house kind. A query gives the towns whose sites are within a distance: each town's
+  structure, its middle, and its houses, each with its structure, where it stands, which way it faces and where its
+  door is. Worked out from the generator with no chunk made, as the town's own roads are, and cached per site.
+  Points inside a house (beds, a counter) come from the house structure's own data, which gains named points in
+  its model's space.
+- **C#.** `Towns.Near(Vector3 point, float radius)` giving `TownPlan`s, with `Houses` as `TownHouse` (a
+  `Structure` reference, `Position`, `Facing`, `Door`, `Points`). `vox editor call towns.near` gives the same.
+- **Tests:** a town's plan matches the houses its chunks are built with, from any column and before any is made.
+- **Size:** medium.
+
+**3. Column events in C#.**
+- **Why.** Residents of generated houses, and residents on a road, have no house Obj to hear `OnGroundLoaded`
+  from. The engine keeps each frame's columns made and let go (`GroundMoves`) for `vox editor call blocks.columns`,
+  but C# cannot read them.
+- **What.** `Blocks.ColumnMade` and `Blocks.ColumnLetGo` events, one a column, with its place among the world's
+  32-block columns, its corner and its size, and `Blocks.IsMade(Vector3)`. Made means the blocks are there. A column's nav may come a few frames
+  later, so `Navigation.IsReady(Vector3)` says when an agent can be sent from there.
+- **Tests:** a script hears a column made as the camera nears it and let go as it leaves, and the same columns as
+  `blocks.columns` lists.
+- **Size:** small.
+
+**4. The game's own `vox editor call` and `vox mcp` calls.**
+- **What is there.** A `[Command]` method with arguments runs from `vox editor call game.console` while the game
+  plays, as a console line, and gives back what it logged. Palette commands run with `command.run`, without
+  arguments.
+- **Why that is not enough.** The answers are log lines, not data a tool can read. A tool cannot list the calls
+  with their arguments. Nothing runs while the editor is not playing, as a schedule preview would need.
+- **What.** A `[Call("society.residents")]` attribute on a static C# method. Its arguments are typed (numbers,
+  text, enums, vectors, asset and Obj references) and its return value is any value `Save` can write, given back as
+  JSON. The link lists such calls beside its own in `calls`, with their arguments and the method's summary, so
+  `vox mcp` offers them as tools. Each says whether it runs in the editor, while playing, or both.
+- **Tests:** a project's call is listed, is called with arguments and gives back its value; called while not
+  playing, a playing-only call says so.
+- **Size:** medium.
+
+### What moves where
+
+| Stage above | Now |
+|---|---|
+| 1. World time and schedules | The game's, on the clock. Engine: nothing. |
+| 2. Residents while unloaded | The game's. Engine: hooks 1 and 3. |
+| 3. Places without loading, populations | The game's. Engine: hook 2. |
+| 4. Needs, interrupts, reactions | The game's. |
+| 5. Society tick and economy | The game's, on the inventory package. Engine: Routes, as world-building stage 5 plans. |
+| 6. Co-op | The game's, over Voxear.Networking. |
+| 7. Tools | The game's own calls through hook 4; a schedule view as a game editor window. |
+
+**Order:** hooks 3 and 1 first, as residents while unloaded need them, then 4 so the society can be driven by
+tools from the start, then 2 when generated towns are peopled. Each lands on master with its tests and a manual
+page.
+
 ## References
 
 Techniques and figures above come from these. They are listed for reading, not as names the engine takes.

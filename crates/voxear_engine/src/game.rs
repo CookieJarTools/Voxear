@@ -1164,6 +1164,7 @@ impl Game {
     /// where it was going.
     fn keep_crowd_records(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
         let level = self.levels.current().map(str::to_string);
+        crate::crowd_records::keep_figures_to(&mut self.engine.world, level.as_deref());
         // A player's machine keeps the server's records, walked on, and only draws them.
         let makes = !crate::net::is_client(&self.engine.world);
         let (changes, gone) = crate::crowd_records::update(&mut self.engine.world, delta, level.as_deref(), makes);
@@ -1210,7 +1211,7 @@ impl Game {
             false => Vec::new(),
         };
         let mut ghosts = world.remove_resource::<Ghosts>().unwrap_or_default();
-        let wanted: std::collections::HashSet<u32> = drawn.iter().map(|drawn| drawn.id).collect();
+        let wanted: std::collections::HashSet<u64> = drawn.iter().map(|drawn| drawn.key).collect();
         ghosts.0.retain(|id, ghost| {
             let keep = wanted.contains(id) && world.is_alive(ghost.root);
             if !keep {
@@ -1220,12 +1221,14 @@ impl Game {
             keep
         });
         for drawn in &drawn {
-            if !ghosts.0.contains_key(&drawn.id) {
-                let prefab = drawn.prefab.to_string();
-                let template = self
-                    .content
-                    .prefab(renderer.as_deref_mut(), &prefab)
-                    .and_then(|id| self.content.loaded_template(renderer.as_deref_mut(), id));
+            if !ghosts.0.contains_key(&drawn.key) {
+                let template = match drawn.from {
+                    crate::crowd_records::DrawnFrom::Record(guid) => {
+                        self.content.prefab(renderer.as_deref_mut(), &guid.to_string())
+                    }
+                    crate::crowd_records::DrawnFrom::Figure(id) => Ok(id),
+                };
+                let template = template.and_then(|id| self.content.loaded_template(renderer.as_deref_mut(), id));
                 let Ok(template) = template else { continue };
                 let world = &mut self.engine.world;
                 let root = world.spawn((Transform::from_position(drawn.at), RecordGhost));
@@ -1265,9 +1268,9 @@ impl Game {
                     ));
                     parts.push((part, walk, stand));
                 }
-                ghosts.0.insert(drawn.id, Ghost { root, parts, time: (drawn.id % 97) as f32 * 0.37 });
+                ghosts.0.insert(drawn.key, Ghost { root, parts, time: (drawn.key % 97) as f32 * 0.37 });
             }
-            if let Some(ghost) = ghosts.0.get_mut(&drawn.id) {
+            if let Some(ghost) = ghosts.0.get_mut(&drawn.key) {
                 crate::crowd_records::move_ghost(&mut self.engine.world, ghost, drawn, delta);
             }
         }
@@ -1544,6 +1547,11 @@ impl Game {
         if !self.engine.is_edit_mode() {
             profile_scope!("Streams With Ground");
             self.stream_with_ground(renderer.as_deref_mut());
+        }
+        // The columns made and let go, told to scripts while the game plays, and forgotten in the editor.
+        let columns = crate::ground_streaming::take_untold(&mut self.engine.world);
+        if !self.engine.is_edit_mode() {
+            self.engine.tell_column_events(&columns);
         }
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
         {

@@ -4164,19 +4164,23 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     arm held up by its baked clip. Records put back from a save or sent by the server are the open level's, not
     cleared as another level's on their first frame. Not done: far crowds made from seeds.
 - A living society: residents with daily routines (home, work, shop, tavern, bed) who keep their day while their
-  ground is unloaded and are where they should be when a player comes back. Researched, nothing built yet: what
-  the engine has, measured limits and the plan are in [research/society.md](research/society.md). A resident's
-  place is worked out from its schedule and the world time, not simulated (9 ns a resident in a prototype), on
-  top of crowd records; aimed at 100,000 residents known to a world, and saves of only what differs from a
-  town's seed. In stages:
-  - [ ] World time counting days, Schedule and Activity assets, Building and Spot components, the Resident
-    component following its schedule.
-  - [ ] Residents while unloaded: records holding a schedule, places and changes, woken at their spots.
-  - [ ] Places known without loading, and generated towns peopled from their seed.
-  - [ ] Needs, interrupts and reactions.
-  - [ ] A society tick per settlement, with stock, money and deliveries.
-  - [ ] Co-op: every machine working out the same plan from the world time, only changes sent.
-  - [ ] The Society view, Profiler rows, `society.*` calls and a sample town.
+  ground is unloaded and are where they should be when a player comes back. Researched in
+  [research/society.md](research/society.md): a resident's place is worked out from its schedule and the time, not
+  simulated (9 ns a resident in a prototype). The society itself is built by the game in C#; the engine gives the
+  hooks a game cannot make itself:
+  - [x] Column events in C#: `Blocks.ColumnMade` and `Blocks.ColumnLetGo` for each 32-block column of a world
+    without end, with those made behind a loading screen told in the first frame (`ground_streaming::UntoldColumns`,
+    native API 97), `Blocks.IsMade(position, radius)` in the dimension scripts ask of, and
+    `Navigation.IsReady(position)`. Test: a script in the Infinite World template hears the columns round it, the one
+    it stands in among them, the ground made there and not 5 km off, the nav ready, and the columns let go once the
+    camera leaves.
+  - [x] Far figures: `FarFigures.Set` draws a game's own characters far off from an id, a prefab, a place, a yaw and
+    a speed, as crowd records are drawn and among the same 2,000 nearest (`crowd_records::FarFigures`); set again,
+    a figure walks on to its new place; one left out goes; forgotten when another level opens, never sent. Tests: a
+    figure set 400 m off drawn there, set 8 m on walking there over frames, gone when left out and past 600 m; one
+    set from C# drawn with its model.
+  - [ ] Generated towns' plans in C#: `Towns.Near` with each house's structure, place, facing, door and points.
+  - [ ] A game's own `vox editor call` and `vox mcp` calls from C# methods, with typed arguments and data back.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

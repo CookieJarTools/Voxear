@@ -75,6 +75,16 @@ public static class Navigation
 	}
 
 	/// <summary>
+	/// Whether a Nav Agent can be sent from a place: there is somewhere to stand within <paramref name="reach"/>
+	/// metres of it. In a world of blocks without end, a column's places are made a few frames after its blocks
+	/// (<see cref="Blocks.IsMade"/>), so a character made there waits for this before it is sent on.
+	/// </summary>
+	public static bool IsReady(Vector3 point, float reach = 2f)
+	{
+		return Nearest(point, reach).HasValue;
+	}
+
+	/// <summary>
 	/// The area of ground of the place to stand nearest <paramref name="point"/>, no more than
 	/// <paramref name="reach"/> metres off: as its block or a Nav Area box marks it. Null where there is none.
 	/// </summary>

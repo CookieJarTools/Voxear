@@ -221,4 +221,6 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<byte*, int, float, int, void> ShaderPackSetOption;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> ShaderPacksInfo;
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> CrowdRecords;
+	public delegate* unmanaged[Cdecl]<FarFigureData*, int, int> FarFigures;
+	public delegate* unmanaged[Cdecl]<Vector3*, float, int> GroundMade;
 }

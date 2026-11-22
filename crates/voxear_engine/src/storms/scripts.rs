@@ -15,6 +15,8 @@ pub(crate) fn register() {
     voxear_scripting::set_storm_call(call);
     voxear_scripting::set_storm_state(state);
     voxear_scripting::set_crowd_records(crate::crowd_records::state);
+    voxear_scripting::set_far_figures(crate::crowd_records::set_figures);
+    voxear_scripting::set_ground_made(crate::ground_streaming::ground_made);
 }
 
 /// The storms as a save keeps them, as bytes; or, given bytes, the storms

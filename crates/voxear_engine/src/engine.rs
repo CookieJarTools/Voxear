@@ -891,6 +891,17 @@ impl Engine {
         }
     }
 
+    /// Tells scripts of the columns of worlds of blocks without end made and
+    /// let go, as `Blocks.ColumnMade` and `Blocks.ColumnLetGo`.
+    pub fn tell_column_events(&mut self, events: &[voxear_scripting::ColumnEventData]) {
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
+            profile_scope!("Column Events");
+            scripts.column_events(&mut self.world, events);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
     /// Tells scripts of Heat Bodies' changes, and what each became, and of
     /// characters that came to feel otherwise, as `HeatBody.Changed` and
     /// `HeatBody.FeelsChanged`; `names` has each change's name, a line each.

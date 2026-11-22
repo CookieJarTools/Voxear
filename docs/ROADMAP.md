@@ -622,6 +622,10 @@ Next in M3:
   - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it
   - [x] several Scene views, each with its own camera, shading and Gizmos, opened from a window's menu (Add Scene
     View)
+  - [x] the Scene view draws only what the game's camera draws while playing, to judge culling from outside
+    (Gizmos ▸ Game Camera's Culling, on by default; a selected camera's while editing): it culls by that camera's
+    frustum, draw distances, LODs, block chunks' sight and the Game view's depth pyramid (the Game view now draws
+    first in the frame), with its frustum drawn in amber; `scene_view.culling` in `vox editor call`
   - [x] handles for two axes at once: move's and scale's squares between each two axes, rotate's ring around the
     view and turning freely inside the rings
   - [ ] **A gizmo API for game code** (agreed, being built). Unity splits this into Gizmos, Handles and Debug, each

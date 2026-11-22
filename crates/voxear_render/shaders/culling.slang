@@ -28,19 +28,25 @@ bool insidePlanes(float4 planes[6], float3 center, float radius)
     return true;
 }
 
-// True when the sphere's screen box is entirely behind the depth pyramid.
+// True when the sphere's screen box is entirely behind the depth pyramid, as
+// the camera culling is judged from sees it (CullCamera in common.slang).
 // With reverse-Z, larger depth is nearer, and the pyramid stores the minimum
 // (farthest) depth of each region.
 bool occluded(Frame* frame, float3 center, float radius)
 {
+    // Culling from another view's camera when no view drew through it this frame: no depth to test against.
+    if (frame->hizTexture == NO_TEXTURE)
+    {
+        return false;
+    }
     float2 low = 1e9;
     float2 high = -1e9;
     float nearest = 0.0;
     for (uint i = 0; i < 8; i++)
     {
         float3 corner = center + radius * float3((i & 1) != 0 ? 1.0 : -1.0, (i & 2) != 0 ? 1.0 : -1.0, (i & 4) != 0 ? 1.0 : -1.0);
-        float4 clip = transform(frame->viewProj, float4(corner, 1.0));
-        if (clip.w <= frame->near)
+        float4 clip = transform(frame->cull.viewProj, float4(corner, 1.0));
+        if (clip.w <= frame->cull.near)
         {
             // Crosses the near plane: too close to judge, so draw it.
             return false;
@@ -146,7 +152,7 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
     float radius = meshlet.radius * culler.scale + culler.grow;
     bool inside;
     // From the camera, a lamp, or along the sun's light from far off. A two-sided list is tested as the list beside it.
-    float3 toCenter = center - frame->cameraPosition;
+    float3 toCenter = center - frame->cull.position;
     uint list = shadowListOf(culler.list);
     if (list >= LIST_LOCAL_SHADOW)
     {
@@ -177,7 +183,7 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
     }
     else
     {
-        inside = insidePlanes(frame->planes, center, radius);
+        inside = insidePlanes(frame->cull.planes, center, radius);
     }
     if (!inside)
     {

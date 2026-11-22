@@ -2016,6 +2016,7 @@ impl Editor {
         let playing = |entity| self.game.audio.is_source_playing(world, entity);
         let markers = self.markers(self.scene.show_gizmos);
         let mut shapes = gizmos::shapes(world, &camera, self.selected(), markers, &playing);
+        shapes.extend(self.culling_shapes(&camera));
         if self.scene.show_gizmos {
             shapes.extend(scene_gizmos::icon_shapes(&self.gizmo_icons(), &camera, self.selected()));
         }
@@ -2730,14 +2731,41 @@ impl Editor {
     }
 
     /// How a view draws: through its camera, and a Scene view shaded as its
-    /// menu says, with behaviours' gizmos while its Gizmos button is on; the
+    /// menu says, with behaviours' gizmos while its Gizmos button is on, and
+    /// culled as the game's camera culls with Game Camera's Culling on; the
     /// Game view always lit, and without gizmos.
     fn view_options(&self, viewport: NodeId, camera: Entity) -> ViewOptions {
         let scene_view = self.scene_view_at(viewport);
         let debug_view = scene_view.map_or(0, |view| view.debug_view());
         // Behaviours' gizmos show in a Scene view with its Gizmos button on, and never in the Game view.
         let gizmos = scene_view.is_some_and(|view| view.show_gizmos);
-        ViewOptions { camera: Some(camera), debug_view, gizmos, ..ViewOptions::default() }
+        let cull_camera = scene_view.and_then(|_| self.culling_camera());
+        ViewOptions { camera: Some(camera), debug_view, gizmos, cull_camera, ..ViewOptions::default() }
+    }
+
+    /// The camera the Scene views cull and pick LODs from with Gizmos ▸ Game
+    /// Camera's Culling on: the game's while playing, and while editing a
+    /// selected camera's. None with it off, or with no such camera.
+    pub fn culling_camera(&self) -> Option<Entity> {
+        if !self.memory.settings.game_culling {
+            return None;
+        }
+        if self.is_playing() {
+            return self.game_camera();
+        }
+        let world = &self.game.engine.world;
+        let selected =
+            self.selected().filter(|&entity| world.has::<Camera>(entity) && !world.has::<EditorOnly>(entity));
+        selected.filter(|&entity| voxear_scene::is_on(world, entity, voxear_scene::Switch::Camera))
+    }
+
+    /// The frustum of the camera the Scene views cull from, as wide as the
+    /// Game view, or as the Game view usually is while it is not showing.
+    pub(super) fn culling_shapes(&self, camera: &ViewCamera) -> Vec<voxear_ui::Shape> {
+        let Some(culler) = self.culling_camera() else { return Vec::new() };
+        let game = self.shown(self.nodes.game_viewport).then(|| self.ui.rect(self.nodes.game_viewport));
+        let aspect = game.filter(|rect| rect[3] > 0.0).map_or(16.0 / 9.0, |rect| rect[2] / rect[3]);
+        gizmos::culling_frustum(&self.game.engine.world, camera, culler, aspect)
     }
 
     /// The camera the game looks through: the level's first that is switched

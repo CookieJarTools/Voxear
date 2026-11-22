@@ -484,6 +484,44 @@ pub struct GpuFrame {
     pub lamp_vsm: GpuLampShadows,
     /// This view's trails on water (see `water_trails`).
     pub trails: crate::water_trails::GpuTrails,
+    /// The camera culling and LODs are judged from: the view's own, or
+    /// another view's it borrows (see [`GpuCull`]).
+    pub cull: GpuCull,
+}
+
+/// The camera a view culls and picks LODs from. Its own, as
+/// [`GpuCull::own`] fills it in, but for a Scene view drawing what the
+/// game's camera draws: then the game camera's frustum, place and LOD scale,
+/// with the depth pyramid in the frame the game view's.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuCull {
+    pub view_proj: Mat4Cols,
+    pub planes: [[f32; 4]; 6],
+    pub position: [f32; 3],
+    pub lod_scale: f32,
+    pub near: f32,
+    /// tan(fov / 2) as LODs by screen share measure it.
+    pub tan_half: f32,
+    /// 1 while the camera is another view's.
+    pub borrowed: u32,
+    pub _pad: u32,
+}
+
+impl GpuCull {
+    /// A frame's own camera, as culling judged from before it could borrow one.
+    pub fn own(frame: &GpuFrame) -> Self {
+        Self {
+            view_proj: frame.view_proj,
+            planes: frame.planes,
+            position: frame.camera_position,
+            lod_scale: frame.lod_scale,
+            near: frame.near,
+            tan_half: frame.viewport[1] as f32 / (2.0 * frame.lod_scale.max(1e-6)),
+            borrowed: 0,
+            _pad: 0,
+        }
+    }
 }
 
 /// How the level's bake lights it, as `Bake` in the shaders: its lights come
@@ -1746,7 +1784,9 @@ mod tests {
                 + vsm
                 + lamp_vsm
                 + trails
+                + 192
         );
+        assert_eq!(size_of::<GpuCull>(), 192);
         assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);
         assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);

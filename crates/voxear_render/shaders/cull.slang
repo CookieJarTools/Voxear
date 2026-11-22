@@ -63,8 +63,8 @@ uint instanceLod(Frame* frame, Instance instance, Mesh mesh, float3 center, floa
     if ((instance.flags & INSTANCE_LOD_SCREEN) != 0)
     {
         // From the main camera, so shadows draw the LOD the view does.
-        float tanHalf = float(frame->viewport.y) / (2.0 * frame->lodScale);
-        float share = radius / (max(length(center - frame->cameraPosition), frame->near) * tanHalf);
+        float tanHalf = frame->cull.tanHalf;
+        float share = radius / (max(length(center - frame->cull.position), frame->cull.near) * tanHalf);
         float ends[8] = { instance.lodScreen0.x, instance.lodScreen0.y, instance.lodScreen0.z, instance.lodScreen0.w,
                           instance.lodScreen1.x, instance.lodScreen1.y, instance.lodScreen1.z, instance.lodScreen1.w };
         uint lod = 0;
@@ -338,7 +338,7 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     // A displaced surface in view is listed for dicing (dice.slang) and drawn from its pieces, in neither list.
     if ((material.flags & MATERIAL_DISPLACED) != 0)
     {
-        if (list == LIST_EARLY && insidePlanes(frame->planes, center, radius))
+        if (list == LIST_EARLY && insidePlanes(frame->cull.planes, center, radius))
         {
             uint at;
             InterlockedAdd(buffers()->diceCounts[0], 1, at);
@@ -350,9 +350,10 @@ void cullMain(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    float distance = max(length(center - frame->cameraPosition) - radius, frame->near);
-    uint lod = instanceLod(frame, instance, mesh, center, radius, scale, frame->lodScale / distance, frame->lodThreshold);
-    bool inFrustum = insidePlanes(frame->planes, center, radius);
+    // Judged from the camera culling borrows, where it borrows one, as from the view's own otherwise.
+    float distance = max(length(center - frame->cull.position) - radius, frame->cull.near);
+    uint lod = instanceLod(frame, instance, mesh, center, radius, scale, frame->cull.lodScale / distance, frame->lodThreshold);
+    bool inFrustum = insidePlanes(frame->cull.planes, center, radius);
     bool twoSided = (material.flags & MATERIAL_TWO_SIDED) != 0;
 
     if (list == LIST_EARLY)

@@ -377,6 +377,23 @@ impl Editor {
                 let hidden = world.resource::<voxear_engine::ground_fit::HiddenLayers>().copied().unwrap_or_default();
                 done(json!({ "worlds": worlds, "hidden": { "fits": hidden.fits } }))
             }
+            "scene_view.culling" => {
+                // As the Scene view's Gizmos ▸ Game Camera's Culling, which takes hold next frame.
+                if let Some(on) = opt_bool(args, "on") {
+                    self.memory.settings.game_culling = on;
+                }
+                let camera = self.culling_camera().map(|camera| link::obj_ref(&self.game, camera));
+                let stats = renderer.stats();
+                done(json!({
+                    "on": self.memory.settings.game_culling,
+                    "camera": camera,
+                    "first_view": {
+                        "frustum_culled": stats.frustum_culled,
+                        "occlusion_culled": stats.occlusion_culled,
+                        "meshlets_occlusion_culled": stats.meshlets_occlusion_culled,
+                    },
+                }))
+            }
             "world_layers.hide" => {
                 // As the Scene view's Gizmos ▸ Bare Ground, which takes hold next frame.
                 if let Some(fits) = opt_bool(args, "fits") {

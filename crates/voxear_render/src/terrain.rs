@@ -894,7 +894,8 @@ pub(crate) fn gather(
             anchors.entry(owner.entity).or_insert(index as u32);
         }
     }
-    let camera = Vec3::from(frame.camera_position);
+    // Tiles are picked from the camera the view culls from: its own, or the one it borrows (`GpuCull`).
+    let camera = Vec3::from(frame.cull.position);
     let mut records = Vec::with_capacity(drawn.len().min(MAX_TERRAINS));
     let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_TERRAINS) * MAX_SURFACES];
     let mut lists: Vec<Vec<GpuTerrainPatch>> = vec![Vec::new(); TERRAIN_LISTS];
@@ -949,7 +950,7 @@ pub(crate) fn gather(
             size: patch.size,
             packed: patch.level | (number as u32) << 8,
         };
-        let planes = voxear_terrain::lod::planes_from(&frame.planes, terrain.corner);
+        let planes = voxear_terrain::lod::planes_from(&frame.cull.planes, terrain.corner);
         patches.clear();
         voxear_terrain::lod::select(&terrain.tree, local, &terrain.ranges, &planes, &mut patches);
         lists[LIST_EARLY as usize].extend(patches.iter().map(pack));

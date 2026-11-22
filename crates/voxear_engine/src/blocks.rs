@@ -1447,9 +1447,14 @@ pub fn restored(world: &World, entity: voxear_ecs::Entity, cells: &[[i32; 3]]) -
     };
     let side = voxear_terrain::blocks::chunk::CHUNK as i32;
     let floor = blocks.floor;
+    // A column made, its chunks as generated are kept, those all air left out: air is what was generated there.
+    let made = |at: &[i32; 3]| {
+        let column = [at[0].div_euclid(side), at[2].div_euclid(side)];
+        blocks.columns.as_ref().map_or(true, |columns| columns.contains(&column))
+    };
     cells
         .iter()
-        .filter(|at| asset.base.chunk(at.map(|v| v.div_euclid(side))).is_some())
+        .filter(|at| made(at))
         .filter(|at| floor.is_none_or(|top| at[1] > top))
         .filter_map(|&at| {
             let generated = asset.base.get(at);

@@ -35,6 +35,7 @@ mod levels;
 mod math;
 mod noise;
 mod output;
+mod painted_map;
 mod peaks;
 mod plateaus;
 mod rivers;
@@ -72,6 +73,7 @@ pub use falloff::{Falloff, FalloffShape};
 pub use gullies::Gullies;
 pub use height_mask::HeightMask;
 pub use landmass::Land;
+pub use painted_map::{PaintedMapKind, PaintedMapNode};
 pub use levels::Levels;
 pub use math::{Math, Operation};
 pub use noise::Noise;
@@ -367,6 +369,8 @@ pub enum NodeKind {
     Fins(Fins),
     Roof(Roof),
     Peaks(Peaks),
+    #[serde(rename = "painted_map")]
+    PaintedMap(PaintedMapNode),
 }
 
 /// What a mask wired in as a program of its own (see
@@ -419,6 +423,7 @@ macro_rules! each_kind {
             NodeKind::Fins($kind) => $do,
             NodeKind::Roof($kind) => $do,
             NodeKind::Peaks($kind) => $do,
+            NodeKind::PaintedMap($kind) => $do,
         }
     };
 }
@@ -437,6 +442,7 @@ impl NodeKind {
             NodeKind::Noise(Noise::default()),
             NodeKind::Cells(Cellular::default()),
             NodeKind::Falloff(Falloff::default()),
+            NodeKind::PaintedMap(PaintedMapNode::default()),
             NodeKind::Constant(Constant::default()),
             NodeKind::Curve(Remap::default()),
             NodeKind::Terrace(Terrace::default()),

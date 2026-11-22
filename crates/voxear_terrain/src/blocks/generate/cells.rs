@@ -172,8 +172,10 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
 /// Gives every landmass of `graph` the world's painted maps to read.
 fn attach_painted(graph: &mut crate::generate::Graph, painted: &crate::generate::painted::Painted) {
     for node in graph.nodes.iter_mut() {
-        if let NodeKind::Landmass(land) = &mut node.kind {
-            land.painted = Some(painted.clone());
+        match &mut node.kind {
+            NodeKind::Landmass(land) => land.painted = Some(painted.clone()),
+            NodeKind::PaintedMap(map) => map.painted = Some(painted.clone()),
+            _ => {}
         }
     }
 }

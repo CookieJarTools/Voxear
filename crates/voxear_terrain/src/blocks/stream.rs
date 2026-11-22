@@ -146,6 +146,9 @@ impl BlockMaking {
     /// into the far view.
     fn made_stamp(&self, level: u32) -> u64 {
         let layers = self.generate.layers.get().map_or(0, super::world_layers::WorldLayers::hash);
+        // And the painted maps' version: a column made under older paint is made again.
+        let painted = self.generate.painted.0.as_ref().map_or(0, |painted| painted.maps().version.rotate_left(41) ^ painted.id);
+        let layers = layers ^ painted;
         match level {
             0 => layers,
             _ => self.built_stamp() ^ layers.rotate_left(17),
@@ -187,7 +190,18 @@ pub fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, lev
 }
 
 fn far_tile_bare(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
-    let path = folder.map(|folder| folder.join(format!("{level}_{}_{}.far", at[0], at[1])));
+    // Kept by the paint over it too, a little past its sides: a tile painted over is another tile.
+    let painted = making.generate.painted.0.as_ref().map_or(0, |painted| {
+        let span = CHUNK as f32 * making.file.block_size.max(0.01) * (1u32 << level.min(16)) as f32;
+        let corner = [making.generate.position[0] + at[0] as f32 * span, making.generate.position[1] + at[1] as f32 * span];
+        let margin = 64.0;
+        painted.maps().hash_within([corner.map(|v| v - margin), corner.map(|v| v + span + margin)])
+    });
+    let name = match painted {
+        0 => format!("{level}_{}_{}.far", at[0], at[1]),
+        painted => format!("{level}_{}_{}_{painted:016x}.far", at[0], at[1]),
+    };
+    let path = folder.map(|folder| folder.join(name));
     let read = path.as_ref().and_then(|path| std::fs::read(path).ok());
     let kept = read.and_then(|bytes| FarTile::from_bytes(&bytes).ok());
     if let Some(tile) = kept.filter(|tile| tile.level == level && tile.at == at) {
@@ -451,6 +465,9 @@ pub struct BlockStreamer {
     /// Near columns made again, as under a world layer that changed: their
     /// old faces drawn till their new ones are made.
     redrawing: CoordSet<[i32; 2]>,
+    /// The painted maps last made with: their handle's number and their
+    /// version (see `generate::painted`).
+    painted_seen: Option<(u64, u64)>,
     /// The near columns made, and let go, since they were last taken (see
     /// [`BlockStreamer::take_moves`]).
     came_since: Vec<[i32; 2]>,
@@ -511,6 +528,7 @@ impl Default for BlockStreamer {
             asked: CoordSet::default(),
             stale: CoordSet::default(),
             redrawing: CoordSet::default(),
+            painted_seen: None,
             came_since: Vec::new(),
             went_since: Vec::new(),
             covered_since: CoordMap::default(),
@@ -655,10 +673,14 @@ impl BlockStreamer {
             world.faces = making.faces.clone();
             self.making = Some(Arc::new(making));
             changed = true;
-        } else if rebuilt || relaid.is_some() {
+        } else if rebuilt || relaid.is_some() || self.painted_differs(&making) {
             self.making = Some(Arc::new(making));
         }
         if let Some(columns) = relaid {
+            self.relay(&columns);
+        }
+        // Painted since: the columns under what was painted made again, the old drawn till then.
+        if let Some(columns) = self.painted_columns() {
             self.relay(&columns);
         }
         let making = self.making.clone().expect("kept above");
@@ -853,6 +875,49 @@ impl BlockStreamer {
         changed
     }
 
+    /// Whether `making`'s painted maps are other than those last made with.
+    fn painted_differs(&self, making: &BlockMaking) -> bool {
+        let now = making.generate.painted.0.as_ref().map(|painted| (painted.id, painted.maps().version));
+        now != self.painted_seen
+    }
+
+    /// The chunk columns the painting since the maps were last made with
+    /// reached, a column round them besides, as gullies read the ground a
+    /// little way off; every column made where too much changed to know.
+    /// None where nothing was painted since.
+    fn painted_columns(&mut self) -> Option<Vec<[i32; 2]>> {
+        let making = self.making.clone()?;
+        let painted = making.generate.painted.0.as_ref();
+        let now = painted.map(|painted| (painted.id, painted.maps().version));
+        let seen = std::mem::replace(&mut self.painted_seen, now);
+        if now == seen {
+            return None;
+        }
+        // Another handle, or one taken away or given, or more changed than is remembered: every column.
+        let (Some(painted), Some((seen_id, seen_version))) = (painted, seen) else {
+            self.relay_all();
+            return None;
+        };
+        let areas = painted.maps().changed_since(seen_version).filter(|_| painted.id == seen_id);
+        let Some(areas) = areas else {
+            self.relay_all();
+            return None;
+        };
+        let size = making.file.block_size.max(0.01);
+        let span = CHUNK as f32 * size;
+        let position = making.generate.position;
+        let mut columns = Vec::new();
+        for [low, high] in areas {
+            let column = |v: f32, axis: usize| ((v - position[axis]) / span).floor() as i32;
+            for z in column(low[1], 1) - 1..=column(high[1], 1) + 1 {
+                for x in column(low[0], 0) - 1..=column(high[0], 0) + 1 {
+                    columns.push([x, z]);
+                }
+            }
+        }
+        Some(columns)
+    }
+
     /// Whether a near column's faces are drawn: made, or being made again
     /// with its old ones drawn till then.
     fn shows(&self, at: &[i32; 2]) -> bool {
@@ -876,6 +941,15 @@ impl BlockStreamer {
                 }
             }
         }
+        self.again = true;
+    }
+
+    /// Marks every column made, at every level, to be made again.
+    fn relay_all(&mut self) {
+        let near: Vec<(u32, [i32; 2])> = self.near.iter().map(|at| (0, *at)).collect();
+        let fine: Vec<(u32, [i32; 2])> = self.fine.keys().map(|at| (FINE, *at)).collect();
+        let coarse: Vec<(u32, [i32; 2])> = self.coarse.keys().chain(self.coarse_blocks.keys()).copied().collect();
+        self.stale.extend(near.into_iter().chain(fine).chain(coarse));
         self.again = true;
     }
 
@@ -2455,6 +2529,45 @@ mod tests {
         settle(&mut streamer, &mut world, (&mut base, &mut pending), &bare, [10.0, 10.0]);
         assert_eq!(top(&world, 16, 16), was);
         assert_eq!(world.blocks.get([20, level + 3, 20]), 3);
+    }
+
+    #[test]
+    fn painting_makes_again_the_columns_it_reaches_and_their_far_tiles_keep_apart_from_unpainted_ones() {
+        use crate::{
+            blocks::generate::PaintedRef,
+            generate::painted::{Painted, PaintedMaps},
+        };
+        let painted = Painted::new(3, PaintedMaps::default());
+        let mut making = making();
+        making.generate.painted = PaintedRef(Some(painted.clone()));
+        let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
+        let top = |world: &BlockWorld, x: i32, z: i32| (-8..400).rev().find(|&y| world.blocks.get([x, y, z]) != 0).unwrap();
+        let was = top(&world, 20, 20);
+        let far_column = [-2, -2];
+        let untouched: Vec<Arc<Chunk>> =
+            world.blocks.chunks().filter(|(k, _)| [k[0], k[2]] == far_column).map(|(_, c)| c.clone()).collect();
+        // A hill painted round block (20, 20), 40 m across: metres from the generator's corner, as the world lies.
+        let middle = [making.generate.position[0] + 41.0, making.generate.position[1] + 41.0];
+        painted.change(|maps| {
+            let area = maps.height.paint(middle, 20.0, 0.3, &|_, cover| Some(cover));
+            maps.changed(area.unwrap());
+        });
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
+        assert!(top(&world, 20, 20) > was + 5, "raised from {was} to {}", top(&world, 20, 20));
+        let still: Vec<Arc<Chunk>> =
+            world.blocks.chunks().filter(|(k, _)| [k[0], k[2]] == far_column).map(|(_, c)| c.clone()).collect();
+        assert!(untouched.iter().zip(&still).all(|(a, b)| Arc::ptr_eq(a, b)), "a column it never reached is not made");
+        // A far tile under the paint is kept apart from the unpainted one, which stays as it was.
+        let folder = std::env::temp_dir().join(format!("voxear-painted-far-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let bare = far_tile_kept(&super::tests::making(), Some(&folder), 3, [0, 0]);
+        let tile = far_tile_kept(&making, Some(&folder), 3, [0, 0]);
+        assert_ne!(tile.surface([2, 2]), bare.surface([2, 2]));
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

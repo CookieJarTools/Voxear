@@ -115,6 +115,42 @@ Each kind of house has rules of its own, so a town can have many cottages, one c
 
 A small hamlet and a large town are two structures, each with a town of its own size and a placement of its own: the hamlet common, the town rarer and kept further apart from the rest.
 
+### Towns from scripts
+
+`Towns.Near` reads the towns a world's generator lays out near a place, worked out from the generator alone. A town far off, never visited, is known as it will be built, which is what a game needs to people it before the player gets there:
+
+```csharp
+public Structure Smithy;
+...
+foreach (var town in Towns.Near(Player.Position, 2000f))
+{
+	foreach (var house in town.Houses.Where(house => house.Structure == Smithy))
+	{
+		society.AddSmith(town.Seed, house.Door!.Value, house.PointOf(new Vector3(1f, 0f, 2f)));
+	}
+}
+```
+
+| On a `Town` | What it is |
+| --- | --- |
+| `World` | The Block World it is in |
+| `Structure` | The structure that lays it out |
+| `Seed` | Its site's own seed, the same every time and on every machine |
+| `Middle` | The middle of its middle building's floor |
+| `Buildings`, `Houses` | Its buildings, the middle first and then houses nearest the middle first; its houses alone |
+
+| On a `TownBuilding` | What it is |
+| --- | --- |
+| `Structure` | The structure it is built from, to compare with a `Structure` field picked in the Inspector |
+| `IsMiddle` | Whether it is the town's middle |
+| `Position` | The middle of its floor |
+| `Size` | How wide, tall and deep it is, before it is turned |
+| `Rotation`, `Front` | How it is turned, and which way its door faces |
+| `Door` | The block just outside its door, on its floor's level |
+| `PointOf(local)` | A place inside it, given in its model's own metres from its floor's middle |
+
+`Towns.Nearest` gives the town whose middle is nearest. `vox editor call towns.near` gives the same, as JSON. Towns are laid on the generator's ground: a world layer that reshapes the ground under a town is not taken into account.
+
 ### Roads between towns
 
 With **Roads** on, a town is joined to the towns of its kind next to it. A road leaves one town and heads for the next, curving round hills where it is far from either and heading straight in as it nears a town. It crosses water on a bridge a block over the water, with posts down to the bed. Which towns are joined is decided by the two towns alone, so a road is the same from every chunk it crosses.

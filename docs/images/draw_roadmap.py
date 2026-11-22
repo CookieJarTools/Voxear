@@ -25,7 +25,7 @@ MILESTONES = [
     ("", "Gameplay kits", "Guns with procedural recoil, heat and cold, controllers, destruction", "now"),
     ("M7", "Materials and particles", "Custom shaders, VoxShade, material variants, GPU particles", "now"),
     ("M8", "Terrain", "Heightmaps, digging, block worlds, biomes, caves, dungeons, maps, texture packs", "now"),
-    ("", "World building", "Ground fits, roads, squares, Objs streamed with their ground; kits and painted land next", "now"),
+    ("", "World building", "Ground fits, roads, squares, kits placed and walked into; painted land next", "now"),
     ("M9", "Navigation, cameras, Timeline", "Ways over blocks and meshes, agents, crowds, obstacles, camera rigs, Timeline", "now"),
     ("M10", "2D and networking", "Replication, RPCs and prediction, sprites and tilemaps", "now"),
     ("M11", "Modding and platform services", "Content and script mods, Steam, the Workshop", "planned"),

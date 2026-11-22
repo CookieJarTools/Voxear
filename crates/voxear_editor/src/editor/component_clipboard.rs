@@ -65,6 +65,9 @@ pub(super) enum Copied {
     StreamsWithGround(voxear_engine::ground_streaming::StreamsWithGround),
     Road(voxear_engine::roads::Road),
     AreaFill(voxear_engine::roads::AreaFill),
+    Placement(voxear_engine::prefab_placing::Placement),
+    PrefabBrush(voxear_engine::prefab_placing::PrefabBrush),
+    Walkable(voxear_engine::walkable_models::Walkable),
     NavObstacle(voxear_engine::nav_obstacle::NavObstacle),
     CrowdMember(voxear_engine::crowds::CrowdMember),
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
@@ -143,6 +146,11 @@ impl Copied {
             Part::GroundFit => Self::GroundFit(world.get::<voxear_engine::ground_fit::GroundFit>(entity)?.clone()),
             Part::Road => Self::Road(world.get::<voxear_engine::roads::Road>(entity)?.clone()),
             Part::AreaFill => Self::AreaFill(world.get::<voxear_engine::roads::AreaFill>(entity)?.clone()),
+            Part::Placement => Self::Placement(*world.get::<voxear_engine::prefab_placing::Placement>(entity)?),
+            Part::Walkable => Self::Walkable(*world.get::<voxear_engine::walkable_models::Walkable>(entity)?),
+            Part::PrefabBrush => {
+                Self::PrefabBrush(world.get::<voxear_engine::prefab_placing::PrefabBrush>(entity)?.clone())
+            }
             Part::StreamsWithGround => {
                 Self::StreamsWithGround(*world.get::<voxear_engine::ground_streaming::StreamsWithGround>(entity)?)
             }
@@ -218,6 +226,9 @@ impl Copied {
             Self::StreamsWithGround(streams) => drop(world.insert(entity, *streams)),
             Self::Road(road) => drop(world.insert(entity, road.clone())),
             Self::AreaFill(area) => drop(world.insert(entity, area.clone())),
+            Self::Placement(placement) => drop(world.insert(entity, *placement)),
+            Self::PrefabBrush(brush) => drop(world.insert(entity, brush.clone())),
+            Self::Walkable(walkable) => drop(world.insert(entity, *walkable)),
             Self::NavObstacle(obstacle) => drop(world.insert(entity, *obstacle)),
             Self::CrowdMember(member) => drop(world.insert(entity, *member)),
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),

@@ -23,6 +23,13 @@ pub trait ScriptServices {
         anyhow::bail!("{reference}: there are no prefabs to load here")
     }
 
+    /// The Placement on a prefab's root, by GUID or project path, as its
+    /// scene file writes it in JSON: how much ground it takes up, its front
+    /// and its door. None where it has none or there are no prefabs here.
+    fn prefab_placement(&mut self, _reference: &str) -> Option<String> {
+        None
+    }
+
     /// Creates a loaded prefab's Objs, without behaviours. The root goes
     /// under `parent`, and takes `placement`, relative to it, when it is
     /// given.
@@ -353,6 +360,13 @@ pub trait ScriptServices {
     /// `voxear_engine::dungeons`).
     fn dungeons_json(&mut self, _world: &World, obj: u64, _at: [f32; 4]) -> Result<String> {
         anyhow::bail!("dungeons are read only in a running game, not here (Obj {obj})")
+    }
+
+    /// The towns of a world of blocks (0 for each of the dimension asked
+    /// of) whose sites lie within `at[3]` metres of `at`, as JSON for
+    /// `Towns` in Voxear.Core.
+    fn towns_json(&mut self, _world: &World, obj: u64, _at: [f32; 4]) -> Result<String> {
+        anyhow::bail!("towns are read only in a running game, not here (Obj {obj})")
     }
 
     /// For a world of blocks without end, every change from its ground: those
@@ -775,6 +789,12 @@ impl Drop for ServicesScope<'_> {
 }
 
 /// Runs `f` with the lent services, or returns `None` outside any scope.
+/// The Placement on a prefab's root through the lent services (see
+/// [`ScriptServices::prefab_placement`]); none outside them.
+pub fn prefab_placement(reference: &str) -> Option<String> {
+    with_services(|services| services.prefab_placement(reference)).flatten()
+}
+
 pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> Option<R> {
     let mut services = SERVICES.get()?;
     Some(f(unsafe { services.as_mut() }))
@@ -938,6 +958,19 @@ pub(crate) unsafe extern "C" fn dungeons_info(obj: u64, at: *const [f32; 4], buf
     let said = crate::interop::with_world(|world| {
         with_services(|services| services.dungeons_json(world, obj, at).ok())
     });
+    let Some(Some(json)) = said else { return -1 };
+    if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+    }
+    json.len() as i32
+}
+
+/// The towns of a world of blocks near a place as JSON for `Towns` in
+/// Voxear.Core (see [`ScriptServices::towns_json`]), written when it fits:
+/// its length, or -1 where they cannot be read.
+pub(crate) unsafe extern "C" fn towns_info(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32 {
+    let at = if at.is_null() { [0.0; 4] } else { unsafe { *at } };
+    let said = crate::interop::with_world(|world| with_services(|services| services.towns_json(world, obj, at).ok()));
     let Some(Some(json)) = said else { return -1 };
     if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
         unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };

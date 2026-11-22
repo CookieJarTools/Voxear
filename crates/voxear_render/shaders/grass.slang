@@ -1,9 +1,9 @@
-// Grass (src/grass.rs): each view scatters each terrain's grass round its
-// camera on the GPU (grassScatter), one blade at most in each cell of a
-// grid fixed to the world, so a blade stands in the same place, turned and
-// sized the same, whenever the camera comes back. A blade grows in a cell
-// as likely as its kind grows thickly there, on the ground's height, and
-// leaning with it; not in holes, not out of view, and thinning out over
+// Grass (src/grass.rs): each view scatters each terrain's grass round the
+// camera it culls from (CullCamera) on the GPU (grassScatter), one blade at
+// most in each cell of a grid fixed to the world, so a blade stands in the
+// same place, turned and sized the same, whenever the camera comes back.
+// A blade grows in a cell as likely as its kind grows thickly there, on
+// the ground's height, and leaning with it; not in holes, not out of view, and thinning out over
 // the last fifth of its draw distance. Blades go into the view's grass
 // instances, a run for each kind and level of detail, counted in the
 // indirect draws that draw them (grassVertex), with the forward passes'
@@ -44,7 +44,7 @@ void grassScatter(uint3 id : SV_DispatchThreadID)
     int2 cell = ((job.firstCell + int2(id.xy) + 32768) & 0xFFFF) - 32768;
     uint seed = job.terrain * 64 + job.kind;
     float2 at = job.corner + (float2(id.xy) + float2(grassHash(cell, seed, 0), grassHash(cell, seed, 1))) * job.cellSize;
-    float away = distance(at, frame->cameraPosition.xz);
+    float away = distance(at, frame->cull.position.xz);
     if (away > job.drawDistance || grassHash(cell, seed, 2) < smoothstep(job.drawDistance * 0.8, job.drawDistance, away))
     {
         return;
@@ -64,7 +64,7 @@ void grassScatter(uint3 id : SV_DispatchThreadID)
     Mesh mesh = buffers()->meshes[job.mesh];
     float grown = grassHash(cell, seed, 4);
     float scale = lerp(job.scale.x, job.scale.y, grown);
-    if (!insidePlanes(frame->planes, foot + mesh.center * scale, mesh.radius * scale))
+    if (!insidePlanes(frame->cull.planes, foot + mesh.center * scale, mesh.radius * scale))
     {
         return;
     }
@@ -203,7 +203,7 @@ void groundCoverGrow(GrassJob job, Frame* frame, Mesh mesh, BlockWorld world, in
         float2 within = float2(placed & 0xFFFF, placed >> 16) / 65535.0;
         float2 sixteenths = float2(lerp(float(span.z), float(span.w), within.x), lerp(float(span.x), float(span.y), within.y));
         float3 foot = world.corner + (float3(block) + float3(sixteenths.x, float(height), sixteenths.y) / 16.0) * world.blockSize;
-        float away = distance(foot, frame->cameraPosition);
+        float away = distance(foot, frame->cull.position);
         float thinned = float((number >> 16) & 0xFF) / 255.0;
         if (away > job.drawDistance || thinned < smoothstep(job.drawDistance * 0.8, job.drawDistance, away))
         {
@@ -211,7 +211,7 @@ void groundCoverGrow(GrassJob job, Frame* frame, Mesh mesh, BlockWorld world, in
         }
         float grown = float(number >> 24) / 255.0;
         float scale = lerp(job.scale.x, job.scale.y, grown);
-        if (!insidePlanes(frame->planes, foot + mesh.center * scale, mesh.radius * scale))
+        if (!insidePlanes(frame->cull.planes, foot + mesh.center * scale, mesh.radius * scale))
         {
             continue;
         }
@@ -291,7 +291,7 @@ void grassReset(uint3 id : SV_DispatchThreadID)
     uint pick = 0;
     for (uint each = 1; each < mesh.lodCount; each++)
     {
-        if (mesh.lods[each].error * size * frame->lodScale > frame->lodThreshold * coarser * max(near, 1e-3))
+        if (mesh.lods[each].error * size * frame->cull.lodScale > frame->lodThreshold * coarser * max(near, 1e-3))
         {
             break;
         }

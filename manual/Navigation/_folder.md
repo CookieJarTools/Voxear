@@ -13,6 +13,7 @@ Navigation is how characters and creatures find their own way about a level: rou
 7. [[Portals and Dimensions]]: Portals walked through as a short way, and agents sent into another dimension, as into a dungeon
 8. [[Climbing]]: vines, ropes, chains and ladders climbed without a Nav Link
 9. [[Agent Types]]: kinds of walker, as a horse or an ogre, each with its own size and costs
+10. [[Walkable Models]]: houses and kits walked into and through in a world of blocks, their doors left open
 
 In a [[Block Worlds|Block World]] the places to walk are worked out from the blocks themselves, chunk by chunk, as the world streams in and as blocks are placed and dug. There is nothing to bake. [[Block Mobs]] walk on the same places.
 

@@ -4395,7 +4395,11 @@ built stone (`rooms`, from `pieces`: columns, pointed arches, balustrades, statu
 reliefs), the ways' floors and ribs, the entrance, then wear (ruin, cracked, mossy, vines) read off the grid before
 any of it changes, and lights. Every step reads only a block's neighbours, so a column built alone is what it is
 among its neighbours. Scripts read the layouts as JSON (`engine::dungeons`, `Dungeons` in C#), as does
-`vox editor call dungeon.layouts`. A dungeon placed in a dimension of its own (`DungeonPlace::OwnDimension`, the
+`vox editor call dungeon.layouts`. Towns are read the same way (`engine::towns`, `Towns` in C#, `towns.near`):
+`structure::towns_near` finds the sites near a place, kept out as `dungeons_near` keeps them, and lays each out
+with `Town::layout`, whose parts now keep their kind of house and the block outside their door; each building's
+floor is the generator's ground at its middle. `WorldStructures::sources` keeps the files each structure and its
+town's pieces were read from, so a building names its `.structure` by GUID. World layers are not looked at. A dungeon placed in a dimension of its own (`DungeonPlace::OwnDimension`, the
 default) is only its gate in the land, and the rest is built in a world of rock of its own (see
 [Dimensions](#dimensions)).
 
@@ -4471,8 +4475,8 @@ var edits = Terrain.CaptureEdits();                           // for a save, or 
 
 ## World building
 
-*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills. Planned: placing tools, painted
-maps, areas and routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
+*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills, placing prefabs, walkable models.
+Planned: painted maps, areas and routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
 first and crafted on top, without storing blocks for what is placed.
 
 **World layers** (`voxear_terrain::blocks::world_layers`). A `WorldLayers` holds every layer of a world in the world's
@@ -4518,13 +4522,43 @@ answers `Roads.Nearest` through the scripts' `WORLD_ASK` call and `roads.nearest
 drag points onto the ground without the road (`ground_fit::ground_under`), set widths, add and take away points, and
 snap an end onto another road's middle.
 
+**Placing prefabs** (`voxear_engine::prefab_placing`). A prefab's root `Placement` gives its footprint (size across
+and along its front, centre), its front's turn and its door. `line_up` walks a road's line by arc length, a side at a
+time, picking candidates by weight from a stable hash of the seed, side and count (not the one just placed where
+another can be had), standing each its half depth plus a jittered setback past the edge, turned so its front faces
+back across the road's normal, and steps a metre on where its footprint meets one taken (oriented rectangles apart
+by their sides). `scatter` tries one place a cell of a grid sized by density, inside the outline and clear of the
+rest. `taken` gathers the footprints of Placements and Ground Fits. The editor's `place.*` calls make each as a prefab
+instance landed on the ground without its own fit (`ground_fit::landing`, else `ground_under`), each an `Exists` step
+folded into one (`History::group_since`). The `PrefabBrush` component drives the Scene view brush
+(`editor::prefab_brushes`): dabs every three quarters of a radius scatter into a circle, skip ground steeper than its
+limit (from the bare ground a metre either way), scale and lean each; Shift takes away the brush Obj's children
+within the radius; Single places one, turned by R. Scripts reach a prefab's Placement through the services
+(`ScriptServices::prefab_placement`), and `Placing.LineUp` and `Placing.Scatter` ask `WORLD_ASK` where and make the
+prefabs themselves on the ground under a block ray.
+
+**Walkable models** (`voxear_engine::walkable_models`). The still colliders of Objs marked Walkable (not doors) are
+sampled half a block apart over each triangle (`acoustics::shape`), and each cell a sample falls in is stamped as
+`MODEL_BLOCK` (a number no world uses, which the walk table takes as whole ground) into a copy of the world's chunk,
+for navigation alone (`for_navigation`, used by `navigation::update` and `nav_of`). Stamped chunks are kept by the
+world chunk's pointer and a hash of their cells, so a block change elsewhere or a model unmoved keeps them, and
+navigation, which rebuilds chunks whose `Arc` changed, rebuilds only those a model came to, left or moved in.
+
+**Box models without skin.** A box model of one bone and no clips is prepared with its part unskinned
+(`BoxModel::prepared`): its vertices are built at rest in model space, so it is drawn as a still model is, its bone
+kept for attachments and its vertices' weights kept for what reads them.
+
 **Streams With Ground** (`voxear_engine::ground_streaming`). The streamer keeps the near columns made and let go
 since it was last asked (`take_moves`); `blocks::stream` puts each world's into `GroundMoves` every frame. While
 playing, `Game::stream_with_ground` takes away the Objs standing on a column no longer made that had stood on made
 ground: Keep For Later captures the Obj and its children as a scene (`scene_file::capture`) with their Ground Fits
 and places, which go on shaping the ground (`kept_fits`), and spawns it again when the column is made; Destroy
 destroys it. Behaviours are told through the `GroundEvents` entry (`OnGroundUnloading`, `OnGroundLoaded`; native
-API 96). Records are not yet kept in a game's save.
+API 96). Records are not yet kept in a game's save. Each world's columns made and let go are also noted in
+`UntoldColumns` as they come (`note_columns`), so those made behind a loading screen are kept too, and told to
+scripts once a frame while playing through the `ColumnEvents` entry (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`;
+native API 97); in the editor they are dropped. `Blocks.IsMade` asks `blocks::made_round` in the dimension
+scripts ask of.
 
 ## Heat *(implemented: the temperature field, the clock, Heat Sources, Zones and Bodies, hot and cold blocks)*
 
@@ -4738,7 +4772,10 @@ engine's glue is `voxear_engine::navigation`.
   no ground. Saves of the scene keep them as small bytes beside the storms' and blocks' edits. Records within drawing
   distance are drawn as ghosts: their prefab's models under one Obj marked `RecordGhost`, with no behaviours, playing
   baked clips. On a server each player is sent the records near them (`net::crowd_sync`), which their machine walks
-  and draws but never makes Objs of.
+  and draws but never makes Objs of. Beside the records, `FarFigures` holds figures a script set
+  (`FarFigures.Set` in C#: an id, a loaded prefab, a place from the level's real middle, a yaw and a speed),
+  drawn the same way: `to_draw` takes the nearest of both, keyed apart (figures above `1 << 32`), and a figure
+  set again eases there as a record's step does. They are forgotten when another level opens and never sent.
 
 ### Planned
 
@@ -5077,6 +5114,13 @@ can change an open project and see the result, each change a step on the editor'
   - Blocks are set at points in the world (`blocks.set`, `blocks.fill`), numbered into the world as a script's
     `Blocks.Set` numbers them, one step to undo; the Scene view's camera is moved and turned with `view.set`.
   - Commands are the command palette's (`palette::command_list`), scripts' `[Command]`s included.
+  - The game's own calls are its scripts' static `[Call]` methods, listed by `ScriptCatalog` into
+    `ScriptTypes::calls` with each argument's kind, and made through the `GameCall` entry (native API 98):
+    arguments read by name with the save reader, what they return written with the save writer, both as JSON.
+    `game.calls` lists them, `game.call` makes one, and a call's own name is taken as `game.call` where no call of
+    the editor's has it. While editing a call runs on the edited level as a command does (`run_on_edits`), what it
+    changes one step to undo; before the scripts have started it waits for them (`Waiting::GameCall`). `vox mcp`
+    lists them as tools from `game.calls` whenever tools are listed.
   - Files are the Project panel's (`project_files`).
   - `link::every_part` and `link::asset_kind_id` match their enums whole, so a new component or asset kind does
     not build until it says how a tool reaches it. A test adds every offered component to an Obj and sets each of

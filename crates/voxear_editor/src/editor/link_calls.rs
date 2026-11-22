@@ -45,6 +45,8 @@ const WATCH: Duration = Duration::from_millis(500);
 const SETTLE: u32 = 3;
 /// How long Play may take to start, building the scripts included.
 const PLAY_PATIENCE: Duration = Duration::from_secs(600);
+/// How long a game's call waits for the scripts to build and start.
+const GAME_CALL_PATIENCE: Duration = Duration::from_secs(600);
 /// How long a capture may take to come back.
 const CAPTURE_PATIENCE: Duration = Duration::from_secs(20);
 /// The most lines `console.read` gives at once, unless asked for fewer.
@@ -104,6 +106,13 @@ pub(super) enum Waiting {
     LightingBake,
     /// The open level's nav mesh baking.
     NavBake,
+    /// A game's call, waiting for the scripts to start: its name, its
+    /// arguments, and when it was asked.
+    GameCall {
+        name: String,
+        args: Json,
+        asked: Instant,
+    },
 }
 
 /// A call done, or one that answers later.
@@ -216,6 +225,10 @@ impl Editor {
 
     /// Runs one call, as the editor's own panels would.
     fn run_call(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {
+        // A game's own call by its name, as `game.calls` lists it.
+        if link::call_info(call).is_none() && self.inspector.types().calls.iter().any(|known| known.name == call) {
+            return self.game_call(call, args, None);
+        }
         let Some(info) = link::call_info(call) else {
             return Err(refuse(
                 ErrorKind::NoSuchCall,
@@ -287,6 +300,7 @@ impl Editor {
             "view.set" => self.view_set(args),
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
+            "blocks.restore" => self.blocks_restore(args),
             "graph.comments" => self.graph_comments(args),
             "graph.comment.add" | "graph.comment.set" | "graph.comment.remove" => {
                 self.refuse_while_playing("change a graph")?;
@@ -301,6 +315,7 @@ impl Editor {
                 self.dungeon_starter(args, renderer)
             }
             "dungeon.layouts" => self.dungeon_layouts(args),
+            "towns.near" => self.towns_near(args),
             "dungeon.open" => self.dungeon_open(args, renderer),
             "dimension.list" => done(self.dimension_list()),
             "dimension.show" => {
@@ -332,6 +347,7 @@ impl Editor {
             }
             "navigation.status" => self.navigation_status(),
             "ground_fit.land" => self.ground_fit_land(args),
+            "place.prefab" | "place.line_up" | "place.scatter" | "place.brush" => self.place_call(call, args, renderer),
             "road.set_points" | "road.set_mix" | "area_fill.set_outline" => self.road_change(call, args),
             "roads.nearest" => {
                 let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
@@ -376,6 +392,23 @@ impl Editor {
                     .collect();
                 let hidden = world.resource::<voxear_engine::ground_fit::HiddenLayers>().copied().unwrap_or_default();
                 done(json!({ "worlds": worlds, "hidden": { "fits": hidden.fits } }))
+            }
+            "scene_view.culling" => {
+                // As the Scene view's Gizmos ▸ Game Camera's Culling, which takes hold next frame.
+                if let Some(on) = opt_bool(args, "on") {
+                    self.memory.settings.game_culling = on;
+                }
+                let camera = self.culling_camera().map(|camera| link::obj_ref(&self.game, camera));
+                let stats = renderer.stats();
+                done(json!({
+                    "on": self.memory.settings.game_culling,
+                    "camera": camera,
+                    "first_view": {
+                        "frustum_culled": stats.frustum_culled,
+                        "occlusion_culled": stats.occlusion_culled,
+                        "meshlets_occlusion_culled": stats.meshlets_occlusion_culled,
+                    },
+                }))
             }
             "world_layers.hide" => {
                 // As the Scene view's Gizmos ▸ Bare Ground, which takes hold next frame.
@@ -503,6 +536,15 @@ impl Editor {
                 }
             }
             "audio.rays" => self.audio_rays(args),
+            "game.calls" => {
+                let calls: Vec<Json> = self.inspector.types().calls.iter().map(|call| call.describe()).collect();
+                done(json!({ "calls": calls }))
+            }
+            "game.call" => {
+                let name = need_text(args, "name")?.to_string();
+                let given = args.get("args").cloned().unwrap_or_else(|| json!({}));
+                self.game_call(&name, &given, None)
+            }
             "commands" => {
                 let sources = self.command_sources();
                 let commands: Vec<Json> = palette::command_list(&sources)
@@ -677,6 +719,7 @@ impl Editor {
     /// Goes on with a call that waits on frames.
     fn go_on_waiting(&mut self, waiting: Waiting, renderer: &mut Renderer) -> Called {
         match waiting {
+            Waiting::GameCall { name, args, asked } => self.game_call(&name, &args, Some(asked)),
             Waiting::Frames(0) => done(json!({})),
             Waiting::Frames(left) => Ok(Outcome::Later(Waiting::Frames(left - 1))),
             Waiting::Play(began) => {
@@ -825,7 +868,7 @@ impl Editor {
 
     /// Notes a change as a step to undo, unless playing, when it changed the
     /// played world only.
-    fn record(&mut self, edit: Edit) -> bool {
+    pub(super) fn record(&mut self, edit: Edit) -> bool {
         if self.is_playing() {
             return false;
         }
@@ -847,7 +890,7 @@ impl Editor {
     }
 
     /// The Hierarchies and Inspectors show what a call changed.
-    fn shown_again(&mut self) {
+    pub(super) fn shown_again(&mut self) {
         self.refresh_hierarchies();
         let selected = self.selection.filter(|&e| self.game.engine.world.is_alive(e));
         self.show_selection(selected);
@@ -1839,6 +1882,88 @@ impl Editor {
         done(json!({ "structure": link::asset_ref(&self.game, &structure), "changed": changed }))
     }
 
+    /// Makes one of the game's own calls (a `[Call]` method), its Objs as
+    /// the link names them given to it by number; later, once the scripts
+    /// have started, when they have not, for at most `GAME_CALL_PATIENCE`
+    /// from when it was first asked, `asked` when it was waiting.
+    fn game_call(&mut self, name: &str, args: &Json, waited: Option<Instant>) -> Called {
+        let asked = waited.unwrap_or_else(Instant::now);
+        let Some(call) = self.inspector.types().calls.iter().find(|call| call.name == name).cloned() else {
+            return Err(refuse(
+                ErrorKind::NoSuchCall,
+                format!("the game has no call `{name}`; `game.calls` lists them"),
+            ));
+        };
+        if !args.is_object() && !args.is_null() {
+            return Err(bad("a call's arguments are a JSON object"));
+        }
+        if call.changes && !self.memory.settings.tools_may_change {
+            return Err(refuse(
+                ErrorKind::NotAllowed,
+                "the editor's settings let tools read the project, not change it",
+            ));
+        }
+        let playing = self.is_playing();
+        match call.when.as_str() {
+            "editing" if playing => {
+                return Err(refuse(ErrorKind::RefusedWhilePlaying, format!("`{name}` is called only while editing")));
+            }
+            "playing" if !playing => {
+                return Err(refuse(ErrorKind::Failed, format!("`{name}` is called only while the game plays")));
+            }
+            _ => {}
+        }
+        let mut given = if args.is_object() { args.clone() } else { json!({}) };
+        for arg in call.args.iter().filter(|arg| arg.kind == "obj") {
+            if let Some(reference) = given.get(&arg.name).filter(|value| !value.is_null()).cloned() {
+                given[&arg.name] = json!(link::resolve_obj(&self.game, &reference)?.to_bits());
+            }
+        }
+        if call.changes && waited.is_none() {
+            tracing::info!("[Tools] {name} {}", short(&given));
+        }
+        match self.run_game_call(&call.type_name, &call.method, &given.to_string()) {
+            Some(Ok(answer)) => {
+                let result: Json = serde_json::from_str(&answer).unwrap_or(Json::String(answer));
+                done(json!({ "result": result }))
+            }
+            Some(Err(error)) => Err(refuse(ErrorKind::Failed, format!("{error:#}"))),
+            None if asked.elapsed() > GAME_CALL_PATIENCE => {
+                Err(refuse(ErrorKind::Failed, "the scripts took too long to build and start"))
+            }
+            None => Ok(Outcome::Later(Waiting::GameCall { name: name.to_string(), args: args.clone(), asked })),
+        }
+    }
+
+    fn towns_near(&mut self, args: &Json) -> Called {
+        let near = match opt_vector(args, "near")? {
+            Some(near) => near,
+            None => self
+                .game
+                .engine
+                .world
+                .get::<voxear_scene::Transform>(self.scene.camera)
+                .map_or([0.0; 3], |camera| camera.position.to_array()),
+        };
+        let reach = args.get("reach").and_then(Json::as_f64).unwrap_or(500.0) as f32;
+        let obj = match args.get("obj").filter(|obj| !obj.is_null()) {
+            Some(obj) => link::resolve_obj(&self.game, obj)?.to_bits(),
+            None => 0,
+        };
+        let world = &self.game.engine.world;
+        let text =
+            voxear_engine::towns::towns_json(world, &mut self.game.content, obj, [near[0], near[1], near[2], reach])
+                .map_err(|error| refuse(ErrorKind::Failed, format!("{error:#}")))?;
+        let mut answer: Json =
+            serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        // Each town's world as the link names Objs.
+        for town in answer["towns"].as_array_mut().into_iter().flatten() {
+            let world = town["world"].as_u64().map(Entity::from_bits);
+            town["world"] = world.map_or(Json::Null, |world| link::obj_ref(&self.game, world));
+        }
+        done(answer)
+    }
+
     fn dungeon_layouts(&mut self, args: &Json) -> Called {
         let near = match opt_vector(args, "near")? {
             Some(near) => near,
@@ -1987,6 +2112,7 @@ impl Editor {
                         "made": builder.made,
                         "build_ms": (builder.spent.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
                         "settled": builder.is_settled(),
+                        "model_cells": voxear_engine::walkable_models::stamped_cells(world, entity),
                     })
                 })
                 .collect()
@@ -1994,7 +2120,15 @@ impl Editor {
         let agents = world.query_ref::<&NavAgent>().into_iter().count();
         let mobs = world.query_ref::<&BlockMob>().into_iter().count();
         let (obstacles, carving) = voxear_engine::nav_obstacle::counts(world);
-        done(json!({ "worlds": worlds, "agents": agents, "mobs": mobs, "obstacles": obstacles, "carving": carving }))
+        let walkable = world.query_ref::<&voxear_engine::walkable_models::Walkable>().into_iter().count();
+        done(json!({
+            "worlds": worlds,
+            "agents": agents,
+            "mobs": mobs,
+            "obstacles": obstacles,
+            "carving": carving,
+            "walkable": walkable,
+        }))
     }
 
     fn navigation_path(&mut self, args: &Json) -> Called {
@@ -2130,6 +2264,38 @@ impl Editor {
         }
         // A block a world did not hold is drawn as its file says from this frame.
         voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
+        done(json!({ "changed": changed }))
+    }
+
+    fn blocks_restore(&mut self, args: &Json) -> Called {
+        use voxear_terrain::blocks::BlockWorld;
+        const MOST: i64 = 4_000_000;
+        let (Some(from), Some(to)) = (opt_vector(args, "from")?, opt_vector(args, "to")?) else {
+            return Err(bad("the points are missing"));
+        };
+        let (from, to) = (Vec3::from_array(from), Vec3::from_array(to));
+        let mut changed = 0;
+        for (entity, corner, size) in self.block_worlds(args)? {
+            let cell = |p: Vec3| ((p - corner) / size).floor().as_ivec3();
+            let (low, high) = (cell(from.min(to)), cell(from.max(to)));
+            let count = (high - low + 1).as_i64vec3().element_product().max(0);
+            if count > MOST {
+                return Err(bad(format!("{count} blocks are too many at once; the most is {MOST}")));
+            }
+            let cells: Vec<[i32; 3]> = (low.z..=high.z)
+                .flat_map(|z| (low.y..=high.y).flat_map(move |y| (low.x..=high.x).map(move |x| [x, y, z])))
+                .collect();
+            let world = &mut self.game.engine.world;
+            let changes = voxear_engine::blocks::restored(world, entity, &cells);
+            let Some(before) = ObjState::of(world, entity) else { continue };
+            let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
+            let count = blocks.set_blocks(changes);
+            if count > 0 {
+                world.insert(entity, blocks);
+                changed += count;
+                self.record_change(entity, before);
+            }
+        }
         done(json!({ "changed": changed }))
     }
 

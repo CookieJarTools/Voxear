@@ -482,6 +482,15 @@ pub struct ObjData {
     /// An area of a world of blocks laid with blocks, level or following the ground.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area_fill: Option<crate::roads::AreaFill>,
+    /// How much ground a prefab takes up, its front and its door, for placing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<crate::prefab_placing::Placement>,
+    /// Paints prefabs onto the ground under its Obj in the editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefab_brush: Option<crate::prefab_placing::PrefabBrush>,
+    /// Its still collider walked on in a world of blocks's navigation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walkable: Option<crate::walkable_models::Walkable>,
     /// A box agents go round, cut out of the nav where it stands still.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
@@ -647,6 +656,9 @@ impl ObjData {
             streams_with_ground: None,
             road: None,
             area_fill: None,
+            placement: None,
+            prefab_brush: None,
+            walkable: None,
             nav_obstacle: None,
             crowd_member: None,
             motion_matcher: None,
@@ -2413,6 +2425,15 @@ fn capture_instance(
     if root.area_fill.is_some() && root.area_fill != prefab_root.area_fill {
         instance.area_fill = root.area_fill.clone();
     }
+    if root.placement.is_some() && root.placement != prefab_root.placement {
+        instance.placement = root.placement;
+    }
+    if root.prefab_brush.is_some() && root.prefab_brush != prefab_root.prefab_brush {
+        instance.prefab_brush = root.prefab_brush.clone();
+    }
+    if root.walkable.is_some() && root.walkable != prefab_root.walkable {
+        instance.walkable = root.walkable;
+    }
     if root.nav_obstacle.is_some() && root.nav_obstacle != prefab_root.nav_obstacle {
         instance.nav_obstacle = root.nav_obstacle;
     }
@@ -2698,6 +2719,15 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(area) = actual.area_fill.as_ref().filter(|a| Some(*a) != expected.area_fill.as_ref()) {
         put("area_fill", whole(area, &crate::roads::AreaFill::default())?);
+    }
+    if let Some(placement) = actual.placement.as_ref().filter(|p| Some(*p) != expected.placement.as_ref()) {
+        put("placement", whole(placement, &crate::prefab_placing::Placement::default())?);
+    }
+    if let Some(brush) = actual.prefab_brush.as_ref().filter(|b| Some(*b) != expected.prefab_brush.as_ref()) {
+        put("prefab_brush", whole(brush, &crate::prefab_placing::PrefabBrush::default())?);
+    }
+    if let Some(walkable) = actual.walkable.as_ref().filter(|w| Some(*w) != expected.walkable.as_ref()) {
+        put("walkable", whole(walkable, &crate::walkable_models::Walkable::default())?);
     }
     if let Some(obstacle) = actual.nav_obstacle.as_ref().filter(|o| Some(*o) != expected.nav_obstacle.as_ref()) {
         put("nav_obstacle", whole(obstacle, &crate::nav_obstacle::NavObstacle::default())?);
@@ -3047,6 +3077,9 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.streams_with_ground = world.get::<crate::ground_streaming::StreamsWithGround>(entity).copied();
     obj.road = world.get::<crate::roads::Road>(entity).cloned();
     obj.area_fill = world.get::<crate::roads::AreaFill>(entity).cloned();
+    obj.placement = world.get::<crate::prefab_placing::Placement>(entity).copied();
+    obj.prefab_brush = world.get::<crate::prefab_placing::PrefabBrush>(entity).cloned();
+    obj.walkable = world.get::<crate::walkable_models::Walkable>(entity).copied();
     obj.nav_obstacle = world.get::<crate::nav_obstacle::NavObstacle>(entity).copied();
     obj.crowd_member = world.get::<crate::crowds::CrowdMember>(entity).copied();
     // As saved: where a game sent it is not part of the scene.

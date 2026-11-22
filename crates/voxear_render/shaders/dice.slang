@@ -38,8 +38,8 @@ static const uint DICE_OVERFLOW = 9;
 // it spans pixels over `detail`, at most `most`.
 float diceFactor(Frame* frame, float3 a, float3 b, float detail, float most)
 {
-    float away = max(length((a + b) * 0.5 - frame->cameraPosition), frame->near);
-    float pixels = length(b - a) * frame->lodScale / away;
+    float away = max(length((a + b) * 0.5 - frame->cull.position), frame->cull.near);
+    float pixels = length(b - a) * frame->cull.lodScale / away;
     return clamp(ceil(pixels / detail), 1.0, most);
 }
 
@@ -86,7 +86,7 @@ void diceSplitMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         float3 p2 = transform(instance.model, float4(buffers()->vertices[v.z].position, 1.0)).xyz;
         float3 middle = (p0 + p1 + p2) / 3.0;
         float reach = sqrt(max(max(dot(p0 - middle, p0 - middle), dot(p1 - middle, p1 - middle)), dot(p2 - middle, p2 - middle)));
-        if (!insidePlanes(frame->planes, middle, reach + margin))
+        if (!insidePlanes(frame->cull.planes, middle, reach + margin))
         {
             continue;
         }
@@ -95,7 +95,7 @@ void diceSplitMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         float3 normals = buffers()->vertices[v.x].normal + buffers()->vertices[v.y].normal + buffers()->vertices[v.z].normal;
         float3 worldNormals = instance.normal0.xyz * normals.x + instance.normal1.xyz * normals.y + instance.normal2.xyz * normals.z;
         facing = normalizeOr(dot(facing, worldNormals) < 0.0 ? -facing : facing, float3(0.0, 1.0, 0.0));
-        if (dot(facing, frame->cameraPosition - p0) < -margin)
+        if (dot(facing, frame->cull.position - p0) < -margin)
         {
             continue;
         }
@@ -210,7 +210,7 @@ void dicePatchMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         float3 pc = transform(instance.model, float4(diceGridPoint(corners[0], corners[1], corners[2], float2(c), split), 1.0)).xyz;
         float3 middle = (pa + pb + pc) / 3.0;
         float reach = sqrt(max(max(dot(pa - middle, pa - middle), dot(pb - middle, pb - middle)), dot(pc - middle, pc - middle)));
-        if (!insidePlanes(frame->planes, middle, reach + margin))
+        if (!insidePlanes(frame->cull.planes, middle, reach + margin))
         {
             continue;
         }

@@ -960,6 +960,9 @@ impl BoxModel {
                 self.boxes().filter_map(|(_, _, model_box)| Some(model_box.layer?.height)).fold(0.0, f32::max);
             lods.push(crate::lod::Lod::new(&far, tallest * self.pixel_size(), &data.vertices));
         }
+        // One bone and nothing to play: nothing moves its boxes apart, so its part is drawn as it stands, with no skin,
+        // as a still model's is. Its bone stays, for what is held at it, and its vertices keep their weights.
+        let still = self.bones.len() == 1 && self.clips.is_empty();
         model.meshes.push((data, lods));
         self.add_look(&mut model);
         let name = std::path::Path::new(path).file_stem().map(|stem| stem.to_string_lossy().into_owned());
@@ -972,7 +975,7 @@ impl BoxModel {
             material: Some(0),
             mesh_part: "mesh0.0".to_string(),
             material_part: Some("material0".to_string()),
-            skin: Some(0),
+            skin: (!still).then_some(0),
         });
         model
     }
@@ -1446,6 +1449,19 @@ mod tests {
         let mesh = model.mesh();
         assert_eq!(mesh.indices.len(), 6);
         assert!(mesh.vertices.iter().all(|vertex| vertex.normal == [0.0, 1.0, 0.0]));
+    }
+
+    #[test]
+    fn a_model_of_one_bone_and_no_clips_is_drawn_with_no_skin_and_keeps_its_bone() {
+        let mut model = figure();
+        let body = model.find_bone("Body").unwrap();
+        model.bones = vec![BoxBone { parent: None, ..model.bones[body].clone() }];
+        model.clips.clear();
+        let prepared = model.prepared("Crate.boxmodel");
+        assert_eq!(prepared.nodes[0].skin, None, "nothing moves its boxes apart");
+        assert_eq!(prepared.animation().unwrap().skeleton.bones.len(), 1, "its bone kept, for what is held at it");
+        // With more bones it stays skinned.
+        assert_eq!(figure().prepared("Figure.boxmodel").nodes[0].skin, Some(0));
     }
 
     #[test]

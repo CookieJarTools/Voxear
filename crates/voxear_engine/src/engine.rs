@@ -193,6 +193,17 @@ impl Engine {
         ran
     }
 
+    /// Makes a tool's call of a scripts' `[Call]` method against this
+    /// engine's world, as while playing: what it returned, as JSON (see
+    /// [`ScriptRuntime::game_call`]).
+    pub fn game_call(&mut self, type_name: &str, method: &str, args: &str) -> anyhow::Result<String> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        let ran = scripts.game_call(&mut self.world, type_name, method, args);
+        let doomed = scripts.take_obj_destroys();
+        self.destroy_objs(&doomed);
+        ran
+    }
+
     /// Runs a check a guide's step names against this engine's world, as
     /// while playing (see [`ScriptRuntime::run_check`]).
     pub fn run_check(&mut self, type_name: &str, method: &str) -> anyhow::Result<Result<(), String>> {
@@ -886,6 +897,17 @@ impl Engine {
         if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
             profile_scope!("Ground Events");
             scripts.ground_events(&mut self.world, events);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
+    /// Tells scripts of the columns of worlds of blocks without end made and
+    /// let go, as `Blocks.ColumnMade` and `Blocks.ColumnLetGo`.
+    pub fn tell_column_events(&mut self, events: &[voxear_scripting::ColumnEventData]) {
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
+            profile_scope!("Column Events");
+            scripts.column_events(&mut self.world, events);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
             self.flush();
         }

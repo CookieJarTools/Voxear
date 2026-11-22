@@ -293,13 +293,47 @@ impl Editor {
     /// one step to undo: Objs it changed, and those it destroyed, which undo
     /// brings back.
     fn run_command_on_edits(&mut self, type_name: &str, method: &str) -> Result<()> {
+        self.run_on_edits(|scripts, world| scripts.run_command(world, type_name, method))
+    }
+
+    /// Makes a tool's call of a scripts' `[Call]` method, its arguments as
+    /// JSON: against the game while playing, or the edited level once the
+    /// scripts have started, which the first call asks for, keeping what it
+    /// changed as one step to undo. `None` until the scripts have started.
+    pub(super) fn run_game_call(&mut self, type_name: &str, method: &str, args: &str) -> Option<Result<String>> {
+        match &self.play.mode {
+            Mode::Playing(_) => Some(self.game.engine.game_call(type_name, method, args)),
+            Mode::Building(_) => None,
+            Mode::Editing if self.play.ready && self.play.scripts.is_none() => {
+                Some(Err(anyhow::anyhow!("this project has no scripts")))
+            }
+            Mode::Editing if self.play.error.is_some() => {
+                Some(Err(anyhow::anyhow!("the scripts did not build or start; the Console says why")))
+            }
+            Mode::Editing if !self.play.ready => {
+                self.play.start_only = true;
+                self.build_scripts();
+                None
+            }
+            Mode::Editing => {
+                Some(self.run_on_edits(|scripts, world| scripts.game_call(world, type_name, method, args)))
+            }
+        }
+    }
+
+    /// Runs `run` with the scripts against the edited level, keeping what it
+    /// changed as one step to undo, as a command does.
+    fn run_on_edits<R>(
+        &mut self,
+        run: impl FnOnce(&mut ScriptRuntime, &mut voxear_ecs::World) -> Result<R>,
+    ) -> Result<R> {
         let world = &self.game.engine.world;
         let objs: Vec<Entity> =
             world.query_ref::<(Entity, &Name)>().without::<EditorOnly>().into_iter().map(|(e, _)| e).collect();
         let before: Vec<(Entity, ObjState)> = objs.iter().filter_map(|&e| Some((e, ObjState::of(world, e)?))).collect();
         let scripts = self.play.scripts.as_mut().expect("checked by the caller");
         // With the game's services, as while playing, so a command can load blocks and prefabs.
-        let ran = self.game.with_services(None, |world| scripts.run_command(world, type_name, method));
+        let ran = self.game.with_services(None, |world| run(scripts, world));
         self.link.refresh_blocks = true;
         let doomed = scripts.take_obj_destroys();
         let world = &self.game.engine.world;

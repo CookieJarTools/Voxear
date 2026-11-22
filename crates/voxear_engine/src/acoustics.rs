@@ -274,7 +274,7 @@ fn fingerprint(colliders: &[(Collider, Mat4, Option<&ColliderMesh>)]) -> u64 {
 }
 
 /// A collider's triangles in the world.
-fn shape(collider: &Collider, matrix: &Mat4, mesh: Option<&ColliderMesh>) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+pub(crate) fn shape(collider: &Collider, matrix: &Mat4, mesh: Option<&ColliderMesh>) -> (Vec<Vec3>, Vec<[u32; 3]>) {
     let center = Vec3::from(collider.center);
     let (points, triangles) = match collider.shape {
         ColliderShape::Box => cube(center, Vec3::from(collider.size) * 0.5),

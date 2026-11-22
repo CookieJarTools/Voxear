@@ -2257,7 +2257,8 @@ pub(crate) fn gather(
             anchors.entry(owner.entity).or_insert(index as u32);
         }
     }
-    let camera = Vec3::from(frame.camera_position);
+    // Chunks are picked from the camera the view culls from: its own, or the one it borrows (`GpuCull`).
+    let camera = Vec3::from(frame.cull.position);
     let mut records = Vec::with_capacity(drawn.len().min(MAX_BLOCK_WORLDS));
     let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_BLOCK_WORLDS) * MAX_BLOCK_SURFACES];
     let mut runs = Vec::new();
@@ -2338,7 +2339,7 @@ pub(crate) fn gather(
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
         let local = back * (camera - corner);
         let mut lists = vec![Vec::new(); LISTS];
-        let planes = turned_planes(&frame.planes, corner, back);
+        let planes = turned_planes(&frame.cull.planes, corner, back);
         // What the world shows from the place nearest the camera, where it is seen from more than one.
         let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
             (place.at[0] - local.x).powi(2) + (place.at[1] - local.z).powi(2)
@@ -2359,7 +2360,7 @@ pub(crate) fn gather(
             voxear_terrain::blocks::sight::seen(map, sights, from, |key| ours(key) && within(&planes, bounds(key)))
         });
         // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
-        let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
+        let allowed = frame.lod_threshold / frame.cull.lod_scale.max(1e-6);
         let ring = fading.then_some((fades.at, fades.reach, fades.coarsest as i32));
         let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size, rings: ring });
         let grouped = (&blocks.chunks[..], &blocks.groups[..]);

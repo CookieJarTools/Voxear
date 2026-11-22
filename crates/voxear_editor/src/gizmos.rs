@@ -8,7 +8,9 @@
 //! Unity's are, and its joint's anchor, a hinge's axis, and a line to what
 //! it holds to in orange. Each Audio Source shows a speaker, bright while
 //! the game plays it and dim otherwise, and the selected 3D one the
-//! distances it is at full volume within and silent past, as rings.
+//! distances it is at full volume within and silent past, as rings. While
+//! the Scene view culls from the game's camera, that camera's frustum is
+//! drawn far out, in amber, so where the cut falls can be seen.
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
@@ -40,6 +42,10 @@ const FRUSTUM_DEPTH: f32 = 3.0;
 /// The aspect a camera's frustum is drawn with, which the view it renders
 /// to decides, so the Game view's usual one.
 const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
+/// The frustum of the camera the Scene view culls from, and how far out
+/// it is drawn, in metres.
+const CULLING: u32 = 0xf2b24c;
+const CULLING_DEPTH: f32 = 60.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
 const COLLIDER: u32 = 0x91f48b;
@@ -814,6 +820,31 @@ fn frustum(shapes: &mut Vec<Shape>, camera: &ViewCamera, lens: &Camera, position
         line(shapes, camera, position, corners[i], color);
         line(shapes, camera, corners[i], corners[(i + 1) % 4], color);
     }
+}
+
+/// The frustum of the camera the Scene view culls from (Gizmos ▸ Game
+/// Camera's Culling), seen as wide as the view drawing through it, `aspect`:
+/// its edges far out, and a frame where they end.
+pub fn culling_frustum(world: &World, camera: &ViewCamera, culler: Entity, aspect: f32) -> Vec<Shape> {
+    let mut shapes = Vec::new();
+    let (Some(transform), Some(lens)) = (world.get::<Transform>(culler), world.get::<Camera>(culler)) else {
+        return shapes;
+    };
+    let (position, rotation) = placement(transform, world.get::<WorldTransform>(culler));
+    let color = Color::hex(CULLING);
+    let half_height = (lens.fov_y_degrees.to_radians() * 0.5).tan();
+    let half_width = half_height * aspect;
+    let corner = |(x, y): (f32, f32), depth: f32| {
+        position + rotation * (Vec3::new(x * half_width, y * half_height, 1.0) * depth)
+    };
+    let ways = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+    let (near, far) = (ways.map(|way| corner(way, lens.near.max(0.05))), ways.map(|way| corner(way, CULLING_DEPTH)));
+    for i in 0..4 {
+        line(&mut shapes, camera, near[i], far[i], color);
+        line(&mut shapes, camera, far[i], far[(i + 1) % 4], color);
+        line(&mut shapes, camera, near[i], near[(i + 1) % 4], color);
+    }
+    shapes
 }
 
 /// A line between two points in the world, left out when either is behind

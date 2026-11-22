@@ -2,9 +2,9 @@
 //! them: a Post Volume, a Wind Zone, an Ocean, a Pool and a Stream through
 //! each Obj's own (`PostVolume`, `WindZone`, `Ocean`, `Pool` and
 //! `WaterStream` in Voxear.Core); a Bone Attachment, a Particle System, a
-//! Nav Area, a Nav Link, a Foliage and a LOD Group through one kind for
-//! them all, [`ComponentKind::Whole`], beside the calls some have of their
-//! own; and the level's Seasons, Climate and storm rules through the `Post`
+//! Nav Area, a Nav Link, a Foliage, a LOD Group and an Animator through
+//! one kind for them all, [`ComponentKind::Whole`], beside the calls some
+//! have of their own; and the level's Seasons, Climate and storm rules through the `Post`
 //! call (`Seasons`, `Climate` and `Storms`). Each reads as JSON with
 //! every setting, and takes JSON of the settings to change: the rest stay
 //! as they were, and nothing changes where any is refused.
@@ -19,10 +19,12 @@ use voxear_render::{
 use voxear_scripting::ComponentKind;
 
 use crate::{
-    animation::BoneAttachment,
+    animation::{Animator, BoneAttachment},
     ground_fit::GroundFit,
     ground_streaming::StreamsWithGround,
+    prefab_placing::{Placement, PrefabBrush},
     roads::{AreaFill, Road},
+    walkable_models::Walkable,
     heat::Climate,
     navigation::{NavArea, NavLink},
     scene_file::PostVolumeData,
@@ -57,6 +59,10 @@ const GROUND_FIT: i32 = 9;
 const STREAMS_WITH_GROUND: i32 = 10;
 const ROAD: i32 = 11;
 const AREA_FILL: i32 = 12;
+const ANIMATOR: i32 = 13;
+const PLACEMENT: i32 = 14;
+const PREFAB_BRUSH: i32 = 15;
+const WALKABLE: i32 = 16;
 
 /// Whether an Obj has one, and adding and taking off those scripts may add:
 /// the component in the number's bits above the lowest two.
@@ -69,6 +75,10 @@ fn whole_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
         STREAMS_WITH_GROUND => values::<StreamsWithGround>(world, entity, asked, written),
         ROAD => values::<Road>(world, entity, asked, written),
         AREA_FILL => values::<AreaFill>(world, entity, asked, written),
+        ANIMATOR => values::<Animator>(world, entity, asked, written),
+        PLACEMENT => values::<Placement>(world, entity, asked, written),
+        PREFAB_BRUSH => values::<PrefabBrush>(world, entity, asked, written),
+        WALKABLE => values::<Walkable>(world, entity, asked, written),
         BONE_ATTACHMENT => has::<BoneAttachment>(world, entity, asked, written),
         PARTICLE_SYSTEM => has::<ParticleSystem>(world, entity, asked, written),
         FOLIAGE => has::<Foliage>(world, entity, asked, written),
@@ -90,6 +100,10 @@ fn whole_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opti
         STREAMS_WITH_GROUND => texts::<StreamsWithGround>(world, entity, asked, text),
         ROAD => texts::<Road>(world, entity, asked, text),
         AREA_FILL => texts::<AreaFill>(world, entity, asked, text),
+        ANIMATOR => texts::<Animator>(world, entity, asked, text),
+        PLACEMENT => texts::<Placement>(world, entity, asked, text),
+        PREFAB_BRUSH => texts::<PrefabBrush>(world, entity, asked, text),
+        WALKABLE => texts::<Walkable>(world, entity, asked, text),
         FOLIAGE => texts::<Foliage>(world, entity, asked, text),
         LOD_GROUP => texts::<LodGroup>(world, entity, asked, text),
         DRY_AREA_MESH | LIGHT_COOKIE | LIGHT_PROFILE => {
@@ -229,7 +243,11 @@ written_as_is!(
     GroundFit,
     StreamsWithGround,
     Road,
-    AreaFill
+    AreaFill,
+    Animator,
+    Placement,
+    PrefabBrush,
+    Walkable
 );
 
 /// A Foliage's settings scripts change: how far its plants are drawn, cast
@@ -507,6 +525,21 @@ mod tests {
         whole_values(&mut world, obj, AREA_FILL << 2 | ADD, Some([0.0; 4])).unwrap();
         whole_texts(&mut world, obj, AREA_FILL << 1 | CHANGE, r#"{"level":"level","pattern":["12"]}"#).unwrap();
         assert_eq!(world.get::<AreaFill>(obj).unwrap().level, crate::roads::AreaLevel::Level);
+        // An Animator, given a clip to play and slowed.
+        whole_values(&mut world, obj, ANIMATOR << 2 | ADD, Some([0.0; 4])).unwrap();
+        whole_texts(&mut world, obj, ANIMATOR << 1 | CHANGE, r#"{"clip":"Walk","speed":0.5}"#).unwrap();
+        let animator = world.get::<Animator>(obj).unwrap();
+        assert_eq!((animator.clip.as_str(), animator.speed, animator.looping), ("Walk", 0.5, true));
+        // A Placement, a Prefab Brush and a Walkable, the same way.
+        for which in [PLACEMENT, PREFAB_BRUSH, WALKABLE] {
+            whole_values(&mut world, obj, which << 2 | ADD, Some([0.0; 4])).unwrap();
+        }
+        whole_texts(&mut world, obj, PLACEMENT << 1 | CHANGE, r#"{"size":[10,8],"front":90}"#).unwrap();
+        assert_eq!(world.get::<Placement>(obj).unwrap().size, [10.0, 8.0]);
+        whole_texts(&mut world, obj, PREFAB_BRUSH << 1 | CHANGE, r#"{"mode":"single","radius":3}"#).unwrap();
+        assert_eq!(world.get::<PrefabBrush>(obj).unwrap().mode, crate::prefab_placing::BrushMode::Single);
+        whole_texts(&mut world, obj, WALKABLE << 1 | CHANGE, r#"{"door":true}"#).unwrap();
+        assert!(world.get::<Walkable>(obj).unwrap().door);
 
         let near = world.spawn((voxear_scene::Transform::default(),));
         world.insert(obj, LodGroup::of(&[near]));

@@ -437,10 +437,17 @@ impl Editor {
     /// pointer.
     pub(super) fn draw_other_scene_views(&mut self, renderer: &Renderer) {
         let (markers, icons) = (self.markers(true), self.gizmo_icons());
+        // The frustum of the camera they cull from, drawn in each.
+        let culling: Vec<Vec<Shape>> = (self.scene_views.iter())
+            .map(|view| {
+                let camera = ViewCamera::new(&self.game.engine.world, view.camera, self.ui.rect(view.viewport));
+                camera.map(|camera| self.culling_shapes(&camera)).unwrap_or_default()
+            })
+            .collect();
         let (ui, world, tools) = (&mut self.ui, &self.game.engine.world, &self.tools);
         let playing = |entity| self.game.audio.is_source_playing(world, entity);
         let selected = self.selection;
-        for view in &self.scene_views {
+        for (view, culling) in self.scene_views.iter().zip(culling) {
             let shown = std::iter::successors(Some(view.viewport), |&n| ui.parent(n)).all(|n| ui.is_visible(n));
             let camera = shown.then(|| ViewCamera::new(world, view.camera, ui.rect(view.viewport))).flatten();
             let Some(camera) = camera else {
@@ -449,6 +456,7 @@ impl Editor {
             };
             let markers = if view.show_gizmos { markers } else { crate::scene_tools::Markers::NONE };
             let mut shapes = gizmos::shapes(world, &camera, selected, markers, &playing);
+            shapes.extend(culling);
             if view.show_gizmos {
                 shapes.extend(super::scene_gizmos::icon_shapes(&icons, &camera, selected));
             }
@@ -581,7 +589,8 @@ fn gizmo_types(types: &ScriptTypes) -> Vec<(String, String)> {
 }
 
 /// The Gizmos menu: lights, cameras, Audio Sources, the vehicles' debug
-/// view and each behaviour type with gizmos, ticked while they show.
+/// view, the game camera's culling and each behaviour type with gizmos,
+/// ticked while they show.
 fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem> {
     let mut items = vec![
         MenuItem::new("Lights").checked(settings.light_gizmos),
@@ -590,6 +599,7 @@ fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem>
         MenuItem::new("Vehicle Debug").checked(settings.vehicle_gizmos),
         MenuItem::new("Navigation").checked(settings.nav_gizmos),
         MenuItem::new("Bare Ground").checked(settings.bare_ground),
+        MenuItem::new("Game Camera's Culling").checked(settings.game_culling),
         MenuItem::separator(),
     ];
     for (name, label) in types {
@@ -611,8 +621,9 @@ fn toggle_gizmos(settings: &mut Settings, types: &[(String, String)], choice: us
         3 => settings.vehicle_gizmos = !settings.vehicle_gizmos,
         4 => settings.nav_gizmos = !settings.nav_gizmos,
         5 => settings.bare_ground = !settings.bare_ground,
+        6 => settings.game_culling = !settings.game_culling,
         _ => {
-            let Some((name, _)) = types.get(choice - 7) else { return false };
+            let Some((name, _)) = types.get(choice - 8) else { return false };
             match settings.hidden_gizmos.iter().position(|hidden| hidden == name) {
                 Some(index) => _ = settings.hidden_gizmos.remove(index),
                 None => settings.hidden_gizmos.push(name.clone()),

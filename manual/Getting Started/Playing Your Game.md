@@ -25,6 +25,23 @@ If your scripts do not build, the Console lists what is wrong, and the game keep
 
 The Game view looks through the first camera in the level that is switched on, as the game does: a camera a script switches off as the game starts gives way to the next. A level with no camera shows "No camera renders this level." Add one with the Hierarchy's **+** button, then **Camera**. New projects start with one, called Main Camera.
 
+## What the game draws, seen from the Scene view
+
+While the game plays, the Scene view draws only what the game's camera draws, so you can fly round and see what the game leaves out. Whatever the game's camera does not draw is missing from the Scene view too:
+
+- Objs and parts of meshes hidden behind others, as the Game view sees them;
+- chunks of a world of blocks the camera cannot see into, and the faces turned away from it;
+- whatever is outside the camera's view or past its draw distances;
+- the levels of detail the game's camera picks, and the levels a LOD Group hides at its distance.
+
+The game camera's view is drawn in amber, out to 60 m, so you can see where the cut falls. Something you expected to see that is missing is being culled; something drawn that you cannot see in the Game view is drawn for nothing.
+
+Hidden things are worked out from the Game view's depth, so they go missing only while the Game view is showing. With the Game view behind another tab, the Scene view still leaves out what is outside the camera's view, past its draw distances or at another level of detail, but draws what is hidden behind other things.
+
+Turn this off with **Game Camera's Culling** in the Scene view's **Gizmos** menu (the arrow beside **Gizmos**), and the Scene view draws everything round its own camera again. It is on to begin with, and kept with your Preferences. While you are not playing, selecting a camera does the same from that camera, to check what it will draw before you play.
+
+From a terminal, `vox editor call scene_view.culling` says whether it is on, which camera the Scene view culls from, and how much the first view drawn culled; `vox editor call scene_view.culling on=false` turns it off (see [[Driving the Editor from a Terminal]]).
+
 ## Play settings
 
 Open **Preferences**, from the strip on the far left, and pick **Play Mode**:

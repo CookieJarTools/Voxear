@@ -4,7 +4,9 @@
 //! Each of the editor's calls is a tool of its own, named with `_` for `.`
 //! (`obj.get` is `obj_get`), with its arguments as the tool's input schema.
 //! `vox` itself is one more tool, for the commands that work on files, as
-//! `vox render` and `vox build` do. The tools reach the editor open on the
+//! `vox render` and `vox build` do. The game's own calls, its scripts'
+//! `[Call]` methods, are tools too, listed from the editor (`game.calls`)
+//! each time the tools are asked for. The tools reach the editor open on the
 //! project; with none open, a headless one is started for them, and closed
 //! when the assistant goes. A capture comes back as a picture as well as its
 //! path, so the assistant sees what it changed.
@@ -95,7 +97,11 @@ impl Server {
                 }))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools() })),
+            "tools/list" => {
+                let mut listed = tools();
+                listed.extend(self.game_calls().iter().map(game_tool));
+                Ok(json!({ "tools": listed }))
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -111,7 +117,26 @@ impl Server {
             return run_vox(&self.root, &args);
         }
         let Some(call) = CALLS.iter().find(|call| tool_name(call.name) == name) else {
-            return tool_error(&format!("no tool is named `{name}`"));
+            // One of the game's own calls, by its name as a tool's.
+            let calls = self.game_calls();
+            let Some(game) =
+                calls.iter().find(|call| call["name"].as_str().is_some_and(|call| tool_name(call) == name))
+            else {
+                return tool_error(&format!("no tool is named `{name}`"));
+            };
+            let asked = json!({ "name": game["name"], "args": args });
+            return match self.call_editor("game.call", asked) {
+                Ok(Ok(result)) => json!({
+                    "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result["result"]).unwrap_or_default() }],
+                    "isError": false,
+                }),
+                Ok(Err(error)) => tool_error(&format!(
+                    "{} ({})",
+                    error.message,
+                    serde_json::to_string(&error.kind).unwrap_or_default()
+                )),
+                Err(error) => tool_error(&format!("{error:#}")),
+            };
         };
         match self.call_editor(call.name, args) {
             Ok(Ok(result)) => {
@@ -125,6 +150,21 @@ impl Server {
             }
             Ok(Err(error)) => tool_error(&format!("{} ({})", error.message, serde_json::to_string(&error.kind).unwrap_or_default())),
             Err(error) => tool_error(&format!("{error:#}")),
+        }
+    }
+
+    /// The game's own calls, as `game.calls` lists them; none where the
+    /// editor cannot be reached or the project has none.
+    fn game_calls(&mut self) -> Vec<Value> {
+        match self.call_editor("game.calls", json!({})) {
+            Ok(Ok(listed)) => listed["calls"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|call| call["name"].as_str().is_some_and(|name| !CALLS.iter().any(|own| own.name == name)))
+                .cloned()
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -258,6 +298,45 @@ The project is given for you.",
         },
     }));
     tools
+}
+
+/// One of the game's own calls as a tool, its arguments' schemas by the
+/// kinds `game.calls` names.
+fn game_tool(call: &Value) -> Value {
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::new();
+    for arg in call["args"].as_array().into_iter().flatten() {
+        let Some(name) = arg["name"].as_str() else { continue };
+        let mut described = match arg["kind"].as_str().unwrap_or_default() {
+            "toggle" => schema(ArgKind::Toggle),
+            "text" => schema(ArgKind::Text),
+            "number" => schema(ArgKind::Number),
+            "whole" => schema(ArgKind::Whole),
+            "vector" => schema(ArgKind::Vector),
+            "obj" => schema(ArgKind::Obj),
+            "choice" => json!({ "type": "string", "enum": arg["choices"] }),
+            _ => json!({}),
+        };
+        described["description"] = json!(format!("A {}.", arg["type"].as_str().unwrap_or("value")));
+        properties.insert(name.to_string(), described);
+        if arg["required"].as_bool().unwrap_or(false) {
+            required.push(name.to_string());
+        }
+    }
+    let mut description = format!("The game's own call: {}", call["about"].as_str().unwrap_or_default());
+    match call["when"].as_str() {
+        Some("editing") => description.push_str(" Only while editing."),
+        Some("playing") => description.push_str(" Only while the game plays."),
+        _ => {}
+    }
+    if call["changes"].as_bool().unwrap_or(false) {
+        description.push_str(" One step to undo.");
+    }
+    json!({
+        "name": tool_name(call["name"].as_str().unwrap_or_default()),
+        "description": description,
+        "inputSchema": { "type": "object", "properties": properties, "required": required },
+    })
 }
 
 /// The JSON Schema of an argument.

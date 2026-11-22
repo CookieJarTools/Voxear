@@ -624,7 +624,8 @@ fn number_placed(content: &mut Content, file: &mut BlockFile, owner: &str, named
 /// numbered after (see [`with_covered`]).
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::blocks::structure::{
-        Dungeon, DungeonBlocks, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
+        Dungeon, DungeonBlocks, PlacedStructure, StructureBlocks, StructureSource, Town, TownHouseKind, TownPiece,
+        WorldStructures,
     };
     let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
         return file.clone();
@@ -634,8 +635,15 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     let biome_guids: Vec<Option<AssetGuid>> =
         biomes.iter().map(|reference| content.biome(reference).map(|(guid, _)| guid)).collect();
     let mut list = Vec::new();
+    let mut sources = Vec::new();
     let mut turns = Turns::new();
     for reference in &references {
+        // Each file named by its GUID where the project knows it, so scripts compare them as their fields hold them.
+        let guid_of = |content: &Content, named: &str| match content.parse(named).ok().and_then(|found| found.guid()) {
+            Some(guid) => guid.to_string(),
+            None => named.to_string(),
+        };
+        let mut source = StructureSource { structure: guid_of(content, reference), ..StructureSource::default() };
         let Some((_, structure)) = content.structure(reference) else {
             tracing::warn!("a world of blocks lists the structure {reference}, which is not in the project");
             continue;
@@ -757,6 +765,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
                 };
                 let middle = town.middle.as_deref().and_then(|named| piece(content, &mut file, &mut turns, named));
+                source.middle =
+                    town.middle.as_deref().filter(|_| middle.is_some()).map(|named| guid_of(content, named));
                 // Each kind of house with the world's biomes it stands in, by their place in the world's list.
                 let in_biomes = |content: &mut Content, named: &[String]| -> Vec<usize> {
                     let wanted: Vec<Option<AssetGuid>> =
@@ -768,6 +778,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 for house in &town.houses {
                     let Some(piece) = piece(content, &mut file, &mut turns, &house.structure) else { continue };
                     let biomes = in_biomes(content, &house.biomes);
+                    source.houses.push(guid_of(content, &house.structure));
                     houses.push(TownHouseKind {
                         piece,
                         weight: house.weight,
@@ -806,6 +817,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             .filter(|(_, guid)| guid.is_some() && wanted.contains(guid))
             .map(|(at, _)| at)
             .collect();
+        sources.push(source);
         list.push(PlacedStructure {
             placement: structure.placement.clone(),
             ground: structure.ground,
@@ -815,7 +827,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
         });
     }
     if let Some(generate) = file.generate.as_mut() {
-        generate.built = Some(Arc::new(WorldStructures { list, turns }));
+        generate.built = Some(Arc::new(WorldStructures { list, turns, sources }));
     }
     // And what those blocks show as while covered.
     with_covered(content, &mut file);
@@ -1437,6 +1449,32 @@ fn ground_of(drawn: &Arc<Resolved>) -> (BlockFile, Arc<[voxear_terrain::blocks::
     made
 }
 
+/// The blocks of `cells` of the world of blocks on `entity` that differ
+/// from its ground as generated, with its world layers, each with the block
+/// it was generated as: what putting them back changes. Only cells of chunks
+/// it has made, and none of the floor nothing changes.
+pub fn restored(world: &World, entity: voxear_ecs::Entity, cells: &[[i32; 3]]) -> Vec<([i32; 3], BlockId)> {
+    let (Some(blocks), Some(asset)) = (world.get::<BlockWorld>(entity), world.get::<BlockWorldAsset>(entity)) else {
+        return Vec::new();
+    };
+    let side = voxear_terrain::blocks::chunk::CHUNK as i32;
+    let floor = blocks.floor;
+    // A column made, its chunks as generated are kept, those all air left out: air is what was generated there.
+    let made = |at: &[i32; 3]| {
+        let column = [at[0].div_euclid(side), at[2].div_euclid(side)];
+        blocks.columns.as_ref().map_or(true, |columns| columns.contains(&column))
+    };
+    cells
+        .iter()
+        .filter(|at| made(at))
+        .filter(|at| floor.is_none_or(|top| at[1] > top))
+        .filter_map(|&at| {
+            let generated = asset.base.get(at);
+            (blocks.blocks.get(at) != generated).then_some((at, generated))
+        })
+        .collect()
+}
+
 /// Each world of blocks without end's streamer, by its Obj.
 #[derive(Default)]
 struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blocks::stream::BlockStreamer>);
@@ -1556,7 +1594,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
         let changed = streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from);
         // Which columns came and went, for what stands on them (see `ground_streaming`).
         let (came, went) = streamer.take_moves();
-        moves.worlds.push(crate::ground_streaming::WorldMoves {
+        let moved = crate::ground_streaming::WorldMoves {
             world: entity,
             dimension: here,
             corner,
@@ -1564,7 +1602,9 @@ pub fn stream(world: &mut World, content: &mut Content) {
             near: blocks.columns.clone().unwrap_or_default(),
             came,
             went,
-        });
+        };
+        crate::ground_streaming::note_columns(world, &moved);
+        moves.worlds.push(moved);
         if changed {
             world.insert(entity, blocks);
             world.insert(entity, asset);

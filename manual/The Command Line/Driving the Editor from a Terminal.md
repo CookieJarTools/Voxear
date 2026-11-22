@@ -185,14 +185,17 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `undo`, `redo`, `batch` | Step back and forward, and make several changes one step |
 | `select`, `frame` | Select Objs, and show them in the Scene view |
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
-| `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
+| `blocks.get`, `blocks.set`, `blocks.fill`, `blocks.restore` | Read and change a Block World's blocks, at points in the world, and put a box of them back as the ground was generated |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts`, `dungeon.open` | Make the starter temple dungeon for a Block World, read the dungeons its generator lays out near a point, and open a dungeon's own dimension to look round |
+| `towns.near` | Read the towns a Block World's generator lays out near a point, with each building's structure, floor, facing and door, none of their ground made (see [[Structures]]) |
 | `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`, `obj.move_to_dimension` | List the dimensions made, show one in the Scene view, make a `.dimension` file of a kind, open or let go of one, and move an Obj into another |
 | `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, how many Nav Obstacles there are and carve, and what every Nav Agent and Block Mob is doing |
+| `scene_view.culling` | Whether the Scene views draw only what the game's camera draws, which camera they cull from, and turn it on or off (see [[Playing Your Game]]) |
 | `ground_fit.land`, `world_layers.status`, `world_layers.hide` | Set an Obj with a Ground Fit down on the ground without its own cut, list each world's layers, and hide them to see the bare ground (see [[World Layers]]) |
 | `blocks.columns` | Each world of blocks without end's columns made, and those made and let go last frame, and how many Objs are kept while their ground is away (see [[Streams With Ground]]) |
 | `road.set_points`, `road.set_mix`, `area_fill.set_outline`, `roads.nearest` | Set a Road's points, set down on the ground with `land`, a Road's or an Area Fill's blocks and pattern, and an Area Fill's outline, and find the road nearest a place (see [[Roads]]) |
+| `place.prefab`, `place.line_up`, `place.scatter`, `place.brush` | Make prefabs on the ground: one, facing the road nearest with `face_road`; lined up along a Road; scattered over an outline or an Area Fill; or a stroke of the Prefab Brush, each call one step to undo (see [[Placing Prefabs]]) |
 | `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
 | `nav_agent.set_destination` | Send an Obj's Nav Agent somewhere, or stop it |
@@ -210,6 +213,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `look_pack.list`, `look_pack.wear`, `texture_pack.list`, `texture_pack.wear` | List the look packs and texture packs there are, and wear one, as the Lighting page's menus do |
 | `look_pack.get`, `look_pack.set` | Read a look pack of the project's, and write one of its settings, its look shader and that shader's properties among them, as its Inspector page does |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
+| `game.calls`, `game.call` | List the game's own calls, its scripts' `[Call]` methods, and make one; each is also called by its own name (see [[Commands]]) |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |
 | `box_model.sheet_save`, `box_model.sheet_load` | Write a box model's sheet beside it as a picture, and paint its sheet from a picture, as the Model window's **Save Sheet** and a picture dropped on its sheet do |
@@ -247,7 +251,7 @@ Each change a tool makes writes a line to the Console, starting `[Tools]`, so yo
 
 ## An AI assistant
 
-`vox mcp` serves the same calls as tools for an AI assistant, over the Model Context Protocol, on stdin and stdout. Most assistants that speak it take the command that starts a server:
+`vox mcp` serves the same calls as tools for an AI assistant, and the game's own `[Call]` methods beside them, over the Model Context Protocol, on stdin and stdout. Most assistants that speak it take the command that starts a server:
 
 ```bash
 vox mcp --project /home/me/Games/MyGame

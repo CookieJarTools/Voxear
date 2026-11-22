@@ -9,6 +9,7 @@ Everything here works on the ground the generator makes without storing blocks. 
 1. [[World Layers]]: what changes the generator's ground without storing blocks, in what order, and how a change is made again
 2. [[Ground Fit]]: a building that levels the ground it stands on, with a slope out to the ground round it
 3. [[Roads]]: roads, paths and canals laid along points, graded, bridged and tunnelled, and squares paved with Area Fills
-4. [[Streams With Ground]]: houses, props and mobs that go when their ground streams out, and come back with it
+4. [[Placing Prefabs]]: kits lined up along streets, scattered over yards and painted with the Prefab Brush
+5. [[Streams With Ground]]: houses, props and mobs that go when their ground streams out, and come back with it
 
 World building is under **Add Component ▸ Terrain**.

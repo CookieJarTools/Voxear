@@ -46,7 +46,7 @@ public readonly partial struct Obj : IEquatable<Obj>
 	/// </summary>
 	public static Obj Instantiate(Obj original)
 	{
-		return original.IsValid ? Copy(original, Placement(original.WorldPosition, original.WorldRotation), true, None) : None;
+		return original.IsValid ? Copy(original, PlacedAt(original.WorldPosition, original.WorldRotation), true, None) : None;
 	}
 
 	/// <summary>A copy under a parent, placed relative to it as the original is to its own.</summary>
@@ -58,13 +58,13 @@ public readonly partial struct Obj : IEquatable<Obj>
 	/// <summary>A copy at a position and rotation in the world. Its root keeps the original's scale.</summary>
 	public static Obj Instantiate(Obj original, Vector3 position, Quaternion rotation)
 	{
-		return Copy(original, Placement(position, rotation), true, None);
+		return Copy(original, PlacedAt(position, rotation), true, None);
 	}
 
 	/// <summary>A copy under a parent, at a position and rotation in the world.</summary>
 	public static Obj Instantiate(Obj original, Vector3 position, Quaternion rotation, Obj parent)
 	{
-		return Copy(original, Placement(position, rotation), true, parent);
+		return Copy(original, PlacedAt(position, rotation), true, parent);
 	}
 
 	/// <summary>
@@ -564,6 +564,46 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new AreaFill(this);
 	}
 
+	/// <summary>The Obj's Animator, which plays one clip on its model; null when it has none.</summary>
+	public Animator? Animator => Animator.Of(this);
+
+	/// <summary>Gives the Obj an Animator, playing no clip yet, unless it has one, and returns it.</summary>
+	public Animator AddAnimator()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Animator, this, true);
+		return new Animator(this);
+	}
+
+	/// <summary>The Obj's Placement, how much ground it takes up, its front and its door; null when it has none.</summary>
+	public Placement? Placement => Placement.Of(this);
+
+	/// <summary>Gives the Obj a Placement, 6 metres square facing +z, unless it has one, and returns it.</summary>
+	public Placement AddPlacement()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Placement, this, true);
+		return new Placement(this);
+	}
+
+	/// <summary>The Obj's Prefab Brush, which paints prefabs under it in the editor; null when it has none.</summary>
+	public PrefabBrush? PrefabBrush => PrefabBrush.Of(this);
+
+	/// <summary>Gives the Obj a Prefab Brush, unless it has one, and returns it.</summary>
+	public PrefabBrush AddPrefabBrush()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.PrefabBrush, this, true);
+		return new PrefabBrush(this);
+	}
+
+	/// <summary>The Obj's Walkable, which has its still collider walked on in a world of blocks; null when it has none.</summary>
+	public Walkable? Walkable => Walkable.Of(this);
+
+	/// <summary>Gives the Obj a Walkable, unless it has one, and returns it.</summary>
+	public Walkable AddWalkable()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Walkable, this, true);
+		return new Walkable(this);
+	}
+
 	/// <summary>The Obj's LOD Group; null when it has none.</summary>
 	public LodGroup? LodGroup => LodGroup.Of(this);
 
@@ -901,7 +941,7 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return copy;
 	}
 
-	private static Transform Placement(Vector3 position, Quaternion rotation)
+	private static Transform PlacedAt(Vector3 position, Quaternion rotation)
 	{
 		return Transform.Identity with { Position = position, Rotation = rotation };
 	}

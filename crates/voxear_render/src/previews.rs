@@ -704,7 +704,7 @@ fn camera_frame((center, radius): (Vec3, f32), options: &PreviewOptions) -> GpuF
     };
     let sky = crate::Sky::default();
     let light = options.light_from.try_normalize().unwrap_or(Vec3::Y);
-    GpuFrame {
+    let frame = GpuFrame {
         view_proj: cols(view_projection),
         camera_position: position.to_array(),
         camera_forward: forward.to_array(),
@@ -717,7 +717,8 @@ fn camera_frame((center, radius): (Vec3, f32), options: &PreviewOptions) -> GpuF
         ambient: options.ambient,
         exposure: options.exposure,
         ..Default::default()
-    }
+    };
+    GpuFrame { cull: crate::gpu::GpuCull::own(&frame), ..frame }
 }
 
 /// A pixel of the atlas, premultiplied and sRGB-encoded, with its colour

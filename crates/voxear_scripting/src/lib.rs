@@ -20,6 +20,7 @@ mod interop;
 mod layers;
 pub mod blocks;
 mod physics;
+mod columns;
 mod crowds;
 mod plants;
 mod post;
@@ -55,7 +56,8 @@ pub use post::{
     SUN_LOOK_SET, WORLD_ASK, set_post_call,
 };
 pub use plants::{FoliageCall, set_foliage_call};
-pub use crowds::{CrowdRecordsState, set_crowd_records};
+pub use columns::{ColumnEventData, GroundMade, set_ground_made};
+pub use crowds::{CrowdRecordsState, FarFigureData, FarFiguresSet, set_crowd_records, set_far_figures};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
@@ -72,8 +74,8 @@ pub use saves::{
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, ModelChange, ObjAsset, PreviewOptions,
     PreviewSource, PreviewState, SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab,
-    UiAnswer, UiAsk, change_model, model_part_name, obj_asset, set_model, set_parent, ui_panel_document,
-    ui_screen_document,
+    UiAnswer, UiAsk, change_model, model_part_name, obj_asset, prefab_placement, set_model, set_parent,
+    ui_panel_document, ui_screen_document,
 };
 pub use trees::FelledInfo;
 pub use ui_rows::RowWork;

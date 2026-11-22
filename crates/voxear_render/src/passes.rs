@@ -50,6 +50,9 @@ pub struct Targets {
     pub pyramid_texture: TextureId,
     pub pyramid_mips: Vec<StorageImageId>,
     pub pyramid_size: [u32; 2],
+    /// The depth pyramid of the view whose camera this one culls from, which
+    /// the late cull reads in place of its own (see `ViewOptions::cull_camera`).
+    pub cull_pyramid: Option<ImageId>,
     pub shadows: Option<ImageId>,
     /// How many texels a side each of the sun's cascades has in it.
     pub cascade_size: u32,
@@ -881,10 +884,16 @@ pub fn record(
 
     // With mesh shaders, the late pass's task shaders sample the pyramid too, after this pass.
     let late_pyramid = if mesh.is_some() { ImageAccess::SampledWithTasks } else { ImageAccess::Sampled };
-    fg.add_pass("Cull (late)", &[(pyramid, late_pyramid)], &culling, move |ctx| {
+    // Culled from another view's camera, against that view's pyramid.
+    let culled_against = targets.cull_pyramid.unwrap_or(pyramid);
+    let late_images = [(pyramid, late_pyramid), (culled_against, late_pyramid)];
+    let late_images = if culled_against == pyramid { &late_images[..1] } else { &late_images[..] };
+    fg.add_pass("Cull (late)", late_images, &culling, move |ctx| {
         cull(ctx, pipelines.cull, &push, LIST_LATE, instances, 1);
     });
-    meshlet_pass(fg, "Meshlets (late)", &[(pyramid, ImageAccess::Sampled)], [LIST_LATE, LIST_SHADOW]);
+    let meshlet_images = [(pyramid, ImageAccess::Sampled), (culled_against, ImageAccess::Sampled)];
+    let meshlet_images = if culled_against == pyramid { &meshlet_images[..1] } else { &meshlet_images[..] };
+    meshlet_pass(fg, "Meshlets (late)", meshlet_images, [LIST_LATE, LIST_SHADOW]);
     match depth_first {
         true => {
             depth_pass(fg, "Depth (late)", LIST_LATE);

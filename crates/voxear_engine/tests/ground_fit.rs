@@ -119,6 +119,56 @@ fn a_graded_road_is_laid_through_the_streamed_world_with_its_blocks_and_found_fr
 }
 
 #[test]
+fn a_walkable_platform_is_stood_on_in_the_worlds_navigation_and_a_door_is_left_open() {
+    use voxear_engine::walkable_models::Walkable;
+    use voxear_physics::scene::{Collider, ColliderShape};
+    let (mut game, _folder) = game_of("Walkable");
+    let world = named(&game, "World").expect("the template's world");
+    let camera = named(&game, "Main Camera").expect("the template's camera");
+    let eye = game.engine.world.get::<Transform>(camera).unwrap().position;
+    let spot = Vec3::new(eye.x + 8.0, 0.0, eye.z + 8.0);
+    assert!(until(&mut game, &mut |game| top_at(game, world, spot).is_some()));
+    // A platform 8 m square, its top 6 m over the ground, held up by nothing: only its own surfaces are stood on.
+    let ground = top_at(&game, world, spot).unwrap();
+    let top = ground + 6.0;
+    let platform = Collider { shape: ColliderShape::Box, size: [8.0, 1.0, 8.0], ..Collider::default() };
+    game.engine.world.spawn((
+        Name("Platform".into()),
+        Transform::from_position(Vec3::new(spot.x, top - 0.5, spot.z)),
+        platform,
+        Walkable::default(),
+    ));
+    voxear_engine::navigation::nav_of(&mut game.engine.world, world).expect("the world's navigation");
+    let stood = |game: &mut Game| {
+        let place =
+            voxear_engine::nav_agent::nearest_place(&mut game.engine.world, Vec3::new(spot.x, top + 0.5, spot.z), 1.0);
+        place.is_some_and(|place| (place.y - top).abs() < 1.1)
+    };
+    let mut on = false;
+    for _ in 0..600 {
+        game.tick(1.0 / 30.0, None);
+        if stood(&mut game) {
+            on = true;
+            break;
+        }
+    }
+    assert!(on, "a place to stand on the platform's top at {top}");
+    assert!(voxear_engine::walkable_models::stamped_cells(&game.engine.world, world) > 0);
+    // Marked a door, it is left out: nothing stands on it there.
+    let platform = named(&game, "Platform").unwrap();
+    game.engine.world.insert(platform, Walkable { door: true });
+    let mut gone = false;
+    for _ in 0..600 {
+        game.tick(1.0 / 30.0, None);
+        if !stood(&mut game) {
+            gone = true;
+            break;
+        }
+    }
+    assert!(gone, "a door is walked through, not stood on");
+}
+
+#[test]
 fn a_ground_fit_levels_the_streamed_ground_and_objs_kept_for_later_go_and_come_back_with_it() {
     let parent = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let folder = parent.path().join("Fitted");

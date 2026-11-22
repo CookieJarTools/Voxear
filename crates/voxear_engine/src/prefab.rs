@@ -440,6 +440,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.streams_with_ground = instance.streams_with_ground.or(root.streams_with_ground);
     root.road = instance.road.clone().or(root.road.clone());
     root.area_fill = instance.area_fill.clone().or(root.area_fill.clone());
+    root.placement = instance.placement.or(root.placement);
+    root.prefab_brush = instance.prefab_brush.clone().or(root.prefab_brush.clone());
+    root.walkable = instance.walkable.or(root.walkable);
     root.nav_obstacle = instance.nav_obstacle.or(root.nav_obstacle);
     root.crowd_member = instance.crowd_member.or(root.crowd_member);
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
@@ -549,6 +552,9 @@ pub struct TemplateObj {
     pub streams_with_ground: Option<crate::ground_streaming::StreamsWithGround>,
     pub road: Option<crate::roads::Road>,
     pub area_fill: Option<crate::roads::AreaFill>,
+    pub placement: Option<crate::prefab_placing::Placement>,
+    pub prefab_brush: Option<crate::prefab_placing::PrefabBrush>,
+    pub walkable: Option<crate::walkable_models::Walkable>,
     pub nav_obstacle: Option<crate::nav_obstacle::NavObstacle>,
     pub crowd_member: Option<crate::crowds::CrowdMember>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
@@ -794,6 +800,15 @@ impl Template {
             }
             if let Some(area) = obj.area_fill.clone() {
                 world.insert(entity, area);
+            }
+            if let Some(placement) = obj.placement {
+                world.insert(entity, placement);
+            }
+            if let Some(brush) = obj.prefab_brush.clone() {
+                world.insert(entity, brush);
+            }
+            if let Some(walkable) = obj.walkable {
+                world.insert(entity, walkable);
             }
             if let Some(obstacle) = obj.nav_obstacle {
                 world.insert(entity, obstacle);
@@ -1460,6 +1475,9 @@ pub(crate) fn resolve_obj(
         streams_with_ground: data.streams_with_ground,
         road: data.road.clone(),
         area_fill: data.area_fill.clone(),
+        placement: data.placement,
+        prefab_brush: data.prefab_brush.clone(),
+        walkable: data.walkable,
         nav_obstacle: data.nav_obstacle,
         crowd_member: data.crowd_member,
         motion_matcher: data.motion_matcher.clone(),

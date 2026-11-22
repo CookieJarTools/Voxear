@@ -421,6 +421,17 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "blocks.restore",
+        about: "Puts the blocks in the box between two points of the world, in metres, back as its ground was generated, its world layers with it: what was placed or broken by hand there goes. Only where the world has made its chunks. One step to undo.",
+        args: &[
+            arg("from", ArgKind::Vector, "One corner, in metres."),
+            arg("to", ArgKind::Vector, "The opposite corner, in metres."),
+            maybe("obj", ArgKind::Obj, "The Block World."),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
         name: "graph.comments",
         about: "The comments of a graph, a generator (.worldgen) or a VoxShade shader (.voxshade): each its number, its top left corner and size on the canvas, its title and its text.",
         args: &[arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade.")],
@@ -491,6 +502,17 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ dungeons: [{ world, structure, site, place, dimension, stage, floors, entrance, spaces, ways, lights }] }",
     },
     CallInfo {
+        name: "towns.near",
+        about: "The towns a Block World's generator lays out whose sites lie near a point, worked out with none of their ground made: each town's structure, its site's seed, its middle, and its buildings (the middle first, then houses nearest the middle first), each with its structure, where its floor's middle is, its size before turning, how many quarter turns it is turned, its yaw, which way its door faces and the place just outside its door, all in the level's metres.",
+        args: &[
+            maybe("obj", ArgKind::Obj, "The Block World; every one when left out."),
+            maybe("near", ArgKind::Vector, "Where to look round, in metres; the editor's camera when left out."),
+            maybe("reach", ArgKind::Number, "How far round to look, in metres: 500 when left out."),
+        ],
+        changes: false,
+        returns: "{ towns: [{ world, structure, site, middle, buildings: [{ structure, middle, at, size, turns, yaw, front, door }] }] }",
+    },
+    CallInfo {
         name: "dungeon.open",
         about: "Makes the dimension of a dungeon that is in a dimension of its own, as its gate's Open Dungeon does, and shows its way out in the Scene view: to look round it while editing. Its dimension is made by code, as the game makes it, and nothing of it is saved.",
         args: &[
@@ -557,7 +579,7 @@ pub const CALLS: &[CallInfo] = &[
         about: "The navigation kept for each Block World something walks in: how many chunks have places to stand, how many places, how much it keeps, how often it has been made again from the world's blocks and how long that took, and whether it is up to date with them; and how many Nav Agents and Block Mobs there are.",
         args: &[],
         changes: false,
-        returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled }], agents, mobs }",
+        returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled, model_cells }], agents, mobs, walkable }",
     },
     CallInfo {
         name: "ground_fit.land",
@@ -619,11 +641,79 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ road, point, along }",
     },
     CallInfo {
+        name: "place.prefab",
+        about: "Makes an instance of a prefab on the ground of the world of blocks there, at `at` along x and z, turned `turn` degrees; with `face_road`, turned to face the road nearest and set `setback` metres back from its edge, as its Placement says. Lands on the ground without its own Ground Fit. One step to undo.",
+        args: &[
+            arg("prefabs", ArgKind::Value, "The prefab, as a list of one: `[{ \"prefab\": <asset> }]`."),
+            arg("at", ArgKind::Vector, "Where, in metres; up is found from the ground."),
+            maybe("turn", ArgKind::Number, "How far it is turned about up, in degrees."),
+            maybe("face_road", ArgKind::Toggle, "Whether it faces the road nearest."),
+            maybe("setback", ArgKind::Number, "How far back from the road's edge, in metres: 1 when left out."),
+            maybe("parent", ArgKind::Obj, "The Obj it goes under."),
+        ],
+        changes: true,
+        returns: "{ objs }",
+    },
+    CallInfo {
+        name: "place.line_up",
+        about: "Lines prefabs up along a Road, each facing it and set back from its edge a little more or less than the last, as often as its weight, no two alike side by side, none where something with a Placement or a Ground Fit stands: on `side` (left, right or both), from `from` to `to` metres along it. The same `seed` gives the same street. One step to undo.",
+        args: &[
+            arg("road", ArgKind::Obj, "The Obj with the Road."),
+            arg("prefabs", ArgKind::Value, "The prefabs, each `{ \"prefab\": <asset>, \"weight\": n }`."),
+            maybe("side", ArgKind::Text, "left, right or both: both when left out."),
+            maybe("from", ArgKind::Number, "Where the stretch starts, in metres along the road."),
+            maybe("to", ArgKind::Number, "Where it ends, in metres along; its end when left out."),
+            maybe("setback", ArgKind::Number, "How far back from the edge, in metres: 1 when left out."),
+            maybe("jitter", ArgKind::Number, "How much more or less, in metres: 0.5 when left out."),
+            maybe("gap", ArgKind::Number, "How far apart, in metres: 1 when left out."),
+            maybe("seed", ArgKind::Whole, "The seed."),
+            maybe("parent", ArgKind::Obj, "The Obj they go under."),
+        ],
+        changes: true,
+        returns: "{ objs }",
+    },
+    CallInfo {
+        name: "place.scatter",
+        about: "Scatters prefabs over an outline or an Area Fill's, about `density` of them each 100 square metres, as often as their weights, turned any way, none where something stands. One step to undo.",
+        args: &[
+            arg("prefabs", ArgKind::Value, "The prefabs, each `{ \"prefab\": <asset>, \"weight\": n }`."),
+            maybe("area", ArgKind::Obj, "An Obj with an Area Fill whose outline to fill."),
+            maybe("outline", ArgKind::Value, "Or the outline, each corner `[x, z]` in metres."),
+            maybe("density", ArgKind::Number, "How many each 100 square metres: 1 when left out."),
+            maybe("seed", ArgKind::Whole, "The seed."),
+            maybe("parent", ArgKind::Obj, "The Obj they go under."),
+        ],
+        changes: true,
+        returns: "{ objs }",
+    },
+    CallInfo {
+        name: "place.brush",
+        about: "A stroke of the prefab brush: prefabs scattered within `radius` metres of `at`, about `density` each 100 square metres; or, with `remove`, the instances of those prefabs there taken away. One step to undo.",
+        args: &[
+            arg("prefabs", ArgKind::Value, "The prefabs, each `{ \"prefab\": <asset>, \"weight\": n }`."),
+            arg("at", ArgKind::Vector, "The brush's middle, in metres."),
+            maybe("radius", ArgKind::Number, "Its radius, in metres: 5 when left out."),
+            maybe("density", ArgKind::Number, "How many each 100 square metres: 4 when left out."),
+            maybe("remove", ArgKind::Toggle, "Whether it takes them away."),
+            maybe("seed", ArgKind::Whole, "The seed."),
+            maybe("parent", ArgKind::Obj, "The Obj they go under."),
+        ],
+        changes: true,
+        returns: "{ objs } or { removed }",
+    },
+    CallInfo {
         name: "world_layers.status",
         about: "The world layers over each world of blocks without end's ground, as it was last streamed: how many Ground Fits, how many chunk columns they reach, and which kinds are hidden to show the bare ground.",
         args: &[],
         changes: false,
         returns: "{ worlds: [{ world, fits, columns }], hidden: { fits } }",
+    },
+    CallInfo {
+        name: "scene_view.culling",
+        about: "Whether the Scene views draw only what the game's camera draws while playing, and a selected camera's while editing (Gizmos ▸ Game Camera's Culling): its frustum, draw distances, LODs and the Game view's depth cull them, not their own camera. Answers the camera they cull from, and what the first view drawn culled a few frames ago.",
+        args: &[maybe("on", ArgKind::Toggle, "Whether they cull from the game's camera.")],
+        changes: false,
+        returns: "{ on, camera, first_view: { frustum_culled, occlusion_culled, meshlets_occlusion_culled } }",
     },
     CallInfo {
         name: "world_layers.hide",
@@ -751,6 +841,23 @@ pub const CALLS: &[CallInfo] = &[
         args: &[],
         changes: false,
         returns: "{ commands: [{ id, title, keys }] }",
+    },
+    CallInfo {
+        name: "game.calls",
+        about: "The game's own calls: each static method its scripts mark [Call], with what it does, its arguments (each one's name, the kind of value it takes, its C# type, whether it must be given, and an enum's names), what it gives back, when it may run (`both`, `editing` or `playing`) and whether it changes the level. Each is called by its name as any call is, or through `game.call`.",
+        args: &[],
+        changes: false,
+        returns: "{ calls: [{ name, about, args, returns, when, changes }] }",
+    },
+    CallInfo {
+        name: "game.call",
+        about: "Makes one of the game's own calls, as `game.calls` lists them: against the level being edited, the scripts starting first if they have not, what it changes one step to undo; or against the game while it plays. Gives back what the method returned, as a save writes it.",
+        args: &[
+            arg("name", ArgKind::Text, "The call's name, as `game.calls` lists it."),
+            maybe("args", ArgKind::Value, "Its arguments, a JSON object by their names."),
+        ],
+        changes: false,
+        returns: "{ result }",
     },
     CallInfo {
         name: "command.run",
@@ -1438,6 +1545,9 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::StreamsWithGround
             | Part::Road
             | Part::AreaFill
+            | Part::Placement
+            | Part::PrefabBrush
+            | Part::Walkable
             | Part::NavObstacle
             | Part::CrowdMember
             | Part::MotionMatcher

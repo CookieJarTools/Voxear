@@ -389,6 +389,15 @@ pub const PREFERENCES: &[Setting] = &[
          ground under them. The scene is not changed. Off by default.",
     ),
     Setting::new(
+        ("Scene View", "Gizmos"),
+        "game_culling",
+        "Game Camera's Culling",
+        Kind::Toggle,
+        "While playing, the Scene view draws only what the game's camera draws: what its frustum, its draw \
+         distances, its LODs and the depth in the Game view leave out is left out here too, with its frustum drawn. \
+         While editing, the same for a selected camera. Off, the Scene view culls from its own camera. On by default.",
+    ),
+    Setting::new(
         ("Tools", "Editor Link"),
         "tools_may_change",
         "Let tools change the project",
@@ -479,6 +488,9 @@ pub struct Settings {
     pub nav_gizmos: bool,
     /// Whether world layers are left out of worlds' ground, to see it bare.
     pub bare_ground: bool,
+    /// The Scene view culls and picks LODs from the game's camera while
+    /// playing, and a selected camera's while editing.
+    pub game_culling: bool,
     pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
@@ -574,6 +586,7 @@ impl Default for Settings {
             vehicle_gizmos: false,
             nav_gizmos: false,
             bare_ground: false,
+            game_culling: true,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,
@@ -629,6 +642,7 @@ impl Settings {
             "vehicle_gizmos" => json!(self.vehicle_gizmos),
             "nav_gizmos" => json!(self.nav_gizmos),
             "bare_ground" => json!(self.bare_ground),
+            "game_culling" => json!(self.game_culling),
             "scene_shading" => json!(SHADING.get(self.scene_shading).map_or("Lit", |(label, _)| *label)),
             "prefab_parts" => json!(self.prefab_parts),
             "start_paused" => json!(self.start_paused),
@@ -683,6 +697,7 @@ impl Settings {
             "vehicle_gizmos" => self.vehicle_gizmos = on,
             "nav_gizmos" => self.nav_gizmos = on,
             "bare_ground" => self.bare_ground = on,
+            "game_culling" => self.game_culling = on,
             "scene_shading" => self.scene_shading = at(SHADING).unwrap_or(0),
             "prefab_parts" => self.prefab_parts = on,
             "tools_may_change" => self.tools_may_change = on,

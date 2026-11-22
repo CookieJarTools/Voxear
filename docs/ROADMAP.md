@@ -622,6 +622,10 @@ Next in M3:
   - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it
   - [x] several Scene views, each with its own camera, shading and Gizmos, opened from a window's menu (Add Scene
     View)
+  - [x] the Scene view draws only what the game's camera draws while playing, to judge culling from outside
+    (Gizmos ▸ Game Camera's Culling, on by default; a selected camera's while editing): it culls by that camera's
+    frustum, draw distances, LODs, block chunks' sight and the Game view's depth pyramid (the Game view now draws
+    first in the frame), with its frustum drawn in amber; `scene_view.culling` in `vox editor call`
   - [x] handles for two axes at once: move's and scale's squares between each two axes, rotate's ring around the
     view and turning freely inside the rings
   - [ ] **A gizmo API for game code** (agreed, being built). Unity splits this into Gizmos, Handles and Debug, each
@@ -3863,9 +3867,24 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   world with its blocks and found from a place; road calls set, found and undone in the editor; scripts' whole
   components. Manual: World Building ▸ Roads. Not done: stairs as steps, junctions blending two grades, a road
   asked of the generator's town roads, bridges kept over water of their own.
-- **Placing tools and nav for placed models** (stage 3): the Placement component, a palette of prefabs, lining up
-  along a road, a prefab brush, scattering in an area; walkable mesh colliders in block nav, doors; box models with
-  one bone and no clips drawn unskinned.
+- ~~**Placing tools and nav for placed models:**~~ done (stage 3). The Placement component (footprint, front, door);
+  lining up prefabs along a Road facing it, set back a little more or less each, no two alike side by side, skipping
+  what Placements and Ground Fits take; scattering over an outline or an Area Fill by density; one prefab placed
+  facing the road nearest; each made on the ground without its own fit, one step to undo, the same seed the same
+  street. The Prefab Brush component and Scene view tool: up to six prefabs picked with their pictures, Paint
+  strokes by radius and density, random or set turn, scale range, lean with ground, steepest slope, Shift to take
+  away, Single clicks with R turning, facing the road. Walkable: a still collider stamped into block navigation by
+  the cells its surfaces pass through, only the chunks it reaches rebuilt as it moves, a door left open;
+  `navigation.status` counts them. A Block World's Build tool gains **Restore**, putting blocks under the brush back
+  as the ground was generated with its layers (`blocks.restore` for a box). Box models of one bone and no clips drawn
+  with no skin. C#: `Placement`,
+  `Placing.LineUp`, `Placing.Scatter`, `PlacingChoice`, `LineUpSettings`, `RoadSide`, `PrefabBrush`, `BrushMode`,
+  `Walkable`. `vox editor call`: `place.prefab`, `place.line_up`, `place.scatter`, `place.brush`. Tests: lining up
+  and scattering; a walkable platform stood on and a door left open in a streamed world; a street lined up through
+  the editor, facing the road, undone as one step; scripts' components; a one-bone box model unskinned. Manual:
+  World Building ▸ Placing Prefabs, Navigation ▸ Walkable Models, Box Models. Not done: a grid panel of a folder's
+  prefabs (the Prefab Brush's pickers show their pictures), kits baked once per prefab (each instance is stamped),
+  doors that block when shut.
 - **Painted maps** (stage 4): Land, Height and Biome maps kept in tiles where painted, a Painted Map node, brushes
   beside Build with a quick preview.
 - **World Areas and Routes** (stage 5): areas with tags and data the game asks about, structures kept to or out of
@@ -4160,19 +4179,35 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     arm held up by its baked clip. Records put back from a save or sent by the server are the open level's, not
     cleared as another level's on their first frame. Not done: far crowds made from seeds.
 - A living society: residents with daily routines (home, work, shop, tavern, bed) who keep their day while their
-  ground is unloaded and are where they should be when a player comes back. Researched, nothing built yet: what
-  the engine has, measured limits and the plan are in [research/society.md](research/society.md). A resident's
-  place is worked out from its schedule and the world time, not simulated (9 ns a resident in a prototype), on
-  top of crowd records; aimed at 100,000 residents known to a world, and saves of only what differs from a
-  town's seed. In stages:
-  - [ ] World time counting days, Schedule and Activity assets, Building and Spot components, the Resident
-    component following its schedule.
-  - [ ] Residents while unloaded: records holding a schedule, places and changes, woken at their spots.
-  - [ ] Places known without loading, and generated towns peopled from their seed.
-  - [ ] Needs, interrupts and reactions.
-  - [ ] A society tick per settlement, with stock, money and deliveries.
-  - [ ] Co-op: every machine working out the same plan from the world time, only changes sent.
-  - [ ] The Society view, Profiler rows, `society.*` calls and a sample town.
+  ground is unloaded and are where they should be when a player comes back. Researched in
+  [research/society.md](research/society.md): a resident's place is worked out from its schedule and the time, not
+  simulated (9 ns a resident in a prototype). The society itself is built by the game in C#; the engine gives the
+  hooks a game cannot make itself:
+  - [x] Column events in C#: `Blocks.ColumnMade` and `Blocks.ColumnLetGo` for each 32-block column of a world
+    without end, with those made behind a loading screen told in the first frame (`ground_streaming::UntoldColumns`,
+    native API 97), `Blocks.IsMade(position, radius)` in the dimension scripts ask of, and
+    `Navigation.IsReady(position)`. Test: a script in the Infinite World template hears the columns round it, the one
+    it stands in among them, the ground made there and not 5 km off, the nav ready, and the columns let go once the
+    camera leaves.
+  - [x] Far figures: `FarFigures.Set` draws a game's own characters far off from an id, a prefab, a place, a yaw and
+    a speed, as crowd records are drawn and among the same 2,000 nearest (`crowd_records::FarFigures`); set again,
+    a figure walks on to its new place; one left out goes; forgotten when another level opens, never sent. Tests: a
+    figure set 400 m off drawn there, set 8 m on walking there over frames, gone when left out and past 600 m; one
+    set from C# drawn with its model.
+  - [x] Generated towns' plans in C#: `Towns.Near(position, reach)` and `Towns.Nearest` give each town's structure,
+    seed, middle and buildings (the middle first), each with its `Structure` (a new typed asset reference, picked
+    in the Inspector), floor, size, rotation, front and the place outside its door, and `PointOf` for places
+    inside, worked out from the generator with none of the ground made (`structure::towns_near`, `engine::towns`,
+    `vox editor call towns.near`, native API 98). Points named on a structure's model are left to the game. Tests:
+    a town's plan the same every time and matching the blocks its chunks build, its middle's and houses' floors
+    and doors; from C#, the towns within 3 km of the Infinite World template's camera, a well in the middle and
+    houses with doors.
+  - [x] A game's own calls: a static C# method marked `[Call("name", About, When, Changes)]` is listed by
+    `game.calls` with its arguments' kinds and made by its name or `game.call`, its arguments read and its answer
+    written as saves do; while editing it runs on the edited level, a change one step to undo; `vox mcp` offers
+    each as a tool and `--describe` lists them. Tests: a call listed with its arguments and made with a default
+    left out, and refused without one (engine); in the editor, listed, made through `game.call` and by its name,
+    an Obj moved as one step to undo, a call for play refused while editing.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

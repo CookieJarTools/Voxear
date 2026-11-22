@@ -2038,13 +2038,29 @@ impl Renderer {
         let mut backdrops = vec![None; outputs.len()];
         let mut cleared = vec![false; outputs.len()];
         let mut push = None;
-        for (index, view) in views.iter_mut().enumerate() {
+        // The first view in each output's list keeps its picture for the UI's backdrop, whatever order they draw in.
+        let mut backdrop_views = vec![None; outputs.len()];
+        for (index, view) in views.iter().enumerate() {
+            if let Some(at) = outputs.iter().position(|o| o.id == view.output).filter(|&at| images[at].is_some()) {
+                backdrop_views[at].get_or_insert(index);
+            }
+        }
+        // A view culling from another's camera draws after the view looking through it, whose depth pyramid it reads.
+        let order = cull_order(views);
+        let mut cull_sources: HashMap<voxear_ecs::Entity, CullSource> = HashMap::new();
+        for index in order {
+            let view = &mut views[index];
             let Some(at) = outputs.iter().position(|o| o.id == view.output) else { continue };
             let Some((output, desc)) = images[at] else { continue };
             // A view after the first keeps images of its own, by name.
             fg.set_prefix(&if index == 0 { String::new() } else { format!("view {index} ") });
             let first = !std::mem::replace(&mut cleared[at], true);
-            let keep_ldr = first && outputs[at].ui.wants_backdrop();
+            let keeps_backdrop = backdrop_views[at] == Some(index);
+            let keep_ldr = keeps_backdrop && outputs[at].ui.wants_backdrop();
+            let cull = view
+                .options
+                .cull_camera
+                .map(|camera| cull_sources.get(&camera).copied().unwrap_or(CullSource { size: None, pyramid: None }));
             let full = desc.extent();
             let ui_quads = ui.quads.address;
             let mesh_shaders = *mesh_shaders;
@@ -2075,11 +2091,17 @@ impl Renderer {
                 baked: baked_frame.clone(),
                 bake: bake.clone(),
                 pack: pack_draw.clone(),
+                cull,
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
-            if first {
+            if keeps_backdrop {
                 backdrops[at] = recorded.backdrop;
+            }
+            if let Some(camera) = view.options.camera.filter(|_| view.options.cull_camera.is_none()) {
+                let size = view.rect_in(full).extent;
+                let source = CullSource { size: Some((size.width, size.height)), pyramid: recorded.pyramid };
+                cull_sources.entry(camera).or_insert(source);
             }
             probe_job_done |= recorded.probe_job_done;
             sound_done |= recorded.sound_done;
@@ -2577,6 +2599,18 @@ struct Sees {
     waves: Option<water::SharedWaves>,
 }
 
+/// The order the views draw in: each a view culls from first, as it lists
+/// them, then the rest, so a view culling from another's camera finds its
+/// depth pyramid made (see `ViewOptions::cull_camera`).
+fn cull_order(views: &[View]) -> Vec<usize> {
+    let borrowed = |view: &View| {
+        view.options.cull_camera.is_none()
+            && view.options.camera.is_some_and(|camera| views.iter().any(|v| v.options.cull_camera == Some(camera)))
+    };
+    let (first, rest): (Vec<usize>, Vec<usize>) = (0..views.len()).partition(|&index| borrowed(&views[index]));
+    first.into_iter().chain(rest).collect()
+}
+
 /// What every view's frame shares.
 struct ViewSetup {
     /// How many times paper white the output's display shows at most, and
@@ -2628,6 +2662,19 @@ struct ViewSetup {
     bake: Option<lightmapper::BakeFrame>,
     /// The shader pack the world wears, and its pipelines.
     pack: Option<shader_packs::PackDraw>,
+    /// For a view that culls from another's camera, what it reads of the
+    /// view drawing through that camera (see `ViewOptions::cull_camera`).
+    cull: Option<CullSource>,
+}
+
+/// What a view that culls from another view's camera reads of it: its size,
+/// for the frustum's shape, and its depth pyramid, made earlier in the same
+/// frame. Neither where no view draws through that camera this frame, when
+/// it culls by the frustum, distances and LODs alone.
+#[derive(Clone, Copy)]
+struct CullSource {
+    size: Option<(u32, u32)>,
+    pyramid: Option<(ImageId, ImageDesc)>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -2647,6 +2694,8 @@ struct ViewRecorded {
     /// The Portals a view through a Portal sees in turn, for the view it
     /// is seen in to draw the far sides of.
     sees: Option<Sees>,
+    /// Its depth pyramid, for a view culling from its camera to read.
+    pyramid: Option<(ImageId, ImageDesc)>,
 }
 
 impl View {
@@ -3139,7 +3188,11 @@ impl View {
             &self.options,
             &|mesh| assets.mesh_sphere(mesh),
             through.as_ref(),
+            setup.cull.and_then(|source| source.size),
         );
+        // Culled from another view's camera, it reads that view's depth pyramid rather than its own.
+        let cull_pyramid = setup.cull.and_then(|source| source.pyramid).filter(|_| extracted.frame.cull.borrowed != 0);
+        let borrows = extracted.frame.cull.borrowed != 0;
         // Seeing another dimension, what it kept of the last one's shadows, sky and bounced light goes: they are
         // another world's, which the shadows would otherwise go on showing for a while as their pages come again a
         // few at a time. The picture's own history stays, as a camera walking through a Portal sees no cut.
@@ -3203,12 +3256,13 @@ impl View {
             blocks::add_proxies(&seen_blocks, &mut extracted);
         }
         if features.vegetation {
-            // The plants round the camera where the world has it, moved into the view's own space.
+            // The plants round the camera the view culls from where the world has it, moved into the view's own
+            // space.
             let first = extracted.instances.len();
-            let seen_from = camera + offset;
+            let seen_from = voxear_core::math::Vec3::from(extracted.frame.cull.position) + offset;
             // The view's frustum moved out of its own space into the world's, where the plants are.
             let moved = |[x, y, z, d]: [f32; 4]| [x, y, z, d - voxear_core::math::Vec3::new(x, y, z).dot(offset)];
-            let planes = extracted.frame.planes.map(moved);
+            let planes = extracted.frame.cull.planes.map(moved);
             let sphere = |mesh| assets.mesh_sphere(mesh);
             let gathering = profile_marker!("Foliage").scope();
             self.foliage.gather(world, seen_from, &planes, &mut extracted, &sphere, &assets.impostors);
@@ -3462,11 +3516,13 @@ impl View {
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         // The cascades' cut-out faces are drawn for a shader pack's leaf light, whatever draws the shadows.
         let cascade_lists = sun_shadows && (cascades || extracted.leaf_light);
+        // The chunks a world of blocks shows are walked to from where the view culls from.
+        let culled_from = voxear_core::math::Vec3::from(extracted.frame.cull.position);
         let mut view_blocks = blocks::gather(
             &seen_blocks,
             &extracted,
             &buffers.blocks,
-            (offset, Some(through.map_or(camera, |t| t.window)), cascade_lists, portal.is_none()),
+            (offset, Some(through.map_or(culled_from, |t| t.window)), cascade_lists, portal.is_none()),
             &lamps,
             &sun_pages,
         );
@@ -3926,9 +3982,16 @@ impl View {
         self.cloud_history = cloudy.then_some(extent);
         frame_data.instance_count = opaque_count as u32;
         frame_data.light_count = light_count as u32;
-        frame_data.hiz_texture = fg.texture(pyramid).0;
-        frame_data.hiz_size = [pyramid_desc.width, pyramid_desc.height];
-        frame_data.hiz_mips = pyramid_desc.mip_levels;
+        // Culling from another view's camera, the depth it tests against is that view's; where none drew this frame,
+        // there is none, and only the frustum, distances and LODs cull.
+        let (hiz, hiz_desc) = match (borrows, cull_pyramid) {
+            (true, Some((image, desc))) => (Some(image), desc),
+            (true, None) => (None, pyramid_desc),
+            (false, _) => (Some(pyramid), pyramid_desc),
+        };
+        frame_data.hiz_texture = hiz.map_or(NO_TEXTURE, |image| fg.texture(image).0);
+        frame_data.hiz_size = [hiz_desc.width, hiz_desc.height];
+        frame_data.hiz_mips = hiz_desc.mip_levels;
         frame_data.shadow_texture = shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
         frame_data.local_shadows.texture = local_shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
         frame_data.local_shadows.cache = kept_shadows.map_or(NO_TEXTURE, |kept| fg.texture(kept).0);
@@ -4263,6 +4326,7 @@ impl View {
             pyramid_texture: fg.texture(pyramid),
             pyramid_mips: (0..pyramid_desc.mip_levels as usize).map(|mip| fg.storage(pyramid, mip)).collect(),
             pyramid_size: [pyramid_desc.width, pyramid_desc.height],
+            cull_pyramid: cull_pyramid.map(|(image, _)| image),
             shadows,
             cascade_size: if portal.is_some() { shadows::CASCADE_RESOLUTION / 2 } else { shadows::CASCADE_RESOLUTION },
             virtual_shadows: virtual_shadows.as_ref().map(|(pool, drawn, moving_pool)| {
@@ -4416,6 +4480,7 @@ impl View {
                 probe_job_done,
                 sound_done,
                 bake_dispatches,
+                pyramid: None,
             });
         }
         let post = post_passes::PostInput {
@@ -4474,7 +4539,17 @@ impl View {
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done, sound_done, bake_dispatches })
+        let pyramid = Some((pyramid, pyramid_desc));
+        Ok(ViewRecorded {
+            push,
+            backdrop,
+            panel_sizes,
+            sees: None,
+            probe_job_done,
+            sound_done,
+            bake_dispatches,
+            pyramid,
+        })
     }
 }
 

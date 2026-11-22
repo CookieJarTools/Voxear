@@ -28,16 +28,21 @@ pub enum PaintKind {
     Land,
     Height,
     Biome,
+    /// The World Areas painted over the world, each by its number.
+    Area,
 }
 
 impl PaintKind {
-    pub const ALL: [PaintKind; 3] = [PaintKind::Land, PaintKind::Height, PaintKind::Biome];
+    pub const ALL: [PaintKind; 4] = [PaintKind::Land, PaintKind::Height, PaintKind::Biome, PaintKind::Area];
+    /// Those that shape the generator's ground.
+    pub const GROUND: [PaintKind; 3] = [PaintKind::Land, PaintKind::Height, PaintKind::Biome];
 
     pub fn name(self) -> &'static str {
         match self {
             PaintKind::Land => "Land",
             PaintKind::Height => "Height",
             PaintKind::Biome => "Biome",
+            PaintKind::Area => "Area",
         }
     }
 
@@ -45,7 +50,7 @@ impl PaintKind {
     pub fn spacing(self) -> f32 {
         match self {
             PaintKind::Land | PaintKind::Height => 8.0,
-            PaintKind::Biome => 4.0,
+            PaintKind::Biome | PaintKind::Area => 4.0,
         }
     }
 }
@@ -218,13 +223,14 @@ impl PaintedMap {
     }
 }
 
-/// A world's three painted maps, a number counting each change, and what
+/// A world's painted maps, a number counting each change, and what
 /// each change reached, in metres, by that number.
 #[derive(Clone, Debug)]
 pub struct PaintedMaps {
     pub land: PaintedMap,
     pub height: PaintedMap,
     pub biome: PaintedMap,
+    pub areas: PaintedMap,
     pub version: u64,
     changes: Vec<(u64, [[f32; 2]; 2])>,
 }
@@ -235,6 +241,7 @@ impl Default for PaintedMaps {
             land: PaintedMap::new(PaintKind::Land.spacing()),
             height: PaintedMap::new(PaintKind::Height.spacing()),
             biome: PaintedMap::new(PaintKind::Biome.spacing()),
+            areas: PaintedMap::new(PaintKind::Area.spacing()),
             version: 0,
             changes: Vec::new(),
         }
@@ -243,13 +250,13 @@ impl Default for PaintedMaps {
 
 /// What a file of painted maps starts with, and the version of what follows.
 const MAGIC: &[u8; 4] = b"VXPM";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 /// How many changes are remembered for those catching up.
 const CHANGES_KEPT: usize = 256;
 
 impl PaintedMaps {
     pub fn is_empty(&self) -> bool {
-        self.land.is_empty() && self.height.is_empty() && self.biome.is_empty()
+        self.land.is_empty() && self.height.is_empty() && self.biome.is_empty() && self.areas.is_empty()
     }
 
     pub fn map(&self, kind: PaintKind) -> &PaintedMap {
@@ -257,6 +264,7 @@ impl PaintedMaps {
             PaintKind::Land => &self.land,
             PaintKind::Height => &self.height,
             PaintKind::Biome => &self.biome,
+            PaintKind::Area => &self.areas,
         }
     }
 
@@ -265,6 +273,7 @@ impl PaintedMaps {
             PaintKind::Land => &mut self.land,
             PaintKind::Height => &mut self.height,
             PaintKind::Biome => &mut self.biome,
+            PaintKind::Area => &mut self.areas,
         }
     }
 
@@ -293,7 +302,7 @@ impl PaintedMaps {
     /// A number for every map's tiles reaching the box of metres `area`.
     pub fn hash_within(&self, area: [[f32; 2]; 2]) -> u64 {
         let hashes = PaintKind::ALL.map(|kind| self.map(kind).hash_within(area));
-        if hashes == [0; 3] { 0 } else { crate::layers::stable_hash(&hashes.map(u64::to_le_bytes).concat()) }
+        if hashes == [0; 4] { 0 } else { crate::layers::stable_hash(&hashes.map(u64::to_le_bytes).concat()) }
     }
 
     /// The maps as bytes, compressed, for the world's `.maps` file.
@@ -309,13 +318,21 @@ impl PaintedMaps {
 
     pub fn from_bytes(compressed: &[u8]) -> Result<Self> {
         let bytes = lz4_flex::decompress_size_prepended(compressed)?;
-        ensure!(bytes.len() >= 5 && &bytes[..4] == MAGIC && bytes[4] == VERSION, "not painted maps this version reads");
+        // Version 1 had no Area map.
+        ensure!(
+            bytes.len() >= 5 && &bytes[..4] == MAGIC && (1..=VERSION).contains(&bytes[4]),
+            "not painted maps this version reads"
+        );
         let mut at = 5;
         let land = PaintedMap::read(&bytes, &mut at)?;
         let height = PaintedMap::read(&bytes, &mut at)?;
         let biome = PaintedMap::read(&bytes, &mut at)?;
+        let areas = match bytes[4] {
+            1 => PaintedMap::new(PaintKind::Area.spacing()),
+            _ => PaintedMap::read(&bytes, &mut at)?,
+        };
         ensure!(at == bytes.len(), "painted maps with more after them");
-        Ok(Self { land, height, biome, version: 0, changes: Vec::new() })
+        Ok(Self { land, height, biome, areas, version: 0, changes: Vec::new() })
     }
 }
 

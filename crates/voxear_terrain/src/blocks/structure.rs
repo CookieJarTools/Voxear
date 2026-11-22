@@ -1617,6 +1617,20 @@ fn build_looking(
             if layers.is_some_and(|layers| layers.keeps_out(block.map(|v| v - round), block.map(|v| v + round))) {
                 continue;
             }
+            // Nor where its World Areas keep it out (see `area_layer`).
+            let rules = &structure.placement.tags;
+            let allowed = match layers.map(|layers| layers.areas()).filter(|areas| !areas.is_empty()) {
+                Some(areas) => {
+                    // The ground asked only where an area holds some heights and not others.
+                    let ranged = areas.areas.iter().any(|area| area.low.is_some() || area.high.is_some());
+                    let at = ranged.then(|| ground.top(block[0], block[1]));
+                    areas.allows(block, at, &rules.within, &rules.never)
+                }
+                None => rules.within.is_empty(),
+            };
+            if !allowed {
+                continue;
+            }
             // A town's layout, worked out once: what it takes up is its streets and buildings.
             let layout = match &structure.blocks {
                 StructureBlocks::Town(town) => Some(town.layout(site.seed, block, &ground)),
@@ -2055,6 +2069,63 @@ mod tests {
         // Those that grow by water come down to the shore and the river's banks.
         let by = trees(true);
         assert!(by.len() > dry.len() && by.iter().any(|&at| shore(at) || wet(at)), "{} by water", by.len());
+    }
+
+    #[test]
+    fn world_areas_keep_structures_out_or_hold_those_kept_within_their_tags() {
+        use crate::blocks::world_layers::{AreaLayer, WorldAreas, WorldLayers};
+        let world = crate::generate::starters().into_iter().find(|s| s.name == "Archipelago").unwrap().world(7, 1.0);
+        let position = [592.0, 64.0];
+        let town = 41u128;
+        let trees = |within: Vec<u128>, areas: Vec<AreaLayer>| {
+            let placement =
+                Placement { spacing: 8.0, separation: 3.0, chance: 0.9, slope: 35.0, ..Placement::default() };
+            let placement =
+                Placement { tags: crate::generate::structures::AreaRules { within, never: Vec::new() }, ..placement };
+            let trees = PlacedStructure {
+                placement,
+                ground: GroundFit::Leave,
+                sink: 0,
+                blocks: StructureBlocks::Plant {
+                    plant: PlantDef::default(),
+                    wood: 7,
+                    leaves: 8,
+                    vine: 0,
+                    logs: Vec::new(),
+                },
+                biomes: Vec::new(),
+            };
+            let structures = WorldStructures { list: vec![trees], ..WorldStructures::default() };
+            let layers =
+                WorldLayers::new(Vec::new()).with_areas(WorldAreas { areas, block_size: 1.0, ..WorldAreas::default() });
+            let layers = Some(&layers).filter(|layers| !layers.is_empty());
+            let mut trunks: std::collections::HashSet<[i32; 2]> = std::collections::HashSet::new();
+            let mut set = |at: [i32; 3], block: BlockId| {
+                if block == 7 {
+                    trunks.insert([at[0], at[2]]);
+                }
+            };
+            let at = (1.0, position, -64, false);
+            let (reach, feet) = (looks(&structures, at.0), |_: [i32; 2]| None);
+            build_looking(&mut set, &structures, &world, None, at, ([0, 0], [8, 8]), 2, (&reach, &feet, layers));
+            trunks
+        };
+        // The west half of the 256 blocks kept clear.
+        let half = |id: u64| AreaLayer {
+            id,
+            outline: vec![[-40.0, -40.0], [128.0, -40.0], [128.0, 300.0], [-40.0, 300.0]],
+            ..AreaLayer::default()
+        };
+        let all = trees(Vec::new(), Vec::new());
+        assert!(all.iter().filter(|at| at[0] < 112).count() > 20, "trees in the west half to begin with");
+        let cleared = trees(Vec::new(), vec![AreaLayer { no_structures: true, ..half(1) }]);
+        // A tree's crown may reach over its outline from a trunk outside it, so only trunks well inside are asked.
+        assert!(!cleared.iter().any(|at| at[0] < 112), "no tree in the area with No Structures");
+        assert!(cleared.iter().any(|at| at[0] > 140), "trees past it");
+        let kept = trees(vec![town], vec![AreaLayer { tags: vec![town], ..half(2) }]);
+        assert!(kept.iter().any(|at| at[0] < 112), "trees within the town");
+        assert!(!kept.iter().any(|at| at[0] > 140), "none out of it");
+        assert!(trees(vec![town], Vec::new()).is_empty(), "within a tag no area has: none");
     }
 
     #[test]

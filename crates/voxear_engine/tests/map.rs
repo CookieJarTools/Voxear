@@ -690,3 +690,35 @@ fn on_a_screen_the_size_of_their_design_the_minimap_and_the_map_are_as_designed(
     assert!(ui.is_visible(parts.time_cell) && ui.text(parts.tag_name.unwrap()) == "Pixie");
     keep("design-map.png", renderer.read_pixels().unwrap());
 }
+
+#[test]
+fn a_route_is_drawn_on_the_map_in_its_kinds_colour_unless_it_is_kept_off_it() {
+    use voxear_engine::world_routes::{Route, RouteKind};
+    use voxear_ui::Shape;
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game, None);
+    let hud = find(&game, "Hud");
+    Maps::set_open(&mut game.engine.world, hud, true);
+    // A sea lane past the camera, at 40, 40.
+    let points = vec![[20.0, 0.0, 30.0], [40.0, 0.0, 40.0], [60.0, 0.0, 50.0]];
+    let lane = game.engine.world.spawn((
+        voxear_scene::Name("Lane".into()),
+        voxear_scene::Transform::default(),
+        Route { points, kind: RouteKind::Sea, ..Route::default() },
+    ));
+    settle(&mut game, None);
+    let large = view(&mut game, MapViewKind::Map);
+    let [r, g, b] = voxear_engine::world_routes::kind_color(RouteKind::Sea);
+    let sea = voxear_ui::Color::rgba(r, g, b, 220);
+    let drawn = |game: &mut Game| {
+        let ui = game.ui.ui();
+        let overlay = ui.map_view_parts(large).unwrap().overlay;
+        ui.shapes(overlay).iter().filter(|shape| matches!(shape, Shape::Line { color, .. } if *color == sea)).count()
+    };
+    assert_eq!(drawn(&mut game), 2, "both its stretches");
+    game.engine.world.get_mut::<Route>(lane).unwrap().on_map = false;
+    settle(&mut game, None);
+    assert_eq!(drawn(&mut game), 0, "kept off the map");
+}

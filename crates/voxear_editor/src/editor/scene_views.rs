@@ -599,6 +599,7 @@ fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem>
         MenuItem::new("Vehicle Debug").checked(settings.vehicle_gizmos),
         MenuItem::new("Navigation").checked(settings.nav_gizmos),
         MenuItem::new("Bare Ground").checked(settings.bare_ground),
+        MenuItem::new("Areas and Routes").checked(settings.area_gizmos),
         MenuItem::new("Game Camera's Culling").checked(settings.game_culling),
         MenuItem::separator(),
     ];
@@ -621,9 +622,10 @@ fn toggle_gizmos(settings: &mut Settings, types: &[(String, String)], choice: us
         3 => settings.vehicle_gizmos = !settings.vehicle_gizmos,
         4 => settings.nav_gizmos = !settings.nav_gizmos,
         5 => settings.bare_ground = !settings.bare_ground,
-        6 => settings.game_culling = !settings.game_culling,
+        6 => settings.area_gizmos = !settings.area_gizmos,
+        7 => settings.game_culling = !settings.game_culling,
         _ => {
-            let Some((name, _)) = types.get(choice - 8) else { return false };
+            let Some((name, _)) = types.get(choice - 9) else { return false };
             match settings.hidden_gizmos.iter().position(|hidden| hidden == name) {
                 Some(index) => _ = settings.hidden_gizmos.remove(index),
                 None => settings.hidden_gizmos.push(name.clone()),

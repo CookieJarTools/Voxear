@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use super::area_layer::{AreaLayer, WorldAreas};
 pub use super::road_layer::{Bridge, Palette, RoadLayer, Steps, Tunnel};
 use super::{
     chunk::{AIR, BlockId, CHUNK},
@@ -176,6 +177,10 @@ impl FitLayer {
     }
 }
 
+/// How far past an area's outline the structures it moves may reach, in
+/// blocks: two chunks.
+const AREA_REACH: i32 = 2 * CHUNK as i32;
+
 /// Whether `point` lies inside the loop `outline`, by the crossings of a ray
 /// along x.
 fn inside(outline: &[[f32; 2]], point: [f32; 2]) -> bool {
@@ -244,13 +249,15 @@ pub struct WorldLayers {
     /// The layers reaching each chunk column, in the order they apply: fits,
     /// then roads.
     cells: HashMap<[i32; 2], Vec<LayerRef>>,
+    /// The World Areas over the world, which say where its structures stand.
+    areas: WorldAreas,
     /// A number for all of them, the same for the same layers.
     hash: u64,
 }
 
 impl PartialEq for WorldLayers {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.fits == other.fits && self.roads == other.roads
+        self.hash == other.hash && self.fits == other.fits && self.roads == other.roads && self.areas == other.areas
     }
 }
 
@@ -285,11 +292,32 @@ impl WorldLayers {
         }
         let bytes: Vec<u8> =
             fits.iter().flat_map(FitLayer::bytes).chain(roads.iter().flat_map(RoadLayer::bytes)).collect();
-        Self { fits, roads, cells, hash: crate::layers::stable_hash(&bytes) }
+        Self { fits, roads, cells, areas: WorldAreas::default(), hash: crate::layers::stable_hash(&bytes) }
+    }
+
+    /// These layers with the World Areas `areas` beside them.
+    pub fn with_areas(mut self, mut areas: WorldAreas) -> Self {
+        for area in areas.areas.iter_mut().filter(|area| area.id == 0) {
+            area.id = crate::layers::stable_hash(&area.bytes()).max(1);
+        }
+        areas.areas.sort_by_key(|area| (area.priority, area.id));
+        let mut bytes = self.hash.to_le_bytes().to_vec();
+        areas.areas.iter().for_each(|area| bytes.extend(area.bytes()));
+        bytes.extend(areas.painted.as_ref().map_or(0, |painted| painted.id).to_le_bytes());
+        areas.origin.iter().chain([&areas.block_size]).for_each(|v| bytes.extend(v.to_le_bytes()));
+        if !areas.is_empty() {
+            self.hash = crate::layers::stable_hash(&bytes);
+        }
+        self.areas = areas;
+        self
     }
 
     pub fn is_empty(&self) -> bool {
-        self.fits.is_empty() && self.roads.is_empty()
+        self.fits.is_empty() && self.roads.is_empty() && self.areas.is_empty()
+    }
+
+    pub fn areas(&self) -> &WorldAreas {
+        &self.areas
     }
 
     pub fn fits(&self) -> &[FitLayer] {
@@ -447,6 +475,18 @@ impl WorldLayers {
             |layers: &WorldLayers| layers.roads.iter().map(|road| (road.id, road.bytes(), road.bounds())).collect();
         differ(fits(old), fits(new));
         differ(roads(old), roads(new));
+        // An area moves the structures whose sites it holds, and they reach further than their sites.
+        let areas = |layers: &WorldLayers| {
+            let painted = layers.areas.painted_bounds();
+            let grown = |[low, high]: [[i32; 2]; 2]| [low.map(|v| v - AREA_REACH), high.map(|v| v + AREA_REACH)];
+            layers
+                .areas
+                .areas
+                .iter()
+                .map(|area| (area.id, area.bytes(), if area.painted == 0 { area.bounds() } else { painted }.map(grown)))
+                .collect()
+        };
+        differ(areas(old), areas(new));
         columns.sort_unstable();
         columns.dedup();
         columns

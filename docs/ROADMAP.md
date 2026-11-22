@@ -3826,7 +3826,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 
-## World building (in progress)
+## World building (done)
 
 Worlds of blocks without end generated first and crafted on top: buildings that level their plots, roads, kits of
 prefabs placed and lined up, painted land, mountains and biomes, areas the game asks about, and routes. Everything
@@ -3897,9 +3897,28 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   painted, erased, written and read; painted height and land raising and sinking the generator's ground with nothing
   compiled again; a stroke remaking only its columns and its far tile kept apart; the node; brushes' calls painting,
   undone and saved. Manual: World Building ▸ Painting Land, Generator Nodes. Not done: a quick coarse preview while a
-  stroke is held (near columns are made as it goes), the maps sent to players who join, painted areas for World Areas.
-- **World Areas and Routes** (stage 5): areas with tags and data the game asks about, structures kept to or out of
-  them; routes and stops joined into a network, found, walked, and laid over the sea.
+  stroke is held (near columns are made as it goes), the maps sent to players who join.
+- ~~**World Areas and Routes:**~~ done (stage 5). The World Area component: an outline dragged in the Scene view or a
+  patch painted with the Block World's Area brush (the Area map in the world's `.maps`), Heights Any or Between,
+  Priority, No Structures, and tags, each an Area Tag data asset carrying a data asset of the game's own; Area
+  Defaults on the world for a tag, per biome or anywhere. Structures' placement gains `within` and `never_within`
+  areas' tags, near and far alike, only the ground round a changed area made again. The Route component (Road, Sea,
+  Air or a Route Kind data asset; width, one way, a sea route's draught and shore, On Map) and Route Stop with a data
+  asset; routes of a kind joined where they meet, every Road among them, ways found with the stops they pass, the
+  nearest place on one, a cursor by distance; sea routes laid over the generator's own ground however far off, drawn
+  red when a repaint runs them aground. Areas tinted and routes drawn in the Scene view (Gizmos ▸ Areas and Routes),
+  routes on the game's maps; the road handles also edit routes and the outlines of World Areas and Area Fills. C#:
+  `WorldArea`, `AreaShape`, `AreaEntry`, `AreaTag`, `AreaDefaults`, `Areas.At`, `Areas.Value<T>`, `Areas.Has`,
+  `Route`, `RouteKind`, `CustomRouteKind`, `RouteStop`, `Routes.Find`, `Routes.Nearest`, `Routes.LaySea`,
+  `RouteWay.At`, `RouteHit`, `WorldArea.Paint`. `vox editor call`: `world_area.set_outline`, `areas.at`,
+  `areas.value`, `route.set_points`, `route.lay_sea`, `routes.find`, `routes.nearest`, and `paint.map map=area`.
+  Tests: areas holding places by outline, paint and height, structures kept out or within; trees built round a No
+  Structures area and only within a tagged one; ways found along joined routes, one way, stops passed, the sea
+  search round an island; in a game, areas found by outline, paint and defaults, a sea route laid over sunk land and
+  aground on a raised shoal, laid again round it; the map drawing a route; editor calls making, asking and undoing;
+  scripts' components; a C# cursor. Manual: World Building ▸ World Areas, Routes; Structures; Painting Land. Not
+  done: generator town roads joined into the route graph, air routes kept over the ground, an area's outline drawn
+  on the ground rather than at its Obj's height, a structure's own size checked against an area's edge.
 
 ## M9 — Navigation, cameras and Timeline (in progress)
 

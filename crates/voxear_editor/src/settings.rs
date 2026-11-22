@@ -390,6 +390,14 @@ pub const PREFERENCES: &[Setting] = &[
     ),
     Setting::new(
         ("Scene View", "Gizmos"),
+        "area_gizmos",
+        "Areas and Routes",
+        Kind::Toggle,
+        "Each World Area's outline, tinted by its first tag, and each Route as a line coloured by its kind: a sea \
+         route that runs aground drawn red. On by default.",
+    ),
+    Setting::new(
+        ("Scene View", "Gizmos"),
         "game_culling",
         "Game Camera's Culling",
         Kind::Toggle,
@@ -488,6 +496,8 @@ pub struct Settings {
     pub nav_gizmos: bool,
     /// Whether world layers are left out of worlds' ground, to see it bare.
     pub bare_ground: bool,
+    /// Whether World Areas' outlines and Routes are drawn.
+    pub area_gizmos: bool,
     /// The Scene view culls and picks LODs from the game's camera while
     /// playing, and a selected camera's while editing.
     pub game_culling: bool,
@@ -586,6 +596,7 @@ impl Default for Settings {
             vehicle_gizmos: false,
             nav_gizmos: false,
             bare_ground: false,
+            area_gizmos: true,
             game_culling: true,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
@@ -642,6 +653,7 @@ impl Settings {
             "vehicle_gizmos" => json!(self.vehicle_gizmos),
             "nav_gizmos" => json!(self.nav_gizmos),
             "bare_ground" => json!(self.bare_ground),
+            "area_gizmos" => json!(self.area_gizmos),
             "game_culling" => json!(self.game_culling),
             "scene_shading" => json!(SHADING.get(self.scene_shading).map_or("Lit", |(label, _)| *label)),
             "prefab_parts" => json!(self.prefab_parts),
@@ -697,6 +709,7 @@ impl Settings {
             "vehicle_gizmos" => self.vehicle_gizmos = on,
             "nav_gizmos" => self.nav_gizmos = on,
             "bare_ground" => self.bare_ground = on,
+            "area_gizmos" => self.area_gizmos = on,
             "game_culling" => self.game_culling = on,
             "scene_shading" => self.scene_shading = at(SHADING).unwrap_or(0),
             "prefab_parts" => self.prefab_parts = on,

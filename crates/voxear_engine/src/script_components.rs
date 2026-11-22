@@ -25,6 +25,8 @@ use crate::{
     prefab_placing::{Placement, PrefabBrush},
     roads::{AreaFill, Road},
     walkable_models::Walkable,
+    world_areas::{AreaDefaults, WorldArea},
+    world_routes::{Route, RouteStop},
     heat::Climate,
     navigation::{NavArea, NavLink},
     scene_file::PostVolumeData,
@@ -63,6 +65,10 @@ const ANIMATOR: i32 = 13;
 const PLACEMENT: i32 = 14;
 const PREFAB_BRUSH: i32 = 15;
 const WALKABLE: i32 = 16;
+const WORLD_AREA: i32 = 17;
+const AREA_DEFAULTS: i32 = 18;
+const ROUTE: i32 = 19;
+const ROUTE_STOP: i32 = 20;
 
 /// Whether an Obj has one, and adding and taking off those scripts may add:
 /// the component in the number's bits above the lowest two.
@@ -79,6 +85,10 @@ fn whole_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
         PLACEMENT => values::<Placement>(world, entity, asked, written),
         PREFAB_BRUSH => values::<PrefabBrush>(world, entity, asked, written),
         WALKABLE => values::<Walkable>(world, entity, asked, written),
+        WORLD_AREA => values::<WorldArea>(world, entity, asked, written),
+        AREA_DEFAULTS => values::<AreaDefaults>(world, entity, asked, written),
+        ROUTE => values::<Route>(world, entity, asked, written),
+        ROUTE_STOP => values::<RouteStop>(world, entity, asked, written),
         BONE_ATTACHMENT => has::<BoneAttachment>(world, entity, asked, written),
         PARTICLE_SYSTEM => has::<ParticleSystem>(world, entity, asked, written),
         FOLIAGE => has::<Foliage>(world, entity, asked, written),
@@ -104,6 +114,10 @@ fn whole_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opti
         PLACEMENT => texts::<Placement>(world, entity, asked, text),
         PREFAB_BRUSH => texts::<PrefabBrush>(world, entity, asked, text),
         WALKABLE => texts::<Walkable>(world, entity, asked, text),
+        WORLD_AREA => texts::<WorldArea>(world, entity, asked, text),
+        AREA_DEFAULTS => texts::<AreaDefaults>(world, entity, asked, text),
+        ROUTE => texts::<Route>(world, entity, asked, text),
+        ROUTE_STOP => texts::<RouteStop>(world, entity, asked, text),
         FOLIAGE => texts::<Foliage>(world, entity, asked, text),
         LOD_GROUP => texts::<LodGroup>(world, entity, asked, text),
         DRY_AREA_MESH | LIGHT_COOKIE | LIGHT_PROFILE => {
@@ -247,7 +261,11 @@ written_as_is!(
     Animator,
     Placement,
     PrefabBrush,
-    Walkable
+    Walkable,
+    WorldArea,
+    AreaDefaults,
+    Route,
+    RouteStop
 );
 
 /// A Foliage's settings scripts change: how far its plants are drawn, cast
@@ -540,6 +558,19 @@ mod tests {
         assert_eq!(world.get::<PrefabBrush>(obj).unwrap().mode, crate::prefab_placing::BrushMode::Single);
         whole_texts(&mut world, obj, WALKABLE << 1 | CHANGE, r#"{"door":true}"#).unwrap();
         assert!(world.get::<Walkable>(obj).unwrap().door);
+        // A World Area and Area Defaults with tags, a Route and a Route Stop.
+        for which in [WORLD_AREA, AREA_DEFAULTS, ROUTE, ROUTE_STOP] {
+            whole_values(&mut world, obj, which << 2 | ADD, Some([0.0; 4])).unwrap();
+        }
+        let tags = r#"{"tags":[{"tag":"0123456789abcdef0123456789abcdef"}],"no_structures":true,"low":-20}"#;
+        whole_texts(&mut world, obj, WORLD_AREA << 1 | CHANGE, tags).unwrap();
+        let area = world.get::<WorldArea>(obj).unwrap();
+        assert!(area.no_structures && area.tags[0].tag.is_some() && area.low == Some(-20.0));
+        whole_texts(&mut world, obj, ROUTE << 1 | CHANGE, r#"{"kind":"sea","one_way":true}"#).unwrap();
+        let route = world.get::<Route>(obj).unwrap();
+        assert_eq!((route.kind, route.one_way), (crate::world_routes::RouteKind::Sea, true));
+        assert!(whole_texts(&mut world, obj, ROUTE_STOP << 1 | READ, "").is_some());
+        assert!(whole_texts(&mut world, obj, AREA_DEFAULTS << 1 | READ, "").is_some());
 
         let near = world.spawn((voxear_scene::Transform::default(),));
         world.insert(obj, LodGroup::of(&[near]));

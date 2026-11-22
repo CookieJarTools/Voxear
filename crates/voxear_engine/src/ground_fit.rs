@@ -207,22 +207,29 @@ pub fn kept(world: &World, entity: Entity) -> Option<Arc<WorldLayers>> {
 /// blocks on `entity` puts over its ground, the world lying at `place`, its
 /// blocks numbered as `number` says: the same `Arc` while nothing changed.
 /// `leave_out` is left out, as a fit dropped onto the ground finds the
-/// ground without its own cut.
+/// ground without its own cut. Beside them, the World Areas its structures
+/// keep to, read with the painted maps of `generate`, the world's generator.
 pub fn layers_of(
     world: &mut World,
     entity: Entity,
     place: WorldPlace,
     number: &dyn Fn(AssetGuid) -> Option<BlockId>,
     leave_out: Option<Entity>,
+    generate: &voxear_terrain::blocks::generate::BlockGenerate,
 ) -> Option<Arc<WorldLayers>> {
     let (fits, roads) = fits_of(world, entity, place, number, leave_out);
-    if fits.is_empty() && roads.is_empty() {
+    let areas = crate::world_areas::layers(world, entity, place);
+    if fits.is_empty() && roads.is_empty() && areas.is_empty() {
         if leave_out.is_none() {
             world.resource_mut::<KeptLayers>().map(|kept| kept.0.remove(&entity));
         }
         return None;
     }
-    let bytes: Vec<u8> = fits.iter().flat_map(FitLayer::bytes).chain(roads.iter().flat_map(RoadLayer::bytes)).collect();
+    let painted = generate.painted.0.clone().filter(|_| areas.iter().any(|area| area.painted != 0));
+    let mut bytes: Vec<u8> =
+        fits.iter().flat_map(FitLayer::bytes).chain(roads.iter().flat_map(RoadLayer::bytes)).collect();
+    areas.iter().for_each(|area| bytes.extend(area.bytes()));
+    bytes.extend(painted.as_ref().map_or(0, |painted| painted.id).to_le_bytes());
     let made_from = voxear_terrain::layers::stable_hash(&bytes);
     if leave_out.is_none() {
         let kept = world.resource::<KeptLayers>().and_then(|kept| kept.0.get(&entity));
@@ -230,7 +237,13 @@ pub fn layers_of(
             return Some(layers.clone());
         }
     }
-    let layers = Arc::new(WorldLayers::of(fits, roads));
+    let areas = voxear_terrain::blocks::world_layers::WorldAreas {
+        areas,
+        painted,
+        origin: generate.position,
+        block_size: place.block_size,
+    };
+    let layers = Arc::new(WorldLayers::of(fits, roads).with_areas(areas));
     if leave_out.is_none() {
         if world.resource::<KeptLayers>().is_none() {
             world.insert_resource(KeptLayers::default());
@@ -300,7 +313,7 @@ pub fn bare_ground(
     let corner = world_corner(world, entity)?;
     let place = WorldPlace { corner, block_size: asset.file.block_size };
     let drawn = asset.drawn.clone();
-    let layers = layers_of(world, entity, place, &|guid| drawn.number_of(guid), leave_out);
+    let layers = layers_of(world, entity, place, &|guid| drawn.number_of(guid), leave_out, &making.generate);
     let size = place.block_size.max(0.01);
     let [bx, bz] = place.blocks_of(at);
     let column = [bx.floor() as i32, bz.floor() as i32];

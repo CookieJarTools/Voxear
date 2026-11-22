@@ -594,6 +594,46 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new PrefabBrush(this);
 	}
 
+	/// <summary>The Obj's World Area, a part of a world with tags; null when it has none.</summary>
+	public WorldArea? WorldArea => WorldArea.Of(this);
+
+	/// <summary>Gives the Obj a World Area, a 64 metre square round it, unless it has one, and returns it.</summary>
+	public WorldArea AddWorldArea()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.WorldArea, this, true);
+		return new WorldArea(this);
+	}
+
+	/// <summary>The Obj's Area Defaults, its world's own data for each area tag; null when it has none.</summary>
+	public AreaDefaults? AreaDefaults => AreaDefaults.Of(this);
+
+	/// <summary>Gives the Obj Area Defaults, with none yet, unless it has them, and returns them.</summary>
+	public AreaDefaults AddAreaDefaults()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.AreaDefaults, this, true);
+		return new AreaDefaults(this);
+	}
+
+	/// <summary>The Obj's Route, a way through the world of a kind; null when it has none.</summary>
+	public Route? Route => Route.Of(this);
+
+	/// <summary>Gives the Obj a Route, a road 40 metres long, unless it has one, and returns it.</summary>
+	public Route AddRoute()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Route, this, true);
+		return new Route(this);
+	}
+
+	/// <summary>The Obj's Route Stop, a place on a route; null when it has none.</summary>
+	public RouteStop? RouteStop => RouteStop.Of(this);
+
+	/// <summary>Gives the Obj a Route Stop, unless it has one, and returns it.</summary>
+	public RouteStop AddRouteStop()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.RouteStop, this, true);
+		return new RouteStop(this);
+	}
+
 	/// <summary>The Obj's Walkable, which has its still collider walked on in a world of blocks; null when it has none.</summary>
 	public Walkable? Walkable => Walkable.Of(this);
 

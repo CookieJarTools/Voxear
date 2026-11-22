@@ -93,6 +93,8 @@ pub enum BlockBrush {
     Biome,
     /// Takes paint away, back to the generator alone.
     Erase,
+    /// Paints a World Area on the world's Area map; Shift takes it off.
+    Area,
     Model,
     /// Uses the block clicked, as a player would: opens a door, turns a
     /// lever.
@@ -103,7 +105,7 @@ pub enum BlockBrush {
 }
 
 impl BlockBrush {
-    pub const ALL: [BlockBrush; 11] = [
+    pub const ALL: [BlockBrush; 12] = [
         BlockBrush::Place,
         BlockBrush::Break,
         BlockBrush::Paint,
@@ -115,6 +117,7 @@ impl BlockBrush {
         BlockBrush::Height,
         BlockBrush::Biome,
         BlockBrush::Erase,
+        BlockBrush::Area,
     ];
 
     pub fn name(self) -> &'static str {
@@ -127,6 +130,7 @@ impl BlockBrush {
             BlockBrush::Height => "Height",
             BlockBrush::Biome => "Biome",
             BlockBrush::Erase => "Erase",
+            BlockBrush::Area => "Area",
             BlockBrush::Model => "Model",
             BlockBrush::Use => "Use",
             BlockBrush::Link => "Link",
@@ -152,12 +156,14 @@ pub struct BlockUi {
     pub paint_strength: f32,
     pub paint_falloff: f32,
     pub paint_biome: usize,
+    /// The World Area the Area brush paints.
+    pub paint_area: Option<voxear_ecs::Entity>,
 }
 
 impl BlockBrush {
     /// Whether it paints the world's maps rather than its blocks.
     pub fn paints_maps(self) -> bool {
-        matches!(self, BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase)
+        matches!(self, BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase | BlockBrush::Area)
     }
 }
 
@@ -173,6 +179,7 @@ impl Default for BlockUi {
             paint_strength: 0.3,
             paint_falloff: 0.5,
             paint_biome: 0,
+            paint_area: None,
         }
     }
 }
@@ -623,6 +630,7 @@ pub enum BlockField {
     PaintStrength,
     PaintFalloff,
     PaintBiome,
+    PaintArea,
     Model,
     /// The block of the project the brush builds with.
     Block,
@@ -664,6 +672,9 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                 let mut fields = vec![F::Brush, F::PaintRadius, F::PaintStrength, F::PaintFalloff];
                 if state.brush == BlockBrush::Biome {
                     fields.push(F::PaintBiome);
+                }
+                if state.brush == BlockBrush::Area {
+                    fields = vec![F::Brush, F::PaintRadius, F::PaintArea];
                 }
                 fields
             } else {
@@ -775,6 +786,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::PaintStrength => "Strength",
         F::PaintFalloff => "Falloff",
         F::PaintBiome => "Biome",
+        F::PaintArea => "World Area",
         F::Model => "Model",
         F::Block => "Block",
         F::Biomes => "Biomes",
@@ -1065,6 +1077,15 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
                 .collect();
             Value::Choice(state.paint_biome.min(names.len().saturating_sub(1)), names)
         }
+        F::PaintArea => {
+            let areas = world_areas(world);
+            let names = areas.iter().map(|(_, name)| name.clone()).collect::<Vec<_>>();
+            let at = state.paint_area.and_then(|picked| areas.iter().position(|(obj, _)| *obj == picked));
+            match names.is_empty() {
+                true => Value::Choice(0, vec!["None".into()]),
+                false => Value::Choice(at.unwrap_or(0), names),
+            }
+        }
         F::Model => Value::Asset(
             state.model.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
         ),
@@ -1212,6 +1233,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         (F::PaintBiome, Value::Choice(at, _)) => {
             return std::mem::replace(&mut ui_mut(world).paint_biome, *at) != *at;
+        }
+        (F::PaintArea, Value::Choice(at, _)) => {
+            let picked = world_areas(world).get(*at).map(|(obj, _)| *obj);
+            return std::mem::replace(&mut ui_mut(world).paint_area, picked) != picked;
         }
         _ => {}
     }
@@ -2051,4 +2076,19 @@ pub fn remove(world: &mut World, entity: Entity) {
     world.remove::<BlockLook>(entity);
     world.remove::<BlockWorldAsset>(entity);
     world.remove::<BlockWorldSource>(entity);
+}
+
+/// The World Areas of the scene the Area brush can paint, each with its Obj's
+/// name, in a lasting order.
+pub fn world_areas(world: &World) -> Vec<(voxear_ecs::Entity, String)> {
+    let mut found: Vec<(voxear_ecs::Entity, String)> = world
+        .query_ref::<(voxear_ecs::Entity, &voxear_engine::world_areas::WorldArea)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .map(|(obj, _)| {
+            (obj, world.get::<voxear_scene::Name>(obj).map_or_else(|| "World Area".into(), |n| n.0.clone()))
+        })
+        .collect();
+    found.sort_by_key(|(obj, _)| obj.to_bits());
+    found
 }

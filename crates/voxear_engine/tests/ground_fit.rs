@@ -280,3 +280,69 @@ fn a_ground_fit_levels_the_streamed_ground_and_objs_kept_for_later_go_and_come_b
     assert!(game.engine.world.get::<GroundFit>(house).is_some());
     assert!(until(&mut game, &mut |game| there(game)), "and its ground levelled again");
 }
+
+#[test]
+fn world_areas_are_found_by_outline_paint_and_defaults_and_a_sea_route_is_laid_and_runs_aground() {
+    use voxear_assets::AssetGuid;
+    use voxear_engine::{
+        world_areas::{self, AreaDefaults, AreaEntry, WorldArea},
+        world_routes::{self, Route, RouteKind},
+    };
+    let (mut game, _folder) = game_of("Areas");
+    let world = named(&game, "World").expect("the template's world");
+    let camera = named(&game, "Main Camera").expect("the template's camera");
+    let eye = game.engine.world.get::<Transform>(camera).unwrap().position;
+    let (town, laws, wilds) = (AssetGuid::from_u128(11), AssetGuid::from_u128(12), AssetGuid::from_u128(13));
+    // A town 64 m square round the camera, the town's laws in it; the world's own elsewhere.
+    let entry = |data| AreaEntry { tag: Some(town), data: Some(data), biome: None };
+    let area = WorldArea { tags: vec![entry(laws)], priority: 2, ..WorldArea::default() };
+    let square = game.engine.world.spawn((Name("Town".into()), Transform::from_position(eye), area));
+    game.engine.world.spawn((Name("Defaults".into()), AreaDefaults { tags: vec![entry(wilds)] }));
+    game.tick(1.0 / 30.0, None);
+    let (w, content) = (&game.engine.world, &mut game.content);
+    assert_eq!(world_areas::at(w, content, eye), [square]);
+    assert_eq!(world_areas::value(w, content, eye, town), Some(Some(laws)));
+    let far = eye + Vec3::new(500.0, 0.0, 0.0);
+    assert_eq!(world_areas::value(w, content, far, town), Some(Some(wilds)), "the world's default");
+    assert_eq!(world_areas::value(w, content, eye, AssetGuid::from_u128(99)), None);
+    // A painted area, given its number as it is first painted, holds where it is painted.
+    let marsh = game.engine.world.spawn((Name("Marsh".into()), Transform::default(), WorldArea::default()));
+    let dab =
+        format!(r#"{{"map":"area","area":{},"at":[{},0,{}],"radius":30,"falloff":0}}"#, marsh.to_bits(), far.x, far.z);
+    assert!(voxear_engine::map_painting::paint_json(&mut game.engine.world, &mut game.content, world, &dab));
+    assert_eq!(game.engine.world.get::<WorldArea>(marsh).unwrap().number, 1);
+    game.tick(1.0 / 30.0, None);
+    assert_eq!(world_areas::at(&game.engine.world, &mut game.content, far), [marsh]);
+    // The land round the camera sunk into the sea, and a sea route laid across it.
+    let sink = |game: &mut Game, at: Vec3, radius: f32, mode: &str| {
+        let dab = format!(
+            r#"{{"map":"land","at":[{},0,{}],"radius":{radius},"strength":1,"falloff":0.2,"mode":"{mode}"}}"#,
+            at.x, at.z
+        );
+        voxear_engine::map_painting::paint_json(&mut game.engine.world, &mut game.content, world, &dab)
+    };
+    for _ in 0..3 {
+        assert!(sink(&mut game, eye, 600.0, "take_away"));
+    }
+    let (from, to) = (eye - Vec3::X * 200.0, eye + Vec3::X * 200.0);
+    // A ship drawing 8 m, kept 16 m off any land.
+    let laid =
+        world_routes::lay_sea(&game.engine.world, &mut game.content, from, to, 8.0, 16.0).expect("a way over the sea");
+    assert!(laid.len() >= 2 && laid[0].x == from.x && laid.last().unwrap().x == to.x);
+    let points = laid.iter().map(|at| at.to_array()).collect();
+    let route = Route { points, kind: RouteKind::Sea, draught: 8.0, shore: 16.0, ..Route::default() };
+    let lane = game.engine.world.spawn((Name("Lane".into()), Transform::default(), route));
+    game.tick(1.0 / 30.0, None);
+    assert!(!world_routes::aground(&mut game.engine.world, &mut game.content, lane));
+    // A shoal raised under its middle runs it aground.
+    for _ in 0..3 {
+        assert!(sink(&mut game, eye, 60.0, "add"));
+    }
+    assert!(world_routes::aground(&mut game.engine.world, &mut game.content, lane), "aground on the island");
+    // Laid again, it goes round the island.
+    let round = world_routes::lay_sea(&game.engine.world, &mut game.content, from, to, 8.0, 16.0).expect("round it");
+    assert!(round.iter().any(|at| (at.z - eye.z).abs() > 30.0), "{round:?}");
+    // And the way along it is found from one end to the other.
+    let way = world_routes::find(&mut game.engine.world, from, to, world_routes::KindOf::of(RouteKind::Sea));
+    assert!(way.is_some_and(|way| way.length >= 399.0));
+}

@@ -216,7 +216,9 @@ fn smooth_ball(
         BlockBrush::Break => Ball::Take,
         BlockBrush::Paint => Ball::Paint(picked),
         BlockBrush::Restore | BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => return Vec::new(),
-        BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase => return Vec::new(),
+        BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase | BlockBrush::Area => {
+            return Vec::new();
+        }
     };
     smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does, faces)
 }
@@ -378,7 +380,11 @@ impl BlockTools {
                     BlockBrush::Break => (now != AIR).then_some(AIR),
                     BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then(|| paint(now)).flatten(),
                     BlockBrush::Restore | BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => None,
-                    BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase => None,
+                    BlockBrush::Land
+                    | BlockBrush::Height
+                    | BlockBrush::Biome
+                    | BlockBrush::Erase
+                    | BlockBrush::Area => None,
                 }?;
                 Some((at, wanted))
             })
@@ -528,6 +534,14 @@ impl BlockTools {
             BlockBrush::Land => PaintMap::Land,
             BlockBrush::Height => PaintMap::Height,
             BlockBrush::Biome => PaintMap::Biome(state.paint_biome),
+            // The World Area picked, or the first; given its number the first time it is painted.
+            BlockBrush::Area => {
+                let picked =
+                    state.paint_area.or_else(|| block_props::world_areas(&game.engine.world).first().map(|a| a.0));
+                let number = picked.and_then(|obj| voxear_engine::world_areas::number_for(&mut game.engine.world, obj));
+                let Some(number) = number else { return };
+                PaintMap::Area(number)
+            }
             _ => PaintMap::Erase,
         };
         let mode = match (self.control, shift) {

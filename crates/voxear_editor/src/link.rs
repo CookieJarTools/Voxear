@@ -691,6 +691,23 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ objs } or { removed }",
     },
     CallInfo {
+        name: "paint.map",
+        about: "A dab of a map brush on a world of blocks without end's generator: `land`, `height`, `biome` (the one named, as the world lists it) or `erase` back to the generator alone, round `at`, `radius` metres across; `take_away` paints sea or lowers, `smooth` evens it out. Only the columns it reaches are made again. One step to undo.",
+        args: &[
+            arg("map", ArgKind::Text, "land, height, biome or erase."),
+            arg("at", ArgKind::Vector, "The dab's middle, in metres."),
+            maybe("radius", ArgKind::Number, "How wide, in metres: 40 when left out."),
+            maybe("strength", ArgKind::Number, "How strong, 0 to 1: 0.3 when left out."),
+            maybe("falloff", ArgKind::Number, "How much of the radius eases out, 0 to 1: 0.5 when left out."),
+            maybe("take_away", ArgKind::Toggle, "Paints sea, lowers, or takes the biome away."),
+            maybe("smooth", ArgKind::Toggle, "Evens the land or height out."),
+            maybe("biome", ArgKind::Asset, "For `biome`, the .biome the world lists."),
+            maybe("obj", ArgKind::Obj, "The Block World."),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
         name: "world_layers.status",
         about: "The world layers over each world of blocks without end's ground, as it was last streamed: how many Ground Fits, how many chunk columns they reach, and which kinds are hidden to show the bare ground.",
         args: &[],

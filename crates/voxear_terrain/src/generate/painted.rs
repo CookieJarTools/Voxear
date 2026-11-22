@@ -116,6 +116,18 @@ impl PaintedMap {
         falloff: f32,
         stroke: &dyn Fn(Option<f32>, f32) -> Option<f32>,
     ) -> Option<[[f32; 2]; 2]> {
+        self.paint_at(at, radius, falloff, &|was, cover, _| stroke(was, cover))
+    }
+
+    /// As [`PaintedMap::paint`], `stroke` given each pixel's middle besides,
+    /// in metres.
+    pub fn paint_at(
+        &mut self,
+        at: [f32; 2],
+        radius: f32,
+        falloff: f32,
+        stroke: &dyn Fn(Option<f32>, f32, [f32; 2]) -> Option<f32>,
+    ) -> Option<[[f32; 2]; 2]> {
         let spacing = self.spacing;
         let low = [((at[0] - radius) / spacing).floor() as i32, ((at[1] - radius) / spacing).floor() as i32];
         let high = [((at[0] + radius) / spacing).ceil() as i32, ((at[1] + radius) / spacing).ceil() as i32];
@@ -138,7 +150,7 @@ impl PaintedMap {
                     }
                 };
                 let was = self.pixel([px, pz]);
-                let now = stroke(was, cover);
+                let now = stroke(was, cover, middle);
                 if now == was {
                     continue;
                 }

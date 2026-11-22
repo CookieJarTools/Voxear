@@ -288,6 +288,7 @@ impl Editor {
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
             "blocks.restore" => self.blocks_restore(args),
+            "paint.map" => self.paint_map(args),
             "graph.comments" => self.graph_comments(args),
             "graph.comment.add" | "graph.comment.set" | "graph.comment.remove" => {
                 self.refuse_while_playing("change a graph")?;
@@ -2158,6 +2159,55 @@ impl Editor {
         }
         // A block a world did not hold is drawn as its file says from this frame.
         voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
+        done(json!({ "changed": changed }))
+    }
+
+    fn paint_map(&mut self, args: &Json) -> Called {
+        use voxear_engine::map_painting::{Dab, PaintMap, PaintMode};
+        self.refuse_while_playing("paint a world's maps")?;
+        let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+        let number = |key: &str, default: f32| args.get(key).and_then(Json::as_f64).map_or(default, |v| v as f32);
+        let mode = match (opt_bool(args, "smooth"), opt_bool(args, "take_away")) {
+            (Some(true), _) => PaintMode::Smooth,
+            (_, Some(true)) => PaintMode::TakeAway,
+            _ => PaintMode::Add,
+        };
+        let mut changed = false;
+        for (entity, ..) in self.block_worlds(args)? {
+            let world = &self.game.engine.world;
+            let Some(asset) = world.get::<voxear_engine::blocks::BlockWorldAsset>(entity).cloned() else { continue };
+            let map = match need(args, "map")?.as_str() {
+                Some("land") => PaintMap::Land,
+                Some("height") => PaintMap::Height,
+                Some("erase") => PaintMap::Erase,
+                Some("biome") => {
+                    let path = link::resolve_asset(&self.game, need(args, "biome")?)?;
+                    let guid = self.game.content.parse(&path).ok().and_then(|r| r.guid());
+                    let listed = asset.file.generate.as_ref().map(|g| g.biomes.clone()).unwrap_or_default();
+                    let index = listed
+                        .iter()
+                        .position(|reference| self.game.content.parse(reference).ok().and_then(|r| r.guid()) == guid)
+                        .ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{path} is not a biome the world lists")))?;
+                    PaintMap::Biome(index)
+                }
+                _ => return Err(bad("`map` is land, height, biome or erase")),
+            };
+            let dab = Dab {
+                map,
+                mode,
+                at,
+                radius: number("radius", 40.0),
+                strength: number("strength", 0.3),
+                falloff: number("falloff", 0.5),
+            };
+            let before = self.game.content.painted(asset.guid, true).map(|painted| painted.maps());
+            if voxear_engine::map_painting::paint(&self.game.engine.world, &mut self.game.content, entity, &dab)
+                && let (Some(before), Some(painted)) = (before, self.game.content.painted(asset.guid, false))
+            {
+                self.record(Edit::Painted { world: asset.guid, before, after: painted.maps() });
+                changed = true;
+            }
+        }
         done(json!({ "changed": changed }))
     }
 

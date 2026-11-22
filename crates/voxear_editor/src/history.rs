@@ -413,6 +413,13 @@ pub enum Edit {
     Group(Vec<Edit>),
     /// Objs linked to prefab instances otherwise, as unpacking one does.
     Linked(Vec<Link>),
+    /// A world of blocks' painted maps changed by a stroke: the world, and
+    /// its maps before and after.
+    Painted {
+        world: voxear_assets::AssetGuid,
+        before: std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>,
+        after: std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>,
+    },
     /// A settings file of the project changed in place, as the Lighting page
     /// changes lighting settings and look packs: its text before and after.
     File { path: std::path::PathBuf, before: String, after: String },
@@ -496,6 +503,12 @@ impl Edit {
                 settings_file_changed(game, path);
                 (None, HashMap::new())
             }
+            Edit::Painted { world, before, after } => {
+                if let Some(painted) = game.content.painted(*world, true) {
+                    painted.set(if undo { before.clone() } else { after.clone() });
+                }
+                (None, HashMap::new())
+            }
             Edit::OwnLighting { before, after } => {
                 let own = if undo { &*before } else { &*after };
                 if let Err(error) = game.levels.set_own_lighting(&mut game.engine, own) {
@@ -544,7 +557,7 @@ impl Edit {
             }
             Edit::Group(edits) => edits.iter_mut().for_each(|edit| edit.remap(renamed)),
             Edit::Linked(links) => links.iter_mut().for_each(|link| link.remap(renamed)),
-            Edit::File { .. } | Edit::OwnLighting { .. } => {}
+            Edit::File { .. } | Edit::OwnLighting { .. } | Edit::Painted { .. } => {}
         }
     }
 }

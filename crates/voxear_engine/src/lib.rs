@@ -26,6 +26,7 @@ mod foliage_scripts;
 mod game;
 pub mod ground_fit;
 pub mod ground_streaming;
+pub mod map_painting;
 pub mod grown_plants;
 pub mod guns;
 pub mod heat;

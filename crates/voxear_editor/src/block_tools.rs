@@ -92,6 +92,9 @@ pub struct BlockTools {
     placing: Option<(Entity, BlockState)>,
     /// The lever or button the Link brush links from, while one is picked.
     linking: Option<(Entity, [i32; 3])>,
+    /// Whether Ctrl is held, and the maps a map brush's stroke began on.
+    control: bool,
+    painted_before: Option<(AssetGuid, std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>)>,
 }
 
 /// The `.vox` model `guid`, read from its file.
@@ -213,6 +216,7 @@ fn smooth_ball(
         BlockBrush::Break => Ball::Take,
         BlockBrush::Paint => Ball::Paint(picked),
         BlockBrush::Restore | BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => return Vec::new(),
+        BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase => return Vec::new(),
     };
     smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does, faces)
 }
@@ -374,6 +378,7 @@ impl BlockTools {
                     BlockBrush::Break => (now != AIR).then_some(AIR),
                     BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then(|| paint(now)).flatten(),
                     BlockBrush::Restore | BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => None,
+                    BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase => None,
                 }?;
                 Some((at, wanted))
             })
@@ -401,6 +406,17 @@ impl BlockTools {
             self.under = block_under(game, camera, entity, point, brush).map(|hit| (entity, hit));
         }
         let Some((_, hit)) = self.under.filter(|(e, _)| *e == entity) else { return false };
+        if brush.paints_maps() {
+            // The maps as they were, for the stroke's step to undo.
+            if let Some(guid) = game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(entity).map(|a| a.guid)
+                && let Some(painted) = game.content.painted(guid, true)
+            {
+                self.painted_before = Some((guid, painted.maps()));
+            }
+            self.dab(game, entity, &hit, shift);
+            self.stroke = Some((entity, hit.block, point));
+            return true;
+        }
         if brush == BlockBrush::Use {
             // Used as a player would: a stroke, so a door opened is a step to undo.
             voxear_engine::blocks::use_block(&mut game.engine.world, &mut game.content, entity, hit.block);
@@ -468,6 +484,16 @@ impl BlockTools {
         }
         let brush = Self::brush(game, shift);
         let Some(hit) = block_under(game, camera, entity, point, brush) else { return };
+        // The map brushes dab on every half radius along the way.
+        if brush.paints_maps() {
+            let size = game.engine.world.get::<BlockWorld>(entity).map_or(1.0, |blocks| blocks.block_size.max(0.01));
+            let apart = (0..3).map(|i| (hit.block[i] - last[i]).pow(2)).sum::<i32>() as f32;
+            if apart.sqrt() * size >= block_props::ui(&game.engine.world).paint_radius * 0.5 {
+                self.dab(game, entity, &hit, shift);
+                self.stroke = Some((entity, hit.block, point));
+            }
+            return;
+        }
         // A model is built once a click, and a block used or linked once.
         if matches!(brush, BlockBrush::Model | BlockBrush::Use | BlockBrush::Link) {
             return;
@@ -486,6 +512,44 @@ impl BlockTools {
         };
         let worked = Self::work(game, None, entity, &hit, brush, placed);
         self.stroke = Some((entity, worked, point));
+    }
+
+    /// A dab of a map brush on the block `hit`: Shift takes away, Ctrl smooths.
+    fn dab(&self, game: &mut Game, entity: Entity, hit: &BlockHit, shift: bool) {
+        use voxear_engine::map_painting::{Dab, PaintMap, PaintMode};
+        let state = block_props::ui(&game.engine.world);
+        let (Some(corner), Some(size)) =
+            (corner_of(game, entity), game.engine.world.get::<BlockWorld>(entity).map(|blocks| blocks.block_size))
+        else {
+            return;
+        };
+        let at = corner + Vec3::from_array(hit.block.map(|v| v as f32 + 0.5)) * size;
+        let map = match state.brush {
+            BlockBrush::Land => PaintMap::Land,
+            BlockBrush::Height => PaintMap::Height,
+            BlockBrush::Biome => PaintMap::Biome(state.paint_biome),
+            _ => PaintMap::Erase,
+        };
+        let mode = match (self.control, shift) {
+            (true, _) => PaintMode::Smooth,
+            (false, true) => PaintMode::TakeAway,
+            (false, false) => PaintMode::Add,
+        };
+        let dab = Dab { map, mode, at, radius: state.paint_radius, strength: state.paint_strength, falloff: state.paint_falloff };
+        voxear_engine::map_painting::paint(&game.engine.world, &mut game.content, entity, &dab);
+    }
+
+    /// Whether Ctrl is held, for the map brushes to smooth.
+    pub fn set_control(&mut self, control: bool) {
+        self.control = control;
+    }
+
+    /// The world a map brush's stroke painted and its maps before it, for the
+    /// stroke's step to undo, once the stroke ends.
+    pub fn take_painted(
+        &mut self,
+    ) -> Option<(voxear_assets::AssetGuid, std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>)> {
+        self.painted_before.take()
     }
 
     /// Ends the stroke; its Obj, for the step to undo.

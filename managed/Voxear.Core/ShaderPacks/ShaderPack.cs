@@ -30,6 +30,12 @@ public readonly struct ShaderPack : IEquatable<ShaderPack>, IAsset<ShaderPack>
 	/// </summary>
 	public static readonly ShaderPack Vivid = new("builtin:vivid", "Vivid");
 
+	/// <summary>
+	/// Low golden sun and deep dark caves: a glowing sun in a warm haze, pink clouds, sunlit grass glowing, cool shade,
+	/// beams of sun through mist where it reaches into a cave, and torchlight that falls off into the dark.
+	/// </summary>
+	public static readonly ShaderPack Radiant = new("builtin:radiant", "Radiant");
+
 	private readonly string? reference;
 	private readonly string? name;
 	private readonly string? description;

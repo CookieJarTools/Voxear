@@ -408,19 +408,13 @@ fn a_pack_compiled_again_is_drawn_as_it_now_is_and_one_that_fails_says_where() {
 /// A field of blocks with a row of trees across it, their crowns full of
 /// gaps, seen from the grass towards a low sun behind them.
 fn trees_at_evening(renderer: &mut Renderer) -> World {
-    use voxear_render::{BlockLook, SurfaceLook};
-    use voxear_terrain::blocks::{
-        BlockWorld,
-        file::{BlockFile, BlockKind},
-    };
-    let mut file = BlockFile::default();
-    file.ground.size = [64, 64];
-    file.ground.height = 4;
-    let first = file.blocks.len() as u16 + 1;
-    file.blocks.push(BlockKind::colored("Log", [0.36, 0.26, 0.17]));
-    file.blocks.push(BlockKind::colored("Leaves", [0.22, 0.48, 0.18]));
-    let (log, leaves) = (first, first + 1);
-    let mut blocks = file.make_ground(None);
+    // From the grass, looking along +z a little up at the crowns, the sun low behind them.
+    let eye = Transform::new(Vec3::new(32.0, 6.0, 18.0), Quat::from_rotation_x(-0.22), Vec3::ONE);
+    blocks_at_evening(renderer, eye, Vec3::new(0.0, 0.32, 1.0), false, trees)
+}
+
+/// A row of trees, their crowns with gaps the sun comes through.
+fn trees(blocks: &mut voxear_terrain::blocks::BlockMap, log: u16, leaves: u16) {
     for trunk in (14..52).step_by(7) {
         for y in 4..11 {
             blocks.set([trunk, y, 40], log);
@@ -438,6 +432,31 @@ fn trees_at_evening(renderer: &mut Renderer) -> World {
             }
         }
     }
+}
+
+/// Ground of blocks 64 across with what `build` puts on it, given the numbers of a log and of leaves, seen from `eye`
+/// with the sun the way `towards_sun` says; lit by block light, with its light kept round the camera, where `kept`.
+fn blocks_at_evening(
+    renderer: &mut Renderer,
+    eye: Transform,
+    towards_sun: Vec3,
+    kept: bool,
+    build: impl FnOnce(&mut voxear_terrain::blocks::BlockMap, u16, u16),
+) -> World {
+    use voxear_render::{BlockLook, SurfaceLook};
+    use voxear_terrain::blocks::{
+        BlockWorld,
+        file::{BlockFile, BlockKind},
+    };
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    let first = file.blocks.len() as u16 + 1;
+    file.blocks.push(BlockKind::colored("Log", [0.36, 0.26, 0.17]));
+    file.blocks.push(BlockKind::colored("Leaves", [0.22, 0.48, 0.18]));
+    let (log, leaves) = (first, first + 1);
+    let mut blocks = file.make_ground(None);
+    build(&mut blocks, log, leaves);
     let (looks, faces) = file.faces();
     let surfaces: Vec<SurfaceLook> = looks
         .iter()
@@ -468,15 +487,12 @@ fn trees_at_evening(renderer: &mut Renderer) -> World {
         surfaces: Arc::from(surfaces),
         voxels: Default::default(),
         motions: Arc::from([]),
-        light: Default::default(),
+        light: voxear_render::BlockLight { kept, ..Default::default() },
         ground_cover: Default::default(),
     };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
-    // From the grass, looking along +z a little up at the crowns, the sun low behind them.
-    let up = Quat::from_rotation_x(-0.22);
-    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 6.0, 18.0), up, Vec3::ONE)));
-    let towards_sun = Vec3::new(0.0, 0.32, 1.0).normalize();
-    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Camera::default(), eye));
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun.normalize());
     world.spawn((Light::directional(Vec3::new(1.0, 0.9, 0.75), 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
     world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Taa, sharpness: 0.0, ..AntiAliasing::default() };
@@ -872,6 +888,64 @@ fn the_vivid_pack_makes_a_world_of_blocks_more_colourful_and_its_sky_bluer() {
     assert!(colourful(&vivid, crowns.clone()) > colourful(&plain, crowns) * 1.2, "the leaves more colourful");
     let ([pr, _, pb], [vr, _, vb]) = (rgb_at(&plain, OVER.0, OVER.1), rgb_at(&vivid, OVER.0, OVER.1));
     assert!(vb - vr > pb - pr, "the sky overhead bluer: {pr} {pb} to {vr} {vb}");
+}
+
+/// A hall of logs on the ground, a hole in its roof and a high sun, seen from inside towards the air under the hole.
+fn hall_with_a_hole(renderer: &mut Renderer) -> World {
+    let eye = Transform::new(Vec3::new(32.0, 7.0, 20.0), Quat::from_rotation_x(-0.25), Vec3::ONE);
+    blocks_at_evening(renderer, eye, Vec3::new(0.1, 1.0, 0.15), true, |blocks, log, _| {
+        let mut fill = |from: [i32; 3], to: [i32; 3], block: u16| {
+            for x in from[0]..=to[0] {
+                for y in from[1]..=to[1] {
+                    for z in from[2]..=to[2] {
+                        blocks.set([x, y, z], block);
+                    }
+                }
+            }
+        };
+        fill([12, 4, 12], [52, 22, 60], log);
+        fill([14, 4, 14], [50, 18, 58], 0);
+        fill([30, 19, 36], [34, 22, 40], 0);
+    })
+}
+
+#[test]
+fn the_radiant_pack_warms_an_evening_and_lays_a_beam_of_sun_through_a_hole_in_a_caves_roof() {
+    let Some(mut renderer) = renderer() else { return };
+    let files = match shader_packs::builtin_folder("radiant") {
+        Some(folder) => PackFiles::Folder(folder),
+        None => PackFiles::Embedded(shader_packs::builtin_files("radiant").unwrap()),
+    };
+    let manifest = PackManifest::parse(&files.read("pack.toml").unwrap()).unwrap();
+    let radiant = Arc::new(shader_packs::compile(&manifest, &files).unwrap_or_else(|error| panic!("{error:#}")));
+
+    let mut world = trees_at_evening(&mut renderer);
+    let plain = render(&mut renderer, &world, 24);
+    world.insert_resource(WornShaderPack::new(radiant.clone()));
+    let worn = render(&mut renderer, &world, 24);
+    keep_image("radiant evening.png", &worn, (WIDTH, HEIGHT));
+    let all = (0..WIDTH, 0..HEIGHT);
+    let ((_, plain_warm), (_, worn_warm)) =
+        (averages(&plain, all.0.clone(), all.1.clone()), averages(&worn, all.0, all.1));
+    eprintln!("warm: plain {plain_warm:.1}, worn {worn_warm:.1}");
+    assert!(worn_warm > plain_warm + 8.0, "warmer: {worn_warm} against {plain_warm}");
+
+    // In the hall, the air under the hole glows with the sun; without the sunbeams it does not.
+    let mut world = hall_with_a_hole(&mut renderer);
+    world.insert_resource(WornShaderPack::new(radiant.clone()));
+    let beam = render(&mut renderer, &world, 24);
+    keep_image("radiant beam.png", &beam, (WIDTH, HEIGHT));
+    let mut no_beams = WornShaderPack::new(radiant);
+    no_beams.options[2] = 0.0;
+    world.insert_resource(no_beams);
+    let without = render(&mut renderer, &world, 24);
+    keep_image("radiant without beams.png", &without, (WIDTH, HEIGHT));
+    let under = |pixels: &[u8]| averages(pixels, WIDTH / 2 - 20..WIDTH / 2 + 20, 50..HEIGHT - 50).0;
+    let side = |pixels: &[u8]| averages(pixels, 0..40, 50..HEIGHT - 50).0;
+    let (lit, dark) = (under(&beam) - under(&without), side(&beam) - side(&without));
+    eprintln!("the beam brightens the air under the hole by {lit:.1}, the side by {dark:.1}");
+    assert!(lit > 6.0, "a beam under the hole: {lit}");
+    assert!(lit > dark * 3.0, "under the hole most: {lit} against {dark}");
 }
 
 #[test]

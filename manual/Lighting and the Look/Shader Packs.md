@@ -80,6 +80,26 @@ A `ShaderPack` field of a script picks one of your project's packs in the Inspec
 | **Glow** | How much bright light glows round itself, where the level's bloom is on, 0 to 3 |
 | **Vignette** | How much darker the corners are, 0 to 1 |
 
+**Radiant** gives a low golden sun and deep dark caves. Above ground: a large, bright sun in a wide warm glow, a lavender sky turning peach towards the horizon, clouds pink and gold-edged towards the sun, far hills fading into a warm haze, a low sun's light kept strong, grass, flowers and leaves glowing with the sun through them, cool blue-grey shade and long soft shadows. Underground, caves are darker the further they are from the sky, so light from an opening reaches only a little way in, and the eye does not adapt all the way to the dark. Where the sun reaches into a cave between the blocks, through a hole in its roof or in at its mouth, it shines through the dusty air in a beam and lies on the floor and the water in a bright patch, water lit through a clear blue with the moving lines rippled water focuses the sun into. Torchlight is bright close by and falls off quickly into grey stone, brightest on the faces turned towards the torch, and metal and ore catch it.
+
+| Option | What it does |
+| --- | --- |
+| **Strength** | How far the whole look goes, from the engine's own at 0, to 2 |
+| **Warmth** | How warm the sun, the haze and the grade are, and how cool the shade, 0 to 1 |
+| **Sunbeams** | Beams of sun through the air, and sunlit patches, where the sun reaches in between blocks |
+| **Beam strength** | How bright the sunbeams and the dust they light are, 0 to 3 |
+| **Cave darkness** | How dark caves are away from the sky, and how quickly light from an opening fades inside, 0 to 1 |
+| **Haze** | How much warm haze the air holds far off and round the sun, 0 to 2 |
+| **Torchlight** | How bright torches and lava are close by, 0 to 2 |
+| **Foliage glow** | How much grass, flowers and leaves glow with the sun through them, 0 to 2 |
+| **Sun glow** | How large and bright the glow round the sun is, 0 to 2 |
+| **Glow** | How much bright light glows round itself, where the level's bloom is on, 0 to 3 |
+| **Vignette** | How much darker the corners are, 0 to 1 |
+
+The beams are worked out from the light kept for the blocks round the camera (see [[Block Light]]): from points along the way to each pixel, a walk towards the sun says whether it meets a solid block before the open sky. So they need a world of blocks lit by block light, show within about 64 metres of the camera, and are stopped by solid blocks, not by leaves. They cost about half a millisecond at 1080p on an RTX 3070 in a cave, a quarter of one in the open; the whole pack about 0.7 ms.
+
+Grass and flowers glow against the sun where their material is foliage; plants made of boxes, as many block games' grass is, are lit as any other model.
+
 ## Seeing a level under a pack
 
 On the **Lighting** page, **Shader pack** shows the Scene view and the game under any pack, as a player who picked it would see it. Nothing of it is saved with the scene. Playing keeps the pack on.

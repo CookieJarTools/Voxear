@@ -73,7 +73,7 @@ pub const MAX_OPTIONS: usize = 32;
 
 /// The engine's own packs: what each is named by after `builtin:`, what a
 /// menu calls it, and its files.
-pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 2] = [
+pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 3] = [
     (
         "evening",
         "Evening",
@@ -96,6 +96,21 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 2] = [
             ("pack.toml", include_str!("../shader_packs/vivid.shaderpack/pack.toml")),
             ("grade.slang", include_str!("../shader_packs/vivid.shaderpack/grade.slang")),
             ("sky.slang", include_str!("../shader_packs/vivid.shaderpack/sky.slang")),
+        ],
+    ),
+    (
+        "radiant",
+        "Radiant",
+        &[
+            ("pack.toml", include_str!("../shader_packs/radiant.shaderpack/pack.toml")),
+            ("air.slang", include_str!("../shader_packs/radiant.shaderpack/air.slang")),
+            ("light.slang", include_str!("../shader_packs/radiant.shaderpack/light.slang")),
+            ("grade.slang", include_str!("../shader_packs/radiant.shaderpack/grade.slang")),
+            ("faces.slang", include_str!("../shader_packs/radiant.shaderpack/faces.slang")),
+            ("water.slang", include_str!("../shader_packs/radiant.shaderpack/water.slang")),
+            ("sky.slang", include_str!("../shader_packs/radiant.shaderpack/sky.slang")),
+            ("models.slang", include_str!("../shader_packs/radiant.shaderpack/models.slang")),
+            ("window.slang", include_str!("../shader_packs/radiant.shaderpack/window.slang")),
         ],
     ),
 ];

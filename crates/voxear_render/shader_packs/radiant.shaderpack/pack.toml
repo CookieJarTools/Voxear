@@ -1,0 +1,50 @@
+format = 1
+description = "Low golden sun and deep dark caves: a glowing sun in warm haze, pink clouds lit from below, grass and leaves glowing with the sun through them, cool blue-grey shade, long soft shadows, beams of sun through the air where it reaches into a cave, torchlight that falls off into the dark, and a rich warm grade of its own."
+
+[options]
+strength = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Strength", about = "How far the whole look goes, from the engine's own at 0" }
+warmth = { kind = "number", range = [0.0, 1.0], default = 0.7, label = "Warmth", about = "How warm the sun, the haze and the grade are, and how cool the shade" }
+sunbeams = { kind = "toggle", default = true, label = "Sunbeams", about = "Beams of sun through the air where it reaches in between blocks, as through a hole in a cave's roof" }
+beam_strength = { kind = "number", range = [0.0, 3.0], default = 1.0, label = "Beam strength", about = "How bright the sunbeams and the haze they light are" }
+cave_darkness = { kind = "number", range = [0.0, 1.0], default = 0.7, label = "Cave darkness", about = "How dark caves are where the sky's light does not reach, and how quickly light from an opening fades inside" }
+haze = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Haze", about = "How much warm haze the air holds far off and round the sun" }
+torchlight = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Torchlight", about = "How bright light from torches and lava is close by; it falls off quicker than the engine's" }
+foliage_glow = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Foliage glow", about = "How much grass, flowers and leaves glow with the sun through them" }
+sun_glow = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Sun glow", about = "How large and bright the glow round the sun is" }
+glow = { kind = "number", range = [0.0, 3.0], default = 1.0, label = "Glow", about = "How much bright light glows round itself, where the bloom is on" }
+vignette = { kind = "number", range = [0.0, 1.0], default = 0.4, label = "Vignette", about = "How much darker the corners are" }
+
+# How block faces, models and water are lit: warm sun, cool shade, caves darker the further from the sky, torchlight
+# brightest on what faces the torch; grass and leaves lit through; and the sky: a low sun's glow and pink clouds.
+[surface]
+blocks = "faces.slang"
+models = "models.slang"
+water = "water.slang"
+sky = "sky.slang"
+
+# A wider sun, for long soft shadows.
+[shadows]
+softness = 1.2
+
+# The air round the camera marched through the light kept for its blocks, at half size: where the sun reaches it
+# between blocks it glows, in beams.
+[[pass]]
+name = "Radiant air"
+program = "air.slang"
+at = "after_fog"
+reads = ["depth", "block_light"]
+writes = { target = "air", format = "rgba16f", scale = 0.5 }
+
+# The beams and the far warm haze laid over the scene, before TAA, which smooths the beams' noise.
+[[pass]]
+name = "Radiant light"
+program = "light.slang"
+at = "after_fog"
+reads = ["color", "depth", "air", "block_light"]
+
+# Its own tonemap and grade in the engine's place.
+[[pass]]
+name = "Radiant grade"
+program = "grade.slang"
+at = "tonemap"
+reads = ["color", "bloom", "block_light"]

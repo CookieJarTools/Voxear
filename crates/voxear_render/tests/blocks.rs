@@ -1412,7 +1412,8 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
         (biome([12.0, 60.0], [0.6, 1.0]), of(jungle)),
     ];
     let (defs, blocks): (Vec<_>, Vec<_>) = list.into_iter().unzip();
-    let placed = WorldBiomes { regions: None, biomes: Biomes::new(defs, 16.0, 0.45, world.seed()), blocks };
+    let placed =
+        WorldBiomes { painted: None, regions: None, biomes: Biomes::new(defs, 16.0, 0.45, world.seed()), blocks };
     file.generate.as_mut().unwrap().placed = Some(Arc::new(placed));
     let (looks, faces) = file.faces();
     let surfaces: Vec<SurfaceLook> = looks
@@ -2078,7 +2079,8 @@ fn generated_view_with(
         (generate.slabs, generate.halves) = (true, Some(Arc::new(halves)));
     }
     if !defs.is_empty() {
-        let placed = WorldBiomes { regions: None, biomes: Biomes::new(defs, 15.0, 0.3, world.seed()), blocks };
+        let placed =
+            WorldBiomes { painted: None, regions: None, biomes: Biomes::new(defs, 15.0, 0.3, world.seed()), blocks };
         file.generate.as_mut().unwrap().placed = Some(Arc::new(placed));
     }
     let (looks, faces) = file.faces();

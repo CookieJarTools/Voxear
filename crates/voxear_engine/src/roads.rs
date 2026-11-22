@@ -369,6 +369,17 @@ pub fn answer(world: &mut voxear_ecs::World, text: &str) -> anyhow::Result<Strin
     if asked["ask"] == "line_up" || asked["ask"] == "scatter" {
         return crate::prefab_placing::answer(world, &asked);
     }
+    // A dab of a map brush on the level's world of blocks without end.
+    if asked["ask"] == "paint" {
+        let blocks = world
+            .query_ref::<(voxear_ecs::Entity, &crate::blocks::BlockWorldAsset)>()
+            .into_iter()
+            .filter(|(_, asset)| asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some()))
+            .map(|(entity, _)| entity)
+            .find(|entity| voxear_scene::dimension_of(world, *entity) == voxear_scene::DimensionId::LEVEL);
+        let painted = blocks.is_some_and(|blocks| voxear_scripting::paint_map(world, blocks, text));
+        return Ok(if painted { "true".into() } else { String::new() });
+    }
     anyhow::ensure!(asked["ask"] == "nearest_road", "no such question about the world: {}", asked["ask"]);
     let at = asked["at"].as_array().map(|v| v.iter().filter_map(serde_json::Value::as_f64).collect::<Vec<f64>>());
     let Some([x, y, z]) = at.and_then(|at| <[f64; 3]>::try_from(at).ok()) else { anyhow::bail!("`at` is not a place") };

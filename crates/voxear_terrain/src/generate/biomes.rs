@@ -481,9 +481,31 @@ pub struct WorldBiomes {
     /// (see `regions`). None, and each place is the biome its climate is
     /// nearest.
     pub regions: Option<std::sync::Arc<super::Regions>>,
+    /// Its painted maps, whose biome map is chosen before the climate rules
+    /// where it is painted (see `painted`).
+    pub painted: Option<super::painted::Painted>,
 }
 
 impl WorldBiomes {
+    /// The biome painted at `(x, z)`, by its place in the list: the nearest
+    /// pixel of a place moved a little by noise, so painted biomes meet with
+    /// ragged edges.
+    fn painted_at(&self, x: f32, z: f32) -> Option<usize> {
+        let maps = self.painted.as_ref()?.maps();
+        if maps.biome.is_empty() {
+            return None;
+        }
+        let spacing = maps.biome.spacing;
+        let wander = |part: u32| {
+            let size = spacing * 3.0;
+            let noise = crate::noise::fractal(crate::noise::NoiseStyle::Fractal, x / size, z / size, 2, part);
+            (noise * 2.0 - 1.0) * spacing * 1.5
+        };
+        let value = maps.biome.nearest(x + wander(0x51), z + wander(0x7a))?;
+        let index = value.round();
+        (index >= 0.0 && (index as usize) < self.blocks.len().max(self.biomes.list().len())).then_some(index as usize)
+    }
+
     /// Whether any of them has blocks for steep ground, so slopes are worth
     /// working out.
     pub fn any_steep(&self) -> bool {
@@ -529,6 +551,9 @@ impl WorldBiomes {
     /// Which of them the place at `(x, z)` is, by its place in the list: by
     /// its region where they keep to regions, else by its climate.
     pub fn index_at(&self, x: f32, z: f32, climate: Place) -> Option<usize> {
+        if let Some(index) = self.painted_at(x, z) {
+            return Some(index);
+        }
         match &self.regions {
             Some(regions) => regions.at(x, z, climate),
             None => self.biomes.at(x, z, climate),
@@ -631,6 +656,7 @@ mod tests {
     #[test]
     fn a_worlds_biomes_make_the_same_ground_whatever_their_colours_and_other_ground_once_they_lie_elsewhere() {
         let of = |list: Vec<BiomeDef>, top: BlockId| WorldBiomes {
+            painted: None,
             regions: None,
             blocks: list.iter().map(|_| BiomeBlocks { top, ..BiomeBlocks::default() }).collect(),
             biomes: Biomes::new(list, 15.0, 0.3, 1),

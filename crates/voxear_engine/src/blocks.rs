@@ -519,7 +519,7 @@ fn biomes_read(content: &mut Content, file: &BlockFile) -> BlockFile {
         })
     });
     if let Some(generate) = file.generate.as_mut() {
-        generate.placed = Some(Arc::new(WorldBiomes { regions, biomes, blocks }));
+        generate.placed = Some(Arc::new(WorldBiomes { painted: None, regions, biomes, blocks }));
     }
     file
 }
@@ -1400,6 +1400,18 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
         }
         written.push(path);
     }
+    // And the painted maps changed since they were written, beside their worlds.
+    for (path, maps) in content.take_unsaved_painted() {
+        let file = project.join(crate::content::maps_file(&path));
+        match maps.is_empty() {
+            true if file.is_file() => {
+                std::fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?
+            }
+            true => {}
+            false => std::fs::write(&file, maps.to_bytes()).with_context(|| format!("saving {}", file.display()))?,
+        }
+        written.push(crate::content::maps_file(&path));
+    }
     Ok(written)
 }
 
@@ -1413,6 +1425,12 @@ pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_t
     let (file, faces) = ground_of(&asset.drawn);
     // Its far view kept in the project's own folder of what is made, so ground seen once comes back at once.
     let far_folder = Some(content.db().root().join(".voxear").join("FarView").join(asset.guid.to_string()));
+    // Its painted maps, read by its generator and its biomes (see `voxear_terrain::generate::painted`).
+    let mut generate = generate;
+    if let Some(painted) = content.painted(asset.guid, false) {
+        generate.placed = generate.placed.map(|placed| painted_biomes(&placed, &painted));
+        generate.painted = voxear_terrain::blocks::generate::PaintedRef(Some(painted));
+    }
     Some(voxear_terrain::blocks::stream::BlockMaking {
         file,
         generate,
@@ -1421,6 +1439,31 @@ pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_t
         far_folder,
         // Nothing built over its ground: who streams it adds what it grows.
         far_built: Vec::new(),
+    })
+}
+
+/// `placed`, a world's biomes, choosing its painted biomes first: kept, so a
+/// world streamed every frame makes the copy once.
+fn painted_biomes(
+    placed: &Arc<voxear_terrain::generate::WorldBiomes>,
+    painted: &voxear_terrain::generate::painted::Painted,
+) -> Arc<voxear_terrain::generate::WorldBiomes> {
+    type Biomes = Arc<voxear_terrain::generate::WorldBiomes>;
+    type Kept = Vec<(Biomes, u64, Biomes)>;
+    thread_local! {
+        static KEPT: std::cell::RefCell<Kept> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    KEPT.with_borrow_mut(|kept| {
+        if let Some((_, _, made)) = kept.iter().find(|(from, id, _)| Arc::ptr_eq(from, placed) && *id == painted.id) {
+            return made.clone();
+        }
+        let made =
+            Arc::new(voxear_terrain::generate::WorldBiomes { painted: Some(painted.clone()), ..(**placed).clone() });
+        if kept.len() >= 8 {
+            kept.remove(0);
+        }
+        kept.push((placed.clone(), painted.id, made.clone()));
+        made
     })
 }
 

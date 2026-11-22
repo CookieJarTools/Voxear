@@ -30,6 +30,13 @@ pub trait ScriptServices {
         None
     }
 
+    /// A dab of a map brush on the world of blocks on `blocks`, as JSON
+    /// (`{ "map", "at", "radius", "strength", "falloff", "mode", "biome" }`);
+    /// whether it changed anything. False where there is nothing to paint.
+    fn paint_map(&mut self, _world: &mut World, _blocks: Entity, _dab: &str) -> bool {
+        false
+    }
+
     /// Creates a loaded prefab's Objs, without behaviours. The root goes
     /// under `parent`, and takes `placement`, relative to it, when it is
     /// given.
@@ -793,6 +800,12 @@ impl Drop for ServicesScope<'_> {
 /// [`ScriptServices::prefab_placement`]); none outside them.
 pub fn prefab_placement(reference: &str) -> Option<String> {
     with_services(|services| services.prefab_placement(reference)).flatten()
+}
+
+/// A dab of a map brush through the lent services (see
+/// [`ScriptServices::paint_map`]); false outside them.
+pub fn paint_map(world: &mut World, blocks: Entity, dab: &str) -> bool {
+    with_services(|services| services.paint_map(world, blocks, dab)).unwrap_or(false)
 }
 
 pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> Option<R> {

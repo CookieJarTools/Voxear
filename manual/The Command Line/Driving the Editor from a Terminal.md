@@ -185,7 +185,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `undo`, `redo`, `batch` | Step back and forward, and make several changes one step |
 | `select`, `frame` | Select Objs, and show them in the Scene view |
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
-| `blocks.get`, `blocks.set`, `blocks.fill`, `blocks.restore` | Read and change a Block World's blocks, at points in the world, and put a box of them back as the ground was generated |
+| `blocks.get`, `blocks.set`, `blocks.fill`, `blocks.restore`, `paint.map` | Read and change a Block World's blocks, at points in the world, and put a box of them back as the ground was generated; paint land, height and biomes into a world's generator (see [[Painting Land]]) |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts`, `dungeon.open` | Make the starter temple dungeon for a Block World, read the dungeons its generator lays out near a point, and open a dungeon's own dimension to look round |
 | `towns.near` | Read the towns a Block World's generator lays out near a point, with each building's structure, floor, facing and door, none of their ground made (see [[Structures]]) |

@@ -85,6 +85,14 @@ pub enum BlockBrush {
     /// Puts the blocks under it back as the world's ground was generated,
     /// its world layers with it: what was placed or broken by hand goes.
     Restore,
+    /// Paints land into the world's generator, Shift sea; Ctrl smooths.
+    Land,
+    /// Paints height into the world's generator, Shift lowers; Ctrl smooths.
+    Height,
+    /// Paints the biome picked, Shift takes it away.
+    Biome,
+    /// Takes paint away, back to the generator alone.
+    Erase,
     Model,
     /// Uses the block clicked, as a player would: opens a door, turns a
     /// lever.
@@ -95,7 +103,7 @@ pub enum BlockBrush {
 }
 
 impl BlockBrush {
-    pub const ALL: [BlockBrush; 7] = [
+    pub const ALL: [BlockBrush; 11] = [
         BlockBrush::Place,
         BlockBrush::Break,
         BlockBrush::Paint,
@@ -103,6 +111,10 @@ impl BlockBrush {
         BlockBrush::Use,
         BlockBrush::Link,
         BlockBrush::Restore,
+        BlockBrush::Land,
+        BlockBrush::Height,
+        BlockBrush::Biome,
+        BlockBrush::Erase,
     ];
 
     pub fn name(self) -> &'static str {
@@ -111,6 +123,10 @@ impl BlockBrush {
             BlockBrush::Break => "Break",
             BlockBrush::Paint => "Paint",
             BlockBrush::Restore => "Restore",
+            BlockBrush::Land => "Land",
+            BlockBrush::Height => "Height",
+            BlockBrush::Biome => "Biome",
+            BlockBrush::Erase => "Erase",
             BlockBrush::Model => "Model",
             BlockBrush::Use => "Use",
             BlockBrush::Link => "Link",
@@ -129,11 +145,35 @@ pub struct BlockUi {
     pub brush: BlockBrush,
     pub size: u32,
     pub model: Option<AssetGuid>,
+    /// The map brushes': how wide in metres, how strong and how much of the
+    /// radius eases out, each 0 to 1; and the biome painted, by its place in
+    /// the world's list.
+    pub paint_radius: f32,
+    pub paint_strength: f32,
+    pub paint_falloff: f32,
+    pub paint_biome: usize,
+}
+
+impl BlockBrush {
+    /// Whether it paints the world's maps rather than its blocks.
+    pub fn paints_maps(self) -> bool {
+        matches!(self, BlockBrush::Land | BlockBrush::Height | BlockBrush::Biome | BlockBrush::Erase)
+    }
 }
 
 impl Default for BlockUi {
     fn default() -> Self {
-        Self { tool: BlockTool::Build, block: None, brush: BlockBrush::Place, size: 1, model: None }
+        Self {
+            tool: BlockTool::Build,
+            block: None,
+            brush: BlockBrush::Place,
+            size: 1,
+            model: None,
+            paint_radius: 40.0,
+            paint_strength: 0.3,
+            paint_falloff: 0.5,
+            paint_biome: 0,
+        }
     }
 }
 
@@ -579,6 +619,10 @@ pub enum BlockField {
     /// builds.
     Brush,
     BrushSize,
+    PaintRadius,
+    PaintStrength,
+    PaintFalloff,
+    PaintBiome,
     Model,
     /// The block of the project the brush builds with.
     Block,
@@ -615,6 +659,13 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             // A model brings its own colours; any other brush builds with the block picked.
             if state.brush == BlockBrush::Model {
                 vec![F::Brush, F::Model]
+            } else if state.brush.paints_maps() {
+                // The map brushes paint the generator's land, height and biomes, metres across.
+                let mut fields = vec![F::Brush, F::PaintRadius, F::PaintStrength, F::PaintFalloff];
+                if state.brush == BlockBrush::Biome {
+                    fields.push(F::PaintBiome);
+                }
+                fields
             } else {
                 let mut fields = vec![F::Brush, F::BrushSize, F::Block];
                 let held = held_at(world, entity).and_then(|at| file.blocks.get(at));
@@ -720,6 +771,10 @@ pub fn label(field: BlockField) -> &'static str {
         F::Shadows => "Cast shadows",
         F::Brush => "Brush",
         F::BrushSize => "Size",
+        F::PaintRadius => "Radius",
+        F::PaintStrength => "Strength",
+        F::PaintFalloff => "Falloff",
+        F::PaintBiome => "Biome",
         F::Model => "Model",
         F::Block => "Block",
         F::Biomes => "Biomes",
@@ -992,6 +1047,24 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
             Value::Choice(at, BlockBrush::ALL.iter().map(|b| b.name().to_string()).collect())
         }
         F::BrushSize => Value::Number(state.size as f32),
+        F::PaintRadius => Value::Number(state.paint_radius),
+        F::PaintStrength => Value::Number(state.paint_strength),
+        F::PaintFalloff => Value::Number(state.paint_falloff),
+        F::PaintBiome => {
+            let names: Vec<String> = file()?
+                .generate
+                .as_ref()?
+                .biomes
+                .iter()
+                .map(|reference| {
+                    let path = path_of(game, Some(reference.as_str()));
+                    std::path::Path::new(&path)
+                        .file_stem()
+                        .map_or(path.clone(), |stem| stem.to_string_lossy().into_owned())
+                })
+                .collect();
+            Value::Choice(state.paint_biome.min(names.len().saturating_sub(1)), names)
+        }
         F::Model => Value::Asset(
             state.model.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
         ),
@@ -1124,6 +1197,21 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::BrushSize, v) => {
             let size = number(v).unwrap_or(1.0).round().clamp(1.0, 16.0) as u32;
             return std::mem::replace(&mut ui_mut(world).size, size) != size;
+        }
+        (F::PaintRadius, v) => {
+            let radius = number(v).unwrap_or(40.0).clamp(1.0, 2000.0);
+            return std::mem::replace(&mut ui_mut(world).paint_radius, radius) != radius;
+        }
+        (F::PaintStrength, v) => {
+            let strength = number(v).unwrap_or(0.3).clamp(0.0, 1.0);
+            return std::mem::replace(&mut ui_mut(world).paint_strength, strength) != strength;
+        }
+        (F::PaintFalloff, v) => {
+            let falloff = number(v).unwrap_or(0.5).clamp(0.0, 1.0);
+            return std::mem::replace(&mut ui_mut(world).paint_falloff, falloff) != falloff;
+        }
+        (F::PaintBiome, Value::Choice(at, _)) => {
+            return std::mem::replace(&mut ui_mut(world).paint_biome, *at) != *at;
         }
         _ => {}
     }

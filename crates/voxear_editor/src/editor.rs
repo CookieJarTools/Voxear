@@ -1919,6 +1919,7 @@ impl Editor {
                     self.field_drag_start = before;
                 }
             } else if let Some(entity) = selected.filter(|_| self.block_tools.is_hovered()) {
+                self.block_tools.set_control(self.control);
                 // Blocks are built while playing too, as a game would build them; play keeps none of it.
                 let before = ObjState::of(world, entity);
                 if self.block_tools.begin(&mut self.game, renderer, &camera, entity, point, self.shift) {
@@ -2094,6 +2095,16 @@ impl Editor {
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
         let held = held.or_else(|| self.road_handles.end());
         let held = held.or_else(|| self.terrain_tools.end()).or_else(|| self.block_tools.end());
+        // A map brush's stroke: the world's painted maps before and after it, one step to undo.
+        if let Some((world, before)) = self.block_tools.take_painted()
+            && let Some(painted) = self.game.content.painted(world, false)
+        {
+            let after = painted.maps();
+            if !std::sync::Arc::ptr_eq(&before, &after) && !self.is_playing() {
+                self.history.record_step(crate::history::Edit::Painted { world, before, after });
+                self.unsaved = true;
+            }
+        }
         let held = held.or_else(|| self.plants_tools.end());
         if let Some(entity) = held {
             return self.end_field_drag(entity);

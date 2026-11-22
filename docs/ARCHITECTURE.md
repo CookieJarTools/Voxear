@@ -4475,8 +4475,8 @@ var edits = Terrain.CaptureEdits();                           // for a save, or 
 
 ## World building
 
-*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills, placing prefabs, walkable models.
-Planned: painted maps, areas and routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
+*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills, placing prefabs, walkable models,
+painted maps. Planned: World Areas and Routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
 first and crafted on top, without storing blocks for what is placed.
 
 **World layers** (`voxear_terrain::blocks::world_layers`). A `WorldLayers` holds every layer of a world in the world's
@@ -4547,6 +4547,21 @@ navigation, which rebuilds chunks whose `Arc` changed, rebuilds only those a mod
 **Box models without skin.** A box model of one bone and no clips is prepared with its part unskinned
 (`BoxModel::prepared`): its vertices are built at rest in model space, so it is drawn as a still model is, its bone
 kept for attachments and its vertices' weights kept for what reads them.
+
+**Painted maps** (`voxear_terrain::generate::painted`, `voxear_engine::map_painting`). A `PaintedMap` keeps 64×64
+tiles of `f32` only where painted (`NaN` unpainted), 8 m a pixel for land and height and 4 m for biomes, in the
+generator's own metres; `PaintedMaps` holds the three, a version counted at each change and the boxes the last 256
+changes reached. A world's maps sit behind a `Painted` handle (`RwLock<Arc<PaintedMaps>>`, known by an id from the
+world's GUID), kept by Content and written to `<world>.maps`. The engine puts the handle on `BlockGenerate::painted`
+(compared alike, as layers are) and on a copy of the world's `WorldBiomes`. `cells::source` gives it to every
+Landmass and Painted Map node of the world's own wrapped generator, keyed by the handle's id, so a stroke compiles
+nothing again: `Landmass::shaped` adds painted land to `across` before the coast curve and to the coast's height,
+and painted height to the share and the relief before the crags, erosion and gullies read it; `WorldBiomes::index_at`
+takes the painted biome first, at the nearest pixel of a place moved by noise. The streamer compares the handle's
+version, marks the chunk columns the changed boxes reach (a column round them besides) stale at every level, and
+folds the version into each job's stamp; far tiles are named by the hash of the paint over them, so a painted tile is
+another and the unpainted one stays. Ground Fits, roads and brushes land on the world's own wrapped generator, so
+they see the paint, the rivers and the biomes' land. A stroke is one `Edit::Painted` step (the maps before and after).
 
 **Streams With Ground** (`voxear_engine::ground_streaming`). The streamer keeps the near columns made and let go
 since it was last asked (`take_moves`); `blocks::stream` puts each world's into `GroundMoves` every frame. While

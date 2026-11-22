@@ -10,6 +10,7 @@ Everything here works on the ground the generator makes without storing blocks. 
 2. [[Ground Fit]]: a building that levels the ground it stands on, with a slope out to the ground round it
 3. [[Roads]]: roads, paths and canals laid along points, graded, bridged and tunnelled, and squares paved with Area Fills
 4. [[Placing Prefabs]]: kits lined up along streets, scattered over yards and painted with the Prefab Brush
-5. [[Streams With Ground]]: houses, props and mobs that go when their ground streams out, and come back with it
+5. [[Painting Land]]: land, mountains and biomes painted into the world's generator, coasts and peaks of its own
+6. [[Streams With Ground]]: houses, props and mobs that go when their ground streams out, and come back with it
 
 World building is under **Add Component ▸ Terrain**.

@@ -57,7 +57,7 @@ fn placed(mut file: BlockFile, raw: &Arc<WorldGen>, levels: &Levels, list: &[Bio
     let regions = Arc::new(regions.with_levels(crate::generate::LevelPlan { keep, ..levels.plan() }));
     let blocks =
         vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }, BiomeBlocks { top: 5, ..BiomeBlocks::default() }];
-    generate.placed = Some(Arc::new(WorldBiomes { regions: Some(regions), biomes, blocks }));
+    generate.placed = Some(Arc::new(WorldBiomes { painted: None, regions: Some(regions), biomes, blocks }));
     file
 }
 

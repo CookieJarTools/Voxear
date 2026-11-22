@@ -362,6 +362,13 @@ pub trait ScriptServices {
         anyhow::bail!("dungeons are read only in a running game, not here (Obj {obj})")
     }
 
+    /// The towns of a world of blocks (0 for each of the dimension asked
+    /// of) whose sites lie within `at[3]` metres of `at`, as JSON for
+    /// `Towns` in Voxear.Core.
+    fn towns_json(&mut self, _world: &World, obj: u64, _at: [f32; 4]) -> Result<String> {
+        anyhow::bail!("towns are read only in a running game, not here (Obj {obj})")
+    }
+
     /// For a world of blocks without end, every change from its ground: those
     /// of its chunks made now and those kept for chunks not made. None for
     /// any other world, whose changes are told from how its level built it.
@@ -951,6 +958,19 @@ pub(crate) unsafe extern "C" fn dungeons_info(obj: u64, at: *const [f32; 4], buf
     let said = crate::interop::with_world(|world| {
         with_services(|services| services.dungeons_json(world, obj, at).ok())
     });
+    let Some(Some(json)) = said else { return -1 };
+    if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+    }
+    json.len() as i32
+}
+
+/// The towns of a world of blocks near a place as JSON for `Towns` in
+/// Voxear.Core (see [`ScriptServices::towns_json`]), written when it fits:
+/// its length, or -1 where they cannot be read.
+pub(crate) unsafe extern "C" fn towns_info(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32 {
+    let at = if at.is_null() { [0.0; 4] } else { unsafe { *at } };
+    let said = crate::interop::with_world(|world| with_services(|services| services.towns_json(world, obj, at).ok()));
     let Some(Some(json)) = said else { return -1 };
     if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
         unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };

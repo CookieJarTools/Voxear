@@ -56,6 +56,9 @@ pub struct ScriptTypes {
     pub structs: BTreeMap<String, NestedType>,
     #[serde(default)]
     pub commands: Vec<ScriptCommand>,
+    /// The `[Call]` methods, which tools call by name.
+    #[serde(default)]
+    pub calls: Vec<ScriptCall>,
     /// The `[DocsCheck]` methods, for a VoxDocs guide's checks.
     #[serde(default)]
     pub checks: Vec<ScriptCheck>,
@@ -176,6 +179,63 @@ pub struct ScriptCommand {
     #[serde(rename = "type")]
     pub type_name: String,
     pub method: String,
+}
+
+/// A `[Call]` method: the call's name, what it does, its type and method,
+/// when it may run (`both`, `editing` or `playing`), whether it changes the
+/// level, what it gives back, and its arguments.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptCall {
+    pub name: String,
+    #[serde(default)]
+    pub about: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub method: String,
+    #[serde(default)]
+    pub when: String,
+    #[serde(default)]
+    pub changes: bool,
+    #[serde(default)]
+    pub returns: String,
+    #[serde(default)]
+    pub args: Vec<ScriptCallArg>,
+}
+
+/// An argument of a `[Call]` method: its name, the kind of value a tool
+/// gives (`toggle`, `text`, `number`, `whole`, `choice`, `vector`, `obj` or
+/// `value`), its C# type, whether it must be given, and an enum's names.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptCallArg {
+    pub name: String,
+    pub kind: String,
+    #[serde(rename = "type", default)]
+    pub type_name: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub choices: Vec<String>,
+}
+
+impl ScriptCall {
+    /// The call as `game.calls` and the MCP server list it.
+    pub fn describe(&self) -> serde_json::Value {
+        let args: Vec<serde_json::Value> = self
+            .args
+            .iter()
+            .map(|arg| {
+                let mut described = serde_json::json!({ "name": arg.name, "kind": arg.kind, "type": arg.type_name, "required": arg.required });
+                if !arg.choices.is_empty() {
+                    described["choices"] = serde_json::json!(arg.choices);
+                }
+                described
+            })
+            .collect();
+        serde_json::json!({
+            "name": self.name, "about": self.about, "when": self.when, "changes": self.changes,
+            "returns": self.returns, "args": args,
+        })
+    }
 }
 
 impl ScriptTypes {

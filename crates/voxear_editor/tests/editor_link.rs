@@ -837,9 +837,9 @@ fn an_editor_takes_the_link_once_the_editor_holding_it_closes() {
 /// The only test here that starts .NET, which starts once per process: a
 /// `[Command]` run on the edited level has the game's services, so it puts
 /// a block by its file into an open Block World, one step to undo; and
-/// Add Component offers the engine's own behaviours, as Block User.
+/// Add Component offers the engine's own behaviours, as Block User; and the game's own calls are made as tools.
 #[test]
-fn a_command_on_the_edited_level_puts_blocks_and_the_engines_behaviours_are_offered() {
+fn a_command_on_the_edited_level_puts_blocks_the_engines_behaviours_are_offered_and_the_games_calls_made() {
     if voxear_scripting::find_dotnet().is_none() {
         return eprintln!("skipping: needs .NET");
     }
@@ -858,6 +858,21 @@ fn a_command_on_the_edited_level_puts_blocks_and_the_engines_behaviours_are_offe
         block["path"].as_str().unwrap()
     );
     std::fs::write(dir.path().join("Scripts/BlockTools.cs"), tool).unwrap();
+    // And the game's own calls, in the same build: a process starts .NET once.
+    let sign = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "Sign", "position": [0, 0, 0] }),
+    )["obj"]
+        .clone();
+    let calls = "using System.Numerics;\nusing Voxear;\n\nnamespace Hello;\n\ninternal static class ToolCalls\n{\n\
+                 \t[Call(\"tools.add\", About = \"Adds two numbers.\")]\n\
+                 \tprivate static int Add(int a, int b = 1) => a + b;\n\n\
+                 \t[Call(\"tools.move\", About = \"Moves an Obj.\", Changes = true)]\n\
+                 \tprivate static Vector3 Move(Obj obj, Vector3 to)\n\t{\n\t\tobj.Position = to;\n\t\treturn obj.Position;\n\t}\n\n\
+                 \t[Call(\"tools.playing\", When = CallWhen.Playing)]\n\tprivate static bool Playing() => true;\n}\n";
+    std::fs::write(dir.path().join("Scripts/ToolCalls.cs"), calls).unwrap();
     let built = done(&mut editor, &mut renderer, "scripts.build", json!({}));
     assert_eq!(built["ok"], true, "{built}");
 
@@ -881,6 +896,45 @@ fn a_command_on_the_edited_level_puts_blocks_and_the_engines_behaviours_are_offe
     assert_eq!(done(&mut editor, &mut renderer, "editor.state", json!({}))["undo"].as_u64().unwrap(), undo + 1);
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert!(done(&mut editor, &mut renderer, "blocks.get", at)["block"].is_null(), "one undo takes the block back");
+
+    // The project's own [Call] methods: listed with their arguments and called by name, directly or through
+    // game.call; one that changes the level is one step to undo, and one only for play is refused while editing.
+    let listed = done(&mut editor, &mut renderer, "game.calls", json!({}));
+    let add =
+        listed["calls"].as_array().unwrap().iter().find(|call| call["name"] == "tools.add").expect("listed").clone();
+    assert_eq!(add["about"], "Adds two numbers.");
+    assert_eq!(
+        add["args"],
+        json!([
+            { "name": "a", "kind": "whole", "type": "Int32", "required": true },
+            { "name": "b", "kind": "whole", "type": "Int32", "required": false },
+        ])
+    );
+    let moves = listed["calls"].as_array().unwrap().iter().find(|call| call["name"] == "tools.move").unwrap().clone();
+    assert_eq!((moves["changes"].clone(), moves["args"][0]["kind"].clone()), (json!(true), json!("obj")));
+
+    // Through game.call, and by its own name, its default taken where an argument is left out.
+    let summed =
+        done(&mut editor, &mut renderer, "game.call", json!({ "name": "tools.add", "args": { "a": 2, "b": 3 } }));
+    assert_eq!(summed["result"], 5);
+    assert_eq!(done(&mut editor, &mut renderer, "tools.add", json!({ "a": 4 }))["result"], 5);
+    let wrong = ask(&mut editor, &mut renderer, "tools.add", json!({})).unwrap_err();
+    assert!(wrong.message.contains("`a` is missing"), "{}", wrong.message);
+
+    // A change, given the Obj as tools name it: one step to undo.
+    let undo = done(&mut editor, &mut renderer, "editor.state", json!({}))["undo"].as_u64().unwrap();
+    let moved = done(&mut editor, &mut renderer, "tools.move", json!({ "obj": sign, "to": [3, 1, 2] }));
+    assert_eq!(moved["result"], json!([3, 1, 2]));
+    assert_eq!(done(&mut editor, &mut renderer, "obj.get", json!({ "obj": sign }))["position"], json!([3.0, 1.0, 2.0]));
+    assert_eq!(done(&mut editor, &mut renderer, "editor.state", json!({}))["undo"].as_u64().unwrap(), undo + 1);
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(done(&mut editor, &mut renderer, "obj.get", json!({ "obj": sign }))["position"], json!([0.0, 0.0, 0.0]));
+
+    // One for play alone is refused while editing, and a call the game has not is said to be none.
+    let refused = ask(&mut editor, &mut renderer, "tools.playing", json!({})).unwrap_err();
+    assert!(refused.message.contains("only while the game plays"), "{}", refused.message);
+    let none = ask(&mut editor, &mut renderer, "game.call", json!({ "name": "tools.none" })).unwrap_err();
+    assert_eq!(none.kind, ErrorKind::NoSuchCall);
 }
 
 #[test]

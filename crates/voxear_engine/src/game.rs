@@ -1911,6 +1911,10 @@ impl ScriptServices for GameServices<'_> {
         crate::dungeons::dungeons_json(world, self.content, obj, at)
     }
 
+    fn towns_json(&mut self, world: &World, obj: u64, at: [f32; 4]) -> Result<String> {
+        crate::towns::towns_json(world, self.content, obj, at)
+    }
+
     fn endless_changes(&mut self, world: &World, entity: Entity) -> Option<voxear_terrain::blocks::edits::BlockEdits> {
         crate::blocks::endless_changes(world, entity)
     }

@@ -4194,8 +4194,20 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     a figure walks on to its new place; one left out goes; forgotten when another level opens, never sent. Tests: a
     figure set 400 m off drawn there, set 8 m on walking there over frames, gone when left out and past 600 m; one
     set from C# drawn with its model.
-  - [ ] Generated towns' plans in C#: `Towns.Near` with each house's structure, place, facing, door and points.
-  - [ ] A game's own `vox editor call` and `vox mcp` calls from C# methods, with typed arguments and data back.
+  - [x] Generated towns' plans in C#: `Towns.Near(position, reach)` and `Towns.Nearest` give each town's structure,
+    seed, middle and buildings (the middle first), each with its `Structure` (a new typed asset reference, picked
+    in the Inspector), floor, size, rotation, front and the place outside its door, and `PointOf` for places
+    inside, worked out from the generator with none of the ground made (`structure::towns_near`, `engine::towns`,
+    `vox editor call towns.near`, native API 98). Points named on a structure's model are left to the game. Tests:
+    a town's plan the same every time and matching the blocks its chunks build, its middle's and houses' floors
+    and doors; from C#, the towns within 3 km of the Infinite World template's camera, a well in the middle and
+    houses with doors.
+  - [x] A game's own calls: a static C# method marked `[Call("name", About, When, Changes)]` is listed by
+    `game.calls` with its arguments' kinds and made by its name or `game.call`, its arguments read and its answer
+    written as saves do; while editing it runs on the edited level, a change one step to undo; `vox mcp` offers
+    each as a tool and `--describe` lists them. Tests: a call listed with its arguments and made with a default
+    left out, and refused without one (engine); in the editor, listed, made through `game.call` and by its name,
+    an Obj moved as one step to undo, a call for play refused while editing.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

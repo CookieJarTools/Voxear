@@ -56,6 +56,7 @@ internal static class ScriptCatalog
 			WriteSystems(json, assemblies);
 			WriteNestedTypes(json, types, nested, drawers);
 			WriteCommands(json, assemblies);
+			WriteCalls(json, assemblies);
 			WriteChecks(json, assemblies);
 			WriteWindows(json, assemblies);
 			WriteSideBar(json, assemblies);
@@ -505,6 +506,51 @@ internal static class ScriptCatalog
 		json.WriteString("type", type.FullName);
 		json.WriteString("method", method.Name);
 		json.WriteEndObject();
+	}
+
+	/// <summary>The <c>[Call]</c> methods, which tools call by name, each with its arguments and when it may run.</summary>
+	private static void WriteCalls(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
+	{
+		json.WriteStartArray("calls");
+		foreach (var (type, method, call) in GameCalls.In(Loadable(assemblies)))
+		{
+			json.WriteStartObject();
+			json.WriteString("name", call.Name);
+			json.WriteString("about", string.IsNullOrEmpty(call.About) ? method.Name : call.About);
+			json.WriteString("type", type.FullName);
+			json.WriteString("method", method.Name);
+			json.WriteString("when", call.When switch
+			{
+				CallWhen.Editing => "editing",
+				CallWhen.Playing => "playing",
+				_ => "both",
+			});
+			json.WriteBoolean("changes", call.Changes);
+			json.WriteString("returns", method.ReturnType == typeof(void) ? "nothing" : method.ReturnType.Name);
+			json.WriteStartArray("args");
+			foreach (var parameter in method.GetParameters())
+			{
+				var kind = GameCalls.KindOf(parameter.ParameterType);
+				json.WriteStartObject();
+				json.WriteString("name", parameter.Name);
+				json.WriteString("kind", kind);
+				json.WriteString("type", parameter.ParameterType.Name);
+				json.WriteBoolean("required", !parameter.HasDefaultValue);
+				if (kind == "choice")
+				{
+					json.WriteStartArray("choices");
+					foreach (var name in Enum.GetNames(Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType))
+					{
+						json.WriteStringValue(name);
+					}
+					json.WriteEndArray();
+				}
+				json.WriteEndObject();
+			}
+			json.WriteEndArray();
+			json.WriteEndObject();
+		}
+		json.WriteEndArray();
 	}
 
 	/// <summary>The <c>[DocsCheck]</c> methods, which a VoxDocs page's Action… menu lists for a guide's steps.</summary>

@@ -36,4 +36,5 @@ internal unsafe struct ManagedApi
 	public delegate* unmanaged[Cdecl]<HeatEventData*, int, byte*, int, void> HeatEvents;
 	public delegate* unmanaged[Cdecl]<ulong*, int, int*, void> GroundEvents;
 	public delegate* unmanaged[Cdecl]<ColumnEventData*, int, void> ColumnEvents;
+	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, byte*, int, byte*, int, int*, int> GameCall;
 }

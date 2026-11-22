@@ -4395,7 +4395,11 @@ built stone (`rooms`, from `pieces`: columns, pointed arches, balustrades, statu
 reliefs), the ways' floors and ribs, the entrance, then wear (ruin, cracked, mossy, vines) read off the grid before
 any of it changes, and lights. Every step reads only a block's neighbours, so a column built alone is what it is
 among its neighbours. Scripts read the layouts as JSON (`engine::dungeons`, `Dungeons` in C#), as does
-`vox editor call dungeon.layouts`. A dungeon placed in a dimension of its own (`DungeonPlace::OwnDimension`, the
+`vox editor call dungeon.layouts`. Towns are read the same way (`engine::towns`, `Towns` in C#, `towns.near`):
+`structure::towns_near` finds the sites near a place, kept out as `dungeons_near` keeps them, and lays each out
+with `Town::layout`, whose parts now keep their kind of house and the block outside their door; each building's
+floor is the generator's ground at its middle. `WorldStructures::sources` keeps the files each structure and its
+town's pieces were read from, so a building names its `.structure` by GUID. World layers are not looked at. A dungeon placed in a dimension of its own (`DungeonPlace::OwnDimension`, the
 default) is only its gate in the land, and the rest is built in a world of rock of its own (see
 [Dimensions](#dimensions)).
 
@@ -5110,6 +5114,13 @@ can change an open project and see the result, each change a step on the editor'
   - Blocks are set at points in the world (`blocks.set`, `blocks.fill`), numbered into the world as a script's
     `Blocks.Set` numbers them, one step to undo; the Scene view's camera is moved and turned with `view.set`.
   - Commands are the command palette's (`palette::command_list`), scripts' `[Command]`s included.
+  - The game's own calls are its scripts' static `[Call]` methods, listed by `ScriptCatalog` into
+    `ScriptTypes::calls` with each argument's kind, and made through the `GameCall` entry (native API 98):
+    arguments read by name with the save reader, what they return written with the save writer, both as JSON.
+    `game.calls` lists them, `game.call` makes one, and a call's own name is taken as `game.call` where no call of
+    the editor's has it. While editing a call runs on the edited level as a command does (`run_on_edits`), what it
+    changes one step to undo; before the scripts have started it waits for them (`Waiting::GameCall`). `vox mcp`
+    lists them as tools from `game.calls` whenever tools are listed.
   - Files are the Project panel's (`project_files`).
   - `link::every_part` and `link::asset_kind_id` match their enums whole, so a new component or asset kind does
     not build until it says how a tool reaches it. A test adds every offered component to an Obj and sets each of

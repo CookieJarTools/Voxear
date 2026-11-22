@@ -126,7 +126,8 @@ impl ScriptRuntime {
                 && managed.particle_hits.is_some()
                 && managed.heat_events.is_some()
                 && managed.ground_events.is_some()
-                && managed.column_events.is_some(),
+                && managed.column_events.is_some()
+                && managed.game_call.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -225,6 +226,43 @@ impl ScriptRuntime {
         ensure!(status != 1, "{type_name} has no [Command] method {method}");
         ensure!(status == 0, "{type_name}.{method} threw; the Console has what it said");
         Ok(())
+    }
+
+    /// Makes a tool's call of a `[Call]` method of the game scripts against
+    /// `world`, its arguments a JSON object: what it returned, as JSON.
+    /// Fails when there is no such method, the arguments are wrong, or it
+    /// threw, saying which.
+    pub fn game_call(&mut self, world: &mut World, type_name: &str, method: &str, args: &str) -> Result<String> {
+        /// The longest answer a call gives back.
+        const MOST: usize = 4 << 20;
+        let call = self.api().game_call.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        let mut buffer = vec![0u8; MOST];
+        let mut written = 0i32;
+        let (ty, name, given) = (type_name.as_bytes(), method.as_bytes(), args.as_bytes());
+        let status = unsafe {
+            call(
+                ty.as_ptr(),
+                ty.len() as i32,
+                name.as_ptr(),
+                name.len() as i32,
+                given.as_ptr(),
+                given.len() as i32,
+                buffer.as_mut_ptr(),
+                buffer.len() as i32,
+                &mut written,
+            )
+        };
+        let length = written.max(0) as usize;
+        ensure!(length <= MOST, "{type_name}.{method} gave back {length} bytes, more than a call may: {MOST}");
+        buffer.truncate(length);
+        let answer = String::from_utf8_lossy(&buffer).into_owned();
+        match status {
+            0 => Ok(answer),
+            1 => anyhow::bail!("{type_name} has no [Call] method {method}"),
+            2 => anyhow::bail!("{answer}"),
+            _ => anyhow::bail!("{type_name}.{method} threw: {answer}"),
+        }
     }
 
     /// Runs a check a VoxDocs guide's step names, against `world`: a static

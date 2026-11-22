@@ -502,6 +502,17 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ dungeons: [{ world, structure, site, place, dimension, stage, floors, entrance, spaces, ways, lights }] }",
     },
     CallInfo {
+        name: "towns.near",
+        about: "The towns a Block World's generator lays out whose sites lie near a point, worked out with none of their ground made: each town's structure, its site's seed, its middle, and its buildings (the middle first, then houses nearest the middle first), each with its structure, where its floor's middle is, its size before turning, how many quarter turns it is turned, its yaw, which way its door faces and the place just outside its door, all in the level's metres.",
+        args: &[
+            maybe("obj", ArgKind::Obj, "The Block World; every one when left out."),
+            maybe("near", ArgKind::Vector, "Where to look round, in metres; the editor's camera when left out."),
+            maybe("reach", ArgKind::Number, "How far round to look, in metres: 500 when left out."),
+        ],
+        changes: false,
+        returns: "{ towns: [{ world, structure, site, middle, buildings: [{ structure, middle, at, size, turns, yaw, front, door }] }] }",
+    },
+    CallInfo {
         name: "dungeon.open",
         about: "Makes the dimension of a dungeon that is in a dimension of its own, as its gate's Open Dungeon does, and shows its way out in the Scene view: to look round it while editing. Its dimension is made by code, as the game makes it, and nothing of it is saved.",
         args: &[
@@ -830,6 +841,23 @@ pub const CALLS: &[CallInfo] = &[
         args: &[],
         changes: false,
         returns: "{ commands: [{ id, title, keys }] }",
+    },
+    CallInfo {
+        name: "game.calls",
+        about: "The game's own calls: each static method its scripts mark [Call], with what it does, its arguments (each one's name, the kind of value it takes, its C# type, whether it must be given, and an enum's names), what it gives back, when it may run (`both`, `editing` or `playing`) and whether it changes the level. Each is called by its name as any call is, or through `game.call`.",
+        args: &[],
+        changes: false,
+        returns: "{ calls: [{ name, about, args, returns, when, changes }] }",
+    },
+    CallInfo {
+        name: "game.call",
+        about: "Makes one of the game's own calls, as `game.calls` lists them: against the level being edited, the scripts starting first if they have not, what it changes one step to undo; or against the game while it plays. Gives back what the method returned, as a save writes it.",
+        args: &[
+            arg("name", ArgKind::Text, "The call's name, as `game.calls` lists it."),
+            maybe("args", ArgKind::Value, "Its arguments, a JSON object by their names."),
+        ],
+        changes: false,
+        returns: "{ result }",
     },
     CallInfo {
         name: "command.run",

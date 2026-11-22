@@ -2,9 +2,9 @@
 //! them: a Post Volume, a Wind Zone, an Ocean, a Pool and a Stream through
 //! each Obj's own (`PostVolume`, `WindZone`, `Ocean`, `Pool` and
 //! `WaterStream` in Voxear.Core); a Bone Attachment, a Particle System, a
-//! Nav Area, a Nav Link, a Foliage and a LOD Group through one kind for
-//! them all, [`ComponentKind::Whole`], beside the calls some have of their
-//! own; and the level's Seasons, Climate and storm rules through the `Post`
+//! Nav Area, a Nav Link, a Foliage, a LOD Group and an Animator through
+//! one kind for them all, [`ComponentKind::Whole`], beside the calls some
+//! have of their own; and the level's Seasons, Climate and storm rules through the `Post`
 //! call (`Seasons`, `Climate` and `Storms`). Each reads as JSON with
 //! every setting, and takes JSON of the settings to change: the rest stay
 //! as they were, and nothing changes where any is refused.
@@ -19,7 +19,7 @@ use voxear_render::{
 use voxear_scripting::ComponentKind;
 
 use crate::{
-    animation::BoneAttachment,
+    animation::{Animator, BoneAttachment},
     ground_fit::GroundFit,
     ground_streaming::StreamsWithGround,
     roads::{AreaFill, Road},
@@ -57,6 +57,7 @@ const GROUND_FIT: i32 = 9;
 const STREAMS_WITH_GROUND: i32 = 10;
 const ROAD: i32 = 11;
 const AREA_FILL: i32 = 12;
+const ANIMATOR: i32 = 13;
 
 /// Whether an Obj has one, and adding and taking off those scripts may add:
 /// the component in the number's bits above the lowest two.
@@ -69,6 +70,7 @@ fn whole_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
         STREAMS_WITH_GROUND => values::<StreamsWithGround>(world, entity, asked, written),
         ROAD => values::<Road>(world, entity, asked, written),
         AREA_FILL => values::<AreaFill>(world, entity, asked, written),
+        ANIMATOR => values::<Animator>(world, entity, asked, written),
         BONE_ATTACHMENT => has::<BoneAttachment>(world, entity, asked, written),
         PARTICLE_SYSTEM => has::<ParticleSystem>(world, entity, asked, written),
         FOLIAGE => has::<Foliage>(world, entity, asked, written),
@@ -90,6 +92,7 @@ fn whole_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opti
         STREAMS_WITH_GROUND => texts::<StreamsWithGround>(world, entity, asked, text),
         ROAD => texts::<Road>(world, entity, asked, text),
         AREA_FILL => texts::<AreaFill>(world, entity, asked, text),
+        ANIMATOR => texts::<Animator>(world, entity, asked, text),
         FOLIAGE => texts::<Foliage>(world, entity, asked, text),
         LOD_GROUP => texts::<LodGroup>(world, entity, asked, text),
         DRY_AREA_MESH | LIGHT_COOKIE | LIGHT_PROFILE => {
@@ -229,7 +232,8 @@ written_as_is!(
     GroundFit,
     StreamsWithGround,
     Road,
-    AreaFill
+    AreaFill,
+    Animator
 );
 
 /// A Foliage's settings scripts change: how far its plants are drawn, cast
@@ -507,6 +511,11 @@ mod tests {
         whole_values(&mut world, obj, AREA_FILL << 2 | ADD, Some([0.0; 4])).unwrap();
         whole_texts(&mut world, obj, AREA_FILL << 1 | CHANGE, r#"{"level":"level","pattern":["12"]}"#).unwrap();
         assert_eq!(world.get::<AreaFill>(obj).unwrap().level, crate::roads::AreaLevel::Level);
+        // An Animator, given a clip to play and slowed.
+        whole_values(&mut world, obj, ANIMATOR << 2 | ADD, Some([0.0; 4])).unwrap();
+        whole_texts(&mut world, obj, ANIMATOR << 1 | CHANGE, r#"{"clip":"Walk","speed":0.5}"#).unwrap();
+        let animator = world.get::<Animator>(obj).unwrap();
+        assert_eq!((animator.clip.as_str(), animator.speed, animator.looping), ("Walk", 0.5, true));
 
         let near = world.spawn((voxear_scene::Transform::default(),));
         world.insert(obj, LodGroup::of(&[near]));

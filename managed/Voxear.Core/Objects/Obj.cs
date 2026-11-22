@@ -564,6 +564,16 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new AreaFill(this);
 	}
 
+	/// <summary>The Obj's Animator, which plays one clip on its model; null when it has none.</summary>
+	public Animator? Animator => Animator.Of(this);
+
+	/// <summary>Gives the Obj an Animator, playing no clip yet, unless it has one, and returns it.</summary>
+	public Animator AddAnimator()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Animator, this, true);
+		return new Animator(this);
+	}
+
 	/// <summary>The Obj's LOD Group; null when it has none.</summary>
 	public LodGroup? LodGroup => LodGroup.Of(this);
 

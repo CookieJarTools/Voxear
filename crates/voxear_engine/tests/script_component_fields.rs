@@ -2,10 +2,10 @@
 //! not reach before, on a copy of Hello with a renderer to load what they
 //! name: a Light's cookie, cookie size, shadow tint and body; a Particle
 //! System's texture, tiles and mesh; a First-Person View's twist; a Bone
-//! Attachment's bone; a Nav Area and a Nav Link; a Dry Area's mesh; and the
-//! storms' seed. A file of its own, so it runs in a process of its own,
-//! since .NET starts only once per process. Skips itself without .NET, the
-//! managed build or a GPU.
+//! Attachment's bone; a Nav Area and a Nav Link; a Dry Area's mesh; an
+//! Animator; and the storms' seed. A file of its own, so it runs in a
+//! process of its own, since .NET starts only once per process. Skips
+//! itself without .NET, the managed build or a GPU.
 
 use voxear_core::logging::LogCapture;
 use voxear_engine::{Engine, Game, Project, animation::BoneAttachment, scripts};
@@ -66,6 +66,13 @@ public sealed class Reaching : SystemBase
 			hold.Mesh = MeshAsset.Sphere;
 			Log.Info($"dry: {hold.Mesh == MeshAsset.Sphere} {hold.InsideHeight > 0f}");
 			Log.Info($"storms: {Storms.Seed}");
+
+			var walker = Obj.Instantiate(lamp).AddAnimator();
+			walker.Speed = 0.5f;
+			walker.Play(new AnimationClip("Walk"), looping: false);
+			Log.Info($"animator: {Obj.Instantiate(lamp).Animator is null} {walker.Clip} {walker.Speed} {walker.Looping} {walker.BlendTime}");
+			walker.Stop();
+			Log.Info($"stopped: {walker.Clip.IsValid}");
 		}
 		if (frame == 3)
 		{
@@ -160,6 +167,8 @@ fn a_script_sets_the_fields_the_inspector_has() {
     assert_eq!(report("nav: "), ["nav: Water 6 Jump 3 True"], "{lines:#?}");
     assert_eq!(report("dry: "), ["dry: True True"], "{lines:#?}");
     assert_eq!(report("storms: "), ["storms: 0"], "Hello has no storms of its own: {lines:#?}");
+    assert_eq!(report("animator: "), ["animator: True Walk 0.5 False 0.2"], "{lines:#?}");
+    assert_eq!(report("stopped: "), ["stopped: False"], "{lines:#?}");
 
     let world = &game.engine.world;
     let moon = world.query_ref::<&Light>().into_iter().find(|light| light.body == SkyBody::Moon).copied();

@@ -246,7 +246,8 @@ A pack's own tonemap, and a program for the sky. Settled on the way:
 - **Models, later:** `[surface] models`, `float3 run(ModelSurface surface, ModelLighting light)`, compiled into the
   three shaders that draw models (`forward`, `meshlets`, `dice`) with `VOXEAR_PACK_MODELS`. `fragmentMain` keeps the
   engine's terms apart for it as for block faces (`PACK_KEEPS_TERMS`); `ModelLighting` is `BlockLighting`, and
-  `ModelSurface` has a model's material and whether it is foliage, custom-lit or glowing. Evening's `models.slang`
+  `ModelSurface` has a model's material and whether it is foliage, custom-lit, glowing or a wind-bent plant (`MODEL_PLANT`, from the material's wind bend, with
+  `bend` and a `through` shadow looked up towards the sun, so box-model grass can be lit through). Evening's `models.slang`
   warms the sun, cools the shade and lays a rim of light round what stands against a low sun.
 
 ## What stage 4 built

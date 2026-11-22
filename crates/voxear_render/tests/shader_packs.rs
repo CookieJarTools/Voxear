@@ -1229,3 +1229,110 @@ fn a_water_program_lights_the_sea_and_a_worlds_water_and_is_given_the_engines_li
     render(&mut renderer, &world, 2);
     assert!(!renderer.pack_surfaces_drawn());
 }
+
+/// Box-model plants on dark ground, a tuft of grass at each place and a rock in the middle, seen from low down towards
+/// a low sun behind them.
+fn plants_against_the_sun(renderer: &mut Renderer) -> World {
+    use voxear_render::StarterPlant;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 0.7, 0.0), Quat::from_rotation_x(0.12), Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let ground = renderer.add_material(&MaterialDesc { base_color: [0.1, 0.08, 0.06, 1.0], ..MaterialDesc::default() });
+    world.spawn((
+        MeshRenderer::new(cube, ground.unwrap()),
+        Transform::new(Vec3::new(0.0, -0.5, 20.0), Quat::IDENTITY, Vec3::new(40.0, 1.0, 40.0)),
+    ));
+    let mut upload = |plant: StarterPlant| {
+        let text = plant.model().to_text();
+        let model = voxear_render::prepare_model("Plant.boxmodel", &mut |file| match file {
+            "Plant.boxmodel" => Ok(text.clone().into_bytes()),
+            other => anyhow::bail!("no {other}"),
+        })
+        .unwrap();
+        let imported = renderer.upload_model(&model).unwrap();
+        (imported.nodes[0].mesh, imported.nodes[0].material)
+    };
+    let (tuft, rock) = (upload(StarterPlant::Tuft), upload(StarterPlant::Rock));
+    for (x, z) in [(-1.2, 3.0), (-0.4, 3.4), (0.4, 3.4), (1.2, 3.0), (-0.8, 4.4), (0.8, 4.4)] {
+        world.spawn((MeshRenderer::new(tuft.0, tuft.1), Transform::from_position(Vec3::new(x, 0.0, z))));
+    }
+    world.spawn((MeshRenderer::new(rock.0, rock.1), Transform::from_position(Vec3::new(0.0, 0.0, 4.0))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, -Vec3::new(0.15, 0.2, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::new(1.0, 0.9, 0.75), 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let mut post = PostProcess::neutral();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.reflections.enabled = false;
+    world.insert_resource(post);
+    world
+}
+
+#[test]
+fn a_models_program_tells_a_wind_bent_plant_and_radiant_lights_box_grass_through_against_the_sun() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = plants_against_the_sun(&mut renderer);
+    // Plants red, how far they bend in green, and what does not bend blue.
+    let program = "float3 run(ModelSurface surface, ModelLighting light)
+{
+    return (surface.kind & MODEL_PLANT) != 0 ? float3(1.0, surface.bend * 0.25, 0.0) : float3(0.0, 0.0, 1.0);
+}
+";
+    let manifest = "[surface]\nmodels = \"models.slang\"\n";
+    wear(&mut world, pack(manifest, &[("models.slang", program)]).unwrap_or_else(|error| panic!("{error:#}")));
+    let told = render(&mut renderer, &world, 3);
+    keep_image("plants told.png", &told, (WIDTH, HEIGHT));
+    let count = |pixels: &[u8], test: &dyn Fn([i32; 3]) -> bool| {
+        (0..HEIGHT).flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&(x, y)| test(rgb_at(pixels, x, y))).count()
+    };
+    // A tuft bends 2, so half as green as red, before the tonemap.
+    let grass = count(&told, &|[r, g, b]| r > 150 && g > b + 40 && g < r - 20 && b < 100);
+    let still = count(&told, &|[r, g, b]| b > r + 80 && b > g + 80);
+    eprintln!("{grass} pixels of plants, {still} of what does not bend");
+    assert!(grass > 400, "the tufts told as plants: {grass}");
+    assert!(still > 400, "the ground and the rock told from them: {still}");
+
+    let files = match shader_packs::builtin_folder("radiant") {
+        Some(folder) => PackFiles::Folder(folder),
+        None => PackFiles::Embedded(shader_packs::builtin_files("radiant").unwrap()),
+    };
+    let manifest = PackManifest::parse(&files.read("pack.toml").unwrap()).unwrap();
+    let radiant = Arc::new(shader_packs::compile(&manifest, &files).unwrap_or_else(|error| panic!("{error:#}")));
+    let glow = manifest.options.iter().position(|option| option.key == "foliage_glow").unwrap();
+    world.insert_resource(WornShaderPack::new(radiant.clone()));
+    let glowing = render(&mut renderer, &world, 24);
+    keep_image("radiant grass.png", &glowing, (WIDTH, HEIGHT));
+    let mut dull = WornShaderPack::new(radiant);
+    dull.options[glow] = 0.0;
+    world.insert_resource(dull);
+    let without = render(&mut renderer, &world, 24);
+    keep_image("radiant grass without glow.png", &without, (WIDTH, HEIGHT));
+    // Where the plants were told, how much brighter and greener the glow makes them.
+    let places: Vec<(u32, u32)> = (0..HEIGHT)
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let [r, g, b] = rgb_at(&told, x, y);
+            r > 150 && g > b + 40 && g < r - 20 && b < 100
+        })
+        .collect();
+    let mean = |pixels: &[u8], places: &[(u32, u32)]| {
+        let all: Vec<[i32; 3]> = places.iter().map(|&(x, y)| rgb_at(pixels, x, y)).collect();
+        let n = all.len().max(1) as f32;
+        [0, 1, 2].map(|c| all.iter().map(|p| p[c] as f32).sum::<f32>() / n)
+    };
+    let (lit, dark) = (mean(&glowing, &places), mean(&without, &places));
+    let rock: Vec<(u32, u32)> = (0..HEIGHT)
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            y < HEIGHT * 3 / 5 && {
+                let [r, g, b] = rgb_at(&told, x, y);
+                b > r + 80 && b > g + 80
+            }
+        })
+        .collect();
+    let (rock_lit, rock_dark) = (mean(&glowing, &rock), mean(&without, &rock));
+    eprintln!("the grass {dark:?} without the glow, {lit:?} with; the rest {rock_dark:?} and {rock_lit:?}");
+    assert!(lit[1] > dark[1] + 10.0, "the grass greener-bright with the sun through it: {lit:?} against {dark:?}");
+    let rest = (0..3).map(|c| (rock_lit[c] - rock_dark[c]).abs()).fold(0.0, f32::max);
+    assert!(rest < 2.0, "what does not bend as it was: {rock_lit:?} against {rock_dark:?}");
+}

@@ -33,6 +33,10 @@ internal static class NativeWhole
 	public const int Placement = 14;
 	public const int PrefabBrush = 15;
 	public const int Walkable = 16;
+	public const int WorldArea = 17;
+	public const int AreaDefaults = 18;
+	public const int Route = 19;
+	public const int RouteStop = 20;
 
 	private const int ReadAll = 0;
 	private const int ChangeSome = 1;

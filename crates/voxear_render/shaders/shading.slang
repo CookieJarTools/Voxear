@@ -1728,7 +1728,16 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         packed.blockLight = blockLitHere ? blockLit.y : 0.0;
         packed.material = input.material;
         packed.kind = ((material.flags & MATERIAL_FOLIAGE) != 0 ? PACK_MODEL_FOLIAGE : 0)
-            | (customLit ? PACK_MODEL_CUSTOM : 0) | (any(emission > 0.0) ? PACK_MODEL_GLOWS : 0);
+            | (customLit ? PACK_MODEL_CUSTOM : 0) | (any(emission > 0.0) ? PACK_MODEL_GLOWS : 0)
+            | (material.windBend > 0.0 ? PACK_MODEL_PLANT : 0);
+        packed.bend = material.windBend;
+        // Light through a thin blade or leaf: the shadow a little way towards the sun, as foliage takes it (looked up
+        // for plants only, which a pack may light through; its own shadow elsewhere).
+        packed.through = shadow;
+        if ((packed.kind & (PACK_MODEL_FOLIAGE | PACK_MODEL_PLANT)) != 0)
+        {
+            packed.through = sunShadowHard(frame, shadowAt - frame->sunDirection * 0.15, -frame->sunDirection);
+        }
         packed.pixel = input.position.xy;
         ModelLighting packLight;
         packLight.sunDirection = -frame->sunDirection;

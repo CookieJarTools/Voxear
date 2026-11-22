@@ -1,4 +1,4 @@
-//! Painting a world of blocks' land, height and biomes (see
+//! Painting a world of blocks' land, height, biomes and World Areas (see
 //! `voxear_terrain::generate::painted`): a dab of a brush at a place in the
 //! world, by the editor's brushes, `vox editor call paint.map` and scripts.
 //! Its maps are begun where it has none, and the world makes again the
@@ -15,6 +15,9 @@ pub enum PaintMap {
     Height,
     /// A biome, by its place in the world's list.
     Biome(usize),
+    /// A painted World Area, by its number (see `world_areas`).
+    Area(u32),
+    /// The land, height and biome maps taken back to the generator alone.
     Erase,
 }
 
@@ -40,9 +43,11 @@ pub struct Dab {
 }
 
 /// A dab given as JSON, as scripts give it: `{ "map": "land" | "height" |
-/// "biome" | "erase", "at": [x, y, z], "radius", "strength", "falloff",
-/// "mode": "add" | "take_away" | "smooth", "biome": its place in the list }`.
-pub fn paint_json(world: &World, content: &mut crate::content::Content, blocks: Entity, json: &str) -> bool {
+/// "biome" | "area" | "erase", "at": [x, y, z], "radius", "strength",
+/// "falloff", "mode": "add" | "take_away" | "smooth", "biome": its place in
+/// the list, "area": the World Area's Obj }`. A World Area painted for the
+/// first time is given its number.
+pub fn paint_json(world: &mut World, content: &mut crate::content::Content, blocks: Entity, json: &str) -> bool {
     let Ok(asked) = serde_json::from_str::<serde_json::Value>(json) else { return false };
     let number = |key: &str, default: f32| asked[key].as_f64().map_or(default, |v| v as f32);
     let at = asked["at"].as_array().map(|v| v.iter().filter_map(serde_json::Value::as_f64).collect::<Vec<f64>>());
@@ -51,6 +56,13 @@ pub fn paint_json(world: &World, content: &mut crate::content::Content, blocks: 
         Some("land") => PaintMap::Land,
         Some("height") => PaintMap::Height,
         Some("biome") => PaintMap::Biome(asked["biome"].as_u64().unwrap_or(0) as usize),
+        Some("area") => {
+            let obj = asked["area"].as_u64().map(Entity::from_bits);
+            match obj.and_then(|obj| crate::world_areas::number_for(world, obj)) {
+                Some(number) => PaintMap::Area(number),
+                None => return false,
+            }
+        }
         Some("erase") => PaintMap::Erase,
         _ => return false,
     };
@@ -122,8 +134,18 @@ pub fn paint(world: &World, content: &mut crate::content::Content, blocks: Entit
                 };
                 reached.extend(maps.biome.paint(at, radius, falloff, &set));
             }
+            PaintMap::Area(number) => {
+                let mine = Some(number as f32);
+                let set = |was: Option<f32>, cover: f32| match (dab.mode, cover > 0.5) {
+                    (PaintMode::TakeAway, true) if was == mine => None,
+                    (PaintMode::TakeAway, _) => was,
+                    (_, true) => mine,
+                    _ => was,
+                };
+                reached.extend(maps.areas.paint(at, radius, falloff, &set));
+            }
             PaintMap::Erase => {
-                for kind in PaintKind::ALL {
+                for kind in PaintKind::GROUND {
                     let gone = |was: Option<f32>, cover: f32| if cover > 0.0 { None } else { was };
                     reached.extend(maps.map_mut(kind).paint(at, radius, falloff, &gone));
                 }

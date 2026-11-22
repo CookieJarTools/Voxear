@@ -98,7 +98,7 @@ A `ShaderPack` field of a script picks one of your project's packs in the Inspec
 
 The shafts are marched through the air within about 64 metres of the camera. At each step the sun's shadow says whether the sun reaches it, so leaves, models and characters cast shafts, in any world the sun's shadows are drawn in. Under cover, in a world of blocks lit by block light (see [[Block Light]]), a walk towards the sun through the light kept round the camera must also meet no solid block before the open sky, so a cave's roof keeps the sun out wherever the shadows reach. The air costs about a millisecond at 1080p on an RTX 3070 in a cave or under trees, under half of one in the open.
 
-Grass and flowers glow against the sun where their material is foliage; plants made of boxes, as many block games' grass is, are lit as any other model.
+Grass and flowers glow against the sun where their material is foliage, and where they bend in the wind: a box model with a **Wind Bend** glows as grass does, a tuft and a flower fully, a bush half as much, and a tree, which bends only a little, hardly at all.
 
 ## Seeing a level under a pack
 
@@ -334,7 +334,7 @@ float3 run(ModelSurface surface, ModelLighting light)
 }
 ```
 
-`light` is as a block face's: the sun's way and light and its shadow, the sky's light and the blocks' glow, occlusion, what it reflects, and the engine's terms and colour. `surface` has its place, normals, view, colour, alpha, roughness, metallic and emission, as a block face's; `skyLight` and `blockLight` round it in a world of blocks (1 and 0 elsewhere); `material`, its material's number; and `kind`, a bit each: `MODEL_FOLIAGE` for a foliage material, `MODEL_CUSTOM` for a material whose custom shader lights it (`light.engine` is that light), and `MODEL_GLOWS`. A models program is compiled into each of the engine's shaders that draw models, so a pack with one takes a little longer to compile the first time.
+`light` is as a block face's: the sun's way and light and its shadow, the sky's light and the blocks' glow, occlusion, what it reflects, and the engine's terms and colour. `surface` has its place, normals, view, colour, alpha, roughness, metallic and emission, as a block face's; `skyLight` and `blockLight` round it in a world of blocks (1 and 0 elsewhere); `material`, its material's number; and `kind`, a bit each: `MODEL_FOLIAGE` for a foliage material, `MODEL_CUSTOM` for a material whose custom shader lights it (`light.engine` is that light), `MODEL_GLOWS`, and `MODEL_PLANT` for a plant that bends in the wind, foliage or not (a box model's grass and flowers among them); and `bend`, how far it bends, as its material's wind bend has it (0 for what stands still, 2 for a tuft of grass), so grass can be told from a tree; and `through`, the sun's shadow on light through a foliage or plant surface, looked up a little way towards the sun, so the side of a blade facing away from the sun glows where the side facing it is lit (`light.shadow` for the rest). A models program is compiled into each of the engine's shaders that draw models, so a pack with one takes a little longer to compile the first time.
 
 ### Lighting water
 

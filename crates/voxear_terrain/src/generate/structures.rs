@@ -74,6 +74,25 @@ pub struct Placement {
     /// it keeps to dry ground off the shore and away from the water.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub by_water: bool,
+    /// The World Areas it stands in, each a reference to an Area Tag data
+    /// asset: only in an area holding one of them; none for anywhere.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<String>,
+    /// The World Areas it never stands in, by their tags.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub never_within: Vec<String>,
+    /// Those tags by their assets' numbers, as the world is made: never in
+    /// its file.
+    #[serde(skip)]
+    pub tags: AreaRules,
+}
+
+/// The tags of the World Areas a structure stands within, and those it
+/// never stands within, by their assets' numbers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AreaRules {
+    pub within: Vec<u128>,
+    pub never: Vec<u128>,
 }
 
 fn is_zero(value: &u32) -> bool {
@@ -97,6 +116,9 @@ impl Default for Placement {
             slope: 15.0,
             biomes: Vec::new(),
             by_water: false,
+            within: Vec::new(),
+            never_within: Vec::new(),
+            tags: AreaRules::default(),
         }
     }
 }

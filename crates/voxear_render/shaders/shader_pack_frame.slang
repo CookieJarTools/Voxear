@@ -18,6 +18,7 @@ static const uint PACK_BLOCK_CUBES = 64;
 static const uint PACK_MODEL_FOLIAGE = 1;
 static const uint PACK_MODEL_CUSTOM = 2;
 static const uint PACK_MODEL_GLOWS = 4;
+static const uint PACK_MODEL_PLANT = 8;
 
 // What water is, for a pack's water program (shader_pack_surface.slang names them WATER_IS_SEA and the rest).
 static const uint PACK_WATER_SEA = 1;

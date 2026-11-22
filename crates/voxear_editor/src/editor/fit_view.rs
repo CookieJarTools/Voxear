@@ -1,5 +1,7 @@
 //! The Ground Fit gizmo: each selected Obj's footprint drawn at the height it
-//! levels to, and the rings its margin and slope out reach to round it.
+//! levels to, and the rings its margin and slope out reach to round it. And,
+//! where the Gizmos menu's Areas and Routes is on, each World Area's outline
+//! tinted by its first tag, and each Route coloured by its kind.
 
 use voxear_core::{debug_draw, math::Vec3};
 use voxear_ecs::Entity;
@@ -70,5 +72,78 @@ impl Editor {
                 grown(margin + fit.slope_out as f32 * size).iter().for_each(|ring| loop_at(ring, SLOPE_OUT));
             }
         }
+        if self.memory.settings.area_gizmos {
+            self.draw_areas_and_routes();
+        }
     }
+
+    /// Each World Area's outline at its Obj's height, and each Route.
+    fn draw_areas_and_routes(&mut self) {
+        use voxear_engine::{
+            world_areas::WorldArea,
+            world_routes::{Route, RouteKind},
+        };
+        let style = debug_draw::LineStyle { gizmo: true, ..debug_draw::LineStyle::default() };
+        let world = &self.game.engine.world;
+        let here = voxear_engine::dimensions::current(world);
+        let shown = |obj: Entity| voxear_scene::is_active(world, obj) && voxear_scene::dimension_of(world, obj) == here;
+        let areas: Vec<(Vec<[f32; 2]>, f32, [f32; 4])> = world
+            .query_ref::<(Entity, &WorldArea, &WorldTransform)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter(|(obj, area, _)| shown(*obj) && area.shape == voxear_engine::world_areas::AreaShape::Outline)
+            .map(|(_, area, placed)| {
+                let tag = area.tags.iter().find_map(|entry| entry.tag);
+                let color = tag.map_or(UNTAGGED, |tag| tint(tag.to_u128()));
+                let color = if area.no_structures { [color[0], color[1], color[2], 1.0] } else { color };
+                (area.world_outline(&placed.0), placed.0.w_axis.y + 0.1, color)
+            })
+            .collect();
+        for (outline, height, color) in areas {
+            for (at, &[x, z]) in outline.iter().enumerate() {
+                let [nx, nz] = outline[(at + 1) % outline.len()];
+                debug_draw::line(Vec3::new(x, height, z), Vec3::new(nx, height, nz), color, 0.0, style);
+            }
+        }
+        let routes: Vec<(Entity, Vec<Vec3>, RouteKind)> = world
+            .query_ref::<(Entity, &Route, &WorldTransform)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter(|(obj, ..)| shown(*obj))
+            .map(|(obj, route, placed)| (obj, route.world_points(&placed.0), route.kind))
+            .collect();
+        for (obj, points, kind) in routes {
+            let aground = kind == RouteKind::Sea
+                && voxear_engine::world_routes::aground(&mut self.game.engine.world, &mut self.game.content, obj);
+            let color = match kind {
+                _ if aground => AGROUND,
+                RouteKind::Road => [0.95, 0.7, 0.3, 0.9],
+                RouteKind::Sea => [0.35, 0.7, 1.0, 0.9],
+                RouteKind::Air => [0.9, 0.95, 1.0, 0.9],
+                RouteKind::Custom => [0.75, 0.5, 1.0, 0.9],
+            };
+            for pair in points.windows(2) {
+                debug_draw::line(pair[0] + Vec3::Y * 0.2, pair[1] + Vec3::Y * 0.2, color, 0.0, style);
+            }
+        }
+    }
+}
+
+/// An area with no tag, and a sea route aground, sRGB with alpha.
+const UNTAGGED: [f32; 4] = [0.8, 0.8, 0.8, 0.6];
+const AGROUND: [f32; 4] = [1.0, 0.2, 0.15, 1.0];
+
+/// A tag's tint: a hue of its own, the same every time.
+fn tint(tag: u128) -> [f32; 4] {
+    let hue = (voxear_terrain::layers::stable_hash(&tag.to_le_bytes()) % 360) as f32 / 60.0;
+    let x = 1.0 - (hue % 2.0 - 1.0).abs();
+    let [r, g, b] = match hue as u32 {
+        0 => [1.0, x, 0.0],
+        1 => [x, 1.0, 0.0],
+        2 => [0.0, 1.0, x],
+        3 => [0.0, x, 1.0],
+        4 => [x, 0.0, 1.0],
+        _ => [1.0, 0.0, x],
+    };
+    [0.35 + r * 0.65, 0.35 + g * 0.65, 0.35 + b * 0.65, 0.75]
 }

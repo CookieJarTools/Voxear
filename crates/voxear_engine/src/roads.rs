@@ -369,6 +369,13 @@ pub fn answer(world: &mut voxear_ecs::World, text: &str) -> anyhow::Result<Strin
     if asked["ask"] == "line_up" || asked["ask"] == "scatter" {
         return crate::prefab_placing::answer(world, &asked);
     }
+    if asked["ask"] == "route_find" || asked["ask"] == "route_nearest" {
+        return crate::world_routes::answer(world, &asked);
+    }
+    // The World Areas, and laying sea routes, read the game's content.
+    if asked["ask"] == "areas_at" || asked["ask"] == "area_value" || asked["ask"] == "route_lay_sea" {
+        return voxear_scripting::ask_world(world, text).unwrap_or_else(|| Ok(String::new()));
+    }
     // A dab of a map brush on the level's world of blocks without end.
     if asked["ask"] == "paint" {
         let blocks = world

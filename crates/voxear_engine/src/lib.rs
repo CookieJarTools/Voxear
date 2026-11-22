@@ -65,6 +65,8 @@ pub mod particles;
 pub mod portals;
 pub mod prefab_placing;
 pub mod roads;
+pub mod world_areas;
+pub mod world_routes;
 pub mod post_scripts;
 pub mod smoke;
 pub mod storm_sounds;

@@ -399,7 +399,7 @@ With **Build** showing, the brush works in the Scene view over the selected worl
 
 | Setting | What it does |
 | --- | --- |
-| Brush | **Place** puts the picked block against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked block, keeping its shape: a slab becomes the picked block's slab, lying or standing as it did, and a stair becomes the picked block where that is a stair too (a stair, fence or pane painted with a plain block is left as it is); **Model** builds a model of blocks (see below); **Use** uses the block clicked, as a player would; **Link** links a lever or a button to the blocks it drives |
+| Brush | **Place** puts the picked block against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked block, keeping its shape: a slab becomes the picked block's slab, lying or standing as it did, and a stair becomes the picked block where that is a stair too (a stair, fence or pane painted with a plain block is left as it is); **Model** builds a model of blocks (see below); **Use** uses the block clicked, as a player would; **Link** links a lever or a button to the blocks it drives; **Restore** puts the blocks under it back as the ground was generated, its [[World Layers|world layers]] with it, so what was placed or broken by hand there goes |
 | Size | How many blocks across it reaches: 1 for a block at a time, more for a ball of them |
 | Block | The block it builds with, picked from all the project's blocks. The ones you built with last come first |
 | Model | With the Model brush, the `.vox` model it builds |
@@ -407,6 +407,8 @@ With **Build** showing, the brush works in the Scene view over the selected worl
 A block double-clicked in the [[Blocks#The Blocks panel|Blocks panel]], or dragged from it onto **Block**, is picked too.
 
 A [[Blocks#Blocks of parts|block of parts]] is put down standing as a player would put it: a stair rising away from the view, a slab lying on the face clicked, a door on the far side of its block with its hinge on the side it was put nearer. Its outline shows its boxes as they will stand. Press **R** to turn it on a quarter, or, for a slab, a lever or a button, on to its next side. A door put down takes its upper block over it, and breaking either block of it takes both.
+
+With **Restore**, a stroke takes back what was built and dug by hand under the brush, **Size** blocks across, as one step to undo: the world's ground as its generator made it, with any Ground Fits, Roads and Area Fills over it. It works where the world has made its chunks; `vox editor call blocks.restore from=… to=…` does a box at once.
 
 With **Use**, a click uses a block as a player would: a door opens, a lever turns over and drives what it is linked to. With **Link**, click a lever or a button, then each block it should drive: a line shows each link. Click a block linked already to take its link away.
 

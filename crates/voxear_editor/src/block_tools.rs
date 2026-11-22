@@ -212,7 +212,7 @@ fn smooth_ball(
         BlockBrush::Place => Ball::Add(picked),
         BlockBrush::Break => Ball::Take,
         BlockBrush::Paint => Ball::Paint(picked),
-        BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => return Vec::new(),
+        BlockBrush::Restore | BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => return Vec::new(),
     };
     smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does, faces)
 }
@@ -305,6 +305,15 @@ impl BlockTools {
     ) -> [i32; 3] {
         let state = block_props::ui(&game.engine.world);
         let middle = Self::middle(hit, brush);
+        // Restore needs no block: each block under it goes back to the one generated there.
+        if brush == BlockBrush::Restore {
+            let cells = reached(middle, state.size.max(1));
+            let changes = voxear_engine::blocks::restored(&game.engine.world, entity, &cells);
+            if let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity).filter(|blocks| !blocks.smooth) {
+                blocks.set_blocks(changes);
+            }
+            return middle;
+        }
         // With no block picked, or one the world has no room for, there is nothing to place or paint with.
         let picked = match (placed.or_else(|| picked(game, entity)), brush) {
             (Some(block), _) => block,
@@ -364,7 +373,7 @@ impl BlockTools {
                     BlockBrush::Place => (now == AIR || (water(now) && !water(picked))).then_some(picked),
                     BlockBrush::Break => (now != AIR).then_some(AIR),
                     BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then(|| paint(now)).flatten(),
-                    BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => None,
+                    BlockBrush::Restore | BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => None,
                 }?;
                 Some((at, wanted))
             })

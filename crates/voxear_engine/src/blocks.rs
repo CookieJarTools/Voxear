@@ -1437,6 +1437,27 @@ fn ground_of(drawn: &Arc<Resolved>) -> (BlockFile, Arc<[voxear_terrain::blocks::
     made
 }
 
+/// The blocks of `cells` of the world of blocks on `entity` that differ
+/// from its ground as generated, with its world layers, each with the block
+/// it was generated as: what putting them back changes. Only cells of chunks
+/// it has made, and none of the floor nothing changes.
+pub fn restored(world: &World, entity: voxear_ecs::Entity, cells: &[[i32; 3]]) -> Vec<([i32; 3], BlockId)> {
+    let (Some(blocks), Some(asset)) = (world.get::<BlockWorld>(entity), world.get::<BlockWorldAsset>(entity)) else {
+        return Vec::new();
+    };
+    let side = voxear_terrain::blocks::chunk::CHUNK as i32;
+    let floor = blocks.floor;
+    cells
+        .iter()
+        .filter(|at| asset.base.chunk(at.map(|v| v.div_euclid(side))).is_some())
+        .filter(|at| floor.is_none_or(|top| at[1] > top))
+        .filter_map(|&at| {
+            let generated = asset.base.get(at);
+            (blocks.blocks.get(at) != generated).then_some((at, generated))
+        })
+        .collect()
+}
+
 /// Each world of blocks without end's streamer, by its Obj.
 #[derive(Default)]
 struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blocks::stream::BlockStreamer>);

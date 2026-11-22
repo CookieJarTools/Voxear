@@ -185,7 +185,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `undo`, `redo`, `batch` | Step back and forward, and make several changes one step |
 | `select`, `frame` | Select Objs, and show them in the Scene view |
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
-| `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
+| `blocks.get`, `blocks.set`, `blocks.fill`, `blocks.restore` | Read and change a Block World's blocks, at points in the world, and put a box of them back as the ground was generated |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts`, `dungeon.open` | Make the starter temple dungeon for a Block World, read the dungeons its generator lays out near a point, and open a dungeon's own dimension to look round |
 | `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`, `obj.move_to_dimension` | List the dimensions made, show one in the Scene view, make a `.dimension` file of a kind, open or let go of one, and move an Obj into another |

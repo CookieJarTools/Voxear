@@ -3871,7 +3871,9 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   strokes by radius and density, random or set turn, scale range, lean with ground, steepest slope, Shift to take
   away, Single clicks with R turning, facing the road. Walkable: a still collider stamped into block navigation by
   the cells its surfaces pass through, only the chunks it reaches rebuilt as it moves, a door left open;
-  `navigation.status` counts them. Box models of one bone and no clips drawn with no skin. C#: `Placement`,
+  `navigation.status` counts them. A Block World's Build tool gains **Restore**, putting blocks under the brush back
+  as the ground was generated with its layers (`blocks.restore` for a box). Box models of one bone and no clips drawn
+  with no skin. C#: `Placement`,
   `Placing.LineUp`, `Placing.Scatter`, `PlacingChoice`, `LineUpSettings`, `RoadSide`, `PrefabBrush`, `BrushMode`,
   `Walkable`. `vox editor call`: `place.prefab`, `place.line_up`, `place.scatter`, `place.brush`. Tests: lining up
   and scattering; a walkable platform stood on and a door left open in a streamed world; a street lined up through

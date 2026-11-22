@@ -421,6 +421,17 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "blocks.restore",
+        about: "Puts the blocks in the box between two points of the world, in metres, back as its ground was generated, its world layers with it: what was placed or broken by hand there goes. Only where the world has made its chunks. One step to undo.",
+        args: &[
+            arg("from", ArgKind::Vector, "One corner, in metres."),
+            arg("to", ArgKind::Vector, "The opposite corner, in metres."),
+            maybe("obj", ArgKind::Obj, "The Block World."),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
         name: "graph.comments",
         about: "The comments of a graph, a generator (.worldgen) or a VoxShade shader (.voxshade): each its number, its top left corner and size on the canvas, its title and its text.",
         args: &[arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade.")],

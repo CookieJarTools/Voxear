@@ -82,6 +82,9 @@ pub enum BlockBrush {
     Place,
     Break,
     Paint,
+    /// Puts the blocks under it back as the world's ground was generated,
+    /// its world layers with it: what was placed or broken by hand goes.
+    Restore,
     Model,
     /// Uses the block clicked, as a player would: opens a door, turns a
     /// lever.
@@ -92,14 +95,22 @@ pub enum BlockBrush {
 }
 
 impl BlockBrush {
-    pub const ALL: [BlockBrush; 6] =
-        [BlockBrush::Place, BlockBrush::Break, BlockBrush::Paint, BlockBrush::Model, BlockBrush::Use, BlockBrush::Link];
+    pub const ALL: [BlockBrush; 7] = [
+        BlockBrush::Place,
+        BlockBrush::Break,
+        BlockBrush::Paint,
+        BlockBrush::Model,
+        BlockBrush::Use,
+        BlockBrush::Link,
+        BlockBrush::Restore,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             BlockBrush::Place => "Place",
             BlockBrush::Break => "Break",
             BlockBrush::Paint => "Paint",
+            BlockBrush::Restore => "Restore",
             BlockBrush::Model => "Model",
             BlockBrush::Use => "Use",
             BlockBrush::Link => "Link",

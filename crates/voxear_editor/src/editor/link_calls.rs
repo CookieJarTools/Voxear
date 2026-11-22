@@ -287,6 +287,7 @@ impl Editor {
             "view.set" => self.view_set(args),
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
+            "blocks.restore" => self.blocks_restore(args),
             "graph.comments" => self.graph_comments(args),
             "graph.comment.add" | "graph.comment.set" | "graph.comment.remove" => {
                 self.refuse_while_playing("change a graph")?;
@@ -2140,6 +2141,38 @@ impl Editor {
         }
         // A block a world did not hold is drawn as its file says from this frame.
         voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
+        done(json!({ "changed": changed }))
+    }
+
+    fn blocks_restore(&mut self, args: &Json) -> Called {
+        use voxear_terrain::blocks::BlockWorld;
+        const MOST: i64 = 4_000_000;
+        let (Some(from), Some(to)) = (opt_vector(args, "from")?, opt_vector(args, "to")?) else {
+            return Err(bad("the points are missing"));
+        };
+        let (from, to) = (Vec3::from_array(from), Vec3::from_array(to));
+        let mut changed = 0;
+        for (entity, corner, size) in self.block_worlds(args)? {
+            let cell = |p: Vec3| ((p - corner) / size).floor().as_ivec3();
+            let (low, high) = (cell(from.min(to)), cell(from.max(to)));
+            let count = (high - low + 1).as_i64vec3().element_product().max(0);
+            if count > MOST {
+                return Err(bad(format!("{count} blocks are too many at once; the most is {MOST}")));
+            }
+            let cells: Vec<[i32; 3]> = (low.z..=high.z)
+                .flat_map(|z| (low.y..=high.y).flat_map(move |y| (low.x..=high.x).map(move |x| [x, y, z])))
+                .collect();
+            let world = &mut self.game.engine.world;
+            let changes = voxear_engine::blocks::restored(world, entity, &cells);
+            let Some(before) = ObjState::of(world, entity) else { continue };
+            let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
+            let count = blocks.set_blocks(changes);
+            if count > 0 {
+                world.insert(entity, blocks);
+                changed += count;
+                self.record_change(entity, before);
+            }
+        }
         done(json!({ "changed": changed }))
     }
 

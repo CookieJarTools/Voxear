@@ -166,6 +166,57 @@ fn a_roads_points_are_set_on_the_ground_found_by_place_and_undone() {
 }
 
 #[test]
+fn blocks_built_and_dug_by_hand_are_restored_to_the_ground_as_generated() {
+    let Some((_dir, mut renderer, mut editor)) = open() else { return };
+    // Wait for the world to make ground under its viewer, where the Scene view looks.
+    let began = Instant::now();
+    let (at, generated) = loop {
+        frames(&mut editor, &mut renderer, 5);
+        let world = &editor.game.engine.world;
+        let made = world
+            .query_ref::<(voxear_ecs::Entity, &voxear_engine::blocks::BlockWorldAsset)>()
+            .into_iter()
+            .find_map(|(_, asset)| asset.base.chunks().find(|(_, chunk)| !chunk.is_air()).map(|(key, _)| *key));
+        if let Some([cx, cy, cz]) = made {
+            let at = [cx * 32 + 8, cy * 32 + 31, cz * 32 + 8];
+            let blocks = world.query_ref::<&voxear_terrain::blocks::BlockWorld>();
+            let block = blocks.into_iter().next().map(|blocks| blocks.blocks.get(at)).unwrap();
+            break (at, block);
+        }
+        assert!(began.elapsed() < PATIENCE, "no ground made");
+    };
+    let corner = editor
+        .game
+        .engine
+        .world
+        .query_ref::<(&voxear_terrain::blocks::BlockWorld, &voxear_scene::Transform)>()
+        .into_iter()
+        .next()
+        .map(|(blocks, transform)| (transform.position, blocks.block_size))
+        .unwrap();
+    let point = |cell: [i32; 3]| {
+        let (origin, size) = corner;
+        [0, 1, 2].map(|axis| origin[axis] + (cell[axis] as f32 + 0.5) * size)
+    };
+    // A box of stone built round it, over the ground and in it, then put back.
+    let from = point([at[0] - 2, at[1] - 3, at[2] - 2]);
+    let to = point([at[0] + 2, at[1] + 2, at[2] + 2]);
+    let stone = json!({ "path": "Blocks/Buildings/Stone Bricks.block" });
+    let filled = done(&mut editor, &mut renderer, "blocks.fill", json!({ "from": from, "to": to, "block": stone }));
+    assert!(filled["changed"].as_u64().unwrap() > 0);
+    let restored = done(&mut editor, &mut renderer, "blocks.restore", json!({ "from": from, "to": to }));
+    assert_eq!(restored["changed"], filled["changed"], "every block changed by hand put back");
+    let world = &editor.game.engine.world;
+    let blocks = world.query_ref::<&voxear_terrain::blocks::BlockWorld>().into_iter().next().unwrap().blocks.clone();
+    assert_eq!(blocks.get(at), generated);
+    // One step to undo: the stone back.
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    let world = &editor.game.engine.world;
+    let blocks = world.query_ref::<&voxear_terrain::blocks::BlockWorld>().into_iter().next().unwrap().blocks.clone();
+    assert_ne!(blocks.get(at), generated, "undone, the stone is back");
+}
+
+#[test]
 fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
     let Some((_dir, mut renderer, mut editor)) = open() else { return };
     let made = done(

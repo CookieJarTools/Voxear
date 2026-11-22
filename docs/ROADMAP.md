@@ -3863,9 +3863,22 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   world with its blocks and found from a place; road calls set, found and undone in the editor; scripts' whole
   components. Manual: World Building ▸ Roads. Not done: stairs as steps, junctions blending two grades, a road
   asked of the generator's town roads, bridges kept over water of their own.
-- **Placing tools and nav for placed models** (stage 3): the Placement component, a palette of prefabs, lining up
-  along a road, a prefab brush, scattering in an area; walkable mesh colliders in block nav, doors; box models with
-  one bone and no clips drawn unskinned.
+- ~~**Placing tools and nav for placed models:**~~ done (stage 3). The Placement component (footprint, front, door);
+  lining up prefabs along a Road facing it, set back a little more or less each, no two alike side by side, skipping
+  what Placements and Ground Fits take; scattering over an outline or an Area Fill by density; one prefab placed
+  facing the road nearest; each made on the ground without its own fit, one step to undo, the same seed the same
+  street. The Prefab Brush component and Scene view tool: up to six prefabs picked with their pictures, Paint
+  strokes by radius and density, random or set turn, scale range, lean with ground, steepest slope, Shift to take
+  away, Single clicks with R turning, facing the road. Walkable: a still collider stamped into block navigation by
+  the cells its surfaces pass through, only the chunks it reaches rebuilt as it moves, a door left open;
+  `navigation.status` counts them. Box models of one bone and no clips drawn with no skin. C#: `Placement`,
+  `Placing.LineUp`, `Placing.Scatter`, `PlacingChoice`, `LineUpSettings`, `RoadSide`, `PrefabBrush`, `BrushMode`,
+  `Walkable`. `vox editor call`: `place.prefab`, `place.line_up`, `place.scatter`, `place.brush`. Tests: lining up
+  and scattering; a walkable platform stood on and a door left open in a streamed world; a street lined up through
+  the editor, facing the road, undone as one step; scripts' components; a one-bone box model unskinned. Manual:
+  World Building ▸ Placing Prefabs, Navigation ▸ Walkable Models, Box Models. Not done: a grid panel of a folder's
+  prefabs (the Prefab Brush's pickers show their pictures), kits baked once per prefab (each instance is stamped),
+  doors that block when shut.
 - **Painted maps** (stage 4): Land, Height and Biome maps kept in tiles where painted, a Painted Map node, brushes
   beside Build with a quick preview.
 - **World Areas and Routes** (stage 5): areas with tags and data the game asks about, structures kept to or out of

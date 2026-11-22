@@ -4471,8 +4471,8 @@ var edits = Terrain.CaptureEdits();                           // for a save, or 
 
 ## World building
 
-*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills. Planned: placing tools, painted
-maps, areas and routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
+*Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills, placing prefabs, walkable models.
+Planned: painted maps, areas and routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
 first and crafted on top, without storing blocks for what is placed.
 
 **World layers** (`voxear_terrain::blocks::world_layers`). A `WorldLayers` holds every layer of a world in the world's
@@ -4517,6 +4517,32 @@ over a tunnel the ground. An Area Fill is a `FitLayer` with a palette, levelling
 answers `Roads.Nearest` through the scripts' `WORLD_ASK` call and `roads.nearest`. In the editor `RoadHandles`
 drag points onto the ground without the road (`ground_fit::ground_under`), set widths, add and take away points, and
 snap an end onto another road's middle.
+
+**Placing prefabs** (`voxear_engine::prefab_placing`). A prefab's root `Placement` gives its footprint (size across
+and along its front, centre), its front's turn and its door. `line_up` walks a road's line by arc length, a side at a
+time, picking candidates by weight from a stable hash of the seed, side and count (not the one just placed where
+another can be had), standing each its half depth plus a jittered setback past the edge, turned so its front faces
+back across the road's normal, and steps a metre on where its footprint meets one taken (oriented rectangles apart
+by their sides). `scatter` tries one place a cell of a grid sized by density, inside the outline and clear of the
+rest. `taken` gathers the footprints of Placements and Ground Fits. The editor's `place.*` calls make each as a prefab
+instance landed on the ground without its own fit (`ground_fit::landing`, else `ground_under`), each an `Exists` step
+folded into one (`History::group_since`). The `PrefabBrush` component drives the Scene view brush
+(`editor::prefab_brushes`): dabs every three quarters of a radius scatter into a circle, skip ground steeper than its
+limit (from the bare ground a metre either way), scale and lean each; Shift takes away the brush Obj's children
+within the radius; Single places one, turned by R. Scripts reach a prefab's Placement through the services
+(`ScriptServices::prefab_placement`), and `Placing.LineUp` and `Placing.Scatter` ask `WORLD_ASK` where and make the
+prefabs themselves on the ground under a block ray.
+
+**Walkable models** (`voxear_engine::walkable_models`). The still colliders of Objs marked Walkable (not doors) are
+sampled half a block apart over each triangle (`acoustics::shape`), and each cell a sample falls in is stamped as
+`MODEL_BLOCK` (a number no world uses, which the walk table takes as whole ground) into a copy of the world's chunk,
+for navigation alone (`for_navigation`, used by `navigation::update` and `nav_of`). Stamped chunks are kept by the
+world chunk's pointer and a hash of their cells, so a block change elsewhere or a model unmoved keeps them, and
+navigation, which rebuilds chunks whose `Arc` changed, rebuilds only those a model came to, left or moved in.
+
+**Box models without skin.** A box model of one bone and no clips is prepared with its part unskinned
+(`BoxModel::prepared`): its vertices are built at rest in model space, so it is drawn as a still model is, its bone
+kept for attachments and its vertices' weights kept for what reads them.
 
 **Streams With Ground** (`voxear_engine::ground_streaming`). The streamer keeps the near columns made and let go
 since it was last asked (`take_moves`); `blocks::stream` puts each world's into `GroundMoves` every frame. While

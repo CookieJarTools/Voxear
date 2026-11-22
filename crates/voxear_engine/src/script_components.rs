@@ -521,6 +521,16 @@ mod tests {
         whole_values(&mut world, obj, AREA_FILL << 2 | ADD, Some([0.0; 4])).unwrap();
         whole_texts(&mut world, obj, AREA_FILL << 1 | CHANGE, r#"{"level":"level","pattern":["12"]}"#).unwrap();
         assert_eq!(world.get::<AreaFill>(obj).unwrap().level, crate::roads::AreaLevel::Level);
+        // A Placement, a Prefab Brush and a Walkable, the same way.
+        for which in [PLACEMENT, PREFAB_BRUSH, WALKABLE] {
+            whole_values(&mut world, obj, which << 2 | ADD, Some([0.0; 4])).unwrap();
+        }
+        whole_texts(&mut world, obj, PLACEMENT << 1 | CHANGE, r#"{"size":[10,8],"front":90}"#).unwrap();
+        assert_eq!(world.get::<Placement>(obj).unwrap().size, [10.0, 8.0]);
+        whole_texts(&mut world, obj, PREFAB_BRUSH << 1 | CHANGE, r#"{"mode":"single","radius":3}"#).unwrap();
+        assert_eq!(world.get::<PrefabBrush>(obj).unwrap().mode, crate::prefab_placing::BrushMode::Single);
+        whole_texts(&mut world, obj, WALKABLE << 1 | CHANGE, r#"{"door":true}"#).unwrap();
+        assert!(world.get::<Walkable>(obj).unwrap().door);
 
         let near = world.spawn((voxear_scene::Transform::default(),));
         world.insert(obj, LodGroup::of(&[near]));

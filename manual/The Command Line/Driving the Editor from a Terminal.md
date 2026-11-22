@@ -193,6 +193,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `ground_fit.land`, `world_layers.status`, `world_layers.hide` | Set an Obj with a Ground Fit down on the ground without its own cut, list each world's layers, and hide them to see the bare ground (see [[World Layers]]) |
 | `blocks.columns` | Each world of blocks without end's columns made, and those made and let go last frame, and how many Objs are kept while their ground is away (see [[Streams With Ground]]) |
 | `road.set_points`, `road.set_mix`, `area_fill.set_outline`, `roads.nearest` | Set a Road's points, set down on the ground with `land`, a Road's or an Area Fill's blocks and pattern, and an Area Fill's outline, and find the road nearest a place (see [[Roads]]) |
+| `place.prefab`, `place.line_up`, `place.scatter`, `place.brush` | Make prefabs on the ground: one, facing the road nearest with `face_road`; lined up along a Road; scattered over an outline or an Area Fill; or a stroke of the Prefab Brush, each call one step to undo (see [[Placing Prefabs]]) |
 | `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
 | `nav_agent.set_destination` | Send an Obj's Nav Agent somewhere, or stop it |

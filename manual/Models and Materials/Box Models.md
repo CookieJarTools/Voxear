@@ -416,6 +416,12 @@ A box model's bones are a skeleton like any animated model's, and every box move
 
 To make one walk, add a [[Mob Motion]] to the Obj that draws it, and a [[Block Mobs|Block Mob]] to have it find its own way through a Block World. It animates the model from how the Obj moves, using the roles of its bones. The Model window's **Motion** mode shows the same motion on the model while you build it.
 
+## Still box models: crates, walls and buildings
+
+A box model with one bone and no clips is drawn as it stands, with no skin, as a model from a file is: nothing could move its boxes apart, so nothing is posed each frame. A building, a crate or a wall made in the Model window costs no more to draw than any still model, however many of them a city has.
+
+To make one that things stand on and walk through, add a **Collider** with **Shape** set to **Mesh** to its Obj, and, in a world of blocks, a **Walkable** so its floors and doorways join the navigation (see [[Walkable Models]]).
+
 ## Not done yet
 
 - A brush wider than one pixel.

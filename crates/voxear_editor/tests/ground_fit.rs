@@ -71,6 +71,10 @@ fn open() -> Option<(tempfile::TempDir, Renderer, Editor)> {
         obj.enabled.clear();
     }
     voxear_engine::scene_file::write(&scene_path, &scene).unwrap();
+    // A small house of a kit, 4 m square, facing +z.
+    std::fs::create_dir_all(folder.join("Kits")).unwrap();
+    let hut = "format = 1\n\n[[obj]]\nid = 1\nname = \"Hut\"\nplacement = { size = [4.0, 4.0] }\n";
+    std::fs::write(folder.join("Kits/Hut.prefab"), hut).unwrap();
 
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,
@@ -83,6 +87,42 @@ fn open() -> Option<(tempfile::TempDir, Renderer, Editor)> {
     let mut editor = Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frames(&mut editor, &mut renderer, 2);
     Some((dir, renderer, editor))
+}
+
+#[test]
+fn houses_are_lined_up_along_a_road_facing_it_and_undone_as_one_step() {
+    let Some((dir, mut renderer, mut editor)) = open() else { return };
+    let _ = dir;
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Street", "position": [100.0, 0.0, 100.0] }));
+    let road = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": road, "component": "road" }));
+    let points = json!([[0.0, 0.0, 0.0, 5.0], [60.0, 0.0, 0.0, 5.0]]);
+    done(&mut editor, &mut renderer, "road.set_points", json!({ "obj": road, "points": points, "land": true }));
+    let count = |editor: &Editor| {
+        let instances = editor.game.engine.world.query_ref::<&voxear_engine::prefab::PrefabInstance>();
+        instances.without::<voxear_scene::Destroying>().into_iter().count()
+    };
+    let before = count(&editor);
+    let prefabs = json!([{ "prefab": { "path": "Kits/Hut.prefab" } }]);
+    let lined = done(&mut editor, &mut renderer, "place.line_up", json!({ "road": road, "prefabs": prefabs, "seed": 3 }));
+    let objs = lined["objs"].as_array().unwrap().len();
+    assert!(objs >= 8, "{lined}");
+    let world = &editor.game.engine.world;
+    let huts: Vec<(voxear_core::math::Vec3, voxear_core::math::Quat)> = world
+        .query_ref::<(&voxear_engine::prefab::PrefabInstance, &voxear_scene::Transform)>()
+        .into_iter()
+        .map(|(_, transform)| (transform.position, transform.rotation))
+        .collect();
+    assert_eq!(huts.len(), objs);
+    // Each faces the road: its front, +z, towards the road's middle line at z 100.
+    for (position, rotation) in &huts {
+        let front = *rotation * voxear_core::math::Vec3::Z;
+        assert!(front.z * (100.0 - position.z) > 0.0, "a hut at {position} faces {front}");
+        assert!((position.z - 100.0).abs() >= 2.5 + 2.0, "set back from the edge: {position}");
+    }
+    let undone = done(&mut editor, &mut renderer, "undo", json!({}));
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(count(&editor), before, "one step took every hut back: {undone}");
 }
 
 #[test]

@@ -624,7 +624,8 @@ fn number_placed(content: &mut Content, file: &mut BlockFile, owner: &str, named
 /// numbered after (see [`with_covered`]).
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::blocks::structure::{
-        Dungeon, DungeonBlocks, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
+        Dungeon, DungeonBlocks, PlacedStructure, StructureBlocks, StructureSource, Town, TownHouseKind, TownPiece,
+        WorldStructures,
     };
     let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
         return file.clone();
@@ -634,8 +635,15 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     let biome_guids: Vec<Option<AssetGuid>> =
         biomes.iter().map(|reference| content.biome(reference).map(|(guid, _)| guid)).collect();
     let mut list = Vec::new();
+    let mut sources = Vec::new();
     let mut turns = Turns::new();
     for reference in &references {
+        // Each file named by its GUID where the project knows it, so scripts compare them as their fields hold them.
+        let guid_of = |content: &Content, named: &str| match content.parse(named).ok().and_then(|found| found.guid()) {
+            Some(guid) => guid.to_string(),
+            None => named.to_string(),
+        };
+        let mut source = StructureSource { structure: guid_of(content, reference), ..StructureSource::default() };
         let Some((_, structure)) = content.structure(reference) else {
             tracing::warn!("a world of blocks lists the structure {reference}, which is not in the project");
             continue;
@@ -757,6 +765,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
                 };
                 let middle = town.middle.as_deref().and_then(|named| piece(content, &mut file, &mut turns, named));
+                source.middle =
+                    town.middle.as_deref().filter(|_| middle.is_some()).map(|named| guid_of(content, named));
                 // Each kind of house with the world's biomes it stands in, by their place in the world's list.
                 let in_biomes = |content: &mut Content, named: &[String]| -> Vec<usize> {
                     let wanted: Vec<Option<AssetGuid>> =
@@ -768,6 +778,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 for house in &town.houses {
                     let Some(piece) = piece(content, &mut file, &mut turns, &house.structure) else { continue };
                     let biomes = in_biomes(content, &house.biomes);
+                    source.houses.push(guid_of(content, &house.structure));
                     houses.push(TownHouseKind {
                         piece,
                         weight: house.weight,
@@ -806,6 +817,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             .filter(|(_, guid)| guid.is_some() && wanted.contains(guid))
             .map(|(at, _)| at)
             .collect();
+        sources.push(source);
         list.push(PlacedStructure {
             placement: structure.placement.clone(),
             ground: structure.ground,
@@ -815,7 +827,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
         });
     }
     if let Some(generate) = file.generate.as_mut() {
-        generate.built = Some(Arc::new(WorldStructures { list, turns }));
+        generate.built = Some(Arc::new(WorldStructures { list, turns, sources }));
     }
     // And what those blocks show as while covered.
     with_covered(content, &mut file);

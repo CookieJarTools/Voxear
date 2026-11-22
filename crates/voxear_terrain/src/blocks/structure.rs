@@ -400,6 +400,19 @@ pub struct PlacedStructure {
 pub struct WorldStructures {
     pub list: Vec<PlacedStructure>,
     pub turns: std::collections::BTreeMap<BlockId, [BlockId; 8]>,
+    /// What each structure of the list was read from, in the same order,
+    /// where whoever read them says: for scripts to name them.
+    pub sources: Vec<StructureSource>,
+}
+
+/// The files a structure of a world was read from: its `.structure`'s
+/// reference, and for a town, its middle's and each of its kinds of house's,
+/// in the order of the town's list.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StructureSource {
+    pub structure: String,
+    pub middle: Option<String>,
+    pub houses: Vec<String>,
 }
 
 impl WorldStructures {
@@ -573,6 +586,10 @@ struct Part {
     /// How its pieces were turned, for the states of its blocks to turn.
     turns: u8,
     mirrored: bool,
+    /// A town's house: its kind, by its place in the town's list, and the
+    /// block just outside its door, from its middle. None for a town's
+    /// middle and for a structure of its own.
+    house: Option<(usize, [i32; 2])>,
 }
 
 impl Part {
@@ -604,7 +621,8 @@ impl Town {
         let mut parts = Vec::new();
         if let Some(middle) = &self.middle {
             let pieces = model_pieces(middle.size, &middle.blocks);
-            parts.push(Part { at: centre, pieces, ground: middle.ground, sink: middle.sink, turns: 0, mirrored: false });
+            let (ground, sink) = (middle.ground, middle.sink);
+            parts.push(Part { at: centre, pieces, ground, sink, turns: 0, mirrored: false, house: None });
         }
         let middle_radius = self.middle.as_ref().map_or(1.5, TownPiece::radius);
         let streets = self.streets(&mut draws, centre, middle_radius, ground);
@@ -720,7 +738,8 @@ impl Town {
                 continue;
             }
             stubs.extend(stub);
-            parts.push(Part { at, pieces, ground: house.ground, sink: house.sink, turns, mirrored: false });
+            let (ground, sink, house) = (house.ground, house.sink, Some((which, door)));
+            parts.push(Part { at, pieces, ground, sink, turns, mirrored: false, house });
             placed += 1;
             built[which] += 1;
         }
@@ -1366,6 +1385,84 @@ pub fn dungeons_near(
     found
 }
 
+/// A town as a world lays it out, worked out from its site and the
+/// generator's ground alone, with no chunk made: the structure's place in
+/// the world's list, its site, the block of its middle, and its buildings,
+/// the middle first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TownPlan {
+    pub which: usize,
+    pub site: Site,
+    pub centre: [i32; 2],
+    pub buildings: Vec<TownBuilding>,
+}
+
+/// A building of a town: its kind of house by its place in the town's list
+/// (none for its middle), the block its middle stands over, the block its
+/// lowest blocks are laid in, its size before it is turned, how many
+/// quarter turns it is turned (its door, on its model's -z side, then faces
+/// that way round), and the block just outside its door.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TownBuilding {
+    pub house: Option<usize>,
+    pub at: [i32; 2],
+    pub floor: i32,
+    pub size: [u32; 3],
+    pub turns: u8,
+    pub door: Option<[i32; 2]>,
+}
+
+/// The towns of `structures` whose sites lie within `reach` metres of
+/// `near` (plus each town's own reach), in metres in the generator's world,
+/// over the ground `world` makes, laid as `at` says (as
+/// [`dungeons_near`]): each laid out as building its chunks lays it, its
+/// buildings standing on the generator's ground. World layers over the
+/// ground are not looked at.
+pub fn towns_near(
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    at: (f32, [f32; 2], i32, bool),
+    near: [f32; 2],
+    reach: f32,
+) -> Vec<TownPlan> {
+    let ground = Ground { world, size: at.0, position: at.1, biomes, halved: at.3, flat: None };
+    let checks = SiteFits::new(Ground { world, size: at.0, position: at.1, biomes, halved: at.3, flat: None }, structures);
+    let mut found = Vec::new();
+    for (which, structure) in structures.list.iter().enumerate() {
+        let StructureBlocks::Town(town) = &structure.blocks else { continue };
+        let far = reach + town.reach() * at.0;
+        let sites = structure.placement.tries_near(world.seed(), near, near, far);
+        let fitting = checks.fits(structure, &sites);
+        for (site, fits) in sites.into_iter().zip(fitting) {
+            if !fits || kept_out(structures, &checks, which, &site, at.0, world.seed()) {
+                continue;
+            }
+            let centre = [0, 1].map(|axis| ((site.at[axis] - at.1[axis]) / at.0).floor() as i32);
+            let (parts, _) = town.layout(site.seed, centre, &ground);
+            let buildings = parts
+                .iter()
+                .map(|part| {
+                    let piece = match part.house {
+                        Some((kind, _)) => &town.houses[kind].piece,
+                        None => town.middle.as_ref().expect("a town's part that is no house is its middle"),
+                    };
+                    TownBuilding {
+                        house: part.house.map(|(kind, _)| kind),
+                        at: part.at,
+                        floor: ground.top(part.at[0], part.at[1]) + 1 - part.sink,
+                        size: piece.size,
+                        turns: part.turns,
+                        door: part.house.map(|(_, door)| [part.at[0] + door[0], part.at[1] + door[1]]),
+                    }
+                })
+                .collect();
+            found.push(TownPlan { which, site, centre, buildings });
+        }
+    }
+    found
+}
+
 /// Whether a site of structure `which` is kept out by a site of one listed
 /// before it standing too near: within both their footprints, or the
 /// distance either keeps. Towns' streets and buildings are not looked at.
@@ -1589,7 +1686,8 @@ fn build_looking(
                         pieces.retain(|(at, piece)| *vine == AIR || piece != vine || !buried(at));
                     }
                     let (turns, mirrored) = (site.turns, site.mirrored);
-                    vec![Part { at: block, pieces, ground: structure.ground, sink: structure.sink, turns, mirrored }]
+                    let (ground, sink) = (structure.ground, structure.sink);
+                    vec![Part { at: block, pieces, ground, sink, turns, mirrored, house: None }]
                 }
             };
             for mut part in parts {
@@ -2259,6 +2357,69 @@ mod tests {
             let again = make([i as i32 % 6 - 3, i as i32 / 6 - 3]);
             assert_eq!(count(&again, 12), count(&columns[i], 12), "column {i} made again");
             assert_eq!(count(&again, 11), count(&columns[i], 11));
+        }
+    }
+
+    #[test]
+    fn a_towns_plan_worked_out_with_no_chunk_made_is_the_town_its_chunks_build() {
+        let world = Preset::RollingHills.world();
+        let town = PlacedStructure {
+            placement: Placement {
+                spacing: 120.0,
+                separation: 60.0,
+                chance: 1.0,
+                slope: 25.0,
+                height: Some([1.0, 400.0]),
+                ..Placement::default()
+            },
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Town(village()),
+            biomes: Vec::new(),
+        };
+        let structures = WorldStructures { list: vec![town], ..WorldStructures::default() };
+        let laid = (1.0, [0.0, 0.0], -4, false);
+        let plans = towns_near(&structures, &world, None, laid, [0.0, 0.0], 64.0);
+        assert!(!plans.is_empty(), "a town near the middle");
+        assert_eq!(towns_near(&structures, &world, None, laid, [0.0, 0.0], 64.0), plans, "the same every time");
+        // Every column the first town's buildings stand in, built as the streamer builds them.
+        let plan = &plans[0];
+        let mut columns: Vec<[i32; 2]> = Vec::new();
+        for building in &plan.buildings {
+            for at in [building.at, building.door.unwrap_or(building.at)] {
+                let column = at.map(|v| v.div_euclid(32));
+                if !columns.contains(&column) {
+                    columns.push(column);
+                }
+            }
+        }
+        let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
+        for &column in &columns {
+            build(&mut chunks, &structures, &world, None, laid, column, 2, None);
+        }
+        let block_at = |[x, y, z]: [i32; 3]| {
+            let key = [x.div_euclid(32), y.div_euclid(32), z.div_euclid(32)];
+            let chunk = chunks.iter().find(|(k, _)| *k == key).map(|(_, chunk)| chunk);
+            chunk.map_or(AIR, |chunk| {
+                chunk.get(x.rem_euclid(32) as u32, y.rem_euclid(32) as u32, z.rem_euclid(32) as u32)
+            })
+        };
+        // Its middle a well of block 10, its houses walls of block 12, each floor where the plan says.
+        let middle = &plan.buildings[0];
+        assert_eq!(middle.house, None, "the middle first");
+        assert_eq!(middle.at, plan.centre);
+        assert_eq!(block_at([middle.at[0], middle.floor, middle.at[1]]), 10, "the well's floor");
+        assert!(plan.buildings.len() > 4, "{} buildings", plan.buildings.len());
+        for house in &plan.buildings[1..] {
+            assert!(house.house.is_some());
+            assert_eq!(block_at([house.at[0], house.floor, house.at[1]]), 12, "a floor at {:?}", house.at);
+            assert_eq!(block_at([house.at[0], house.floor + 1, house.at[1]]), AIR, "inside, over it");
+            // The block outside its door is clear at the floor's level and the one over it.
+            let door = house.door.expect("a house has a door");
+            let half = house.size[2] as i32 / 2 + 1;
+            let out = [door[0] - house.at[0], door[1] - house.at[1]];
+            assert_eq!(out[0].abs().max(out[1].abs()), half, "just outside its front wall: {out:?}");
+            assert_eq!(block_at([door[0], house.floor + 1, door[1]]), AIR, "the door's way clear at {door:?}");
         }
     }
 

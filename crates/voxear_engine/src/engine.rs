@@ -193,6 +193,17 @@ impl Engine {
         ran
     }
 
+    /// Makes a tool's call of a scripts' `[Call]` method against this
+    /// engine's world, as while playing: what it returned, as JSON (see
+    /// [`ScriptRuntime::game_call`]).
+    pub fn game_call(&mut self, type_name: &str, method: &str, args: &str) -> anyhow::Result<String> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        let ran = scripts.game_call(&mut self.world, type_name, method, args);
+        let doomed = scripts.take_obj_destroys();
+        self.destroy_objs(&doomed);
+        ran
+    }
+
     /// Runs a check a guide's step names against this engine's world, as
     /// while playing (see [`ScriptRuntime::run_check`]).
     pub fn run_check(&mut self, type_name: &str, method: &str) -> anyhow::Result<Result<(), String>> {

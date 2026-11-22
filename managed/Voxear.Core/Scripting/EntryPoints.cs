@@ -156,6 +156,41 @@ internal static unsafe class EntryPoints
 	}
 
 	/// <summary>
+	/// Makes a tool's call of a [Call] method, its arguments a JSON object: 0 when it ran, with what it returned as
+	/// JSON written into buffer when it fits and its length into written; 1 when there is no such call; 2 when the
+	/// arguments were wrong, with what was wrong written likewise; 3 when it threw, which is logged, with what it said.
+	/// </summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static int GameCall(byte* type, int typeLength, byte* method, int methodLength, byte* arguments, int argumentsLength, byte* buffer, int capacity, int* written)
+	{
+		*written = 0;
+		string answer;
+		int status;
+		try
+		{
+			var ran = GameCalls.Run(Native.Utf8(type, typeLength), Native.Utf8(method, methodLength), Native.Utf8(arguments, argumentsLength), out answer);
+			status = ran switch
+			{
+				GameCalls.Ran.Done => 0,
+				GameCalls.Ran.NoSuchCall => 1,
+				_ => 2,
+			};
+		}
+		catch (Exception exception)
+		{
+			Log.Exception(exception);
+			(answer, status) = (exception.Message, 3);
+		}
+		var bytes = Encoding.UTF8.GetBytes(answer);
+		*written = bytes.Length;
+		if (bytes.Length <= capacity)
+		{
+			bytes.CopyTo(new Span<byte>(buffer, capacity));
+		}
+		return status;
+	}
+
+	/// <summary>
 	/// Runs a check a guide's step names: 0 when it passes; 1 when it does not, with what is still wrong written into
 	/// buffer, cut to fit, and its length into written; 2 when there is no such check; 3 when it threw, which is logged.
 	/// </summary>

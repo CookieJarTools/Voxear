@@ -1,8 +1,10 @@
-//! Columns and far figures from C#: a behaviour in a world of blocks without
-//! end, as the Infinite World template makes it, hears the columns made
-//! round it and let go once the camera leaves, asks whether the ground and
-//! the nav are made where it stands and far off, and sets a figure to be
-//! drawn far off (headless: the figure's place, not its model). A file of its own, so it runs in a process of its own,
+//! Columns, far figures, towns and the game's own calls from C#: a
+//! behaviour in a world of blocks without end, as the Infinite World
+//! template makes it, hears the columns made round it and let go once the
+//! camera leaves, asks whether the ground and the nav are made where it
+//! stands and far off, sets a figure to be drawn far off (headless: the
+//! figure's place, not its model), and reads the towns near it, never made;
+//! and its `[Call]` method is listed with its arguments and called. A file of its own, so it runs in a process of its own,
 //! since .NET starts only once per process. Skips itself without .NET.
 
 use std::time::{Duration, Instant};
@@ -19,7 +21,8 @@ use voxear_scene::{Name, Transform};
 
 const DT: f32 = 1.0 / 30.0;
 
-const SCRIPT: &str = r##"using System.Numerics;
+const SCRIPT: &str = r##"using System.Linq;
+using System.Numerics;
 using Voxear;
 
 namespace ColumnsTest;
@@ -54,6 +57,12 @@ public sealed class ColumnsScript : Behaviour
 			Log.Info($"made {made > 0} far {Blocks.IsMade(here + new Vector3(5000f, 0f, 0f))}");
 			var figure = new FarFigure(7, Prefab.Load("Characters/Figure.prefab"), here + new Vector3(0f, 0f, 300f));
 			FarFigures.Set([figure]);
+			var towns = Towns.Near(here, 3000f);
+			var town = towns.FirstOrDefault();
+			var well = Structure.Load("Structures/Pieces/Well.structure");
+			var houses = town?.Houses.ToList() ?? [];
+			var doors = houses.All(house => house.Door is { } door && Vector3.Distance(door, house.Position) < house.Size.Length());
+			Log.Info($"towns {towns.Count > 0} {houses.Count > 4} {town?.Buildings[0].Structure == well} {houses.All(house => house.Structure.IsValid && house.Structure != well)} {doors}");
 		}
 		if (ground && !ready && Navigation.IsReady(here, 16f))
 		{
@@ -66,6 +75,18 @@ public sealed class ColumnsScript : Behaviour
 			Log.Info("let go True");
 		}
 	}
+
+	[Call("columns.echo", About = "Says back what it was given, so many times, and where.")]
+	public static Echoed Echo(string text, int times = 2, Vector3 at = default)
+	{
+		return new Echoed { Said = string.Concat(Enumerable.Repeat(text, times)), At = at };
+	}
+}
+
+public sealed class Echoed
+{
+	public string Said = string.Empty;
+	public Vector3 At;
 }
 "##;
 
@@ -125,6 +146,16 @@ fn a_script_hears_columns_made_and_let_go_asks_where_ground_is_made_and_draws_a_
 
     let project = Project::open(&folder).unwrap();
     scripts::build(&project).unwrap();
+    // Its [Call] is listed with its arguments, for tools.
+    let types = voxear_engine::script_types::describe(&project).unwrap();
+    let echo = types.calls.iter().find(|call| call.name == "columns.echo").expect("the call listed");
+    assert_eq!(
+        (echo.type_name.as_str(), echo.method.as_str(), echo.when.as_str()),
+        ("ColumnsTest.ColumnsScript", "Echo", "both")
+    );
+    let args: Vec<(&str, &str, bool)> =
+        echo.args.iter().map(|arg| (arg.name.as_str(), arg.kind.as_str(), arg.required)).collect();
+    assert_eq!(args, [("text", "text", true), ("times", "whole", false), ("at", "vector", false)]);
     let mut engine = Engine::new();
     engine.set_scripts(scripts::start(&project).unwrap().expect("the project has scripts"));
     let mut game = Game::new(project, engine).unwrap();
@@ -134,6 +165,8 @@ fn a_script_hears_columns_made_and_let_go_asks_where_ground_is_made_and_draws_a_
 
     // The ground round the camera is made: told of its columns, the one it stands in among them, and not 5 km off.
     assert!(until(&mut game, &mut |_| said("made True far False")), "{:?}", lines());
+    // The towns within 3 km, worked out with none of their ground made: a well in the middle, houses with doors.
+    assert!(said("towns True True True True True"), "{:?}", lines());
     assert!(said("here 32 True"), "{:?}", lines());
     assert!(until(&mut game, &mut |_| said("ready True")), "{:?}", lines());
     // The figure it set, 300 m ahead, drawn there with no Obj of its own (its model needs a GPU, which this has not).
@@ -163,4 +196,12 @@ fn a_script_hears_columns_made_and_let_go_asks_where_ground_is_made_and_draws_a_
     }
     assert!(until(&mut game, &mut |_| said("let go True")), "{:?}", lines());
     assert_eq!(ghosts(&game), 0);
+
+    // Called as a tool calls it: its arguments by name, one left to its default, and what it gives back as JSON.
+    let answer =
+        game.engine.game_call("ColumnsTest.ColumnsScript", "Echo", r#"{"text": "ab", "at": [1, 2, 3]}"#).unwrap();
+    let answer: serde_json::Value = serde_json::from_str(&answer).unwrap();
+    assert_eq!(answer, serde_json::json!({ "Said": "abab", "At": [1, 2, 3] }), "{answer}");
+    let missing = game.engine.game_call("ColumnsTest.ColumnsScript", "Echo", "{}").unwrap_err();
+    assert!(format!("{missing:#}").contains("`text` is missing"), "{missing:#}");
 }

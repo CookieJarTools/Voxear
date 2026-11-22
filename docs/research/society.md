@@ -403,8 +403,11 @@ itself. Everything else the game already has.
 
 ### The four hooks
 
-**Built** (2026-11-22): hooks 3 and 1, as column events (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`, one event a
-column) and `FarFigures`. The manual's Streams With Ground and Crowds pages show them.
+**Built** (2026-11-22): all four. Hooks 3 and 1 as column events (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`, one
+event a column) and `FarFigures`; hook 2 as `Towns.Near`, without named points on a structure's model (a game keeps
+those itself, by the `Structure` a building is built from); hook 4 as `[Call]` methods with `game.calls` and
+`game.call`, an `About` on the attribute rather than the method's summary. The manual's Streams With Ground,
+Crowds, Structures and Commands pages show them.
 
 **1. Far figures: ghosts drawn from the game's positions.**
 - **Why.** Past Records beyond (250 m) a resident has no Obj, and only the engine's crowd records are drawn far off.

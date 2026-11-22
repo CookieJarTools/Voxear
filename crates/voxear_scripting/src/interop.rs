@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 97;
+pub(crate) const API_VERSION: u32 = 98;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -621,6 +621,8 @@ pub(crate) struct NativeApi {
     pub far_figures: unsafe extern "C" fn(data: *const crate::crowds::FarFigureData, count: i32) -> i32,
     /// `Blocks.IsMade`: whether the ground within a radius of a place is made, 1 or 0.
     pub ground_made: unsafe extern "C" fn(at: *const [f32; 3], radius: f32) -> i32,
+    /// The towns of a world of blocks near a place, as JSON for `Towns`.
+    pub towns_info: unsafe extern "C" fn(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -1319,6 +1321,24 @@ pub(crate) struct ManagedApi {
     /// Tells scripts of the columns of worlds of blocks without end made or
     /// let go this frame (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`).
     pub column_events: Option<unsafe extern "C" fn(events: *const crate::columns::ColumnEventData, count: i32)>,
+    /// Makes a tool's call of a `[Call]` method, its arguments as JSON: 0
+    /// when it ran, what it returned as JSON in `buffer`; 1 for no such
+    /// call; 2 for arguments that were wrong, what was wrong in `buffer`; 3
+    /// when it threw, what it said in `buffer`. `written` is the answer's
+    /// length, written only when it fits.
+    pub game_call: Option<
+        unsafe extern "C" fn(
+            ty: *const u8,
+            ty_len: i32,
+            method: *const u8,
+            method_len: i32,
+            args: *const u8,
+            args_len: i32,
+            buffer: *mut u8,
+            capacity: i32,
+            written: *mut i32,
+        ) -> i32,
+    >,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -2351,6 +2371,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         crowd_records: crate::crowds::crowd_records,
         far_figures: crate::crowds::far_figures,
         ground_made: crate::columns::ground_made,
+        towns_info: crate::services::towns_info,
     }
 }
 

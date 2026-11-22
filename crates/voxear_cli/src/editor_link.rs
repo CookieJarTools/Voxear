@@ -154,7 +154,7 @@ fn describe(
         "3": "no editor is open on the project, and --headless was not given",
         "4": "refused: the game is playing, edits would be lost, or the editor lets tools only read",
     });
-    let asked = ["components", "commands", "kinds"];
+    let asked = ["components", "commands", "kinds", "game.calls"];
     let answers: Option<Vec<Result<Value, LinkError>>> = match connect(&project.root)? {
         Some(mut editor) => Some(asked.iter().map(|call| editor.call(call, json!({}))).collect::<Result<_>>()?),
         None if headless => {

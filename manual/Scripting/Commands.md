@@ -49,3 +49,27 @@ private static string SpawnWave(int count, string kind)
 ```
 
 Typing `SpawnWave 3 Wolves` runs it and prints what it returns. Commands that take values do not show in the editor's command bar.
+
+## Calls for tools
+
+A **call** is a static method that tools reach: `vox editor call` and `vox mcp` list it beside the editor's own calls, so an AI assistant can drive your game's systems as it drives the engine's. Mark it `[Call]` with its name and what it does:
+
+```csharp
+[Call("society.residents", About = "The residents near a place: each one's name, home and what they are doing.")]
+private static List<ResidentInfo> Residents(Vector3 near, float reach = 100f)
+{
+	return Society.Near(near, reach).Select(resident => resident.Info).ToList();
+}
+```
+
+```bash
+vox editor call society.residents near=[120,40,-30] reach=50
+```
+
+- **Arguments** are read by their names: text, toggles, numbers, enums by name, vectors as `[x, y, z]`, Objs as tools name them, and anything else as a save writes it. One with a default may be left out.
+- **What it returns** comes back as a save writes it: numbers, text, lists, dictionaries, and classes by their fields.
+- **When** says when it may be called: while editing and while playing (the default), or only one of them. While editing it runs against the level being edited, the scripts starting first if they have not.
+- **Changes = true** marks a call that changes the level. It runs only where the editor's settings let tools change the project, and what it changed while editing is one step to undo.
+
+`vox editor call game.calls` lists them, each with its arguments, and `game.call` makes one by its name.
+

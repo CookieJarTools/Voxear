@@ -110,6 +110,9 @@ static const uint MODEL_FOLIAGE = PACK_MODEL_FOLIAGE;
 static const uint MODEL_CUSTOM = PACK_MODEL_CUSTOM;
 // It gives off light of its own.
 static const uint MODEL_GLOWS = PACK_MODEL_GLOWS;
+// A plant that bends in the wind, foliage or not: grass, flowers and bushes of box models among them. `bend` says how
+// far it bends, so grass can be told from a tree.
+static const uint MODEL_PLANT = PACK_MODEL_PLANT;
 
 // A model's surface a models program lights, at one pixel: characters, props, creatures, anything drawn from a mesh.
 // Places and ways are in the world; colours are linear.
@@ -133,6 +136,11 @@ struct ModelSurface
     // Its material's number, the same for every model of that material, and what it is (MODEL_FOLIAGE and the rest).
     uint material;
     uint kind;
+    // How far it bends in the wind, as its material has it: 0 for what stands still, 2 for a tuft of grass, up to 4.
+    float bend;
+    // The sun's shadow on light through it, for foliage and plants: its shadow a little way towards the sun, so the
+    // side facing away from the sun is lit through where the side facing it is lit. As `light.shadow` for the rest.
+    float through;
     // Where it shows in the picture, in pixels.
     float2 pixel;
 };

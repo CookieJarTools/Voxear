@@ -27,11 +27,13 @@ float3 run(ModelSurface surface, ModelLighting light)
 
     float against = saturate(dot(-surface.view, light.sunDirection));
     float day = 1.0 - f->night * 0.8;
-    if ((surface.kind & MODEL_FOLIAGE) != 0)
+    // Foliage, and plants that bend in the wind as grass and flowers do (a tree bends little, a rock not at all).
+    float thin = (surface.kind & MODEL_FOLIAGE) != 0 ? 1.0 : saturate((surface.bend - 0.3) / 1.0);
+    if (thin > 0.0)
     {
         // Thin blades and petals let the sun through: seen against it they glow, and a little from every side.
         float through = 0.25 + 0.75 * pow(against, 3.0);
-        color += diffuse * light.sunLight * light.shadow * through * 0.45 * o.foliage_glow * s * day;
+        color += diffuse * light.sunLight * surface.through * through * 0.45 * o.foliage_glow * s * day * thin;
         return color;
     }
     // Against a low sun, the thin edges turned towards it catch its light, where it reaches them.

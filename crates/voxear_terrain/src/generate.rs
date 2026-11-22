@@ -42,6 +42,7 @@ pub mod regions;
 pub mod strata;
 mod landmass;
 pub mod nodes;
+pub mod painted;
 mod starters;
 pub mod structures;
 mod voxels;

@@ -79,6 +79,11 @@ pub struct Landmass {
     pub crags: f32,
     pub erosion: Erosion,
     pub climate: Climate,
+    /// Its world's painted maps, read as it makes its ground (see
+    /// `painted`): not part of what it is, so a world painted keeps its
+    /// generator.
+    #[serde(skip)]
+    pub painted: Option<super::painted::Painted>,
     /// How high the small bumps over all the ground are, in metres.
     pub bumps: f32,
 }
@@ -235,6 +240,7 @@ impl Preset {
             erosion: erosion(0.35, 160.0, 3),
             climate: Climate { humidity: 0.6, ..Climate::default() },
             bumps: 1.5,
+            painted: None,
         };
         match self {
             Preset::RollingHills => base,
@@ -661,6 +667,12 @@ impl Landmass {
         let read =
             |field: Field, part: u32| signed(fractal(NoiseStyle::Fractal, field.size, field.octaves, part, bent));
         let continents = read(self.continents, 3);
+        // Painted land and height, by the place itself, not the bent one: they lie where they were painted.
+        let painted = self.painted.as_ref().map(|painted| painted.maps());
+        let paint = |map: fn(&super::painted::PaintedMaps) -> &super::painted::PaintedMap| {
+            painted.as_ref().and_then(|maps| map(maps).sample(spot.0, spot.1, 0.0)).unwrap_or(0.0)
+        };
+        let (painted_land, painted_height) = (paint(|maps| &maps.land), paint(|maps| &maps.height));
         let ruggedness = read(self.ruggedness, 4);
         // Ridged noise runs its ridges along where the noise under it crosses its middle: long lines that wind and
         // branch, as ranges do.
@@ -668,12 +680,17 @@ impl Landmass {
         let soft = (1.0 - self.sharpness.clamp(0.0, 1.0)) * 0.35;
         let ridged = ridged(bent.over(size), self.ridges.octaves, seed_of(self.seed, 5), soft);
         let peaks = ((ridged - RIDGE_MIDDLE) * RIDGE_SPREAD).clamp(-1.0, 1.0);
-        let across = (continents + 1.0) * 0.5;
-        let ground = smooth(&self.coast, across, 0.0);
+        // Painted land blended into the landmass before the coast curve: painted land grows a coast of its own.
+        let across = ((continents + 1.0) * 0.5 + painted_land).clamp(0.0, 1.0);
+        // And raised or sunk by it besides, so painting sea sinks even ground whose coast curve stays over the sea.
+        let ground = smooth(&self.coast, across, 0.0) + painted_land * 0.6;
         let relief =
             (smooth(&self.inland, across, 1.0) * smooth(&self.relief, (ruggedness + 1.0) * 0.5, 1.0)).clamp(0.0, 1.0);
+        // Painted height raised under the ridges, with more relief where it is high: a painted mountain gets the
+        // generator's own peaks and valleys.
+        let relief = (relief + painted_height.max(0.0) * 0.6).clamp(0.0, 1.0);
         let shape = smooth(&self.peaks, (peaks + 1.0) * 0.5, 0.0);
-        let mut share = ground + relief * shape;
+        let mut share = ground + relief * shape + painted_height * 0.5;
         if self.crags > 0.0 && peaks > 0.0 {
             let crag = fractal(NoiseStyle::Ridged, self.ridges.size / 8.0, 3, 6, bent);
             share += self.crags * relief * peaks * peaks * crag;

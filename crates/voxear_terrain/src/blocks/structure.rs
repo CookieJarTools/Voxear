@@ -2340,7 +2340,7 @@ mod tests {
         let cool = BiomeDef { temperature: [-60.0, split], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let warm = BiomeDef { temperature: [split, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let biomes = Biomes::new(vec![cool, warm], 15.0, 0.3, world.seed());
-        let biomes = WorldBiomes { regions: None, biomes, blocks: Vec::new() };
+        let biomes = WorldBiomes { painted: None, regions: None, biomes, blocks: Vec::new() };
         let ground =
             Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes), halved: false, flat: None };
         let base = village();

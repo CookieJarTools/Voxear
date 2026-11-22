@@ -144,6 +144,22 @@ pub struct BlockGenerate {
     /// columns it touches.
     #[serde(skip)]
     pub layers: Layers,
+    /// Its painted maps (see `generate::painted`): filled in by whoever has
+    /// the world's files, and not part of its settings, so painting makes
+    /// again only the columns it reaches.
+    #[serde(skip)]
+    pub painted: PaintedRef,
+}
+
+/// A world's painted maps, compared as always alike (see
+/// `BlockGenerate::painted`).
+#[derive(Clone, Debug, Default)]
+pub struct PaintedRef(pub Option<crate::generate::painted::Painted>);
+
+impl PartialEq for PaintedRef {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 /// A world's layers, compared as always alike (see `BlockGenerate::layers`).
@@ -245,6 +261,7 @@ impl Default for BlockGenerate {
             built: None,
             floor: BlockFloor::default(),
             layers: Layers::default(),
+            painted: PaintedRef::default(),
         }
     }
 }
@@ -594,7 +611,7 @@ mod tests {
         let blocks: Vec<BiomeBlocks> = (4..=6).map(|top| BiomeBlocks { top, ..BiomeBlocks::default() }).collect();
         let biomes = Biomes::new(list, 15.0, 0.3, world.seed());
         let regions = std::sync::Arc::new(Regions::new(64.0, 16.0, biomes.clone(), std::sync::Arc::new(world.clone())));
-        let placed = WorldBiomes { regions: Some(regions.clone()), biomes, blocks };
+        let placed = WorldBiomes { painted: None, regions: Some(regions.clone()), biomes, blocks };
         file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(placed));
         let map = file.make_ground(Some(&world));
         let position = file.generate.as_ref().unwrap().position;
@@ -652,7 +669,7 @@ mod tests {
         let blocks = vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }];
         let generate = file.generate.as_mut().unwrap();
         generate.levels = Some(levels);
-        generate.placed = Some(std::sync::Arc::new(WorldBiomes { regions: Some(regions), biomes, blocks }));
+        generate.placed = Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: Some(regions), biomes, blocks }));
         let map = file.make_ground(Some(&world));
         let top = |x: i32, z: i32| (-100..400).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
         let tops: Vec<i32> = (0..64 * 64).map(|k| top(k % 64, k / 64)).collect();
@@ -698,7 +715,7 @@ mod tests {
         let blocks = BiomeBlocks { top: 1, steep: 4, steep_slope: 0.7, strata: Some(strata.clone()), ..BiomeBlocks::default() };
         let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let biomes = Biomes::new(vec![land], 15.0, 0.3, world.seed());
-        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { regions: None, biomes, blocks: vec![blocks] }));
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: None, biomes, blocks: vec![blocks] }));
         let map = file.make_ground(Some(&world));
         let generate = file.generate.as_ref().unwrap();
         let (mut shown, mut wrong) = ([0usize; 2], 0);
@@ -763,7 +780,7 @@ mod tests {
             BiomeBlocks { top: 4, under: 5, under_depth: 2, ..BiomeBlocks::default() },
         ];
         let biomes = Biomes::new(vec![cold, mild], 15.0, 0.3, world.seed()).wandering(0.0, 48.0);
-        let placed = WorldBiomes { regions: None, biomes, blocks };
+        let placed = WorldBiomes { painted: None, regions: None, biomes, blocks };
         file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(placed));
         let map = file.make_ground(Some(&world));
         let surface = |map: &BlockMap, x: i32, z: i32| (-40..400).rev().find(|&y| map.get([x, y, z]) != AIR);
@@ -822,7 +839,7 @@ mod tests {
         let place = |amount: f32, depth: f32| {
             let vines = BiomeBlocks { vine: 4, vine_amount: amount, vine_length: [2, 6], vine_depth: depth, ..BiomeBlocks::default() };
             let biomes = Biomes::new(vec![land.clone()], 15.0, 0.3, world.seed());
-            Some(std::sync::Arc::new(WorldBiomes { regions: None, biomes, blocks: vec![vines] }))
+            Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: None, biomes, blocks: vec![vines] }))
         };
         file.generate.as_mut().unwrap().placed = place(0.4, 30.0);
         let map = file.make_ground(Some(&world));
@@ -934,7 +951,7 @@ mod tests {
         let blocks =
             vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }, BiomeBlocks { top: 5, ..BiomeBlocks::default() }];
         let biomes = Biomes::new(vec![land, hollow], 15.0, 0.3, world.seed()).wandering(0.0, 48.0);
-        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { regions: None, biomes, blocks }));
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: None, biomes, blocks }));
         let map = file.make_ground(Some(&world));
         let (mut floors, mut roofs, mut open) = (0, 0, 0);
         for z in 0..128 {

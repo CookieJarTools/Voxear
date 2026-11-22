@@ -519,7 +519,7 @@ fn biomes_read(content: &mut Content, file: &BlockFile) -> BlockFile {
         })
     });
     if let Some(generate) = file.generate.as_mut() {
-        generate.placed = Some(Arc::new(WorldBiomes { regions, biomes, blocks }));
+        generate.placed = Some(Arc::new(WorldBiomes { painted: None, regions, biomes, blocks }));
     }
     file
 }

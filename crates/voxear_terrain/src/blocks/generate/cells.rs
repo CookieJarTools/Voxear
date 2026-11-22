@@ -115,10 +115,13 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     let landed = shapes_land(generate) && !holds_written_land(graph);
     // Nodes written out of a world's land that keep to its regions, given them here where they are not yet.
     let attaching = regions_of(generate).filter(|_| keeps_to_world(graph));
-    if voxels && !rivered && !landed && attaching.is_none() {
+    // Its painted maps, read by its landmass: a generator of its own, known by the maps' handle.
+    let painted = generate.painted.0.clone();
+    if voxels && !rivered && !landed && attaching.is_none() && painted.is_none() {
         return Source::Own(world);
     }
     let lands = if landed || attaching.is_some() { lands_hash(generate) } else { 0 };
+    let lands = lands ^ painted.as_ref().map_or(0, |painted| painted.id.rotate_left(29));
     let own = OwnVoxels {
         overhangs: generate.overhangs.max(0.0),
         caves: generate.caves.clamp(0.0, 1.0),
@@ -135,6 +138,9 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     let mut graph = graph.clone();
     if let Some(regions) = attaching {
         attach(&mut graph, regions);
+    }
+    if let Some(painted) = &painted {
+        attach_painted(&mut graph, painted);
     }
     if graph.output().is_none() {
         graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
@@ -161,6 +167,15 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     }
     moved.push((key, world.clone()));
     made(world)
+}
+
+/// Gives every landmass of `graph` the world's painted maps to read.
+fn attach_painted(graph: &mut crate::generate::Graph, painted: &crate::generate::painted::Painted) {
+    for node in graph.nodes.iter_mut() {
+        if let NodeKind::Landmass(land) = &mut node.kind {
+            land.painted = Some(painted.clone());
+        }
+    }
 }
 
 /// The biomes `generate` lists, as read; none before they are.

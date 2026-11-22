@@ -45,6 +45,7 @@ fn escarpments() -> Arc<WorldGen> {
     let generate = crate::blocks::generate::BlockGenerate {
         levels: Some(levels),
         placed: Some(Arc::new(crate::generate::WorldBiomes {
+            painted: None,
             regions: Some(regions),
             biomes,
             blocks: vec![crate::generate::BiomeBlocks { top: 4, ..Default::default() }],

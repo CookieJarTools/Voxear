@@ -170,6 +170,7 @@ fn escarpments() -> Arc<WorldGen> {
     let generate = BlockGenerate {
         levels: Some(levels),
         placed: Some(Arc::new(WorldBiomes {
+            painted: None,
             regions: Some(regions),
             biomes,
             blocks: vec![BiomeBlocks { top: 1, ..Default::default() }],

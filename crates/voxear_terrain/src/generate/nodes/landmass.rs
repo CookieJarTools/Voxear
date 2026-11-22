@@ -31,6 +31,10 @@ pub struct Land {
     pub crags: f32,
     pub erosion: Erosion,
     pub bumps: f32,
+    /// The painted maps of the world it is made for, given it as its world's
+    /// generator is made (see `painted`): never in its file.
+    #[serde(skip)]
+    pub painted: Option<crate::generate::painted::Painted>,
 }
 
 impl Default for Land {
@@ -55,6 +59,7 @@ impl From<&Landmass> for Land {
             crags: land.crags,
             erosion: land.erosion,
             bumps: land.bumps,
+            painted: None,
         }
     }
 }
@@ -112,6 +117,7 @@ impl Land {
             erosion: self.erosion,
             climate,
             bumps: self.bumps,
+            painted: self.painted.clone(),
         }
     }
 
@@ -211,6 +217,10 @@ struct Ground(Arc<Landmass>);
 impl Kernel for Ground {
     fn key(&self, key: &mut Key) {
         key.name("landmass").text(&self.0.to_text());
+        // Painted, it reads its world's maps: known by them, not by what they hold, which changes as they are painted.
+        if let Some(painted) = &self.0.painted {
+            key.name("painted").text(&painted.id.to_string());
+        }
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {

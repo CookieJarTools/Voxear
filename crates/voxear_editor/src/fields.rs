@@ -813,6 +813,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "StreamsWithGround" => |world, entity| world.has::<voxear_engine::ground_streaming::StreamsWithGround>(entity),
         "NavObstacle" => |world, entity| world.has::<voxear_engine::nav_obstacle::NavObstacle>(entity),
         "CrowdMember" => |world, entity| world.has::<voxear_engine::crowds::CrowdMember>(entity),
+        "Animator" => |world, entity| world.has::<animation::Animator>(entity),
         "BoneAttachment" => |world, entity| world.has::<animation::BoneAttachment>(entity),
         "Buoyancy" => |world, entity| world.has::<voxear_engine::water::Buoyancy>(entity),
         "Camera" => |world, entity| world.has::<voxear_render::Camera>(entity),

@@ -14,7 +14,10 @@
 //! apart, with the water after the opaque scene (`water::record`): every
 //! one of a chunk the view sees, seen from either side, casting no shadow.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
@@ -1119,10 +1122,13 @@ impl Pool {
         // As many as the frame stages, at least one; the rest come over the next frames, each shown as it was till then.
         let mut changed = false;
         let mut whole = true;
-        for (key, mesh) in coming {
+        // The world's own columns with chunks still to come this frame, where it stages only some.
+        let mut waiting: HashSet<[i32; 2]> = HashSet::new();
+        for (at, &(key, mesh)) in coming.iter().enumerate() {
             let count = mesh.quads.len() as u64;
             if changed && count * 8 > *left {
                 whole = false;
+                waiting = coming[at..].iter().filter(|(key, _)| key[0] == 0).map(|(key, _)| [key[1], key[3]]).collect();
                 break;
             }
             *left = left.saturating_sub(count * 8);
@@ -1180,6 +1186,25 @@ impl Pool {
             });
             changed |= self.held.len() != before;
             self.made_from = Some((world.meshes.clone(), world.far.clone()));
+        } else {
+            // A chunk of the world's own that has no faces now, as one dug out to air, goes at once where the rest
+            // of its column is drawn as it is now: the far view still streaming in would otherwise keep its old faces
+            // drawn, and casting shadows, for as long as it takes.
+            let gone: Vec<[i32; 4]> = self
+                .held
+                .keys()
+                .filter(|key| key[0] == 0 && !world.meshes.contains_key(&[key[1], key[2], key[3]]))
+                .filter(|key| !waiting.contains(&[key[1], key[3]]))
+                .copied()
+                .collect();
+            if !gone.is_empty() {
+                let drawn: HashSet<[i32; 2]> = world.meshes.keys().map(|key| [key[0], key[2]]).collect();
+                for key in gone.into_iter().filter(|key| drawn.contains(&[key[1], key[3]])) {
+                    let held = self.held.remove(&key).expect("held");
+                    self.freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
+                    changed = true;
+                }
+            }
         }
         if changed {
             self.draws = None;

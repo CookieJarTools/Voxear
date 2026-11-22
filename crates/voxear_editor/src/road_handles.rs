@@ -1,17 +1,21 @@
-//! Handles that edit the selected Obj's Road in the Scene view: its middle
-//! line and edges drawn over the ground, a dot on each point to drag it (it
-//! lands on the ground as it is without the road), a smaller one at its side
-//! to drag how wide the road is there, a faint one halfway along each stretch
-//! that adds a point there, and one past its end that adds a point after its
-//! last. Shift-clicking a point takes it away, down to two. An end let go of
-//! on another road snaps onto that road's middle, so the two join. Each drag
-//! or click is one step to undo.
+//! Handles that edit the selected Obj's Road or Route in the Scene view: its
+//! middle line and edges drawn over the ground, a dot on each point to drag
+//! it (it lands on the ground as it is without the road), a smaller one at
+//! its side to drag how wide it is there, a faint one halfway along each
+//! stretch that adds a point there, and one past its end that adds a point
+//! after its last. Shift-clicking a point takes it away, down to two. An end
+//! of a road let go of on another road snaps onto that road's middle, so the
+//! two join. A World Area's or an Area Fill's outline is edited the same way,
+//! as a loop, with no widths and no end. Each drag or click is one step to
+//! undo.
 
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game,
-    roads::{Road, RoadPoint},
+    roads::{AreaFill, Road, RoadPoint},
+    world_areas::WorldArea,
+    world_routes::Route,
 };
 use voxear_ui::{Color, Shape};
 
@@ -64,28 +68,117 @@ fn block_size(world: &World, entity: Entity) -> f32 {
         .max(0.01)
 }
 
-fn grips(road: &Road, to_world: Mat4, size: f32) -> Vec<(Grip, Vec3)> {
+/// What the handles edit: a Road's points, a Route's, or the outline of a
+/// World Area or an Area Fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    Road,
+    Route,
+    Area,
+    Fill,
+}
+
+/// The points edited, in the Obj's own space, each with its width; whether
+/// they make a loop.
+#[derive(Clone, Debug)]
+struct Lined {
+    source: Source,
+    points: Vec<RoadPoint>,
+}
+
+impl Lined {
+    fn closed(&self) -> bool {
+        matches!(self.source, Source::Area | Source::Fill)
+    }
+
+    /// The fewest points it keeps.
+    fn fewest(&self) -> usize {
+        if self.closed() { 3 } else { 2 }
+    }
+
+    /// How many metres its width is a unit of: a road's blocks, a route's metres.
+    fn unit(&self, world: &World, entity: Entity) -> f32 {
+        match self.source {
+            Source::Road => block_size(world, entity),
+            _ => 1.0,
+        }
+    }
+
+    fn of(world: &World, entity: Entity) -> Option<Lined> {
+        let outline = |outline: &[[f32; 2]]| {
+            outline.iter().map(|&[x, z]| RoadPoint { at: [x, 0.0, z], width: 0.0 }).collect::<Vec<_>>()
+        };
+        if let Some(road) = world.get::<Road>(entity) {
+            return Some(Lined { source: Source::Road, points: road.points.clone() });
+        }
+        if let Some(route) = world.get::<Route>(entity) {
+            let points = route.points.iter().map(|&at| RoadPoint { at, width: route.width }).collect();
+            return Some(Lined { source: Source::Route, points });
+        }
+        if let Some(area) =
+            world.get::<WorldArea>(entity).filter(|area| area.shape == voxear_engine::world_areas::AreaShape::Outline)
+        {
+            return Some(Lined { source: Source::Area, points: outline(&area.outline) });
+        }
+        let fill = world.get::<AreaFill>(entity)?;
+        Some(Lined { source: Source::Fill, points: outline(&fill.outline) })
+    }
+
+    /// Puts its points back in the component they came from.
+    fn store(self, world: &mut World, entity: Entity) {
+        let outline: Vec<[f32; 2]> = self.points.iter().map(|point| [point.at[0], point.at[2]]).collect();
+        match self.source {
+            Source::Road => {
+                if let Some(road) = world.get_mut::<Road>(entity) {
+                    road.points = self.points;
+                }
+            }
+            Source::Route => {
+                if let Some(route) = world.get_mut::<Route>(entity) {
+                    route.width = self.points.first().map_or(route.width, |point| point.width);
+                    route.points = self.points.iter().map(|point| point.at).collect();
+                }
+            }
+            Source::Area => {
+                if let Some(area) = world.get_mut::<WorldArea>(entity) {
+                    area.outline = outline;
+                }
+            }
+            Source::Fill => {
+                if let Some(fill) = world.get_mut::<AreaFill>(entity) {
+                    fill.outline = outline;
+                }
+            }
+        }
+    }
+}
+
+fn grips(lined: &Lined, to_world: Mat4, size: f32) -> Vec<(Grip, Vec3)> {
     let place = |p: [f32; 3]| to_world.transform_point3(Vec3::from(p));
-    let n = road.points.len();
+    let points = &lined.points;
+    let n = points.len();
     let mut grips = Vec::new();
     for i in 0..n {
-        let at = place(road.points[i].at);
+        let at = place(points[i].at);
         grips.push((Grip::Point(i), at));
-        let tangent = place(road.points[(i + 1).min(n - 1)].at) - place(road.points[i.saturating_sub(1)].at);
-        grips.push((Grip::Width(i), at + across(tangent) * road.points[i].width * size * 0.5));
+        if !lined.closed() {
+            let tangent = place(points[(i + 1).min(n - 1)].at) - place(points[i.saturating_sub(1)].at);
+            grips.push((Grip::Width(i), at + across(tangent) * points[i].width * size * 0.5));
+        }
     }
-    for i in 0..n.saturating_sub(1) {
-        grips.push((Grip::Insert(i), (place(road.points[i].at) + place(road.points[i + 1].at)) * 0.5));
+    let stretches = if lined.closed() { n } else { n.saturating_sub(1) };
+    for i in 0..stretches {
+        grips.push((Grip::Insert(i), (place(points[i].at) + place(points[(i + 1) % n].at)) * 0.5));
     }
-    if n >= 2 {
-        let (last, before) = (place(road.points[n - 1].at), place(road.points[n - 2].at));
+    if n >= 2 && !lined.closed() {
+        let (last, before) = (place(points[n - 1].at), place(points[n - 2].at));
         grips.push((Grip::Extend, last + (last - before).normalize_or(Vec3::Z) * ONWARD));
     }
     grips
 }
 
-fn placed(world: &World, entity: Entity) -> Option<(Road, Mat4)> {
-    Some((world.get::<Road>(entity)?.clone(), voxear_scene::world_matrix(world, entity)))
+fn placed(world: &World, entity: Entity) -> Option<(Lined, Mat4)> {
+    Some((Lined::of(world, entity)?, voxear_scene::world_matrix(world, entity)))
 }
 
 impl RoadHandles {
@@ -105,7 +198,7 @@ impl RoadHandles {
         self.hovered = entity.zip(point).and_then(|(entity, point)| {
             let (road, to_world) = placed(world, entity)?;
             let near = |at: Vec3| camera.project(at).map(|p| (p[0] - point[0]).hypot(p[1] - point[1]));
-            let all = grips(&road, to_world, block_size(world, entity));
+            let all = grips(&road, to_world, road.unit(world, entity));
             let distances = all.into_iter().filter_map(|(grip, at)| Some((grip, near(at)?)));
             distances.filter(|&(_, d)| d <= REACH).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(grip, _)| grip)
         });
@@ -124,12 +217,12 @@ impl RoadHandles {
         self.hover(world, camera, Some(entity), Some(point));
         let Some(grip) = self.hovered else { return false };
         let Some((mut road, to_world)) = placed(world, entity) else { return false };
-        let size = block_size(world, entity);
+        let size = road.unit(world, entity);
         let grip = match grip {
             Grip::Point(i) if remove => {
-                if road.points.len() > 2 {
+                if road.points.len() > road.fewest() {
                     road.points.remove(i);
-                    world.insert(entity, road);
+                    road.store(world, entity);
                     self.removed = Some(entity);
                 }
                 self.hovered = None;
@@ -137,10 +230,10 @@ impl RoadHandles {
             }
             _ if remove => return false,
             Grip::Insert(i) => {
-                let (a, b) = (road.points[i], road.points[i + 1]);
+                let (a, b) = (road.points[i], road.points[(i + 1) % road.points.len()]);
                 let at = [0, 1, 2].map(|axis| (a.at[axis] + b.at[axis]) * 0.5);
                 road.points.insert(i + 1, RoadPoint { at, width: (a.width + b.width) * 0.5 });
-                world.insert(entity, road);
+                road.store(world, entity);
                 Grip::Point(i + 1)
             }
             Grip::Extend => {
@@ -149,7 +242,7 @@ impl RoadHandles {
                 let local = to_world.inverse().transform_point3(at.unwrap_or(Vec3::ZERO));
                 road.points.push(RoadPoint { at: local.to_array(), ..last });
                 let index = road.points.len() - 1;
-                world.insert(entity, road);
+                road.store(world, entity);
                 Grip::Point(index)
             }
             grip => grip,
@@ -173,14 +266,21 @@ impl RoadHandles {
         let Some(drag) = self.drag else { return };
         let world = &game.engine.world;
         let Some((mut road, to_world)) = placed(world, drag.entity) else { return };
-        let size = block_size(world, drag.entity);
+        let size = road.unit(world, drag.entity);
         let ray = camera.ray(point);
         let Some(&(_, at)) = grips(&road, to_world, size).iter().find(|(g, _)| *g == drag.grip) else { return };
         match drag.grip {
             Grip::Point(i) => {
                 let Some(hit) = on_plane(ray, at, drag.facing) else { return };
                 let mut moved = hit + drag.offset;
-                let end = i == 0 || i + 1 == road.points.len();
+                // Only a road's ends join another road; an outline keeps to its Obj's level.
+                let end = road.source == Source::Road && (i == 0 || i + 1 == road.points.len());
+                if road.closed() {
+                    let local = to_world.inverse().transform_point3(moved);
+                    road.points[i].at = [local.x, 0.0, local.z];
+                    road.store(&mut game.engine.world, drag.entity);
+                    return;
+                }
                 let blocks = voxear_engine::roads::world_of(world, drag.entity);
                 let reach = road.points[i].width * size;
                 let joined = blocks
@@ -204,11 +304,19 @@ impl RoadHandles {
             Grip::Width(i) => {
                 let middle = to_world.transform_point3(Vec3::from(road.points[i].at));
                 let Some(along) = along_axis(ray, middle, (at - middle).normalize_or(Vec3::X)) else { return };
-                road.points[i].width = (along * 2.0 / size).round().clamp(1.0, 64.0);
+                let width = match road.source {
+                    Source::Road => (along * 2.0 / size).round().clamp(1.0, 64.0),
+                    _ => (along * 2.0).clamp(0.5, 500.0),
+                };
+                // A route is as wide all along.
+                match road.source {
+                    Source::Road => road.points[i].width = width,
+                    _ => road.points.iter_mut().for_each(|point| point.width = width),
+                }
             }
             Grip::Insert(_) | Grip::Extend => return,
         }
-        game.engine.world.insert(drag.entity, road);
+        road.store(&mut game.engine.world, drag.entity);
     }
 
     pub fn end(&mut self) -> Option<Entity> {
@@ -220,7 +328,7 @@ impl RoadHandles {
     pub fn shapes(&self, world: &World, camera: &ViewCamera, entity: Option<Entity>) -> Vec<Shape> {
         let Some(entity) = entity else { return Vec::new() };
         let Some((road, to_world)) = placed(world, entity) else { return Vec::new() };
-        let size = block_size(world, entity);
+        let size = road.unit(world, entity);
         let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
         let line = |shapes: &mut Vec<Shape>, from: Vec3, to: Vec3, width: f32, alpha: u8| {
             if let (Some(a), Some(b)) = (camera.project(from), camera.project(to)) {
@@ -234,7 +342,12 @@ impl RoadHandles {
         };
         let mut shapes = Vec::new();
         let points: Vec<Vec3> = road.points.iter().map(|p| to_world.transform_point3(Vec3::from(p.at))).collect();
-        for (i, pair) in points.windows(2).enumerate() {
+        if road.closed() {
+            for (i, &at) in points.iter().enumerate() {
+                line(&mut shapes, at, points[(i + 1) % points.len()], 2.0, 230);
+            }
+        }
+        for (i, pair) in points.windows(2).enumerate().filter(|_| !road.closed()) {
             line(&mut shapes, pair[0], pair[1], 2.0, 230);
             let side = across(pair[1] - pair[0]);
             let (a, b) = (road.points[i].width * size * 0.5, road.points[i + 1].width * size * 0.5);

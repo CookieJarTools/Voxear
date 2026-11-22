@@ -185,7 +185,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `undo`, `redo`, `batch` | Step back and forward, and make several changes one step |
 | `select`, `frame` | Select Objs, and show them in the Scene view |
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
-| `blocks.get`, `blocks.set`, `blocks.fill`, `blocks.restore`, `paint.map` | Read and change a Block World's blocks, at points in the world, and put a box of them back as the ground was generated; paint land, height and biomes into a world's generator (see [[Painting Land]]) |
+| `blocks.get`, `blocks.set`, `blocks.fill`, `blocks.restore`, `paint.map` | Read and change a Block World's blocks, at points in the world, and put a box of them back as the ground was generated; paint land, height, biomes and World Areas into a world's generator (see [[Painting Land]]) |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts`, `dungeon.open` | Make the starter temple dungeon for a Block World, read the dungeons its generator lays out near a point, and open a dungeon's own dimension to look round |
 | `towns.near` | Read the towns a Block World's generator lays out near a point, with each building's structure, floor, facing and door, none of their ground made (see [[Structures]]) |
@@ -195,6 +195,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `ground_fit.land`, `world_layers.status`, `world_layers.hide` | Set an Obj with a Ground Fit down on the ground without its own cut, list each world's layers, and hide them to see the bare ground (see [[World Layers]]) |
 | `blocks.columns` | Each world of blocks without end's columns made, and those made and let go last frame, and how many Objs are kept while their ground is away (see [[Streams With Ground]]) |
 | `road.set_points`, `road.set_mix`, `area_fill.set_outline`, `roads.nearest` | Set a Road's points, set down on the ground with `land`, a Road's or an Area Fill's blocks and pattern, and an Area Fill's outline, and find the road nearest a place (see [[Roads]]) |
+| `world_area.set_outline`, `areas.at`, `areas.value` | Set a World Area's outline, and ask which areas hold a place and the data a tag carries there (see [[World Areas]]) |
+| `route.set_points`, `route.lay_sea`, `routes.find`, `routes.nearest` | Set a Route's points, lay a sea route between its ends over deep water, and find the way along routes of a kind or the nearest place on one (see [[Routes]]) |
 | `place.prefab`, `place.line_up`, `place.scatter`, `place.brush` | Make prefabs on the ground: one, facing the road nearest with `face_road`; lined up along a Road; scattered over an outline or an Area Fill; or a stroke of the Prefab Brush, each call one step to undo (see [[Placing Prefabs]]) |
 | `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |

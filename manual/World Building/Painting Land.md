@@ -15,7 +15,8 @@ Select the Block World, pick **Build**, and choose one of the map brushes as its
 | Land | Land rising out of the sea; with Shift, sea sinking the land |
 | Height | Height under the generator's own ridges; with Shift, lowered ground |
 | Biome | The **Biome** picked, of those the world lists, chosen before the climate rules, its edges ragged; with Shift, taken away |
-| Erase | Every map back to the generator alone |
+| Erase | The land, height and biome maps back to the generator alone |
+| Area | The **World Area** picked, painted with its number (see [[World Areas]]); with Shift, taken off |
 
 **Radius** is how wide the brush is, in metres; **Strength**, from 0 to 1, how much a dab adds; **Falloff**, how much of the radius eases out to nothing. Hold Ctrl to smooth the land or height under the brush instead. Each stroke is one step to undo.
 

@@ -631,6 +631,72 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ outline }",
     },
     CallInfo {
+        name: "world_area.set_outline",
+        about: "Sets the outline of an Obj's World Area along x and z, in metres in the Obj's own space, three corners at least, and makes it an outline area. One step to undo.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the World Area."),
+            arg("outline", ArgKind::Value, "The corners, each `[x, z]`."),
+        ],
+        changes: true,
+        returns: "{ outline }",
+    },
+    CallInfo {
+        name: "areas.at",
+        about: "The World Areas holding a place, in the dimension the Scene view shows, highest priority first: each its Obj and its tags with their data.",
+        args: &[arg("at", ArgKind::Vector, "The place, in metres.")],
+        changes: false,
+        returns: "[{ obj, priority, tags: [{ tag, data }] }]",
+    },
+    CallInfo {
+        name: "areas.value",
+        about: "The data asset an area tag carries at a place: of the first World Area there with the tag, or where none has it, of the world's Area Defaults for the biome there, then for anywhere. Null where nothing carries the tag.",
+        args: &[
+            arg("at", ArgKind::Vector, "The place, in metres."),
+            arg("tag", ArgKind::Asset, "The Area Tag data asset."),
+        ],
+        changes: false,
+        returns: "{ data } or null",
+    },
+    CallInfo {
+        name: "route.set_points",
+        about: "Sets every point of an Obj's Route, in the Obj's own space; with `land`, each point set down on the ground. One step to undo.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the Route."),
+            arg("points", ArgKind::Value, "The points, each `[x, y, z]`, two at least."),
+            maybe("land", ArgKind::Toggle, "Whether each point is set down on the ground."),
+        ],
+        changes: true,
+        returns: "{ points }",
+    },
+    CallInfo {
+        name: "route.lay_sea",
+        about: "Lays an Obj's Route over the sea between its first and last points, over water deeper than its Draught and further than its Shore from land, searched over the world's generated ground however far off. One step to undo.",
+        args: &[arg("obj", ArgKind::Obj, "The Obj with the Route.")],
+        changes: true,
+        returns: "{ points, aground }",
+    },
+    CallInfo {
+        name: "routes.find",
+        about: "The way from one place to another along the routes of a kind (`road`, every Road among them, when left out; `sea`, `air`, or a Route Kind data asset): its points, its length in metres and the Route Stops it passes. Null where none joins them.",
+        args: &[
+            arg("from", ArgKind::Vector, "Where from, in metres."),
+            arg("to", ArgKind::Vector, "Where to, in metres."),
+            maybe("kind", ArgKind::Value, "road, sea, air, or a Route Kind asset."),
+        ],
+        changes: false,
+        returns: "{ points, length, stops }",
+    },
+    CallInfo {
+        name: "routes.nearest",
+        about: "The nearest place to `at` on a route of a kind: its Obj, the place, and how far along the route it lies in metres. Null with none.",
+        args: &[
+            arg("at", ArgKind::Vector, "The place, in metres."),
+            maybe("kind", ArgKind::Value, "road, sea, air, or a Route Kind asset."),
+        ],
+        changes: false,
+        returns: "{ route, point, along }",
+    },
+    CallInfo {
         name: "roads.nearest",
         about: "The road nearest a place along the ground, within `reach` metres (50 when left out), among those over the world of blocks there: its Obj, the nearest point of its middle, and how far along it that is in metres. Null where none is near.",
         args: &[
@@ -703,9 +769,9 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "paint.map",
-        about: "A dab of a map brush on a world of blocks without end's generator: `land`, `height`, `biome` (the one named, as the world lists it) or `erase` back to the generator alone, round `at`, `radius` metres across; `take_away` paints sea or lowers, `smooth` evens it out. Only the columns it reaches are made again. One step to undo.",
+        about: "A dab of a map brush on a world of blocks without end's generator: `land`, `height`, `biome` (the one named, as the world lists it), `area` (a World Area, painted with its number) or `erase` back to the generator alone, round `at`, `radius` metres across; `take_away` paints sea, lowers, or takes the biome or area off. Only the columns it reaches are made again. One step to undo.",
         args: &[
-            arg("map", ArgKind::Text, "land, height, biome or erase."),
+            arg("map", ArgKind::Text, "land, height, biome, area or erase."),
             arg("at", ArgKind::Vector, "The dab's middle, in metres."),
             maybe("radius", ArgKind::Number, "How wide, in metres: 40 when left out."),
             maybe("strength", ArgKind::Number, "How strong, 0 to 1: 0.3 when left out."),
@@ -713,6 +779,7 @@ pub const CALLS: &[CallInfo] = &[
             maybe("take_away", ArgKind::Toggle, "Paints sea, lowers, or takes the biome away."),
             maybe("smooth", ArgKind::Toggle, "Evens the land or height out."),
             maybe("biome", ArgKind::Asset, "For `biome`, the .biome the world lists."),
+            maybe("area", ArgKind::Obj, "For `area`, the Obj with the World Area."),
             maybe("obj", ArgKind::Obj, "The Block World."),
         ],
         changes: true,
@@ -1562,6 +1629,10 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::StreamsWithGround
             | Part::Road
             | Part::AreaFill
+            | Part::WorldArea
+            | Part::AreaDefaults
+            | Part::Route
+            | Part::RouteStop
             | Part::Placement
             | Part::PrefabBrush
             | Part::Walkable

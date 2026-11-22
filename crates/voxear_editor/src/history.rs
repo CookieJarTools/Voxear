@@ -80,6 +80,10 @@ pub struct ObjState {
     pub streams_with_ground: Option<voxear_engine::ground_streaming::StreamsWithGround>,
     pub road: Option<voxear_engine::roads::Road>,
     pub area_fill: Option<voxear_engine::roads::AreaFill>,
+    pub world_area: Option<voxear_engine::world_areas::WorldArea>,
+    pub area_defaults: Option<voxear_engine::world_areas::AreaDefaults>,
+    pub route: Option<voxear_engine::world_routes::Route>,
+    pub route_stop: Option<voxear_engine::world_routes::RouteStop>,
     pub placement: Option<voxear_engine::prefab_placing::Placement>,
     pub prefab_brush: Option<voxear_engine::prefab_placing::PrefabBrush>,
     pub walkable: Option<voxear_engine::walkable_models::Walkable>,
@@ -214,6 +218,10 @@ impl ObjState {
             streams_with_ground: world.get::<voxear_engine::ground_streaming::StreamsWithGround>(entity).copied(),
             road: world.get::<voxear_engine::roads::Road>(entity).cloned(),
             area_fill: world.get::<voxear_engine::roads::AreaFill>(entity).cloned(),
+            world_area: world.get::<voxear_engine::world_areas::WorldArea>(entity).cloned(),
+            area_defaults: world.get::<voxear_engine::world_areas::AreaDefaults>(entity).cloned(),
+            route: world.get::<voxear_engine::world_routes::Route>(entity).cloned(),
+            route_stop: world.get::<voxear_engine::world_routes::RouteStop>(entity).cloned(),
             placement: world.get::<voxear_engine::prefab_placing::Placement>(entity).copied(),
             prefab_brush: world.get::<voxear_engine::prefab_placing::PrefabBrush>(entity).cloned(),
             walkable: world.get::<voxear_engine::walkable_models::Walkable>(entity).copied(),
@@ -332,6 +340,10 @@ impl ObjState {
         put(world, entity, self.streams_with_ground);
         put(world, entity, self.road.clone());
         put(world, entity, self.area_fill.clone());
+        put(world, entity, self.world_area.clone());
+        put(world, entity, self.area_defaults.clone());
+        put(world, entity, self.route.clone());
+        put(world, entity, self.route_stop.clone());
         put(world, entity, self.placement);
         put(world, entity, self.prefab_brush.clone());
         put(world, entity, self.walkable);

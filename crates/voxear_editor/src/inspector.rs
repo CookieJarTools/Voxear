@@ -1317,6 +1317,9 @@ impl Inspector {
                 if let Prop::AreaFill(field) = value {
                     meta.tooltip = Some(crate::road_props::area_tooltip(*field).to_string());
                 }
+                if let Prop::World(field) = value {
+                    meta.tooltip = Some(crate::world_props::tooltip(*field).to_string());
+                }
                 if let Prop::WhenUnloaded = value {
                     meta.tooltip = Some(crate::fit_props::STREAMS_TOOLTIP.to_string());
                 }
@@ -2360,6 +2363,10 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
         (Part::StreamsWithGround, "Terrain"),
         (Part::Road, "Terrain"),
         (Part::AreaFill, "Terrain"),
+        (Part::WorldArea, "Terrain"),
+        (Part::AreaDefaults, "Terrain"),
+        (Part::Route, "Terrain"),
+        (Part::RouteStop, "Terrain"),
         (Part::Placement, "Terrain"),
         (Part::PrefabBrush, "Terrain"),
         (Part::Walkable, "Navigation"),
@@ -3113,6 +3120,10 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::StreamsWithGround) => "streams_with_ground",
         Some(Part::Road) => "road",
         Some(Part::AreaFill) => "area_fill",
+        Some(Part::WorldArea) => "world_area",
+        Some(Part::AreaDefaults) => "area_defaults",
+        Some(Part::Route) => "route",
+        Some(Part::RouteStop) => "route_stop",
         Some(Part::Placement) => "placement",
         Some(Part::PrefabBrush) => "prefab_brush",
         Some(Part::Walkable) => "walkable",

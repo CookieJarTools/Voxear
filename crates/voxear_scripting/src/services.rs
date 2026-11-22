@@ -37,6 +37,13 @@ pub trait ScriptServices {
         false
     }
 
+    /// Answers a question about the world that needs the game's content, as
+    /// JSON: its World Areas, and laying a sea route over the generator's
+    /// ground. None where there is nothing to ask.
+    fn ask_world(&mut self, _world: &mut World, _asked: &str) -> Option<anyhow::Result<String>> {
+        None
+    }
+
     /// Creates a loaded prefab's Objs, without behaviours. The root goes
     /// under `parent`, and takes `placement`, relative to it, when it is
     /// given.
@@ -806,6 +813,12 @@ pub fn prefab_placement(reference: &str) -> Option<String> {
 /// [`ScriptServices::paint_map`]); false outside them.
 pub fn paint_map(world: &mut World, blocks: Entity, dab: &str) -> bool {
     with_services(|services| services.paint_map(world, blocks, dab)).unwrap_or(false)
+}
+
+/// A question about the world through the lent services (see
+/// [`ScriptServices::ask_world`]); none outside them.
+pub fn ask_world(world: &mut World, asked: &str) -> Option<anyhow::Result<String>> {
+    with_services(|services| services.ask_world(world, asked)).flatten()
 }
 
 pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> Option<R> {

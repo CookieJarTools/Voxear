@@ -37,6 +37,7 @@ pub mod flow;
 pub mod generate;
 pub mod grow;
 pub mod light;
+pub mod area_layer;
 pub mod map;
 pub mod map_known;
 pub mod mesh;

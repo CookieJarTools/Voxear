@@ -12,5 +12,7 @@ Everything here works on the ground the generator makes without storing blocks. 
 4. [[Placing Prefabs]]: kits lined up along streets, scattered over yards and painted with the Prefab Brush
 5. [[Painting Land]]: land, mountains and biomes painted into the world's generator, coasts and peaks of its own
 6. [[Streams With Ground]]: houses, props and mobs that go when their ground streams out, and come back with it
+7. [[World Areas]]: towns, forests and dungeon floors marked with tags and data, which keep structures out or in
+8. [[Routes]]: roads, sea lanes and flight paths joined into ways to find, with stops along them
 
 World building is under **Add Component ▸ Terrain**.

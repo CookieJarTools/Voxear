@@ -226,6 +226,17 @@ impl Maps {
         };
         let mut shapes = Vec::new();
         let mut labels: Vec<(Vec2, String)> = Vec::new();
+        // The routes, under the markers: each stretch whose ends are both on the map.
+        for (points, [r, g, b]) in crate::world_routes::on_maps(world, crate::dimensions::current(world)) {
+            let placed: Vec<Option<Vec2>> =
+                points.iter().map(|&at| shown.point(at).filter(|(_, inside)| *inside).map(|(at, _)| at)).collect();
+            for pair in placed.windows(2) {
+                if let [Some(from), Some(to)] = pair {
+                    let color = Color::rgba(r, g, b, 220);
+                    shapes.push(Shape::Line { from: from.to_array(), to: to.to_array(), width: 2.5 * scale, color });
+                }
+            }
+        }
         for (position, marker) in self.markers(world, script) {
             let on_this = match marker.shows {
                 MarkerShows::Both => true,

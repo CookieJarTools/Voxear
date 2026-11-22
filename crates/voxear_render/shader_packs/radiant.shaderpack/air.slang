@@ -1,28 +1,34 @@
-// Radiant's air near the camera: the way from the camera to each pixel's surface is walked through the light kept for
-// the blocks round it, and at each step the air glows with what reaches it: the sun, where a walk from there towards
-// the sun meets no solid block before it comes out under the open sky; and a little of the sky's and the torches'
-// light, as much as the block there has. In a cave the air is dustier, so sun through a hole in its roof shows as a
-// beam and the rest stays dark. Written at half size: the light the air adds in rgb, and in alpha how much of what is
+// Radiant's air near the camera: the way from the camera to each pixel's surface is walked, and at each step the air
+// glows with what reaches it. The sun reaches it where the sun's shadow says nothing stands in its way, so shafts of
+// light come down through the gaps in tree crowns and past models and characters; and, in a world of blocks, where a
+// walk from there towards the sun through the light kept round the camera meets no solid block before the open sky, so
+// a cave's roof keeps it dark however far the shadow maps reach. A little of the sky's and the torches' light glows
+// too, as much as the block there has. In a cave the air is dustier, so sun through a hole in its roof shows as a beam
+// and the rest stays dark. Written at half size: the light the air adds in rgb, and in alpha how much of what is
 // behind still shows.
 
 #include "window.slang"
 
 static const int STEPS = 20;
 static const float REACH = 64.0;
+// How much haze open air holds: enough that sun between shadows shows as shafts, not so much that it greys the view.
+static const float OPEN_AIR = 0.0012;
 
 float4 run(PassInput input)
 {
     Options o = options();
     PackFrame* f = frame();
-    if (!o.sunbeams || !hasBlockLight() || o.strength <= 0.0)
+    if (!o.sunbeams || o.strength <= 0.0)
     {
         return float4(0.0, 0.0, 0.0, 1.0);
     }
-    float size = f->lightWindow->blockSize;
+    bool blocks = hasBlockLight();
+    float size = blocks ? f->lightWindow->blockSize : 1.0;
     float3 way = viewRay(input.uv);
     float reach = min(isSky(input.uv) ? REACH : sceneDistance(input.uv), REACH);
     float step = reach / float(STEPS);
-    float t = step * frameNoise(input.pixel);
+    float noise = frameNoise(input.pixel);
+    float t = step * noise;
 
     float3 toSun = f->sunDirection;
     // A high sun's beam nearly white, a low one's warm.
@@ -46,15 +52,24 @@ float4 run(PassInput input)
         float2 light = lightAround(at);
         // Open air holds a little haze; a cave's air more dust, the more so the less sky light it has, and under a
         // hole in its roof as much: there the blocks round about are under the roof, out of the open sky.
-        float walled = 0.0;
-        for (uint side = 0; side < 4; side++)
+        float cave = 0.0;
+        if (blocks)
         {
-            float3 off = float3(side == 0 ? 5.0 : side == 1 ? -5.0 : 0.0, 0.0, side == 2 ? 5.0 : side == 3 ? -5.0 : 0.0);
-            walled += (windowCell(at + off * size) >> 4) < 15 ? 0.25 : 0.0;
+            float walled = 0.0;
+            for (uint side = 0; side < 4; side++)
+            {
+                float3 off = float3(side == 0 ? 5.0 : side == 1 ? -5.0 : 0.0, 0.0, side == 2 ? 5.0 : side == 3 ? -5.0 : 0.0);
+                walled += (windowCell(at + off * size) >> 4) < 15 ? 0.25 : 0.0;
+            }
+            cave = max(1.0 - light.x, walled * walled);
         }
-        float cave = max(1.0 - light.x, walled * walled);
-        float density = (0.0003 + 0.03 * cave * cave * o.cave_darkness) * o.beam_strength;
-        float lit = sunReaches(at, toSun, size, frac(frameNoise(input.pixel) + float(i) * 0.618));
+        float density = (OPEN_AIR * o.haze + 0.03 * cave * cave * o.cave_darkness) * o.beam_strength;
+        // The sun's shadow anywhere it is drawn; under cover, the walk through the blocks as well.
+        float lit = sunVisibility(at);
+        if (blocks && cave > 0.0 && lit > 0.0)
+        {
+            lit *= sunReaches(at, toSun, size, frac(noise + float(i) * 0.618));
+        }
         float3 here = sun * lit * phase * 4.0 + sky * light.x * light.x * 0.08 + torch * light.y * light.y * light.y * 0.15;
         float absorbed = exp(-density * step);
         added += through * here * (1.0 - absorbed);

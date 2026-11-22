@@ -76,6 +76,46 @@ struct PackLightWindow
 static const int3 PACK_LIGHT_WINDOW = int3(96, 48, 96);
 static const uint PACK_LIGHT_SOLID = 0x0F;
 
+// The sun's shadow maps as a pass that reads `shadow` reads them (src/shader_packs.rs's GpuPackShadows): the virtual
+// shadow pages, or the cascades where there are none. Mirrors what of the engine's own frame its shadows are read by.
+static const uint PACK_VSM_LEVELS = 10;
+static const uint PACK_VSM_PAGE = 128;
+static const uint PACK_VSM_BORDER = 8;
+static const uint PACK_VSM_SLOT = PACK_VSM_PAGE + 2 * PACK_VSM_BORDER;
+static const uint PACK_VSM_POOL_SLOTS = 32;
+static const uint PACK_VSM_MOVING_POOL_SLOTS = 16;
+static const int PACK_VSM_WINDOW = 64;
+static const uint PACK_CASCADES = 4;
+
+struct PackSunShadows
+{
+    // The sun's space: across, up and along its light; the finest level's texel, and where its depth starts and how
+    // far it reaches, in metres.
+    float3 right;
+    float finestTexel;
+    float3 up;
+    float depthMin;
+    float3 direction;
+    float depthRange;
+    // Each level's window of pages, row after row: a slot plus one in the low half, in the moving pool in the high.
+    uint* table;
+    // The pool and the moving pool, PACK_NO_TEXTURE without; the cascades' atlas, PACK_NO_TEXTURE with pages.
+    uint pool;
+    uint movingPool;
+    uint atlas;
+    // How many texels across a cascade's tile of the atlas is.
+    uint cascadeTexels;
+    // Added to the level a point asks for, and the screen's pixels a metre at a metre away.
+    float bias;
+    float lodScale;
+    uint pad0;
+    uint pad1;
+    int4 origins[PACK_VSM_LEVELS];
+    PackMatrix cascadeViewProjection[PACK_CASCADES];
+    float4 cascadeFar;
+    float4 cascadeTexel;
+};
+
 // The frame as every program of a pack sees it. Directions are in the world, unit length; colours linear.
 struct PackFrame
 {
@@ -149,4 +189,6 @@ struct PackFrame
     // The colour the sun takes through the leaves over a point, from its cascades, and the nearest's depth, for a
     // pack whose `[shadows] leaves` lets some of the sun through them; PACK_NO_TEXTURE without.
     uint leafLight;
+    // The sun's shadow maps, for a pass that reads `shadow`; null for one that does not, or without the sun's shadows.
+    PackSunShadows* sunShadows;
 };

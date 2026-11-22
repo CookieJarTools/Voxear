@@ -439,3 +439,150 @@ float2 lightAround(float3 position)
     return weight > 1e-4 ? sum / weight : float2(0.0, 0.0);
 }
 #endif
+
+#if PACK_READS_SHADOW
+[[vk::binding(3, 0)]] SamplerComparisonState packComparisonSamplers[];
+static const uint PACK_COMPARISON_SHADOW = 0;
+
+// Where a point falls in the sun's shadow pages: the page of the level asked for, or of the next coarser one drawn.
+struct PackShadowPage
+{
+    bool found;
+    // The page, its slot's first texel in its pool, the page's width and a texel's, in metres, and the pool.
+    int2 page;
+    float2 corner;
+    float metres;
+    float texel;
+    uint texture;
+    float poolSize;
+};
+
+float2 packPageUv(PackShadowPage page, float2 across)
+{
+    float border = page.texel * float(PACK_VSM_BORDER);
+    float2 within = (across - (float2(page.page) * page.metres - border)) / (page.metres + 2.0 * border) * float(PACK_VSM_SLOT);
+    return (page.corner + clamp(within, 1.0, float(PACK_VSM_SLOT) - 1.0)) / page.poolSize;
+}
+
+PackShadowPage packShadowPage(PackSunShadows* maps, float2 across, uint level)
+{
+    PackShadowPage found;
+    found.found = false;
+    found.page = 0;
+    found.corner = 0.0;
+    found.metres = 0.0;
+    found.texel = 0.0;
+    found.texture = maps->pool;
+    found.poolSize = 1.0;
+    for (uint k = level; k < PACK_VSM_LEVELS; k++)
+    {
+        float metres = maps->finestTexel * float(PACK_VSM_PAGE) * float(1u << k);
+        int2 page = int2(floor(across / metres));
+        int2 at = page - maps->origins[k].xy;
+        if (any(at < 0) || any(at >= PACK_VSM_WINDOW))
+        {
+            continue;
+        }
+        uint entry = maps->table[k * uint(PACK_VSM_WINDOW * PACK_VSM_WINDOW) + uint(at.y * PACK_VSM_WINDOW + at.x)];
+        if (entry == 0)
+        {
+            continue;
+        }
+        // Where something moves in it this frame, the copy with it drawn over.
+        uint moving = entry >> 16;
+        bool copied = moving != 0 && maps->movingPool != PACK_NO_TEXTURE;
+        uint slot = copied ? moving - 1 : (entry & 0xFFFF) - 1;
+        uint slots = copied ? PACK_VSM_MOVING_POOL_SLOTS : PACK_VSM_POOL_SLOTS;
+        found.found = true;
+        found.page = page;
+        found.corner = float2(slot % slots, slot / slots) * float(PACK_VSM_SLOT);
+        found.metres = metres;
+        found.texel = metres / float(PACK_VSM_PAGE);
+        found.texture = copied ? maps->movingPool : maps->pool;
+        found.poolSize = float(PACK_VSM_SLOT * slots);
+        return found;
+    }
+    return found;
+}
+
+// The level of the sun's shadow pages a point reads: the one whose texels are as wide as a pixel is there, or coarser
+// for one whose texels are `reach` metres wide.
+uint packShadowLevel(PackSunShadows* maps, float3 position, float reach)
+{
+    PackFrame* f = frame();
+    float pixel = max(distance(position, f->cameraPosition), f->near) / maps->lodScale;
+    float level = log2(max(max(pixel, reach) / maps->finestTexel, 1.0)) + maps->bias;
+    return uint(clamp(floor(level), 0.0, float(PACK_VSM_LEVELS - 1)));
+}
+
+uint packCascadeAt(PackSunShadows* maps, float3 position)
+{
+    float depth = dot(position - frame()->cameraPosition, frame()->cameraForward);
+    uint cascade = 0;
+    while (cascade < PACK_CASCADES && depth > maps->cascadeFar[cascade])
+    {
+        cascade++;
+    }
+    return cascade;
+}
+
+// Whether the sun's shadows are drawn at a point: a page of the sun's shadow pages holds it, or one of its cascades
+// does. Where they are not, nothing in the sun's way is known, and sunVisibility says the sun reaches it.
+bool sunShadowsReach(float3 position)
+{
+    PackSunShadows* maps = frame()->sunShadows;
+    if (maps == nullptr)
+    {
+        return false;
+    }
+    if (maps->pool != PACK_NO_TEXTURE)
+    {
+        float2 across = float2(dot(position, maps->right), dot(position, maps->up));
+        return packShadowPage(maps, across, packShadowLevel(maps, position, 0.0)).found;
+    }
+    return maps->atlas != PACK_NO_TEXTURE && packCascadeAt(maps, position) < PACK_CASCADES;
+}
+
+// How much of the sun reaches a point in the world, by the sun's shadow: 1 where nothing stands between it and the sun,
+// 0 where something does, between on a shadow's edge. Anywhere, in the air as well as on a surface: a pass marching
+// through the air takes it at each step for shafts of light. Read from the finest shadow there is round the point, or,
+// with `reach`, from shadow texels about `reach` metres wide, cheaper and smoother for a march with long steps. 1 where
+// the sun's shadows do not reach (sunShadowsReach). The clouds' shadow is not in it.
+float sunVisibility(float3 position, float reach = 0.0)
+{
+    PackSunShadows* maps = frame()->sunShadows;
+    if (maps == nullptr)
+    {
+        return 1.0;
+    }
+    if (maps->pool != PACK_NO_TEXTURE)
+    {
+        float2 across = float2(dot(position, maps->right), dot(position, maps->up));
+        PackShadowPage page = packShadowPage(maps, across, packShadowLevel(maps, position, reach));
+        if (!page.found)
+        {
+            return 1.0;
+        }
+        float depth = (dot(position, maps->direction) - maps->depthMin) / maps->depthRange;
+        Texture2D pool = textures[NonUniformResourceIndex(page.texture)];
+        return pool.SampleCmpLevelZero(packComparisonSamplers[PACK_COMPARISON_SHADOW], packPageUv(page, across), depth);
+    }
+    uint cascade = packCascadeAt(maps, position);
+    if (maps->atlas == PACK_NO_TEXTURE || cascade >= PACK_CASCADES)
+    {
+        return 1.0;
+    }
+    float4 clip = packTransform(maps->cascadeViewProjection[cascade], float4(position, 1.0));
+    float2 uv = clip.xy * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0) || clip.z > 1.0)
+    {
+        return 1.0;
+    }
+    // The cascades' tiles, two by two across the atlas, each kept a texel and a half within its edges.
+    float2 tile = float2(cascade & 1, cascade >> 1) * 0.5;
+    float edge = 1.5 / float(2 * maps->cascadeTexels);
+    float2 at = clamp(tile + uv * 0.5, tile + edge, tile + 0.5 - edge);
+    return textures[NonUniformResourceIndex(maps->atlas)].SampleCmpLevelZero(
+        packComparisonSamplers[PACK_COMPARISON_SHADOW], at, clip.z);
+}
+#endif

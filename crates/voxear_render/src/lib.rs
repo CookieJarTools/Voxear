@@ -586,7 +586,8 @@ impl FrameBuffers {
     fn fit_pack_frame(&mut self, gpu: &Gpu, slot: usize) -> Result<&Buffer> {
         if self.pack_frame.is_none() {
             let name = format!("{}shader pack frame {slot}", self.prefix);
-            let size = size_of::<shader_packs::GpuPackFrame>() as u64;
+            // The frame, then the sun's shadow maps for a pass that reads them.
+            let size = shader_packs::SHADOWS_OFFSET + size_of::<shader_packs::GpuPackShadows>() as u64;
             let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
             self.pack_frame = Some(gpu.create_buffer(&name, size, usage, MemoryLocation::CpuToGpu)?);
         }
@@ -4278,6 +4279,10 @@ impl View {
                     motion: velocity,
                     surface,
                     surface_ids,
+                    sun_shadows: match &virtual_shadows {
+                        Some((pool, _, moving_pool)) => [*pool].into_iter().chain(*moving_pool).collect(),
+                        None => shadows.into_iter().collect(),
+                    },
                     drawn: extent,
                     resolved,
                     shown: output_extent,
@@ -4311,6 +4316,15 @@ impl View {
                 let mut recorder =
                     shader_packs::PackRecorder::prepare(fg, (gpu, bindless), draw.clone(), &images, &mut pack_frame)?;
                 let written = buffers.pack_frame.as_ref().expect("made for the pack");
+                // The sun's shadow maps, beside the frame, only for a pack whose passes read them.
+                let sun_shadows = draw
+                    .reads_shadow()
+                    .then(|| shader_packs::GpuPackShadows::of(&frame_data, shadows::CASCADE_RESOLUTION))
+                    .flatten();
+                if let Some(maps) = sun_shadows {
+                    written.write(shader_packs::SHADOWS_OFFSET, &[maps]);
+                    pack_frame.sun_shadows = written.address + shader_packs::SHADOWS_OFFSET;
+                }
                 written.write(0, &[pack_frame]);
                 recorder.set_push(Push { frame: written.address, ..push });
                 Some(recorder)

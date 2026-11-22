@@ -319,6 +319,23 @@ Players' packs, from C# and a ready-made menu. Settled on the way:
   the id's bits, as the textures a pass reads are float; the kind in the top bits keeps every id a normal number.
   4 bytes a pixel, the image made only for such a pack's frames. Whether a block face glows is not in it: the depth
   passes do not know.
+- **The sun's shadow in a pass:** a pass that reads `shadow` gets `sunVisibility(position, reach = 0)`, how much of
+  the sun reaches any point of the world by the sun's shadow (1 lit, 0 shaded, between on an edge; 1 where the maps do
+  not reach, which `sunShadowsReach(position)` tells), so a pass can march shafts of light through the air. It reads
+  the virtual shadow pages at the level whose texels are a pixel wide there, or `reach` metres wide, falling back to a
+  coarser page where a fine one is not drawn, or the cascades' atlas without pages; one hardware-filtered compare tap,
+  no clouds. The header does its own page lookup (`PackSunShadows` in `shader_pack_frame.slang`, with the pages'
+  layout as constants a test holds to `vsm.rs`) rather than including the engine's shading, so a pack's programs are
+  still written against the pack header alone. `GpuPackShadows` is written beside the pack's frame, and
+  `PackFrame::sunShadows` points at it, only when a pass reads `shadow`; the pools or the atlas are then sampled by
+  those passes in the frame graph. Without such a pass nothing more is written or bound.
+- **Radiant's air** takes the sun from `sunVisibility` at each of its 20 steps, so shafts come through tree crowns and
+  past models and characters, in worlds without block light too, and multiplies in its walk through the block light
+  window only under cover, where a cave's roof must keep the sun out wherever the shadow maps reach. Its open-air haze
+  went from 0.0003 to 0.0012 a metre so shafts show. Measured at 1920x1080 on an RTX 3070, least of 60 frames with
+  the GPU shared: the air pass 0.96 ms before and 1.08 after under a roof of leaves with its light kept, 1.16 and
+  1.02 in a cave (the walk skipped where the sun's shadow already says no), and 0.42 ms over trees whose light is not
+  kept, where it drew nothing before.
 - **A pack's own includes:** a program may include files of its pack's, in folders of it too. The compile is hashed
   by the programs the manifest names and what they include of the pack's, as deep as they go (`program_files`), and a
   built game reads the same files from its bundles, the build shipping every `.slang` under the pack's folder; so

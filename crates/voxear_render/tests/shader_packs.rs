@@ -453,7 +453,8 @@ fn blocks_at_evening(
     file.ground.height = 4;
     let first = file.blocks.len() as u16 + 1;
     file.blocks.push(BlockKind::colored("Log", [0.36, 0.26, 0.17]));
-    file.blocks.push(BlockKind::colored("Leaves", [0.22, 0.48, 0.18]));
+    // Leaves that shade the sky's light under them where it is kept, as a tree's do.
+    file.blocks.push(BlockKind { sways: kept, ..BlockKind::colored("Leaves", [0.22, 0.48, 0.18]) });
     let (log, leaves) = (first, first + 1);
     let mut blocks = file.make_ground(None);
     build(&mut blocks, log, leaves);
@@ -946,6 +947,102 @@ fn the_radiant_pack_warms_an_evening_and_lays_a_beam_of_sun_through_a_hole_in_a_
     eprintln!("the beam brightens the air under the hole by {lit:.1}, the side by {dark:.1}");
     assert!(lit > 6.0, "a beam under the hole: {lit}");
     assert!(lit > dark * 3.0, "under the hole most: {lit} against {dark}");
+}
+
+/// Paints what is drawn white where the sun reaches it and black where it does not, by the sun's shadow as a pass
+/// reads it, a little way towards the sun from the surface so it does not shade itself.
+const SUN_VISIBILITY: &str = "float4 run(PassInput input)\n{\n    if (isSky(input.uv))\n    {\n        return sceneColor(input.uv);\n    }\n    float3 at = scenePosition(input.uv) + frame()->sunDirection * 0.15;\n    return float4(float3(sunVisibility(at)) * 0.6, 1.0);\n}\n";
+
+/// Of the pixels of the grass in front of the trees, how many the engine draws in the sun and a pass's sunVisibility
+/// says the sun reaches, or in shade and says it does not; and how many each says are in the sun.
+fn agreement(plain: &[u8], visible: &[u8]) -> (f32, f32, f32) {
+    let (mut same, mut plain_lit, mut seen_lit, mut count) = (0.0, 0.0, 0.0, 0.0);
+    for y in HEIGHT - 50..HEIGHT {
+        for x in 0..WIDTH {
+            let lit = rgb_at(plain, x, y)[1] > 90;
+            let seen = rgb_at(visible, x, y)[0] > 64;
+            same += f32::from(u8::from(lit == seen));
+            plain_lit += f32::from(u8::from(lit));
+            seen_lit += f32::from(u8::from(seen));
+            count += 1.0;
+        }
+    }
+    (same / count, plain_lit / count, seen_lit / count)
+}
+
+#[test]
+fn a_pass_reads_the_suns_shadow_anywhere_from_its_pages_or_its_cascades() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let plain = render(&mut renderer, &world, 6);
+    keep_image("sun visibility plain.png", &plain, (WIDTH, HEIGHT));
+    for (maps, name) in [("", "pages"), ("[shadows]\nmaps = \"cascades\"\n", "cascades")] {
+        let manifest = format!(
+            "{maps}[[pass]]\nname = \"Sun\"\nprogram = \"sun.slang\"\nat = \"after_fog\"\nreads = [\"color\", \"depth\", \"shadow\"]\n"
+        );
+        let compiled = pack(&manifest, &[("sun.slang", SUN_VISIBILITY)]).unwrap_or_else(|error| panic!("{error:#}"));
+        wear(&mut world, compiled);
+        let visible = render(&mut renderer, &world, 6);
+        keep_image(&format!("sun visibility {name}.png"), &visible, (WIDTH, HEIGHT));
+        let (same, plain_lit, seen_lit) = agreement(&plain, &visible);
+        eprintln!("{name}: {same:.3} of the grass alike, {plain_lit:.2} in the sun drawn, {seen_lit:.2} read");
+        assert!((0.15..0.85).contains(&plain_lit), "the grass has sun and shade: {plain_lit}");
+        assert!(same > 0.85, "{name}: the sun reaches what the engine draws in the sun, {same} alike");
+    }
+}
+
+/// A roof of leaves two blocks thick over a clearing, with gaps the sun comes through, seen from under it towards its
+/// far edge, the sun high to one side; its blocks' light kept, so the air under the leaves is shaded from the sky.
+fn under_a_canopy(renderer: &mut Renderer) -> World {
+    let eye = Transform::new(Vec3::new(32.0, 7.0, 16.0), Quat::from_rotation_x(-0.08), Vec3::ONE);
+    blocks_at_evening(renderer, eye, Vec3::new(0.45, 1.0, 0.2), true, |blocks, _, leaves| {
+        for x in 2..62 {
+            for z in 12..62 {
+                if x % 6 < 2 && z % 6 < 2 {
+                    continue;
+                }
+                for y in 13..15 {
+                    blocks.set([x, y, z], leaves);
+                }
+            }
+        }
+    })
+}
+
+#[test]
+fn the_radiant_pack_lays_shafts_of_sun_through_the_gaps_in_a_roof_of_leaves() {
+    let Some(mut renderer) = renderer() else { return };
+    let files = match shader_packs::builtin_folder("radiant") {
+        Some(folder) => PackFiles::Folder(folder),
+        None => PackFiles::Embedded(shader_packs::builtin_files("radiant").unwrap()),
+    };
+    let manifest = PackManifest::parse(&files.read("pack.toml").unwrap()).unwrap();
+    let radiant = Arc::new(shader_packs::compile(&manifest, &files).unwrap_or_else(|error| panic!("{error:#}")));
+    let mut world = under_a_canopy(&mut renderer);
+    world.insert_resource(WornShaderPack::new(radiant.clone()));
+    let shafts = render(&mut renderer, &world, 32);
+    // No dust in the air, the faces lit as before.
+    let mut no_dust = WornShaderPack::new(radiant);
+    no_dust.options[3] = 0.0;
+    world.insert_resource(no_dust);
+    let without = render(&mut renderer, &world, 32);
+    keep_image("radiant shafts.png", &shafts, (WIDTH, HEIGHT));
+    keep_image("radiant without shafts.png", &without, (WIDTH, HEIGHT));
+    // Against the leaves overhead the air glows where the sun comes down through the gaps and stays dark between:
+    // across the view, some columns of it much brighter than others. The walk through the blocks alone lets the sun
+    // through leaves, and lit the air under them evenly. (Below, the dust dims the bright sky beyond the leaves.)
+    let (xs, ys) = (20..WIDTH - 20, 10..80);
+    let columns: Vec<f32> = xs
+        .map(|x| {
+            let lit = |pixels: &[u8]| averages(pixels, x..x + 1, ys.clone()).0;
+            lit(&shafts) - lit(&without)
+        })
+        .collect();
+    let mean = columns.iter().sum::<f32>() / columns.len() as f32;
+    let spread = (columns.iter().map(|c| (c - mean).powi(2)).sum::<f32>() / columns.len() as f32).sqrt();
+    eprintln!("the shafts brighten the air under the leaves by {mean:.1}, {spread:.1} more or less column to column");
+    assert!(mean > 4.0, "the air under the leaves glows: {mean}");
+    assert!(spread > 0.4 * mean, "in shafts, brighter where the sun comes through: {spread} round {mean}");
 }
 
 #[test]

@@ -261,13 +261,16 @@ pub struct PassReads {
     /// What each pixel's surface is, which the depth passes write beside
     /// its normal when a pass reads them.
     pub surface_ids: bool,
+    /// The sun's shadow, at any point of the world: its virtual shadow
+    /// pages or cascades, for shafts of light marched through the air.
+    pub shadow: bool,
     /// The pack's own targets, by their place among [`PackManifest::targets`].
     pub targets: Vec<usize>,
 }
 
 /// The engine's images, as `reads` names them, and which part of
 /// [`PassReads`] each is, with the functions a program reads it by.
-const ENGINE_READS: [(&str, &str, &[&str]); 8] = [
+const ENGINE_READS: [(&str, &str, &[&str]); 9] = [
     ("color", "PACK_READS_COLOR", &["sceneColor", "sceneColorAt", "colorSize"]),
     ("depth", "PACK_READS_DEPTH", &["sceneDepth", "isSky", "sceneDistance", "scenePosition"]),
     ("normals", "PACK_READS_NORMALS", &["sceneNormal", "sceneRoughness"]),
@@ -276,12 +279,13 @@ const ENGINE_READS: [(&str, &str, &[&str]); 8] = [
     ("block_light", "PACK_READS_BLOCK_LIGHT", &["lightAround", "hasBlockLight", "blockGlow"]),
     ("bloom", "PACK_READS_BLOOM", &["sceneBloom"]),
     ("surface_id", "PACK_READS_SURFACE_ID", &["sceneSurfaceId"]),
+    ("shadow", "PACK_READS_SHADOW", &["sunVisibility", "sunShadowsReach"]),
 ];
 
 impl PassReads {
-    fn engine(&self) -> [bool; 8] {
-        let Self { color, depth, normals, motion, history, block_light, bloom, surface_ids, .. } = *self;
-        [color, depth, normals, motion, history, block_light, bloom, surface_ids]
+    fn engine(&self) -> [bool; 9] {
+        let Self { color, depth, normals, motion, history, block_light, bloom, surface_ids, shadow, .. } = *self;
+        [color, depth, normals, motion, history, block_light, bloom, surface_ids, shadow]
     }
 
     /// The names `reads` gives them, for the Inspector.
@@ -773,6 +777,7 @@ impl PackManifest {
                     "history" => reads.history = true,
                     "block_light" => reads.block_light = true,
                     "surface_id" => reads.surface_ids = true,
+                    "shadow" => reads.shadow = true,
                     "bloom" => {
                         ensure!(
                             pass.at >= PackPoint::Tonemap,
@@ -785,7 +790,7 @@ impl PackManifest {
                         let Some(target) = targets.iter().position(|target| target.name == name) else {
                             bail!(
                                 "the pass `{}` reads `{name}`, which is neither one of the frame's images (color, \
-                                 depth, normals, motion, history, block_light, bloom, surface_id) nor a target a \
+                                 depth, normals, motion, history, block_light, bloom, surface_id, shadow) nor a target a \
                                  pass writes",
                                 pass.name
                             );
@@ -1616,6 +1621,71 @@ pub(crate) struct GpuPackFrame {
     pub display_peak: f32,
     /// The leaf light's texture, `NO_TEXTURE` without one.
     pub leaf_light: u32,
+    /// Where the sun's shadow maps are described ([`GpuPackShadows`]), for
+    /// a pass that reads `shadow`; 0 for none.
+    pub sun_shadows: u64,
+}
+
+/// Where in the pack's frame buffer the sun's shadow maps are written,
+/// after the frame.
+pub(crate) const SHADOWS_OFFSET: u64 = size_of::<GpuPackFrame>().next_multiple_of(16) as u64;
+
+/// The sun's shadow maps as a pass that reads `shadow` reads them; mirrors
+/// `PackSunShadows` in `shaders/shader_pack_frame.slang`. Written beside
+/// the pack's frame only when a pass reads them.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuPackShadows {
+    pub right: [f32; 3],
+    pub finest_texel: f32,
+    pub up: [f32; 3],
+    pub depth_min: f32,
+    pub direction: [f32; 3],
+    pub depth_range: f32,
+    pub table: u64,
+    pub pool: u32,
+    pub moving_pool: u32,
+    pub atlas: u32,
+    pub cascade_texels: u32,
+    pub bias: f32,
+    pub lod_scale: f32,
+    pub pad: [u32; 2],
+    pub origins: [[i32; 4]; crate::vsm::LEVELS],
+    pub cascade_view_projection: [[[f32; 4]; 4]; crate::shadows::CASCADES],
+    pub cascade_far: [f32; 4],
+    pub cascade_texel: [f32; 4],
+}
+
+impl GpuPackShadows {
+    /// The sun's shadow maps of the engine's frame, its cascades' tiles
+    /// `cascade_texels` across; `None` where it draws neither its pages nor
+    /// its cascades.
+    pub fn of(frame: &crate::gpu::GpuFrame, cascade_texels: u32) -> Option<Self> {
+        let vsm = &frame.vsm;
+        if vsm.pool == NO_TEXTURE && frame.shadow_texture == NO_TEXTURE {
+            return None;
+        }
+        Some(Self {
+            right: vsm.right,
+            finest_texel: vsm.finest_texel,
+            up: vsm.up,
+            depth_min: vsm.depth_min,
+            direction: vsm.direction,
+            depth_range: vsm.depth_range,
+            table: vsm.table,
+            pool: vsm.pool,
+            moving_pool: vsm.moving_pool,
+            atlas: if vsm.pool == NO_TEXTURE { frame.shadow_texture } else { NO_TEXTURE },
+            cascade_texels,
+            bias: vsm.bias,
+            lod_scale: frame.lod_scale,
+            pad: [0; 2],
+            origins: vsm.origins,
+            cascade_view_projection: frame.cascade_view_proj,
+            cascade_far: frame.cascade_far,
+            cascade_texel: frame.cascade_texel,
+        })
+    }
 }
 
 /// What a view's frame gives a pack's frame beyond the engine's own.
@@ -1675,6 +1745,7 @@ impl GpuPackFrame {
             exposure: facts.exposure,
             display_peak: frame.post.display_peak.max(1.0),
             leaf_light: NO_TEXTURE,
+            sun_shadows: 0,
             sky_light: facts.addresses[0],
             light_window: facts.addresses[1],
             light_bytes: facts.addresses[2],
@@ -1769,6 +1840,12 @@ impl PackDraw {
     pub fn reads_surface_ids(&self) -> bool {
         self.pack.manifest.passes.iter().any(|pass| pass.reads.surface_ids)
     }
+
+    /// Whether a pass reads the sun's shadow, which its frame then points
+    /// at.
+    pub fn reads_shadow(&self) -> bool {
+        self.pack.manifest.passes.iter().any(|pass| pass.reads.shadow)
+    }
 }
 
 /// The images a view's frame gives a pack, and the sizes it draws at.
@@ -1777,6 +1854,9 @@ pub(crate) struct PackImages {
     pub motion: ImageId,
     pub surface: Option<ImageId>,
     pub surface_ids: Option<ImageId>,
+    /// The sun's shadow maps this frame: its pages' pools, or its cascades'
+    /// atlas; read by a pass that reads `shadow`.
+    pub sun_shadows: Vec<ImageId>,
     /// The size the scene is drawn at, the size after TAA, and the size the
     /// picture is shown at.
     pub drawn: vk::Extent2D,
@@ -1797,6 +1877,7 @@ pub(crate) struct PackRecorder {
     motion: ImageId,
     surface: Option<ImageId>,
     surface_ids: Option<ImageId>,
+    sun_shadows: Vec<ImageId>,
     /// Each target this frame, and last frame's for those it keeps.
     targets: Vec<(ImageId, Option<ImageId>)>,
     /// Last frame's colour after TAA, and this frame's to copy it into.
@@ -1905,6 +1986,7 @@ impl PackRecorder {
             motion: images.motion,
             surface: images.surface,
             surface_ids: images.surface_ids,
+            sun_shadows: images.sun_shadows.clone(),
             targets,
             history,
             copy,
@@ -1997,6 +2079,11 @@ impl PackRecorder {
                 && let Some(ids) = self.surface_ids
             {
                 sampled(ids);
+            }
+            if pass.reads.shadow {
+                for &map in &self.sun_shadows {
+                    sampled(map);
+                }
             }
             if pass.reads.history
                 && let Some((_, Some(last))) = self.history
@@ -2125,7 +2212,7 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         };
         fails("format = 1", "no [[pass]]");
         fails("format = 9", "newer Voxear");
-        fails(&format!("{pass}reads = [\"shadow\"]"), "neither one of the frame's images");
+        fails(&format!("{pass}reads = [\"shade\"]"), "neither one of the frame's images");
         fails(&format!("{pass}reads = [\"rays\"]\n{pass}writes = {{ target = \"rays\" }}"), "before the pass");
         fails(&format!("{pass}writes = {{ target = \"rays\" }}\nreads = [\"rays\"]"), "reads the target it writes");
         fails(&format!("{pass}writes = {{ target = \"rays\", scale = 0.3 }}"), "1, 0.5 or 0.25");
@@ -2278,8 +2365,24 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
 
     #[test]
     fn the_frame_a_pack_reads_is_laid_out_as_the_shader_has_it() {
-        // Five matrices, then ten rows of sixteen bytes, the options, the images and four pointers.
-        assert_eq!(size_of::<GpuPackFrame>(), 5 * 64 + 10 * 16 + 4 * MAX_OPTIONS + 16 + 8 * MAX_TARGETS + 8 + 32);
+        // Five matrices, then ten rows of sixteen bytes, the options, the images and five pointers.
+        assert_eq!(size_of::<GpuPackFrame>(), 5 * 64 + 10 * 16 + 4 * MAX_OPTIONS + 16 + 8 * MAX_TARGETS + 8 + 40);
+        // The sun's space, the table, textures and the rest (scalar layout, as the shaders are compiled), each level's
+        // window and the cascades.
+        assert_eq!(size_of::<GpuPackShadows>(), 48 + 8 + 32 + 16 * crate::vsm::LEVELS + 64 * 4 + 32);
+        // As shader_pack_frame.slang names the pages' layout.
+        let header = include_str!("../shaders/shader_pack_frame.slang");
+        for (name, value) in [
+            ("PACK_VSM_LEVELS", crate::vsm::LEVELS as u32),
+            ("PACK_VSM_PAGE", crate::vsm::PAGE),
+            ("PACK_VSM_BORDER", crate::vsm::BORDER),
+            ("PACK_VSM_POOL_SLOTS", crate::vsm::POOL_SLOTS),
+            ("PACK_VSM_MOVING_POOL_SLOTS", crate::vsm::MOVING_POOL_SLOTS),
+            ("PACK_VSM_WINDOW", crate::vsm::WINDOW as u32),
+            ("PACK_CASCADES", crate::shadows::CASCADES as u32),
+        ] {
+            assert!(header.contains(&format!("{name} = {value};")), "{name} is {value}");
+        }
     }
 
     #[test]

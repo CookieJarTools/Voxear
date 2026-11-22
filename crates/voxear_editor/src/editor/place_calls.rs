@@ -31,7 +31,11 @@ pub(super) struct Choice {
 impl Editor {
     /// The prefabs `args` gives as `prefabs`, each `{ "prefab": <asset>,
     /// "weight": n }` or an asset alone, with each one's Placement.
-    fn place_choices(&mut self, args: &Json, renderer: &mut Renderer) -> Result<(Vec<Choice>, Vec<Candidate>), LinkError> {
+    fn place_choices(
+        &mut self,
+        args: &Json,
+        renderer: &mut Renderer,
+    ) -> Result<(Vec<Choice>, Vec<Candidate>), LinkError> {
         let given = need(args, "prefabs")?.as_array().ok_or_else(|| bad("`prefabs` is not a list"))?;
         let (mut choices, mut candidates) = (Vec::new(), Vec::new());
         for entry in given {
@@ -89,7 +93,13 @@ impl Editor {
     }
 
     /// Makes every one of `placed`, as one step to undo.
-    fn place_all(&mut self, choices: &[Choice], placed: &[Placed], parent: Option<Entity>, renderer: &mut Renderer) -> Called {
+    fn place_all(
+        &mut self,
+        choices: &[Choice],
+        placed: &[Placed],
+        parent: Option<Entity>,
+        renderer: &mut Renderer,
+    ) -> Called {
         let depth = self.history.depth();
         let mut made = Vec::new();
         for spot in placed {
@@ -131,7 +141,8 @@ impl Editor {
                     Some("right") => Side::Right,
                     _ => Side::Both,
                 };
-                let number = |key: &str, default: f32| args.get(key).and_then(Json::as_f64).map_or(default, |v| v as f32);
+                let number =
+                    |key: &str, default: f32| args.get(key).and_then(Json::as_f64).map_or(default, |v| v as f32);
                 let how = LineUp {
                     side,
                     from: number("from", 0.0),
@@ -182,9 +193,10 @@ impl Editor {
             return spot;
         };
         let Some((road, middle, _)) = voxear_engine::roads::nearest(world, blocks, at, 60.0, None) else { return spot };
-        let half_width = self.road_points(road).ok().map_or(3.0, |points| {
-            points.iter().map(|(_, width)| *width).fold(0.0, f32::max) * 0.5
-        });
+        let half_width = self
+            .road_points(road)
+            .ok()
+            .map_or(3.0, |points| points.iter().map(|(_, width)| *width).fold(0.0, f32::max) * 0.5);
         let away = Vec3::new(at.x - middle.x, 0.0, at.z - middle.z).normalize_or(Vec3::X);
         let out = half_width + setback + placement.size[1] * 0.5;
         let position = [middle.x + away.x * out, middle.z + away.z * out];

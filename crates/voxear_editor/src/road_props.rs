@@ -437,7 +437,9 @@ pub fn placement_set(game: &mut Game, entity: Entity, field: PlacementField, val
     let far = 10_000.0;
     match (field, value) {
         (P::Size, Value::Vector(v)) if v.len() == 2 => placement.size = [v[0].clamp(0.1, far), v[1].clamp(0.1, far)],
-        (P::Centre, Value::Vector(v)) if v.len() == 2 => placement.centre = [v[0].clamp(-far, far), v[1].clamp(-far, far)],
+        (P::Centre, Value::Vector(v)) if v.len() == 2 => {
+            placement.centre = [v[0].clamp(-far, far), v[1].clamp(-far, far)]
+        }
         (P::Front, Value::Number(front)) => placement.front = front.rem_euclid(360.0),
         (P::Door, Value::Vector(v)) if v.len() == 3 => placement.door = [0, 1, 2].map(|a| v[a].clamp(-far, far)),
         _ => return false,
@@ -517,7 +519,9 @@ pub fn brush_label(field: BrushField) -> String {
 
 pub fn brush_tooltip(field: BrushField) -> &'static str {
     match field {
-        B::Mode => "Paint scatters prefabs where a stroke goes; Single places one where you click, R turning it. Shift takes them away.",
+        B::Mode => {
+            "Paint scatters prefabs where a stroke goes; Single places one where you click, R turning it. Shift takes them away."
+        }
         B::Prefab(_) => "A prefab it paints, as often as the others; weights come from scripts. Placed under this Obj.",
         B::Radius => "The brush's radius, in metres. [ and ] size it. Default: 6.",
         B::Density => "How many it scatters each 100 square metres. Default: 3.",
@@ -563,7 +567,9 @@ pub fn brush_picked(field: BrushField) -> bool {
 
 pub fn prefab_choices(game: &Game) -> Vec<(String, Pick)> {
     let mut found = vec![("None".to_string(), Pick::Asset(None))];
-    found.extend(fields::assets_of(game, Some(AssetKind::Prefab)).into_iter().filter(|(_, pick)| *pick != Pick::Asset(None)));
+    found.extend(
+        fields::assets_of(game, Some(AssetKind::Prefab)).into_iter().filter(|(_, pick)| *pick != Pick::Asset(None)),
+    );
     found
 }
 

@@ -93,7 +93,12 @@ fn open() -> Option<(tempfile::TempDir, Renderer, Editor)> {
 fn houses_are_lined_up_along_a_road_facing_it_and_undone_as_one_step() {
     let Some((dir, mut renderer, mut editor)) = open() else { return };
     let _ = dir;
-    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Street", "position": [100.0, 0.0, 100.0] }));
+    let made = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "Street", "position": [100.0, 0.0, 100.0] }),
+    );
     let road = made["obj"].clone();
     done(&mut editor, &mut renderer, "component.add", json!({ "obj": road, "component": "road" }));
     let points = json!([[0.0, 0.0, 0.0, 5.0], [60.0, 0.0, 0.0, 5.0]]);
@@ -104,7 +109,8 @@ fn houses_are_lined_up_along_a_road_facing_it_and_undone_as_one_step() {
     };
     let before = count(&editor);
     let prefabs = json!([{ "prefab": { "path": "Kits/Hut.prefab" } }]);
-    let lined = done(&mut editor, &mut renderer, "place.line_up", json!({ "road": road, "prefabs": prefabs, "seed": 3 }));
+    let lined =
+        done(&mut editor, &mut renderer, "place.line_up", json!({ "road": road, "prefabs": prefabs, "seed": 3 }));
     let objs = lined["objs"].as_array().unwrap().len();
     assert!(objs >= 8, "{lined}");
     let world = &editor.game.engine.world;

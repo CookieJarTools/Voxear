@@ -49,12 +49,19 @@ impl PrefabBrushes {
 
 impl Editor {
     /// Notes the ground under the pointer for the selected Obj's Prefab Brush.
-    pub(super) fn hover_prefab_brush(&mut self, renderer: &Renderer, camera: &ViewCamera, entity: Option<Entity>, point: Option<[f32; 2]>) {
+    pub(super) fn hover_prefab_brush(
+        &mut self,
+        renderer: &Renderer,
+        camera: &ViewCamera,
+        entity: Option<Entity>,
+        point: Option<[f32; 2]>,
+    ) {
         if self.prefab_brushes.is_dragging() {
             return;
         }
         let world = &self.game.engine.world;
-        let brushing = entity.filter(|entity| world.get::<PrefabBrush>(*entity).is_some_and(|brush| !brush.prefabs.is_empty()));
+        let brushing =
+            entity.filter(|entity| world.get::<PrefabBrush>(*entity).is_some_and(|brush| !brush.prefabs.is_empty()));
         self.prefab_brushes.under = brushing.zip(point).and_then(|(entity, point)| {
             // What the brush already placed is left out of what it finds, so it paints on the ground.
             let skip = objs::family(world, entity);
@@ -128,7 +135,10 @@ impl Editor {
             .iter()
             .filter(|entry| entry.prefab.is_some())
             .zip(&paths)
-            .map(|(entry, path)| Candidate { weight: entry.weight, placement: self.placement_of(path, renderer).unwrap_or_default() })
+            .map(|(entry, path)| Candidate {
+                weight: entry.weight,
+                placement: self.placement_of(path, renderer).unwrap_or_default(),
+            })
             .collect();
         if candidates.is_empty() {
             return;
@@ -174,7 +184,9 @@ impl Editor {
             }
             let Some(path) = paths.get(spot.which) else { continue };
             let choice = super::place_calls::Choice { path: path.clone(), weight: 1 };
-            let Ok(made) = self.place_on_ground(&choice, (spot.position, spot.yaw), Some(entity), renderer) else { continue };
+            let Ok(made) = self.place_on_ground(&choice, (spot.position, spot.yaw), Some(entity), renderer) else {
+                continue;
+            };
             let scale = prefab_placing::scale_for(brush.scale, seed.wrapping_mul(31).wrapping_add(number as u64));
             if let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(made) {
                 transform.scale *= scale;

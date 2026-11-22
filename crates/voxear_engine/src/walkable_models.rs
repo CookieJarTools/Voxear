@@ -163,7 +163,9 @@ pub fn stamped_cells(world: &World, entity: Entity) -> usize {
         .filter_map(|key| map.chunk(*key))
         .map(|chunk| {
             let side = CHUNK;
-            (0..side * side * side).filter(|i| chunk.get(i % side, i / side % side, i / (side * side)) == MODEL_BLOCK).count()
+            (0..side * side * side)
+                .filter(|i| chunk.get(i % side, i / side % side, i / (side * side)) == MODEL_BLOCK)
+                .count()
         })
         .sum()
 }

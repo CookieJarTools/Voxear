@@ -320,7 +320,13 @@ pub fn line_up(points: &[([f32; 2], f32)], candidates: &[Candidate], how: &LineU
 /// Prefabs of `candidates` scattered over the loop `outline`, about
 /// `density` of them each 100 square metres, turned any way, none where
 /// another stands already in `taken`, from `seed`.
-pub fn scatter(outline: &[[f32; 2]], candidates: &[Candidate], density: f32, seed: u64, taken: &[Footprint]) -> Vec<Placed> {
+pub fn scatter(
+    outline: &[[f32; 2]],
+    candidates: &[Candidate],
+    density: f32,
+    seed: u64,
+    taken: &[Footprint],
+) -> Vec<Placed> {
     if outline.len() < 3 || density <= 0.0 {
         return Vec::new();
     }
@@ -340,10 +346,8 @@ pub fn scatter(outline: &[[f32; 2]], candidates: &[Candidate], density: f32, see
         for x in 0..cells(0) {
             let key = (x as u64) << 32 | z as u64;
             let Some(which) = pick(candidates, unit(seed, key, 0), None) else { return placed };
-            let position = [
-                low[0] + (x as f32 + unit(seed, key, 1)) * cell,
-                low[1] + (z as f32 + unit(seed, key, 2)) * cell,
-            ];
+            let position =
+                [low[0] + (x as f32 + unit(seed, key, 1)) * cell, low[1] + (z as f32 + unit(seed, key, 2)) * cell];
             let yaw = unit(seed, key, 3) * std::f32::consts::TAU;
             let print = footprint_of(&candidates[which].placement, position, yaw);
             if !print.inside(outline) || prints.iter().any(|other| other.meets(&print)) {
@@ -369,7 +373,11 @@ fn point_along(points: &[([f32; 2], f32)], lengths: &[f32], along: f32) -> Optio
             let share = (along - walked) / length;
             let ((a, wa), (b, wb)) = (points[at], points[at + 1]);
             let tangent = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
-            return Some(([a[0] + (b[0] - a[0]) * share, a[1] + (b[1] - a[1]) * share], tangent, wa + (wb - wa) * share));
+            return Some((
+                [a[0] + (b[0] - a[0]) * share, a[1] + (b[1] - a[1]) * share],
+                tangent,
+                wa + (wb - wa) * share,
+            ));
         }
         walked += length;
     }

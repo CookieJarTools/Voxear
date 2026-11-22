@@ -140,7 +140,8 @@ fn a_walkable_platform_is_stood_on_in_the_worlds_navigation_and_a_door_is_left_o
     ));
     voxear_engine::navigation::nav_of(&mut game.engine.world, world).expect("the world's navigation");
     let stood = |game: &mut Game| {
-        let place = voxear_engine::nav_agent::nearest_place(&mut game.engine.world, Vec3::new(spot.x, top + 0.5, spot.z), 1.0);
+        let place =
+            voxear_engine::nav_agent::nearest_place(&mut game.engine.world, Vec3::new(spot.x, top + 0.5, spot.z), 1.0);
         place.is_some_and(|place| (place.y - top).abs() < 1.1)
     };
     let mut on = false;

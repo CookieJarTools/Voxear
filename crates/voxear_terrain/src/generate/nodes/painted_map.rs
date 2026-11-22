@@ -91,7 +91,9 @@ impl Kind for PaintedMapNode {
 
     fn compile(&self, cx: &mut Compiler, _: NodeId, _: usize, at: Places) -> V {
         match &self.painted {
-            Some(painted) => cx.run(Read { painted: painted.clone(), map: self.map, default: self.default }, &[at.x, at.z]),
+            Some(painted) => {
+                cx.run(Read { painted: painted.clone(), map: self.map, default: self.default }, &[at.x, at.z])
+            }
             None => cx.constant(self.default),
         }
     }
@@ -137,7 +139,11 @@ mod tests {
         let world = testing::world_of(NodeKind::PaintedMap(node), 0, &[]);
         assert!((world.height_at(100.0, 100.0) - 0.8).abs() < 1e-4);
         assert_eq!(world.height_at(900.0, 900.0), -1.0);
-        let alone = testing::world_of(NodeKind::PaintedMap(PaintedMapNode { default: 2.0, ..PaintedMapNode::default() }), 0, &[]);
+        let alone = testing::world_of(
+            NodeKind::PaintedMap(PaintedMapNode { default: 2.0, ..PaintedMapNode::default() }),
+            0,
+            &[],
+        );
         assert_eq!(alone.height_at(100.0, 100.0), 2.0, "Default with no world's maps");
     }
 }

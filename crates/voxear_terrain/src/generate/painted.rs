@@ -156,7 +156,8 @@ impl PaintedMap {
                 }
                 let key = [px.div_euclid(side), pz.div_euclid(side)];
                 let tile = self.tiles.entry(key).or_insert_with(|| Arc::new(vec![f32::NAN; TILE * TILE]));
-                Arc::make_mut(tile)[(pz.rem_euclid(side) * side + px.rem_euclid(side)) as usize] = now.unwrap_or(f32::NAN);
+                Arc::make_mut(tile)[(pz.rem_euclid(side) * side + px.rem_euclid(side)) as usize] =
+                    now.unwrap_or(f32::NAN);
                 changed = true;
             }
         }
@@ -209,7 +210,8 @@ impl PaintedMap {
         let mut map = PaintedMap::new(spacing);
         for _ in 0..count {
             let key = [i32::from_le_bytes(take(4)?.try_into()?), i32::from_le_bytes(take(4)?.try_into()?)];
-            let pixels: Vec<f32> = take(TILE * TILE * 4)?.chunks(4).map(|v| f32::from_le_bytes([v[0], v[1], v[2], v[3]])).collect();
+            let pixels: Vec<f32> =
+                take(TILE * TILE * 4)?.chunks(4).map(|v| f32::from_le_bytes([v[0], v[1], v[2], v[3]])).collect();
             map.tiles.insert(key, Arc::new(pixels));
         }
         Ok(map)
@@ -357,7 +359,9 @@ impl Painted {
         let reach = |maps: &PaintedMaps| -> Option<[[f32; 2]; 2]> {
             let mut boxes = PaintKind::ALL.into_iter().filter_map(|kind| maps.map(kind).bounds());
             let first = boxes.next()?;
-            Some(boxes.fold(first, |a, b| [[a[0][0].min(b[0][0]), a[0][1].min(b[0][1])], [a[1][0].max(b[1][0]), a[1][1].max(b[1][1])]]))
+            Some(boxes.fold(first, |a, b| {
+                [[a[0][0].min(b[0][0]), a[0][1].min(b[0][1])], [a[1][0].max(b[1][0]), a[1][1].max(b[1][1])]]
+            }))
         };
         for area in [reach(&held), reach(&maps)].into_iter().flatten() {
             Arc::make_mut(&mut maps).changes.push((version, area));

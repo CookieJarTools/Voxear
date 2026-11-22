@@ -796,7 +796,9 @@ impl Content {
 
     /// The painted maps changed since they were last written, each with its
     /// world's path; marked written.
-    pub(crate) fn take_unsaved_painted(&mut self) -> Vec<(String, std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>)> {
+    pub(crate) fn take_unsaved_painted(
+        &mut self,
+    ) -> Vec<(String, std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>)> {
         let mut unsaved = Vec::new();
         for (guid, (painted, saved)) in &mut self.painted {
             let maps = painted.maps();
@@ -2996,7 +2998,6 @@ mod tests {
         assert_ne!(one_sided.key(), data.key(), "a one-sided material is a GPU material of its own");
     }
 }
-
 
 /// The file a world of blocks' painted maps are kept in, beside it.
 pub fn maps_file(world: &str) -> String {

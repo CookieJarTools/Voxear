@@ -669,7 +669,8 @@ mod tests {
         let blocks = vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }];
         let generate = file.generate.as_mut().unwrap();
         generate.levels = Some(levels);
-        generate.placed = Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: Some(regions), biomes, blocks }));
+        let placed = WorldBiomes { painted: None, regions: Some(regions), biomes, blocks };
+        generate.placed = Some(std::sync::Arc::new(placed));
         let map = file.make_ground(Some(&world));
         let top = |x: i32, z: i32| (-100..400).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
         let tops: Vec<i32> = (0..64 * 64).map(|k| top(k % 64, k / 64)).collect();
@@ -715,7 +716,8 @@ mod tests {
         let blocks = BiomeBlocks { top: 1, steep: 4, steep_slope: 0.7, strata: Some(strata.clone()), ..BiomeBlocks::default() };
         let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let biomes = Biomes::new(vec![land], 15.0, 0.3, world.seed());
-        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: None, biomes, blocks: vec![blocks] }));
+        let placed = WorldBiomes { painted: None, regions: None, biomes, blocks: vec![blocks] };
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(placed));
         let map = file.make_ground(Some(&world));
         let generate = file.generate.as_ref().unwrap();
         let (mut shown, mut wrong) = ([0usize; 2], 0);
@@ -951,7 +953,8 @@ mod tests {
         let blocks =
             vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }, BiomeBlocks { top: 5, ..BiomeBlocks::default() }];
         let biomes = Biomes::new(vec![land, hollow], 15.0, 0.3, world.seed()).wandering(0.0, 48.0);
-        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { painted: None, regions: None, biomes, blocks }));
+        let placed = WorldBiomes { painted: None, regions: None, biomes, blocks };
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(placed));
         let map = file.make_ground(Some(&world));
         let (mut floors, mut roofs, mut open) = (0, 0, 0);
         for z in 0..128 {

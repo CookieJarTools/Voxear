@@ -2187,7 +2187,9 @@ impl Editor {
                     let index = listed
                         .iter()
                         .position(|reference| self.game.content.parse(reference).ok().and_then(|r| r.guid()) == guid)
-                        .ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{path} is not a biome the world lists")))?;
+                        .ok_or_else(|| {
+                            refuse(ErrorKind::WrongValue, format!("{path} is not a biome the world lists"))
+                        })?;
                     PaintMap::Biome(index)
                 }
                 _ => return Err(bad("`map` is land, height, biome or erase")),

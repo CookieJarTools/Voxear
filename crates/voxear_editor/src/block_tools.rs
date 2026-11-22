@@ -535,7 +535,14 @@ impl BlockTools {
             (false, true) => PaintMode::TakeAway,
             (false, false) => PaintMode::Add,
         };
-        let dab = Dab { map, mode, at, radius: state.paint_radius, strength: state.paint_strength, falloff: state.paint_falloff };
+        let dab = Dab {
+            map,
+            mode,
+            at,
+            radius: state.paint_radius,
+            strength: state.paint_strength,
+            falloff: state.paint_falloff,
+        };
         voxear_engine::map_painting::paint(&game.engine.world, &mut game.content, entity, &dab);
     }
 

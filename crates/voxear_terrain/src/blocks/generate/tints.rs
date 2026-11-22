@@ -179,7 +179,12 @@ mod tests {
             ..BiomeDef::default()
         };
         let list = vec![biome([-60.0, warmth], [0.6, 1.0, 1.2]), biome([warmth, 60.0], [1.6, 1.2, 0.6])];
-        let placed = WorldBiomes { painted: None, regions: None, biomes: Biomes::new(list, 15.0, 0.3, world.seed()), blocks: Vec::new() };
+        let placed = WorldBiomes {
+            painted: None,
+            regions: None,
+            biomes: Biomes::new(list, 15.0, 0.3, world.seed()),
+            blocks: Vec::new(),
+        };
         let generate = BlockGenerate { placed: Some(Arc::new(placed)), ..BlockGenerate::default() };
         (generate, world)
     }

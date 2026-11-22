@@ -60,7 +60,14 @@ pub fn paint_json(world: &World, content: &mut crate::content::Content, blocks: 
         _ => PaintMode::Add,
     };
     let at = Vec3::new(x as f32, y as f32, z as f32);
-    let dab = Dab { map, mode, at, radius: number("radius", 40.0), strength: number("strength", 0.3), falloff: number("falloff", 0.5) };
+    let dab = Dab {
+        map,
+        mode,
+        at,
+        radius: number("radius", 40.0),
+        strength: number("strength", 0.3),
+        falloff: number("falloff", 0.5),
+    };
     paint(world, content, blocks, &dab)
 }
 

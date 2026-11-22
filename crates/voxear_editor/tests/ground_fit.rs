@@ -230,8 +230,13 @@ fn land_height_and_a_biome_are_painted_into_the_generator_undone_and_saved_besid
         .unwrap();
     let height_at = |editor: &mut Editor, x: f32, z: f32| {
         let game = &mut editor.game;
-        voxear_engine::ground_fit::ground_under(&mut game.engine.world, &mut game.content, voxear_core::math::Vec3::new(x, 0.0, z), None)
-            .unwrap()
+        voxear_engine::ground_fit::ground_under(
+            &mut game.engine.world,
+            &mut game.content,
+            voxear_core::math::Vec3::new(x, 0.0, z),
+            None,
+        )
+        .unwrap()
     };
     let before = height_at(&mut editor, 120.0, 120.0);
     let painted = done(
@@ -245,7 +250,18 @@ fn land_height_and_a_biome_are_painted_into_the_generator_undone_and_saved_besid
     assert!(raised > before + 10.0, "a mountain painted: {before} to {raised}");
     assert_eq!(height_at(&mut editor, 2000.0, 2000.0), height_at(&mut editor, 2000.0, 2000.0));
     // A biome the world lists, chosen there before the climate rules.
-    let biome = editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world_entity).unwrap().file.generate.as_ref().unwrap().biomes[3].clone();
+    let biome = editor
+        .game
+        .engine
+        .world
+        .get::<voxear_engine::blocks::BlockWorldAsset>(world_entity)
+        .unwrap()
+        .file
+        .generate
+        .as_ref()
+        .unwrap()
+        .biomes[3]
+        .clone();
     done(
         &mut editor,
         &mut renderer,

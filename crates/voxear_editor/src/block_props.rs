@@ -1058,7 +1058,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
                 .iter()
                 .map(|reference| {
                     let path = path_of(game, Some(reference.as_str()));
-                    std::path::Path::new(&path).file_stem().map_or(path.clone(), |stem| stem.to_string_lossy().into_owned())
+                    std::path::Path::new(&path)
+                        .file_stem()
+                        .map_or(path.clone(), |stem| stem.to_string_lossy().into_owned())
                 })
                 .collect();
             Value::Choice(state.paint_biome.min(names.len().saturating_sub(1)), names)

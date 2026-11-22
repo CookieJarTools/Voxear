@@ -1392,7 +1392,9 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     for (path, maps) in content.take_unsaved_painted() {
         let file = project.join(crate::content::maps_file(&path));
         match maps.is_empty() {
-            true if file.is_file() => std::fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?,
+            true if file.is_file() => {
+                std::fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?
+            }
             true => {}
             false => std::fs::write(&file, maps.to_bytes()).with_context(|| format!("saving {}", file.display()))?,
         }
@@ -1443,7 +1445,8 @@ fn painted_biomes(
         if let Some((_, _, made)) = kept.iter().find(|(from, id, _)| Arc::ptr_eq(from, placed) && *id == painted.id) {
             return made.clone();
         }
-        let made = Arc::new(voxear_terrain::generate::WorldBiomes { painted: Some(painted.clone()), ..(**placed).clone() });
+        let made =
+            Arc::new(voxear_terrain::generate::WorldBiomes { painted: Some(painted.clone()), ..(**placed).clone() });
         if kept.len() >= 8 {
             kept.remove(0);
         }

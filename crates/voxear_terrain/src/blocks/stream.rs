@@ -147,7 +147,8 @@ impl BlockMaking {
     fn made_stamp(&self, level: u32) -> u64 {
         let layers = self.generate.layers.get().map_or(0, super::world_layers::WorldLayers::hash);
         // And the painted maps' version: a column made under older paint is made again.
-        let painted = self.generate.painted.0.as_ref().map_or(0, |painted| painted.maps().version.rotate_left(41) ^ painted.id);
+        let painted =
+            self.generate.painted.0.as_ref().map_or(0, |painted| painted.maps().version.rotate_left(41) ^ painted.id);
         let layers = layers ^ painted;
         match level {
             0 => layers,
@@ -193,7 +194,8 @@ fn far_tile_bare(making: &BlockMaking, folder: Option<&std::path::Path>, level: 
     // Kept by the paint over it too, a little past its sides: a tile painted over is another tile.
     let painted = making.generate.painted.0.as_ref().map_or(0, |painted| {
         let span = CHUNK as f32 * making.file.block_size.max(0.01) * (1u32 << level.min(16)) as f32;
-        let corner = [making.generate.position[0] + at[0] as f32 * span, making.generate.position[1] + at[1] as f32 * span];
+        let corner =
+            [making.generate.position[0] + at[0] as f32 * span, making.generate.position[1] + at[1] as f32 * span];
         let margin = 64.0;
         painted.maps().hash_within([corner.map(|v| v - margin), corner.map(|v| v + span + margin)])
     });
@@ -2544,7 +2546,8 @@ mod tests {
         let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
         let mut streamer = BlockStreamer::default();
         settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
-        let top = |world: &BlockWorld, x: i32, z: i32| (-8..400).rev().find(|&y| world.blocks.get([x, y, z]) != 0).unwrap();
+        let top =
+            |world: &BlockWorld, x: i32, z: i32| (-8..400).rev().find(|&y| world.blocks.get([x, y, z]) != 0).unwrap();
         let was = top(&world, 20, 20);
         let far_column = [-2, -2];
         let untouched: Vec<Arc<Chunk>> =

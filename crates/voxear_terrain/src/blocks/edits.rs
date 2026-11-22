@@ -258,6 +258,40 @@ impl BlockEdits {
         Self { chunks: chunks.into_iter().map(|(key, cells)| (key, listed(cells))).collect(), links: Vec::new() }
     }
 
+    /// Adds the changes that set each of `cells`, block by block, after
+    /// those it holds: a block it changed already takes the newer change.
+    pub fn put_cells(&mut self, cells: impl IntoIterator<Item = Cell>) {
+        let mut by_chunk: BTreeMap<[i32; 3], Vec<(usize, BlockId, Fill)>> = BTreeMap::new();
+        for (at, block, fill) in cells {
+            let (key, [x, y, z]) = BlockMap::chunk_of(at);
+            by_chunk.entry(key).or_default().push((((y * CHUNK + z) * CHUNK + x) as usize, block, fill));
+        }
+        for (key, cells) in by_chunk {
+            if let Some(ChunkChange::Whole(chunk)) = self.chunks.get_mut(&key) {
+                for (index, block, fill) in cells {
+                    let [x, y, z] = place(index);
+                    chunk.set_cell(x, y, z, block, fill);
+                }
+                continue;
+            }
+            let mut kept: BTreeMap<u16, (BlockId, Fill)> = match self.chunks.remove(&key) {
+                Some(ChunkChange::Blocks(list)) => list
+                    .into_iter()
+                    .map(|(index, block)| (index, (block, if block == AIR { EMPTY } else { FULL })))
+                    .collect(),
+                Some(ChunkChange::Cells(list)) => {
+                    list.into_iter().map(|(index, block, fill)| (index, (block, fill))).collect()
+                }
+                _ => BTreeMap::new(),
+            };
+            for (index, block, fill) in cells {
+                kept.insert(index as u16, (block, fill));
+            }
+            let list = kept.into_iter().map(|(index, (block, fill))| (index, block, fill)).collect();
+            self.chunks.insert(key, ChunkChange::Cells(list));
+        }
+    }
+
     /// These changes for a world whose blocks change size as `resize` says,
     /// each staying where it was in metres (see [`resized`]).
     pub fn resized(&self, resize: &Resize) -> Self {

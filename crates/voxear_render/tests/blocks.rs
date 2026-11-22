@@ -325,6 +325,94 @@ fn a_world_too_large_to_upload_in_a_frame_comes_over_several_the_old_one_drawn_t
 }
 
 #[test]
+fn a_chunk_dug_out_to_air_stops_being_drawn_while_far_chunks_still_stream_in() {
+    use std::collections::HashMap;
+    use voxear_terrain::blocks::{BlockMap, mesh::mesh_chunk};
+    use voxear_terrain::{WorldBudget, WorldQuality};
+    let Some(mut renderer) = renderer() else { return };
+    // A stone floor over one chunk, and a slab of grass over it in the chunk above, alone in that chunk.
+    let file = BlockFile::default();
+    let (looks, faces) = file.faces();
+    let mut blocks = BlockMap::default();
+    for z in 0..32 {
+        for x in 0..32 {
+            blocks.set([x, 0, z], 3);
+        }
+    }
+    let slab: Vec<[i32; 3]> = (8..24).flat_map(|x| (8..24).map(move |z| [x, 40, z])).collect();
+    for &at in &slab {
+        blocks.set(at, 1);
+    }
+    // Far chunks of every other block, each nearly a megabyte of faces, off to the side out of sight.
+    let mut checks = BlockMap::default();
+    for x in 0..32 {
+        for y in 0..32 {
+            for z in (0..32).filter(|z| (x + y + z) % 2 == 0) {
+                checks.set([x, y, z], 3);
+            }
+        }
+    }
+    let far = mesh_chunk(&checks, [0, 0, 0], &faces);
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: false,
+                tint: 0,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+        light: Default::default(),
+        ground_cover: Default::default(),
+    };
+    let field = world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    // A megabyte of chunks a frame.
+    world.insert_resource(WorldBudget { quality: WorldQuality::Custom, upload: 1, ..WorldBudget::default() });
+    // Straight down from 90 m over the slab's middle.
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(16.0, 91.0, 16.0), down, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let green = |[r, g, b]: [i32; 3]| g > r + 10 && g > b + 10;
+    let middle = |pixels: &[u8]| rgb_at(pixels, WIDTH / 2, HEIGHT / 2);
+    let before = render(&mut renderer, &world, 2);
+    assert!(green(middle(&before)), "the slab's grass first: {:?}", middle(&before));
+    // The slab dug out, its chunk left with no faces, while more far chunks than a frame takes come every frame,
+    // as they do while a world without end is still making its far view.
+    world.get_mut::<BlockWorld>(field).unwrap().set_blocks(slab.iter().map(|&at| (at, 0)));
+    assert!(!world.get::<BlockWorld>(field).unwrap().meshes.contains_key(&[0, 1, 0]), "the slab's chunk has no faces");
+    let mut pixels = Vec::new();
+    for _ in 0..6 {
+        let streaming: HashMap<[i32; 4], Arc<_>> =
+            (0..4).map(|i| ([1, 4 + i, 0, 4], Arc::new(far.clone()))).collect();
+        world.get_mut::<BlockWorld>(field).unwrap().far = Arc::new(streaming);
+        pixels = render(&mut renderer, &world, 1);
+    }
+    keep_image("blocks dug out while streaming.png", &pixels);
+    assert!(!green(middle(&pixels)), "the stone floor under where the slab was: {:?}", middle(&pixels));
+}
+
+#[test]
 fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
     use std::collections::HashMap;
     use voxear_terrain::blocks::{BlockMap, mesh::mesh_chunk};

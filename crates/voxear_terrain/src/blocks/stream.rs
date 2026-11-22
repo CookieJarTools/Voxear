@@ -621,6 +621,11 @@ impl BlockStreamer {
         from: &[StreamFrom],
     ) -> bool {
         let mut changed = false;
+        // Changes made to columns not made yet, kept with the others for chunks not made: put in as they come.
+        if !world.unmade.is_empty() {
+            let unmade = std::mem::take(Arc::make_mut(&mut world.unmade));
+            Arc::make_mut(pending).put_cells(unmade.cells());
+        }
         // What is built into the far view changed, its ground the same: its tiles are built on again, the old drawn
         // till then, and nothing else is made again.
         let rebuilt =
@@ -2469,6 +2474,44 @@ mod tests {
             let since = world.fades.covered.get(&[1, key[1], key[3]]).copied();
             assert!(!all || since.is_some_and(|since| since != f32::MAX), "coarse column {key:?} over near ones");
         }
+    }
+
+    #[test]
+    fn a_box_dug_into_columns_not_made_yet_is_dug_into_their_ground_as_it_comes() {
+        let making = making();
+        let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        // Asked for, but nothing made yet.
+        streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 600.0), [10.0, 10.0]);
+        assert!(world.columns.as_ref().is_some_and(|made| !made.contains(&[0, 0])), "column (0, 0) not made yet");
+        // A box of stone round where the ground will be, 20 blocks a side, hollowed out inside.
+        let ground = (making.world.height_at(41.0, 41.0) / 2.0).floor() as i32;
+        let (low, high) = (ground - 6, ground + 10);
+        let within = |inside: i32| {
+            (10 - inside..=30 + inside)
+                .flat_map(move |x| (low + 2 - inside..=high - 2 + inside).map(move |y| (x, y)))
+                .flat_map(move |(x, y)| (10 - inside..=30 + inside).map(move |z| [x, y, z]))
+        };
+        world.set_blocks(within(2).map(|at| (at, 3)));
+        world.set_blocks(within(0).map(|at| (at, AIR)));
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
+        assert!(pending.is_empty(), "every change put in");
+        let dirt = within(0).filter(|&at| world.blocks.get(at) != AIR).count();
+        assert_eq!(dirt, 0, "blocks left inside the box, of its {}", within(0).count());
+        assert_eq!(world.blocks.get([8, high, 8]), 3, "the box's stone");
+        assert_eq!(world.blocks.get([20, low, 20]), 3, "its floor");
+        // No faces left of the ground that was there.
+        let faces_inside = world.meshes.iter().flat_map(|(key, mesh)| {
+            mesh.quads.iter().map(move |quad| {
+                let (at, ..) = unpack(*quad);
+                [key[0] * 32 + at[0] as i32, key[1] * 32 + at[1] as i32, key[2] * 32 + at[2] as i32]
+            })
+        });
+        let floating = faces_inside
+            .filter(|&[x, y, z]| (11..30).contains(&x) && (low + 3..high - 2).contains(&y) && (11..30).contains(&z))
+            .count();
+        assert_eq!(floating, 0, "faces drawn inside the box");
     }
 
     #[test]

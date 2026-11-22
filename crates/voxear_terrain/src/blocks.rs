@@ -473,6 +473,10 @@ pub struct BlockWorld {
     /// water shows no face towards them. `None` for a world of its blocks
     /// alone.
     pub columns: Option<Arc<HashSet<[i32; 2]>>>,
+    /// For a world without end, the changes made to chunk columns not made
+    /// yet: kept apart, as their blocks are not there to change, and put on
+    /// their ground as it comes (see `stream`).
+    pub unmade: Arc<edits::BlockEdits>,
     /// For a world without end seen from more places than one, as through
     /// Portals, what it shows from each (see [`BlockPlace`]): a view draws
     /// what is shown from the place nearest its camera. Empty, everything
@@ -615,6 +619,7 @@ impl BlockWorld {
             faces: faces.into(),
             far: Arc::default(),
             columns: None,
+            unmade: Arc::default(),
             places: Arc::default(),
             fades: Arc::default(),
             block_size,
@@ -867,8 +872,20 @@ impl BlockWorld {
         // under it too.
         let covering = !self.smooth && any_covered(&self.faces);
         let mut lit: Vec<[i32; 3]> = Vec::new();
+        // In a world without end, a change to a column not made yet is kept till its ground comes.
+        let made = self.columns.clone();
+        let mut unmade: Vec<edits::Cell> = Vec::new();
         for (at, block, fill) in changes {
-            if at[1] <= floor || blocks.get(at) == block && blocks.fill(at) == fill {
+            if at[1] <= floor {
+                continue;
+            }
+            let column = [at[0].div_euclid(CHUNK as i32), at[2].div_euclid(CHUNK as i32)];
+            if made.as_ref().is_some_and(|made| !made.contains(&column)) {
+                unmade.push((at, block, fill));
+                changed += 1;
+                continue;
+            }
+            if blocks.get(at) == block && blocks.fill(at) == fill {
                 continue;
             }
             let was = blocks.get(at);
@@ -913,6 +930,9 @@ impl BlockWorld {
         self.remesh(&reached);
         if !flowing.is_empty() {
             Arc::make_mut(&mut self.flowing).extend(flowing);
+        }
+        if !unmade.is_empty() {
+            Arc::make_mut(&mut self.unmade).put_cells(unmade);
         }
         changed
     }

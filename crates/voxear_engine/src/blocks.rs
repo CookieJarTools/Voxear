@@ -986,7 +986,12 @@ pub fn endless_changes(world: &World, entity: voxear_ecs::Entity) -> Option<Bloc
     }
     let asset = world.get::<BlockWorldAsset>(entity)?;
     let blocks = world.get::<BlockWorld>(entity)?;
-    Some(voxear_terrain::blocks::stream::all_changes(&asset.base, &blocks.blocks, &asset.pending))
+    // With those made to columns not made yet, not taken in by the streamer yet.
+    let mut pending = asset.pending.clone();
+    if !blocks.unmade.is_empty() {
+        Arc::make_mut(&mut pending).put_cells(blocks.unmade.cells());
+    }
+    Some(voxear_terrain::blocks::stream::all_changes(&asset.base, &blocks.blocks, &pending))
 }
 
 /// For a world of blocks without end, makes `edits` all its changes from its
@@ -1040,6 +1045,7 @@ pub fn put_endless_changes(world: &mut World, entity: voxear_ecs::Entity, edits:
         }
     }
     now.set_cells(cells);
+    now.unmade = Arc::default();
     now.set_links(&edits.links);
     // Kept as built from here, so a save after holds what changed.
     if !world.has::<voxear_terrain::blocks::BuiltBlocks>(entity) {

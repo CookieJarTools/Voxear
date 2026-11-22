@@ -78,6 +78,17 @@ The ground split into cells, each the ground nearest one of the points scattered
 
 **Out:** Falloff.
 
+### Painted Map
+
+A world's painted Land, Height or Biome map as a field (see [[Painting Land]]): its value where painted, and **Default** where not. A Block World gives its own maps to the generator it is made by; in the generator's own preview it is Default everywhere.
+
+| Row | What it does |
+| --- | --- |
+| Map | **Land** and **Height**, from -1 to 1 as painted; **Biome**, the painted biome's place in the world's list |
+| Default | Its value where nothing is painted |
+
+**Out:** Value.
+
 ### Constant
 
 One number, the same everywhere.

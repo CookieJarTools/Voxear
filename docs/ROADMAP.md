@@ -3885,8 +3885,19 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   World Building ▸ Placing Prefabs, Navigation ▸ Walkable Models, Box Models. Not done: a grid panel of a folder's
   prefabs (the Prefab Brush's pickers show their pictures), kits baked once per prefab (each instance is stamped),
   doors that block when shut.
-- **Painted maps** (stage 4): Land, Height and Biome maps kept in tiles where painted, a Painted Map node, brushes
-  beside Build with a quick preview.
+- ~~**Painted maps:**~~ done (stage 4). Land, Height and Biome maps kept in tiles only where painted (8 m a pixel,
+  biomes 4 m), without end, in a `.maps` file beside the world. Read by the generator itself: land blended into the
+  landmass before the coast curve and raising or sinking the coast, so painted land grows a coast of its own and sea
+  painted sinks it; height under the ridges, erosion and gullies, so a painted mountain gets the generator's own
+  peaks; a biome chosen before the climate rules with ragged edges; rivers, climate and structures following. Only
+  the columns under a stroke made again, at every level, and far tiles kept by the paint over them; nothing compiled
+  again. Build gains Land, Height, Biome and Erase brushes with Radius, Strength and Falloff, Shift to take away,
+  Ctrl to smooth, each stroke a step to undo. The Painted Map node. C#: `Painting.Paint`, `PaintMap`, `PaintMode`.
+  `vox editor call paint.map`. Fitted Objs, roads and brushes now land on the world's own generator. Tests: maps
+  painted, erased, written and read; painted height and land raising and sinking the generator's ground with nothing
+  compiled again; a stroke remaking only its columns and its far tile kept apart; the node; brushes' calls painting,
+  undone and saved. Manual: World Building ▸ Painting Land, Generator Nodes. Not done: a quick coarse preview while a
+  stroke is held (near columns are made as it goes), the maps sent to players who join, painted areas for World Areas.
 - **World Areas and Routes** (stage 5): areas with tags and data the game asks about, structures kept to or out of
   them; routes and stops joined into a network, found, walked, and laid over the sea.
 

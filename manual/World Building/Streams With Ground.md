@@ -1,5 +1,5 @@
 ---
-order: 5
+order: 6
 ---
 
 A world of blocks without end makes its ground round the player and lets it go behind. **Streams With Ground** makes an Obj go with its ground: a house and the things in it, or the mobs spawned round the player. Without it, an Obj stays where it is when the ground under it goes.

@@ -688,9 +688,9 @@ impl Landmass {
             (smooth(&self.inland, across, 1.0) * smooth(&self.relief, (ruggedness + 1.0) * 0.5, 1.0)).clamp(0.0, 1.0);
         // Painted height raised under the ridges, with more relief where it is high: a painted mountain gets the
         // generator's own peaks and valleys.
-        let relief = (relief + painted_height.max(0.0) * 0.6).clamp(0.0, 1.0);
+        let relief = (relief + painted_height.max(0.0) * 0.4).clamp(0.0, 1.0);
         let shape = smooth(&self.peaks, (peaks + 1.0) * 0.5, 0.0);
-        let mut share = ground + relief * shape + painted_height * 0.5;
+        let mut share = ground + relief * shape + painted_height * 0.4;
         if self.crags > 0.0 && peaks > 0.0 {
             let crag = fractal(NoiseStyle::Ridged, self.ridges.size / 8.0, 3, 6, bent);
             share += self.crags * relief * peaks * peaks * crag;

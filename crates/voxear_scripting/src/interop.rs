@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 96;
+pub(crate) const API_VERSION: u32 = 97;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -617,6 +617,10 @@ pub(crate) struct NativeApi {
     /// `CrowdRecords.Capture` (`what` 0) and `Apply` (`what` 1): the level's crowd records as bytes, or bytes put
     /// back in their place; as `storm_state` does storms.
     pub crowd_records: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
+    /// `FarFigures.Set`: the figures a script asks to be drawn far off, in place of those it set before.
+    pub far_figures: unsafe extern "C" fn(data: *const crate::crowds::FarFigureData, count: i32) -> i32,
+    /// `Blocks.IsMade`: whether the ground within a radius of a place is made, 1 or 0.
+    pub ground_made: unsafe extern "C" fn(at: *const [f32; 3], radius: f32) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -1312,6 +1316,9 @@ pub(crate) struct ManagedApi {
     /// (`OnGroundUnloading`, `OnGroundLoaded`): each Obj, and 0 for going or
     /// 1 for come back.
     pub ground_events: Option<unsafe extern "C" fn(objs: *const u64, count: i32, kinds: *const i32)>,
+    /// Tells scripts of the columns of worlds of blocks without end made or
+    /// let go this frame (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`).
+    pub column_events: Option<unsafe extern "C" fn(events: *const crate::columns::ColumnEventData, count: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -2342,6 +2349,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         shader_pack_set_option,
         shader_packs_info: crate::services::shader_packs_info,
         crowd_records: crate::crowds::crowd_records,
+        far_figures: crate::crowds::far_figures,
+        ground_made: crate::columns::ground_made,
     }
 }
 

@@ -45,6 +45,39 @@ public sealed class Chest : Behaviour
 }
 ```
 
+## Hearing the ground come and go
+
+Something that lives on the ground with no Obj of its own, such as a resident a game keeps as numbers while far off, hears the ground through `Blocks.ColumnMade` and `Blocks.ColumnLetGo`. Each tells of one 32-block column of a world of blocks without end, after the frame it was made or let go in:
+
+```csharp
+Blocks.ColumnMade += column =>
+{
+	foreach (var resident in residents.Where(resident => column.Contains(resident.Home)))
+	{
+		resident.Wake();
+	}
+};
+```
+
+| On a `BlockColumn` | What it is |
+| --- | --- |
+| `World` | The world of blocks it is a column of |
+| `X`, `Z` | Its place among the world's columns |
+| `Size` | How wide it is, in metres |
+| `Corner`, `Middle` | Its low corner and its middle along x and z |
+| `Contains(position)` | Whether a place stands in it, at any height |
+
+The columns made before the first frame, behind a loading screen, are told of in the first frame. Scripts are told only while the game plays.
+
+To ask instead of waiting, `Blocks.IsMade(position, radius)` says whether the ground within so many metres of a place is made, to see and to stand on. It is true where no world is being made. A column's nav is made a few frames after its blocks: `Navigation.IsReady(position)` says when a Nav Agent can be sent from there.
+
+```csharp
+if (Blocks.IsMade(bed) && Navigation.IsReady(bed))
+{
+	resident.Instantiate(bed);
+}
+```
+
 ## Which ground is made
 
 `vox editor call blocks.columns` lists each world's columns made last frame, those that came and went, and how many Objs are kept while their ground is away.

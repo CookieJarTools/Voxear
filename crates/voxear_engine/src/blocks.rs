@@ -1577,7 +1577,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
         let changed = streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from);
         // Which columns came and went, for what stands on them (see `ground_streaming`).
         let (came, went) = streamer.take_moves();
-        moves.worlds.push(crate::ground_streaming::WorldMoves {
+        let moved = crate::ground_streaming::WorldMoves {
             world: entity,
             dimension: here,
             corner,
@@ -1585,7 +1585,9 @@ pub fn stream(world: &mut World, content: &mut Content) {
             near: blocks.columns.clone().unwrap_or_default(),
             came,
             went,
-        });
+        };
+        crate::ground_streaming::note_columns(world, &moved);
+        moves.worlds.push(moved);
         if changed {
             world.insert(entity, blocks);
             world.insert(entity, asset);

@@ -255,6 +255,13 @@ internal static unsafe class EntryPoints
 		GroundMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), new ReadOnlySpan<int>(kinds, count));
 	}
 
+	/// <summary>Tells scripts of the columns of worlds of blocks without end made and let go, as Blocks.ColumnMade and Blocks.ColumnLetGo.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void ColumnEvents(ColumnEventData* events, int count)
+	{
+		ColumnMessages.Dispatch(new ReadOnlySpan<ColumnEventData>(events, count));
+	}
+
 	/// <summary>Tells scripts of particles' strikes, as OnParticleHit and Particles.Hit.</summary>
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static void ParticleHits(ParticleHitData* hits, int count)

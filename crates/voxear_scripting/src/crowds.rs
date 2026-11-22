@@ -46,3 +46,45 @@ pub(crate) unsafe extern "C" fn crowd_records(
     }
     bytes.len() as i32
 }
+
+/// A figure a script asks to be drawn far off, as `FarFigure` in
+/// Voxear.Core lays it out: its prefab's engine id (-1 for none), its own
+/// number, where it is in this world, which way it faces about up, and how
+/// fast it walks, 0 standing.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FarFigureData {
+    pub prefab: i32,
+    pub id: u32,
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub speed: f32,
+}
+
+const _: () = assert!(size_of::<FarFigureData>() == 28, "FarFigureData in Voxear.Core is 28 bytes");
+
+/// What puts the figures scripts set in place of those set before (see
+/// `voxear_engine::crowd_records`).
+pub type FarFiguresSet = fn(&mut World, &[FarFigureData]);
+
+static FIGURES: OnceLock<FarFiguresSet> = OnceLock::new();
+
+/// Sets what answers `FarFigures.Set`; the first set is kept.
+pub fn set_far_figures(set: FarFiguresSet) {
+    let _ = FIGURES.set(set);
+}
+
+/// `FarFigures.Set`: the figures in `data` in place of those set before, none
+/// for `count` 0. 0, or -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn far_figures(data: *const FarFigureData, count: i32) -> i32 {
+    let Some(set) = FIGURES.get() else { return -1 };
+    let figures = match data.is_null() || count <= 0 {
+        true => &[][..],
+        false => unsafe { std::slice::from_raw_parts(data, count as usize) },
+    };
+    with_world(|world| {
+        set(world, figures);
+        Some(())
+    })
+    .map_or(-1, |_| 0)
+}

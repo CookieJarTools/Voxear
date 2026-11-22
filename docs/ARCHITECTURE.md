@@ -4550,7 +4550,11 @@ playing, `Game::stream_with_ground` takes away the Objs standing on a column no 
 ground: Keep For Later captures the Obj and its children as a scene (`scene_file::capture`) with their Ground Fits
 and places, which go on shaping the ground (`kept_fits`), and spawns it again when the column is made; Destroy
 destroys it. Behaviours are told through the `GroundEvents` entry (`OnGroundUnloading`, `OnGroundLoaded`; native
-API 96). Records are not yet kept in a game's save.
+API 96). Records are not yet kept in a game's save. Each world's columns made and let go are also noted in
+`UntoldColumns` as they come (`note_columns`), so those made behind a loading screen are kept too, and told to
+scripts once a frame while playing through the `ColumnEvents` entry (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`;
+native API 97); in the editor they are dropped. `Blocks.IsMade` asks `blocks::made_round` in the dimension
+scripts ask of.
 
 ## Heat *(implemented: the temperature field, the clock, Heat Sources, Zones and Bodies, hot and cold blocks)*
 
@@ -4764,7 +4768,10 @@ engine's glue is `voxear_engine::navigation`.
   no ground. Saves of the scene keep them as small bytes beside the storms' and blocks' edits. Records within drawing
   distance are drawn as ghosts: their prefab's models under one Obj marked `RecordGhost`, with no behaviours, playing
   baked clips. On a server each player is sent the records near them (`net::crowd_sync`), which their machine walks
-  and draws but never makes Objs of.
+  and draws but never makes Objs of. Beside the records, `FarFigures` holds figures a script set
+  (`FarFigures.Set` in C#: an id, a loaded prefab, a place from the level's real middle, a yaw and a speed),
+  drawn the same way: `to_draw` takes the nearest of both, keyed apart (figures above `1 << 32`), and a figure
+  set again eases there as a record's step does. They are forgotten when another level opens and never sent.
 
 ### Planned
 

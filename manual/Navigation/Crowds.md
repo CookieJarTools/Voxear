@@ -84,6 +84,23 @@ A world can hold thousands of characters, most of them nowhere near anyone. A Cr
 
 A record comes back as a new Obj, so a script that held the old one sees it gone: keep what a character is in its prefab, and find it again by what it is rather than holding on to it. Records are kept on the server, or by a game playing alone, and only in the level's own dimension.
 
+## Far figures from a game's own numbers
+
+A game that keeps its own characters while they are far off, as a town's residents with their day's routine, draws them far off with `FarFigures`. Each figure is a prefab's models at a place, standing or walking, drawn as records are: within Draw records within, the nearest 2,000 of records and figures together.
+
+```csharp
+var figures = residents
+	.Where(resident => resident.IsFar)
+	.Select(resident => new FarFigure(resident.Id, resident.Prefab, resident.Position, resident.Yaw, resident.Speed))
+	.ToArray();
+FarFigures.Set(figures);
+```
+
+- **Set the whole list again** every second or so. A figure keeps its **Id** from one set to the next, so it walks smoothly on to where it is set now, rather than jumping. One left out goes.
+- **Speed** picks its clip: 0 plays its idle clip, more plays its walk.
+- `FarFigures.Clear()` draws none. The list also goes when another level is opened.
+- **In a session** each machine sets and draws its own figures from what it works out, so nothing is sent.
+
 ## Playing together
 
 On a server the tiers are measured from every player, and each player is sent the crowd by how near it is to them: every tick near, 20 times a second in the middle distance, 5 times far, and nothing beyond Records beyond. See [[Sharing Objs]].

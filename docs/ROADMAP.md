@@ -622,6 +622,10 @@ Next in M3:
   - [x] Lit Wireframe shading in the Scene view: the lit scene with its meshes' edges over it
   - [x] several Scene views, each with its own camera, shading and Gizmos, opened from a window's menu (Add Scene
     View)
+  - [x] the Scene view draws only what the game's camera draws while playing, to judge culling from outside
+    (Gizmos ▸ Game Camera's Culling, on by default; a selected camera's while editing): it culls by that camera's
+    frustum, draw distances, LODs, block chunks' sight and the Game view's depth pyramid (the Game view now draws
+    first in the frame), with its frustum drawn in amber; `scene_view.culling` in `vox editor call`
   - [x] handles for two axes at once: move's and scale's squares between each two axes, rotate's ring around the
     view and turning freely inside the rings
   - [ ] **A gizmo API for game code** (agreed, being built). Unity splits this into Gizmos, Handles and Debug, each
@@ -4174,6 +4178,24 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     400 m off drawn as its prefab's box-model player through the haze, and from 6 m, facing the camera with its right
     arm held up by its baked clip. Records put back from a save or sent by the server are the open level's, not
     cleared as another level's on their first frame. Not done: far crowds made from seeds.
+- A living society: residents with daily routines (home, work, shop, tavern, bed) who keep their day while their
+  ground is unloaded and are where they should be when a player comes back. Researched in
+  [research/society.md](research/society.md): a resident's place is worked out from its schedule and the time, not
+  simulated (9 ns a resident in a prototype). The society itself is built by the game in C#; the engine gives the
+  hooks a game cannot make itself:
+  - [x] Column events in C#: `Blocks.ColumnMade` and `Blocks.ColumnLetGo` for each 32-block column of a world
+    without end, with those made behind a loading screen told in the first frame (`ground_streaming::UntoldColumns`,
+    native API 97), `Blocks.IsMade(position, radius)` in the dimension scripts ask of, and
+    `Navigation.IsReady(position)`. Test: a script in the Infinite World template hears the columns round it, the one
+    it stands in among them, the ground made there and not 5 km off, the nav ready, and the columns let go once the
+    camera leaves.
+  - [x] Far figures: `FarFigures.Set` draws a game's own characters far off from an id, a prefab, a place, a yaw and
+    a speed, as crowd records are drawn and among the same 2,000 nearest (`crowd_records::FarFigures`); set again,
+    a figure walks on to its new place; one left out goes; forgotten when another level opens, never sent. Tests: a
+    figure set 400 m off drawn there, set 8 m on walking there over frames, gone when left out and past 600 m; one
+    set from C# drawn with its model.
+  - [ ] Generated towns' plans in C#: `Towns.Near` with each house's structure, place, facing, door and points.
+  - [ ] A game's own `vox editor call` and `vox mcp` calls from C# methods, with typed arguments and data back.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

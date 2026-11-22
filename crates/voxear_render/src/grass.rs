@@ -198,7 +198,8 @@ pub(crate) fn gather(
     origin: voxear_core::math::I64Vec3,
     buffer: &Buffer,
 ) -> Option<(Vec<GpuGrassJob>, Vec<([u32; 2], bool)>)> {
-    let camera = Vec3::from(frame.camera_position);
+    // Round the camera the view culls from: its own, or the one it borrows (`GpuCull`).
+    let camera = Vec3::from(frame.cull.position);
     let mut wanted: Vec<(Source, GrassLook)> = Vec::new();
     for (number, terrain) in drawn.iter().enumerate().take(crate::terrain::MAX_TERRAINS) {
         if terrain.grass.is_none() {
@@ -364,7 +365,7 @@ fn ground_cover_jobs(
     offset: Vec3,
     frame: &crate::gpu::GpuFrame,
 ) -> Vec<(usize, usize, GroundCoverLook, Vec<(f32, [u32; 2])>)> {
-    let camera = Vec3::from(frame.camera_position);
+    let camera = Vec3::from(frame.cull.position);
     let mut jobs = Vec::new();
     for (number, world) in blocks.iter().take(crate::blocks::MAX_BLOCK_WORLDS).enumerate() {
         if world.look.ground_cover.is_empty() || world.smooth || world.turn.is_some() {
@@ -372,7 +373,7 @@ fn ground_cover_jobs(
         }
         let corner = world.corner - offset;
         let local = camera - corner;
-        let planes = crate::blocks::turned_planes(&frame.planes, corner, voxear_core::math::Quat::IDENTITY);
+        let planes = crate::blocks::turned_planes(&frame.cull.planes, corner, voxear_core::math::Quat::IDENTITY);
         let farthest = world.look.ground_cover.iter().map(|cover| cover.draw_distance).fold(0.0, f32::max);
         // A plant stands over its block: a chunk is looked at as reaching a few metres higher than its faces.
         let mut chunks: Vec<(f32, [u32; 2])> = Vec::new();

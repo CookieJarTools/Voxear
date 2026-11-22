@@ -96,6 +96,46 @@ pub struct GroundMoves {
     pub worlds: Vec<WorldMoves>,
 }
 
+/// The columns made and let go since scripts were last told, in the order
+/// they came and went, kept over the frames the ground is made without a
+/// tick, as behind a loading screen (see [`note_columns`]).
+#[derive(Default)]
+pub struct UntoldColumns(pub Vec<voxear_scripting::ColumnEventData>);
+
+/// Notes the columns `moved` made and let go this time, to tell scripts of.
+pub fn note_columns(world: &mut World, moved: &WorldMoves) {
+    if moved.came.is_empty() && moved.went.is_empty() {
+        return;
+    }
+    let size = CHUNK as f32 * moved.block_size.max(0.01);
+    let told = |column: [i32; 2], made: bool| voxear_scripting::ColumnEventData {
+        world: moved.world.to_bits(),
+        column,
+        made: i32::from(made),
+        size,
+        corner: [moved.corner.x + column[0] as f32 * size, moved.corner.z + column[1] as f32 * size],
+    };
+    let events =
+        moved.came.iter().map(|&column| told(column, true)).chain(moved.went.iter().map(|&column| told(column, false)));
+    match world.resource_mut::<UntoldColumns>() {
+        Some(untold) => untold.0.extend(events),
+        None => world.insert_resource(UntoldColumns(events.collect())),
+    }
+}
+
+/// The columns not told of yet, taken: none are kept after this.
+pub fn take_untold(world: &mut World) -> Vec<voxear_scripting::ColumnEventData> {
+    world.resource_mut::<UntoldColumns>().map(|untold| std::mem::take(&mut untold.0)).unwrap_or_default()
+}
+
+/// Whether the ground within `radius` metres of `at` is made in the
+/// dimension scripts ask of, for `Blocks.IsMade`: true where no world of
+/// blocks without end is made there.
+pub fn ground_made(world: &World, at: [f32; 3], radius: f32) -> bool {
+    let dimension = crate::dimensions::current(world);
+    crate::blocks::made_round(world, (Vec3::from_array(at), dimension), radius.max(0.0)).unwrap_or(true)
+}
+
 /// Objs kept for later while their ground is away, each a scene of its own.
 #[derive(Default)]
 pub struct GroundRecords {

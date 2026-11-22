@@ -1127,6 +1127,22 @@ uint lampPageIndex(uint slot, uint face, uint mip, int2 page)
     return (slot * LOCAL_SHADOW_SLOT_VIEWS + face) * LAMP_VSM_VIEW_PAGES + lampMipBase(mip) + uint(page.y) * across + uint(page.x);
 }
 
+// The camera a view culls and picks its LODs from (src/gpu.rs's GpuCull): its own, or the game's, which a Scene
+// view in play borrows to draw what the game draws. Culling reads it in place of the view's own camera.
+struct CullCamera
+{
+    Mat4 viewProj;
+    float4 planes[6];
+    float3 position;
+    float lodScale;
+    float near;
+    // tan(fov / 2) as the view's LODs by screen share measure it.
+    float tanHalf;
+    // 1 while the camera is another view's.
+    uint borrowed;
+    uint pad;
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -1205,6 +1221,7 @@ struct Frame
     VirtualShadows vsm;
     LampShadows lampVsm;
     Trails trails;
+    CullCamera cull;
 };
 
 // How much of a gradient sky's colours is its light from all round.

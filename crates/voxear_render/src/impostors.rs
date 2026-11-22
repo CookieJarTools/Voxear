@@ -285,12 +285,13 @@ fn view_frame(view: u32, centre: Vec3, radius: f32) -> GpuFrame {
         Vec4::new(0.0, 0.0, -1.0 / (far - near), 0.0),
         Vec4::new(0.0, 0.0, far / (far - near), 1.0),
     );
-    GpuFrame {
+    let frame = GpuFrame {
         view_proj: cols(ortho * look),
         camera_position: eye.to_array(),
         camera_forward: (-toward).to_array(),
         ..GpuFrame::default()
-    }
+    };
+    GpuFrame { cull: crate::gpu::GpuCull::own(&frame), ..frame }
 }
 
 /// A square two units across in X and Y, facing +Z and again facing -Z.

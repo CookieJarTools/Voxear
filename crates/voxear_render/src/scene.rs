@@ -398,6 +398,12 @@ pub struct ViewOptions {
     /// How lamps' shadows are drawn, whatever the scene's lighting says, as
     /// `vox render --lamp-shadows` does, to compare.
     pub lamp_shadows: Option<crate::LampShadows>,
+    /// The Obj whose camera this view culls and picks LODs from, in place of
+    /// its own: what that camera leaves out, by its frustum, its draw
+    /// distances, its LODs and, while a view draws through it in the same
+    /// frame, its depth, is left out here too. The editor's Scene view in
+    /// play takes the game's camera, to show what the game draws.
+    pub cull_camera: Option<voxear_ecs::Entity>,
 }
 
 impl Default for ViewOptions {
@@ -415,6 +421,7 @@ impl Default for ViewOptions {
             local_shadow_cache: true,
             sun_shadows: None,
             lamp_shadows: None,
+            cull_camera: None,
         }
     }
 }
@@ -619,6 +626,9 @@ pub struct DimensionLooks(pub std::collections::HashMap<voxear_scene::DimensionI
 
 /// `frame_index` picks TAA's sub-pixel camera offset. `sphere` gives a
 /// mesh's bounding sphere, which LOD Groups measure their size from.
+/// `cull_size` is the size of the view that draws through the camera
+/// `options.cull_camera` names, for its frustum's shape; this view's own
+/// where none does.
 pub fn extract(
     world: &World,
     (width, height): (u32, u32),
@@ -626,25 +636,34 @@ pub fn extract(
     options: &ViewOptions,
     sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
     through: Option<&crate::portals::Through>,
+    cull_size: Option<(u32, u32)>,
 ) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
     // Nothing switched off draws, lights or looks: neither an Obj that is off nor a component.
     let switched = Switched::of(world);
     let on = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
-    let (camera, position, rotation, filming) = world
-        .query_ref::<(voxear_ecs::Entity, &Camera, &Transform, Option<&WorldTransform>)>()
-        .without::<Destroying>()
-        .into_iter()
-        .filter(|(entity, ..)| on(*entity, Switch::Camera))
-        .find(|(entity, ..)| options.camera.is_none_or(|chosen| chosen == *entity))
-        .map(|(entity, camera, local, placed)| {
-            let (_, rotation, position) =
-                placed.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
-            // A camera whose view a Portal carries looks from the other side of it.
-            let (position, rotation) = crate::portals::ViewCarry::of(world, entity, position, rotation);
-            (*camera, position, rotation, Some(entity))
-        })
-        .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY, None));
+    let looking = |chosen: Option<Entity>| {
+        world
+            .query_ref::<(voxear_ecs::Entity, &Camera, &Transform, Option<&WorldTransform>)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter(|(entity, ..)| on(*entity, Switch::Camera))
+            .find(|(entity, ..)| chosen.is_none_or(|chosen| chosen == *entity))
+            .map(|(entity, camera, local, placed)| {
+                let (_, rotation, position) = placed
+                    .map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
+                // A camera whose view a Portal carries looks from the other side of it.
+                let (position, rotation) = crate::portals::ViewCarry::of(world, entity, position, rotation);
+                (*camera, position, rotation, Some(entity))
+            })
+    };
+    let (camera, position, rotation, filming) =
+        looking(options.camera).unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY, None));
+    // The camera culling is judged from, where it is another than the view's own; never through a Portal.
+    let borrowed = options
+        .cull_camera
+        .filter(|chosen| through.is_none() && Some(*chosen) != filming)
+        .and_then(|chosen| looking(Some(chosen)));
     // A view sees one dimension: its camera's, or for a view through a Portal, the far Portal's. What is in any
     // other is as if switched off.
     let dimensioned = std::sync::Arc::new(voxear_scene::Dimensioned::of(world));
@@ -752,6 +771,7 @@ pub fn extract(
     };
     // With TAA, the scene may be drawn smaller and upscaled; LODs are still picked for the view's own size.
     let output_height = height;
+    let output_size = (width, height);
     let taa = post.anti_aliasing.mode == AntiAliasingMode::Taa;
     let scale = match taa {
         true => options.render_scale.map_or_else(|| post.anti_aliasing.drawn_scale(), |scale| scale.clamp(0.25, 1.0)),
@@ -838,8 +858,36 @@ pub fn extract(
         ..Default::default()
     };
 
-    // What LOD Groups hide from this camera is neither drawn nor lit.
-    let lods = LodChoices::new(world, LodCamera::new(seen_from, camera.fov_y_degrees), sphere);
+    // The camera culling and LODs are judged from: the view's own, or the one it borrows, shaped as the view that
+    // draws through it is.
+    frame.cull = match borrowed {
+        Some((culler, at, turned, _)) => {
+            let (cull_width, cull_height) = cull_size.unwrap_or(output_size);
+            let cull_aspect = cull_width as f32 / cull_height.max(1) as f32;
+            let cull_fov = culler.fov_y_degrees.to_radians();
+            let cull_view = Mat4::from_rotation_translation(turned, at).inverse();
+            let cull_projection = vulkan::perspective_infinite_reverse(cull_fov, cull_aspect, culler.near);
+            let lod_scale = cull_height as f32 / (2.0 * (cull_fov * 0.5).tan());
+            let drawn_height = render_size((cull_width, cull_height), scale).1;
+            crate::gpu::GpuCull {
+                view_proj: cols(cull_projection * cull_view),
+                planes: frustum_planes(at, turned, cull_fov, cull_aspect, culler.near),
+                position: vec3(at),
+                lod_scale,
+                near: culler.near,
+                tan_half: drawn_height as f32 / (2.0 * lod_scale),
+                borrowed: 1,
+                _pad: 0,
+            }
+        }
+        None => crate::gpu::GpuCull::own(&frame),
+    };
+    // What LOD Groups hide from the camera culling is judged from is neither drawn nor lit.
+    let lod_camera = match borrowed {
+        Some((culler, at, ..)) => LodCamera::new(at, culler.fov_y_degrees),
+        None => LodCamera::new(seen_from, camera.fov_y_degrees),
+    };
+    let lods = LodChoices::new(world, lod_camera, sphere);
     let mut lights = Vec::new();
     // The local lights that may cast shadows, by their index in `lights`.
     let mut shadowed = Vec::new();

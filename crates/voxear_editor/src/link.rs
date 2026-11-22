@@ -698,6 +698,13 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ worlds: [{ world, fits, columns }], hidden: { fits } }",
     },
     CallInfo {
+        name: "scene_view.culling",
+        about: "Whether the Scene views draw only what the game's camera draws while playing, and a selected camera's while editing (Gizmos ▸ Game Camera's Culling): its frustum, draw distances, LODs and the Game view's depth cull them, not their own camera. Answers the camera they cull from, and what the first view drawn culled a few frames ago.",
+        args: &[maybe("on", ArgKind::Toggle, "Whether they cull from the game's camera.")],
+        changes: false,
+        returns: "{ on, camera, first_view: { frustum_culled, occlusion_culled, meshlets_occlusion_culled } }",
+    },
+    CallInfo {
         name: "world_layers.hide",
         about: "Hides world layers of a kind from every world's ground, to see the bare ground under them, or shows them again. A view setting: the scene is not changed.",
         args: &[maybe("fits", ArgKind::Toggle, "Whether Ground Fits are hidden.")],

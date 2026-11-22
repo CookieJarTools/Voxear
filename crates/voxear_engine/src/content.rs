@@ -559,6 +559,9 @@ pub struct Content {
     shaders: crate::shaders::ShaderRegistry,
     /// Colour grading lookup tables uploaded, by their pictures.
     luts: HashMap<AssetGuid, TextureId>,
+    /// Each world of blocks' painted maps, by its asset, as read from its
+    /// `.maps` file or begun by painting, and the version last written.
+    painted: HashMap<AssetGuid, (voxear_terrain::generate::painted::Painted, u64)>,
     /// The light of each picture a sky was drawn with: its sky, its horizon
     /// and its ground (see `voxear_render::picture_sky_light`).
     sky_lights: HashMap<AssetGuid, [voxear_core::math::Vec3; 3]>,
@@ -746,6 +749,7 @@ impl Content {
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
+            painted: HashMap::new(),
             sky_lights: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
@@ -767,6 +771,44 @@ impl Content {
     /// texture pack worn changed how they are drawn.
     pub(crate) fn blocks_changed(&mut self) {
         self.blocks_version += 1;
+    }
+
+    /// The painted maps of the world of blocks `guid`, where it has a `.maps`
+    /// file beside it or painting began them; with `begin`, begun empty
+    /// where it has none.
+    pub fn painted(&mut self, guid: AssetGuid, begin: bool) -> Option<voxear_terrain::generate::painted::Painted> {
+        use voxear_terrain::generate::painted::{Painted, PaintedMaps};
+        if let Some((painted, _)) = self.painted.get(&guid) {
+            return Some(painted.clone());
+        }
+        let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::BlockWorld).map(|e| e.path.clone())?;
+        let id = voxear_terrain::layers::stable_hash(guid.to_string().as_bytes());
+        let read = self.read(&maps_file(&path)).ok().and_then(|bytes| PaintedMaps::from_bytes(&bytes).ok());
+        let maps = match read {
+            Some(maps) => maps,
+            None if begin => PaintedMaps::default(),
+            None => return None,
+        };
+        let painted = Painted::new(id, maps);
+        self.painted.insert(guid, (painted.clone(), painted.maps().version));
+        Some(painted)
+    }
+
+    /// The painted maps changed since they were last written, each with its
+    /// world's path; marked written.
+    pub(crate) fn take_unsaved_painted(&mut self) -> Vec<(String, std::sync::Arc<voxear_terrain::generate::painted::PaintedMaps>)> {
+        let mut unsaved = Vec::new();
+        for (guid, (painted, saved)) in &mut self.painted {
+            let maps = painted.maps();
+            if maps.version == *saved {
+                continue;
+            }
+            *saved = maps.version;
+            if let Some(entry) = self.db.get(*guid) {
+                unsaved.push((entry.path.clone(), maps));
+            }
+        }
+        unsaved
     }
 
     /// Reads one of an asset's files by project path.
@@ -2955,3 +2997,11 @@ mod tests {
     }
 }
 
+
+/// The file a world of blocks' painted maps are kept in, beside it.
+pub fn maps_file(world: &str) -> String {
+    match world.strip_suffix(".blockworld") {
+        Some(stem) => format!("{stem}.maps"),
+        None => format!("{world}.maps"),
+    }
+}

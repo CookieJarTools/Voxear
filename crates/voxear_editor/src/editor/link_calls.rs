@@ -349,7 +349,12 @@ impl Editor {
             "navigation.status" => self.navigation_status(),
             "ground_fit.land" => self.ground_fit_land(args),
             "place.prefab" | "place.line_up" | "place.scatter" | "place.brush" => self.place_call(call, args, renderer),
-            "road.set_points" | "road.set_mix" | "area_fill.set_outline" => self.road_change(call, args),
+            "road.set_points" | "road.set_mix" | "area_fill.set_outline" | "world_area.set_outline" => {
+                self.road_change(call, args)
+            }
+            "areas.at" | "areas.value" | "route.set_points" | "route.lay_sea" | "routes.find" | "routes.nearest" => {
+                self.world_route_call(call, args)
+            }
             "roads.nearest" => {
                 let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
                 let reach = args.get("reach").and_then(Json::as_f64).unwrap_or(50.0) as f32;
@@ -1257,14 +1262,136 @@ impl Editor {
                     given.iter().map(|corner| numbers(corner).filter(|v| v.len() == 2).map(|v| [v[0], v[1]])).collect();
                 let outline = outline.filter(|outline| outline.len() >= 3);
                 let outline = outline.ok_or_else(|| bad("three corners at least, each `[x, z]`"))?;
-                let area = self.game.engine.world.get_mut::<AreaFill>(entity);
-                let area = area.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Area Fill"))?;
-                area.outline = outline.clone();
+                let world = &mut self.game.engine.world;
+                if call == "world_area.set_outline" {
+                    let area = world.get_mut::<voxear_engine::world_areas::WorldArea>(entity);
+                    let area = area.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no World Area"))?;
+                    area.outline = outline.clone();
+                    area.shape = voxear_engine::world_areas::AreaShape::Outline;
+                } else {
+                    let area = world.get_mut::<AreaFill>(entity);
+                    let area = area.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Area Fill"))?;
+                    area.outline = outline.clone();
+                }
                 json!({ "outline": outline })
             }
         };
         self.record_change(entity, before);
         done(answer)
+    }
+
+    /// Asks about the World Areas and Routes, or sets or lays a Route's
+    /// points as one step to undo.
+    fn world_route_call(&mut self, call: &str, args: &Json) -> Called {
+        use voxear_engine::{
+            world_areas::WorldArea,
+            world_routes::{self, KindOf, Route, RouteKind},
+        };
+        let at = |key: &str| -> Result<Vec3, LinkError> {
+            Ok(Vec3::from_array(opt_vector(args, key)?.ok_or_else(|| bad(format!("`{key}` is missing")))?))
+        };
+        let kind = match args.get("kind") {
+            None | Some(Json::Null) => KindOf::of(RouteKind::Road),
+            Some(Json::String(named)) if named == "road" => KindOf::of(RouteKind::Road),
+            Some(Json::String(named)) if named == "sea" => KindOf::of(RouteKind::Sea),
+            Some(Json::String(named)) if named == "air" => KindOf::of(RouteKind::Air),
+            Some(asset) => {
+                let (guid, _, _) = link::resolve_project_asset(&self.game, asset)?;
+                KindOf { kind: RouteKind::Custom, custom: Some(guid) }
+            }
+        };
+        let path_of = |game: &voxear_engine::Game, guid: Option<voxear_assets::AssetGuid>| {
+            guid.and_then(|guid| game.content.db().get(guid).map(|entry| entry.path.clone()))
+        };
+        match call {
+            "areas.at" => {
+                let point = at("at")?;
+                let found = voxear_engine::world_areas::at(&self.game.engine.world, &mut self.game.content, point);
+                let listed: Vec<Json> = found
+                    .into_iter()
+                    .filter_map(|obj| {
+                        let area = self.game.engine.world.get::<WorldArea>(obj)?;
+                        let tags: Vec<Json> = area
+                            .tags
+                            .iter()
+                            .map(|entry| json!({ "tag": path_of(&self.game, entry.tag), "data": path_of(&self.game, entry.data) }))
+                            .collect();
+                        Some(json!({ "obj": link::obj_ref(&self.game, obj), "priority": area.priority, "tags": tags }))
+                    })
+                    .collect();
+                done(Json::Array(listed))
+            }
+            "areas.value" => {
+                let point = at("at")?;
+                let (tag, _, _) = link::resolve_project_asset(&self.game, need(args, "tag")?)?;
+                let found =
+                    voxear_engine::world_areas::value(&self.game.engine.world, &mut self.game.content, point, tag);
+                done(found.map_or(Json::Null, |data| json!({ "data": path_of(&self.game, data) })))
+            }
+            "routes.find" => {
+                let way = world_routes::find(&mut self.game.engine.world, at("from")?, at("to")?, kind);
+                done(way.map_or(Json::Null, |way| {
+                    let stops: Vec<Json> = way.stops.iter().map(|&obj| link::obj_ref(&self.game, obj)).collect();
+                    let points: Vec<[f32; 3]> = way.points.iter().map(|point| point.to_array()).collect();
+                    json!({ "points": points, "length": way.length, "stops": stops })
+                }))
+            }
+            "routes.nearest" => {
+                let found = world_routes::nearest(&mut self.game.engine.world, at("at")?, kind);
+                done(found.map_or(Json::Null, |(route, point, along)| {
+                    json!({ "route": link::obj_ref(&self.game, route), "point": point.to_array(), "along": along })
+                }))
+            }
+            _ => {
+                let entity = self.obj_arg(args)?;
+                let world = &self.game.engine.world;
+                let before =
+                    ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+                let route = world.get::<Route>(entity).cloned();
+                let mut route = route.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Route"))?;
+                let placed = voxear_scene::world_matrix(world, entity);
+                let points: Vec<[f32; 3]> = if call == "route.lay_sea" {
+                    let ends = route.world_points(&placed);
+                    let (Some(&from), Some(&to)) = (ends.first(), ends.last()) else {
+                        return Err(bad("the Route has no points"));
+                    };
+                    let laid =
+                        world_routes::lay_sea(world, &mut self.game.content, from, to, route.draught, route.shore);
+                    let laid = laid.ok_or_else(|| refuse(ErrorKind::Failed, "the sea does not join its ends"))?;
+                    laid.iter().map(|&at| placed.inverse().transform_point3(at).to_array()).collect()
+                } else {
+                    let given = need(args, "points")?.as_array().ok_or_else(|| bad("`points` is not a list"))?;
+                    let read: Option<Vec<[f32; 3]>> = given
+                        .iter()
+                        .map(|point| {
+                            let v: Vec<f32> =
+                                point.as_array()?.iter().filter_map(|v| v.as_f64().map(|v| v as f32)).collect();
+                            (v.len() == 3).then(|| [v[0], v[1], v[2]])
+                        })
+                        .collect();
+                    let mut read = read
+                        .filter(|points| points.len() >= 2)
+                        .ok_or_else(|| bad("two points at least, each `[x, y, z]`"))?;
+                    if opt_bool(args, "land") == Some(true) {
+                        for point in &mut read {
+                            let at = placed.transform_point3(Vec3::from(*point));
+                            let (world, content) = (&mut self.game.engine.world, &mut self.game.content);
+                            let ground = voxear_engine::ground_fit::ground_under(world, content, at, Some(entity));
+                            *point = placed
+                                .inverse()
+                                .transform_point3(Vec3::new(at.x, ground.unwrap_or(at.y), at.z))
+                                .to_array();
+                        }
+                    }
+                    read
+                };
+                route.points = points.clone();
+                self.game.engine.world.insert(entity, route);
+                let aground = world_routes::aground(&mut self.game.engine.world, &mut self.game.content, entity);
+                self.record_change(entity, before);
+                done(json!({ "points": points, "aground": aground }))
+            }
+        }
     }
 
     fn ground_fit_land(&mut self, args: &Json) -> Called {
@@ -2286,6 +2413,13 @@ impl Editor {
                 Some("land") => PaintMap::Land,
                 Some("height") => PaintMap::Height,
                 Some("erase") => PaintMap::Erase,
+                Some("area") => {
+                    let area = link::resolve_obj(&self.game, need(args, "area")?)?;
+                    let number = voxear_engine::world_areas::number_for(&mut self.game.engine.world, area);
+                    PaintMap::Area(
+                        number.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no World Area"))?,
+                    )
+                }
                 Some("biome") => {
                     let path = link::resolve_asset(&self.game, need(args, "biome")?)?;
                     let guid = self.game.content.parse(&path).ok().and_then(|r| r.guid());
@@ -2298,7 +2432,7 @@ impl Editor {
                         })?;
                     PaintMap::Biome(index)
                 }
-                _ => return Err(bad("`map` is land, height, biome or erase")),
+                _ => return Err(bad("`map` is land, height, biome, area or erase")),
             };
             let dab = Dab {
                 map,

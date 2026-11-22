@@ -2163,6 +2163,17 @@ impl ScriptServices for GameServices<'_> {
         crate::map_painting::paint_json(world, self.content, blocks, dab)
     }
 
+    fn ask_world(&mut self, world: &mut World, asked: &str) -> Option<anyhow::Result<String>> {
+        let asked: serde_json::Value = match serde_json::from_str(asked) {
+            Ok(asked) => asked,
+            Err(error) => return Some(Err(error.into())),
+        };
+        match asked["ask"].as_str() {
+            Some("route_lay_sea") => Some(crate::world_routes::answer_lay(world, self.content, &asked)),
+            _ => Some(crate::world_areas::answer(world, self.content, &asked)),
+        }
+    }
+
     fn prefab_placement(&mut self, reference: &str) -> Option<String> {
         let id = self.content.prefab(self.renderer.as_deref_mut(), reference).ok()?;
         let template = self.content.loaded_template(self.renderer.as_deref_mut(), id).ok()?;

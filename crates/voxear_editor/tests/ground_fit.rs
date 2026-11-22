@@ -75,6 +75,10 @@ fn open() -> Option<(tempfile::TempDir, Renderer, Editor)> {
     std::fs::create_dir_all(folder.join("Kits")).unwrap();
     let hut = "format = 1\n\n[[obj]]\nid = 1\nname = \"Hut\"\nplacement = { size = [4.0, 4.0] }\n";
     std::fs::write(folder.join("Kits/Hut.prefab"), hut).unwrap();
+    // An Area Tag and a town's laws, as data assets.
+    std::fs::create_dir_all(folder.join("Areas")).unwrap();
+    std::fs::write(folder.join("Areas/Town.asset"), "type = \"Voxear.AreaTag\"\n").unwrap();
+    std::fs::write(folder.join("Areas/Laws.asset"), "type = \"Voxear.AreaTag\"\n").unwrap();
 
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,
@@ -339,4 +343,75 @@ fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
     let fits = world.query_ref::<(voxear_ecs::Entity, &voxear_engine::ground_fit::GroundFit)>();
     let fit = fits.into_iter().next().map(|(_, fit)| fit.clone()).unwrap();
     assert_eq!((fit.slope_out, fit.mode), (2, voxear_engine::ground_fit::FitMode::Flatten));
+}
+
+#[test]
+fn a_world_area_and_routes_are_made_asked_about_and_undone_through_the_editors_calls() {
+    let Some((_dir, mut renderer, mut editor)) = open() else { return };
+    let made = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "Town", "position": [120.0, 0.0, 100.0] }),
+    );
+    let town = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": town, "component": "world_area" }));
+    let outline = json!([[-20.0, -20.0], [20.0, -20.0], [20.0, 20.0], [-20.0, 20.0]]);
+    done(&mut editor, &mut renderer, "world_area.set_outline", json!({ "obj": town, "outline": outline }));
+    let set =
+        |field: &str, value: Value| json!({ "obj": town, "component": "world_area", "field": field, "value": value });
+    done(&mut editor, &mut renderer, "field.set", set("tags", json!(1)));
+    done(&mut editor, &mut renderer, "field.set", set("tag_1", json!({ "path": "Areas/Town.asset" })));
+    done(&mut editor, &mut renderer, "field.set", set("data_1", json!({ "path": "Areas/Laws.asset" })));
+    done(&mut editor, &mut renderer, "field.set", set("no_structures", json!(true)));
+    frames(&mut editor, &mut renderer, 2);
+    let here = done(&mut editor, &mut renderer, "areas.at", json!({ "at": [125.0, 10.0, 95.0] }));
+    assert_eq!(here.as_array().map(Vec::len), Some(1), "{here}");
+    assert_eq!(here[0]["tags"][0]["data"], "Areas/Laws.asset", "{here}");
+    let value = json!({ "at": [125.0, 10.0, 95.0], "tag": { "path": "Areas/Town.asset" } });
+    assert_eq!(done(&mut editor, &mut renderer, "areas.value", value)["data"], "Areas/Laws.asset");
+    let away = json!({ "at": [400.0, 10.0, 95.0], "tag": { "path": "Areas/Town.asset" } });
+    assert!(done(&mut editor, &mut renderer, "areas.value", away).is_null());
+
+    // Two routes that meet, and the way along them; one step each to undo.
+    let route = |editor: &mut Editor, renderer: &mut Renderer, name: &str, points: Value| {
+        let made =
+            done(editor, renderer, "obj.create", json!({ "kind": "Empty", "name": name, "position": [0.0, 0.0, 0.0] }));
+        let obj = made["obj"].clone();
+        done(editor, renderer, "component.add", json!({ "obj": obj, "component": "route" }));
+        done(editor, renderer, "route.set_points", json!({ "obj": obj, "points": points }));
+        obj
+    };
+    route(&mut editor, &mut renderer, "East", json!([[100.0, 5.0, 100.0], [200.0, 5.0, 100.0]]));
+    let north = route(&mut editor, &mut renderer, "North", json!([[150.0, 5.0, 101.0], [150.0, 5.0, 200.0]]));
+    frames(&mut editor, &mut renderer, 2);
+    let way = done(
+        &mut editor,
+        &mut renderer,
+        "routes.find",
+        json!({ "from": [100.0, 5.0, 100.0], "to": [150.0, 5.0, 200.0] }),
+    );
+    assert!((way["length"].as_f64().unwrap() - 150.0).abs() < 2.0, "{way}");
+    let near = done(&mut editor, &mut renderer, "routes.nearest", json!({ "at": [150.0, 5.0, 160.0] }));
+    assert!((near["point"][0].as_f64().unwrap() - 150.0).abs() < 1e-3, "{near}");
+    assert!(
+        done(
+            &mut editor,
+            &mut renderer,
+            "routes.find",
+            json!({ "from": [0.0, 5.0, 0.0], "to": [9.0, 5.0, 0.0], "kind": "sea" })
+        )
+        .is_null()
+    );
+    done(
+        &mut editor,
+        &mut renderer,
+        "route.set_points",
+        json!({ "obj": north, "points": [[0.0, 5.0, 0.0], [0.0, 5.0, 9.0]] }),
+    );
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    let world = &editor.game.engine.world;
+    let named = world.query_ref::<(&voxear_scene::Name, &voxear_engine::world_routes::Route)>();
+    let points = named.into_iter().find(|(name, _)| name.0 == "North").map(|(_, route)| route.points.clone()).unwrap();
+    assert_eq!(points, [[150.0, 5.0, 101.0], [150.0, 5.0, 200.0]], "the set undone");
 }

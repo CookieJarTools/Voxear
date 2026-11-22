@@ -440,6 +440,10 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.streams_with_ground = instance.streams_with_ground.or(root.streams_with_ground);
     root.road = instance.road.clone().or(root.road.clone());
     root.area_fill = instance.area_fill.clone().or(root.area_fill.clone());
+    root.world_area = instance.world_area.clone().or(root.world_area.clone());
+    root.area_defaults = instance.area_defaults.clone().or(root.area_defaults.clone());
+    root.route = instance.route.clone().or(root.route.clone());
+    root.route_stop = instance.route_stop.clone().or(root.route_stop.clone());
     root.placement = instance.placement.or(root.placement);
     root.prefab_brush = instance.prefab_brush.clone().or(root.prefab_brush.clone());
     root.walkable = instance.walkable.or(root.walkable);
@@ -552,6 +556,10 @@ pub struct TemplateObj {
     pub streams_with_ground: Option<crate::ground_streaming::StreamsWithGround>,
     pub road: Option<crate::roads::Road>,
     pub area_fill: Option<crate::roads::AreaFill>,
+    pub world_area: Option<crate::world_areas::WorldArea>,
+    pub area_defaults: Option<crate::world_areas::AreaDefaults>,
+    pub route: Option<crate::world_routes::Route>,
+    pub route_stop: Option<crate::world_routes::RouteStop>,
     pub placement: Option<crate::prefab_placing::Placement>,
     pub prefab_brush: Option<crate::prefab_placing::PrefabBrush>,
     pub walkable: Option<crate::walkable_models::Walkable>,
@@ -800,6 +808,18 @@ impl Template {
             }
             if let Some(area) = obj.area_fill.clone() {
                 world.insert(entity, area);
+            }
+            if let Some(value) = obj.world_area.clone() {
+                world.insert(entity, value);
+            }
+            if let Some(value) = obj.area_defaults.clone() {
+                world.insert(entity, value);
+            }
+            if let Some(value) = obj.route.clone() {
+                world.insert(entity, value);
+            }
+            if let Some(value) = obj.route_stop.clone() {
+                world.insert(entity, value);
             }
             if let Some(placement) = obj.placement {
                 world.insert(entity, placement);
@@ -1475,6 +1495,10 @@ pub(crate) fn resolve_obj(
         streams_with_ground: data.streams_with_ground,
         road: data.road.clone(),
         area_fill: data.area_fill.clone(),
+        world_area: data.world_area.clone(),
+        area_defaults: data.area_defaults.clone(),
+        route: data.route.clone(),
+        route_stop: data.route_stop.clone(),
         placement: data.placement,
         prefab_brush: data.prefab_brush.clone(),
         walkable: data.walkable,

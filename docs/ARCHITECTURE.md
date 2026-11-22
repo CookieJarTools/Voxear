@@ -4476,7 +4476,7 @@ var edits = Terrain.CaptureEdits();                           // for a save, or 
 ## World building
 
 *Implemented: world layers, Ground Fit, Streams With Ground, Roads and Area Fills, placing prefabs, walkable models,
-painted maps. Planned: World Areas and Routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
+painted maps, World Areas and Routes.* The plan is in [research/world-building.md](research/world-building.md). A world of blocks without end is generated
 first and crafted on top, without storing blocks for what is placed.
 
 **World layers** (`voxear_terrain::blocks::world_layers`). A `WorldLayers` holds every layer of a world in the world's
@@ -4574,6 +4574,37 @@ API 96). Records are not yet kept in a game's save. Each world's columns made an
 scripts once a frame while playing through the `ColumnEvents` entry (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`;
 native API 97); in the editor they are dropped. `Blocks.IsMade` asks `blocks::made_round` in the dimension
 scripts ask of.
+
+**World Areas** (`voxear_engine::world_areas`, `voxear_terrain::blocks::area_layer`). A `WorldArea` is an outline in
+its Obj's space or a number painted on the world's Area map (a fourth `PaintedMap`, 4 m a pixel, in `.maps` version
+2, which still reads version 1), an optional height range, a priority, No Structures, and tags: each an Area Tag data
+asset (the built-in `Voxear.AreaTag` Definition) with a data asset of any Definition. Tags and route kinds are data
+assets, as Tool Kinds are, so no asset kind was added and pickers list them by Definition. `world_areas::at` and
+`value` answer scripts (through the `ask_world` script service, which lends the content) and the editor; `value`
+falls back on `AreaDefaults` (a flat list of tag, data and optional biome, the biome's entry first). For the
+generator, areas that say anything of structures become `AreaLayer`s in the world's blocks, carried in
+`WorldLayers` as `WorldAreas` beside the fits and roads (with the world's `Painted` handle, origin and block size)
+and folded into the layers' hash, so `changed_columns` remakes the areas' bounds, grown by two chunks, and painting
+the Area map remakes the stroke's columns as any paint does. Structure placement gains `within` and `never_within`
+(Area Tag references in the file, resolved to GUID numbers in `Placement::tags` as the world is resolved); a site
+is tried against `WorldAreas::allows` after `keeps_out`, the ground asked only when an area has heights. The far
+rings' structures go through the same build, so they agree.
+
+**Routes** (`voxear_engine::world_routes`). A `Route` is points in its Obj's space, a kind (Road, Sea, Air, or
+Custom with a `Voxear.CustomRouteKind` data asset), a width, one way, a sea route's draught and shore distance, and
+On Map; a `RouteStop` holds a data asset. `graph` builds a `Graph` per kind, cached by a hash of the routes and stops
+in the dimension seen from: each route's points as nodes joined in turn (one way where it says), points of two
+routes within half their widths plus 2 m joined, an end near another route's line joined onto it by a node put on
+that segment (nodes put on one segment are joined among themselves in order), and each stop joined onto the nearest
+route within 24 m. Every Road is a route of kind road, its widths in metres. `find` joins its two places onto the
+nearest routes and searches with A*; the stops passed are those joined at a point of the way. `along` gives a place
+by distance, as C#'s `RouteWay.At`. `lay_sea` searches the generator's own ground (`ground_generator`, with painted
+maps) on a grid of 16 m or coarser, at most 384 cells a side round the two places: water at least the draught deep,
+distance from land by an eight-way distance transform, A* over clear cells, the path pulled straight where it sees
+over clear water, its ends joined to the places. `aground` samples a laid sea route every 8 m between its ends,
+cached by its points, place, draught and the painted maps' version. The Scene view draws areas tinted by their
+first tag and routes by kind, red where aground (Gizmos ▸ Areas and Routes); the map overlay draws routes with On
+Map. The road handles also edit a Route's points and a World Area's or an Area Fill's outline, as a loop.
 
 ## Heat *(implemented: the temperature field, the clock, Heat Sources, Zones and Bodies, hot and cold blocks)*
 

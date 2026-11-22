@@ -818,8 +818,16 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             .map(|(at, _)| at)
             .collect();
         sources.push(source);
+        // The World Areas' tags it keeps to, by their assets' numbers.
+        let mut placement = structure.placement.clone();
+        let tags = |named: &[String]| -> Vec<u128> {
+            let guid = |named: &String| content.parse(named).ok().and_then(|parsed| parsed.guid());
+            named.iter().filter_map(guid).map(AssetGuid::to_u128).collect()
+        };
+        placement.tags.within = tags(&placement.within);
+        placement.tags.never = tags(&placement.never_within);
         list.push(PlacedStructure {
-            placement: structure.placement.clone(),
+            placement,
             ground: structure.ground,
             sink: structure.sink,
             blocks,
@@ -1599,7 +1607,8 @@ pub fn stream(world: &mut World, content: &mut Content) {
         // The world layers its scene puts over its ground: Ground Fits.
         let place = crate::ground_fit::WorldPlace { corner, block_size: asset.file.block_size };
         let drawn = asset.drawn.clone();
-        let layers = crate::ground_fit::layers_of(world, entity, place, &|guid| drawn.number_of(guid), None);
+        let layers =
+            crate::ground_fit::layers_of(world, entity, place, &|guid| drawn.number_of(guid), None, &making.generate);
         making.generate.layers = voxear_terrain::blocks::generate::Layers(layers);
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let streamer = streams.0.entry(entity).or_default();

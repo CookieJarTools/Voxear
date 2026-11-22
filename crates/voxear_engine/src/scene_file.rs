@@ -482,6 +482,18 @@ pub struct ObjData {
     /// An area of a world of blocks laid with blocks, level or following the ground.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area_fill: Option<crate::roads::AreaFill>,
+    /// A part of a world with tags, which structures keep to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_area: Option<crate::world_areas::WorldArea>,
+    /// A world's own data for each area tag, where no area carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area_defaults: Option<crate::world_areas::AreaDefaults>,
+    /// A way through a world of a kind: road, sea, air or the game's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<crate::world_routes::Route>,
+    /// A place on a route, with data of the game's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_stop: Option<crate::world_routes::RouteStop>,
     /// How much ground a prefab takes up, its front and its door, for placing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<crate::prefab_placing::Placement>,
@@ -656,6 +668,10 @@ impl ObjData {
             streams_with_ground: None,
             road: None,
             area_fill: None,
+            world_area: None,
+            area_defaults: None,
+            route: None,
+            route_stop: None,
             placement: None,
             prefab_brush: None,
             walkable: None,
@@ -2425,6 +2441,18 @@ fn capture_instance(
     if root.area_fill.is_some() && root.area_fill != prefab_root.area_fill {
         instance.area_fill = root.area_fill.clone();
     }
+    if root.world_area.is_some() && root.world_area != prefab_root.world_area {
+        instance.world_area = root.world_area.clone();
+    }
+    if root.area_defaults.is_some() && root.area_defaults != prefab_root.area_defaults {
+        instance.area_defaults = root.area_defaults.clone();
+    }
+    if root.route.is_some() && root.route != prefab_root.route {
+        instance.route = root.route.clone();
+    }
+    if root.route_stop.is_some() && root.route_stop != prefab_root.route_stop {
+        instance.route_stop = root.route_stop.clone();
+    }
     if root.placement.is_some() && root.placement != prefab_root.placement {
         instance.placement = root.placement;
     }
@@ -2719,6 +2747,18 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(area) = actual.area_fill.as_ref().filter(|a| Some(*a) != expected.area_fill.as_ref()) {
         put("area_fill", whole(area, &crate::roads::AreaFill::default())?);
+    }
+    if let Some(value) = actual.world_area.as_ref().filter(|v| Some(*v) != expected.world_area.as_ref()) {
+        put("world_area", whole(value, &crate::world_areas::WorldArea::default())?);
+    }
+    if let Some(value) = actual.area_defaults.as_ref().filter(|v| Some(*v) != expected.area_defaults.as_ref()) {
+        put("area_defaults", whole(value, &crate::world_areas::AreaDefaults::default())?);
+    }
+    if let Some(value) = actual.route.as_ref().filter(|v| Some(*v) != expected.route.as_ref()) {
+        put("route", whole(value, &crate::world_routes::Route::default())?);
+    }
+    if let Some(value) = actual.route_stop.as_ref().filter(|v| Some(*v) != expected.route_stop.as_ref()) {
+        put("route_stop", whole(value, &crate::world_routes::RouteStop::default())?);
     }
     if let Some(placement) = actual.placement.as_ref().filter(|p| Some(*p) != expected.placement.as_ref()) {
         put("placement", whole(placement, &crate::prefab_placing::Placement::default())?);
@@ -3077,6 +3117,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.streams_with_ground = world.get::<crate::ground_streaming::StreamsWithGround>(entity).copied();
     obj.road = world.get::<crate::roads::Road>(entity).cloned();
     obj.area_fill = world.get::<crate::roads::AreaFill>(entity).cloned();
+    obj.world_area = world.get::<crate::world_areas::WorldArea>(entity).cloned();
+    obj.area_defaults = world.get::<crate::world_areas::AreaDefaults>(entity).cloned();
+    obj.route = world.get::<crate::world_routes::Route>(entity).cloned();
+    obj.route_stop = world.get::<crate::world_routes::RouteStop>(entity).cloned();
     obj.placement = world.get::<crate::prefab_placing::Placement>(entity).copied();
     obj.prefab_brush = world.get::<crate::prefab_placing::PrefabBrush>(entity).cloned();
     obj.walkable = world.get::<crate::walkable_models::Walkable>(entity).copied();

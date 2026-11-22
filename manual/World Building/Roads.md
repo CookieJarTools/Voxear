@@ -52,7 +52,7 @@ vox editor call roads.nearest at=[120,0,100] reach=30
 
 ## Squares and plazas: Area Fill
 
-An **Area Fill** paves an outline with a mix or a pattern of blocks, on the ground as it is (**Level**: **Follow**) or level at its Obj's height (**Level**: **Level**), with a slope out round it. **Size** sets a rectangle round its Obj; any outline comes from scripts, the scene file or `area_fill.set_outline`. A pattern runs a row a block along z and a character a block along x.
+An **Area Fill** paves an outline with a mix or a pattern of blocks, on the ground as it is (**Level**: **Follow**) or level at its Obj's height (**Level**: **Level**), with a slope out round it. **Size** sets a rectangle round its Obj; drag its corners in the Scene view for any other outline, as a road's points, or set it from scripts, the scene file or `area_fill.set_outline`. A pattern runs a row a block along z and a character a block along x.
 
 ## From scripts
 

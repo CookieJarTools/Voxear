@@ -306,7 +306,9 @@ pub fn bare_ground(
     let column = [bx.floor() as i32, bz.floor() as i32];
     let generate = &making.generate;
     let middle = |v: i32, axis: usize| generate.position[axis] + (v as f32 + 0.5) * size;
-    let height = making.world.height_at(middle(column[0], 0), middle(column[1], 1));
+    // The world's own generator: with its rivers, its biomes' land and its painted maps.
+    let ground = voxear_terrain::blocks::generate::ground_generator(generate, &making.world, size);
+    let height = ground.height_at(middle(column[0], 0), middle(column[1], 1));
     let ground = (height / size - 0.5).ceil() as i32;
     let top = layers.and_then(|layers| layers.shape(column, ground)).map_or(ground, |shaped| shaped.top);
     Some(corner.y + top as f32 * size)

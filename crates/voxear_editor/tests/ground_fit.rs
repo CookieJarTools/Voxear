@@ -217,6 +217,61 @@ fn blocks_built_and_dug_by_hand_are_restored_to_the_ground_as_generated() {
 }
 
 #[test]
+fn land_height_and_a_biome_are_painted_into_the_generator_undone_and_saved_beside_the_world() {
+    let Some((dir, mut renderer, mut editor)) = open() else { return };
+    let world_entity = editor
+        .game
+        .engine
+        .world
+        .query_ref::<(voxear_ecs::Entity, &voxear_engine::blocks::BlockWorldAsset)>()
+        .into_iter()
+        .next()
+        .map(|(entity, _)| entity)
+        .unwrap();
+    let height_at = |editor: &mut Editor, x: f32, z: f32| {
+        let game = &mut editor.game;
+        voxear_engine::ground_fit::ground_under(&mut game.engine.world, &mut game.content, voxear_core::math::Vec3::new(x, 0.0, z), None)
+            .unwrap()
+    };
+    let before = height_at(&mut editor, 120.0, 120.0);
+    let painted = done(
+        &mut editor,
+        &mut renderer,
+        "paint.map",
+        json!({ "map": "height", "at": [120.0, 0.0, 120.0], "radius": 80.0, "strength": 1.0 }),
+    );
+    assert_eq!(painted["changed"], true);
+    let raised = height_at(&mut editor, 120.0, 120.0);
+    assert!(raised > before + 10.0, "a mountain painted: {before} to {raised}");
+    assert_eq!(height_at(&mut editor, 2000.0, 2000.0), height_at(&mut editor, 2000.0, 2000.0));
+    // A biome the world lists, chosen there before the climate rules.
+    let biome = editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world_entity).unwrap().file.generate.as_ref().unwrap().biomes[3].clone();
+    done(
+        &mut editor,
+        &mut renderer,
+        "paint.map",
+        json!({ "map": "biome", "biome": biome, "at": [300.0, 0.0, 300.0], "radius": 60.0, "falloff": 0.0 }),
+    );
+    let asset = editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world_entity).unwrap().clone();
+    let making = voxear_engine::blocks::making(&mut editor.game.content, &asset).unwrap();
+    let placed = making.generate.placed.clone().unwrap();
+    let corner = voxear_engine::ground_fit::world_corner(&editor.game.engine.world, world_entity).unwrap();
+    let [gx, gz] = [making.generate.position[0] + 300.0 - corner.x, making.generate.position[1] + 300.0 - corner.z];
+    let mild = voxear_terrain::generate::biomes::Place { temperature: 15.0, humidity: 0.5, above_sea: 10.0, sunk: 0.0 };
+    assert_eq!(placed.index_at(gx, gz, mild), Some(3));
+    // Each dab one step to undo: the biome, then the mountain.
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert!((height_at(&mut editor, 120.0, 120.0) - before).abs() < 0.01, "undone, the ground as it was");
+    done(&mut editor, &mut renderer, "redo", json!({}));
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let maps = dir.path().join("Fits/Blocks/Endless.maps");
+    assert!(maps.is_file(), "saved beside the world");
+    let read = voxear_terrain::generate::painted::PaintedMaps::from_bytes(&std::fs::read(maps).unwrap()).unwrap();
+    assert!(!read.height.is_empty());
+}
+
+#[test]
 fn a_ground_fit_is_added_set_landed_and_undone_through_the_editors_calls() {
     let Some((_dir, mut renderer, mut editor)) = open() else { return };
     let made = done(

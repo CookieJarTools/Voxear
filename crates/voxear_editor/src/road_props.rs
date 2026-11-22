@@ -7,6 +7,7 @@ use voxear_assets::{AssetGuid, AssetKind};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game,
+    prefab_placing::Placement,
     roads::{AreaFill, AreaLevel, MixBlock, Road, RoadGround, RoadSteps},
 };
 
@@ -371,6 +372,79 @@ pub fn area_set(game: &mut Game, entity: Entity, field: AreaField, value: Value)
     true
 }
 
+/// A value the Placement component shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PlacementField {
+    Size,
+    Centre,
+    Front,
+    Door,
+}
+
+use PlacementField as P;
+
+pub fn placement_props() -> Vec<Prop> {
+    [P::Size, P::Centre, P::Front, P::Door].into_iter().map(Prop::Placement).collect()
+}
+
+pub fn placement_label(field: PlacementField) -> String {
+    match field {
+        P::Size => "Size",
+        P::Centre => "Centre",
+        P::Front => "Front",
+        P::Door => "Door",
+    }
+    .into()
+}
+
+pub fn placement_tooltip(field: PlacementField) -> &'static str {
+    match field {
+        P::Size => "How much ground it takes up across and along its front, in metres. Default: 6, 6.",
+        P::Centre => "Its footprint's middle from the Obj along x and z, in metres. Default: 0, 0.",
+        P::Front => "Which way its front faces, in degrees about up from +z: it faces a road it is lined up along.",
+        P::Door => "Where its door is, in its own space.",
+    }
+}
+
+pub fn placement_key(field: PlacementField) -> &'static str {
+    match field {
+        P::Size => "size",
+        P::Centre => "centre",
+        P::Front => "front",
+        P::Door => "door",
+    }
+}
+
+pub fn placement_unit(field: PlacementField) -> Option<&'static str> {
+    match field {
+        P::Front => Some("°"),
+        _ => Some("m"),
+    }
+}
+
+pub fn placement_get(game: &Game, entity: Entity, field: PlacementField) -> Option<Value> {
+    let placement = game.engine.world.get::<Placement>(entity)?;
+    Some(match field {
+        P::Size => Value::Vector(placement.size.to_vec()),
+        P::Centre => Value::Vector(placement.centre.to_vec()),
+        P::Front => Value::Number(placement.front),
+        P::Door => Value::Vector(placement.door.to_vec()),
+    })
+}
+
+pub fn placement_set(game: &mut Game, entity: Entity, field: PlacementField, value: Value) -> bool {
+    let Some(placement) = game.engine.world.get_mut::<Placement>(entity) else { return false };
+    let far = 10_000.0;
+    match (field, value) {
+        (P::Size, Value::Vector(v)) if v.len() == 2 => placement.size = [v[0].clamp(0.1, far), v[1].clamp(0.1, far)],
+        (P::Centre, Value::Vector(v)) if v.len() == 2 => placement.centre = [v[0].clamp(-far, far), v[1].clamp(-far, far)],
+        (P::Front, Value::Number(front)) => placement.front = front.rem_euclid(360.0),
+        (P::Door, Value::Vector(v)) if v.len() == 3 => placement.door = [0, 1, 2].map(|a| v[a].clamp(-far, far)),
+        _ => return false,
+    }
+    true
+}
+
 /// Adds the Road and Area Fill parts where `entity` has the components.
 pub fn parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
     if world.has::<Road>(entity) {
@@ -378,5 +452,8 @@ pub fn parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
     }
     if world.has::<AreaFill>(entity) {
         parts.push(Part::AreaFill);
+    }
+    if world.has::<Placement>(entity) {
+        parts.push(Part::Placement);
     }
 }

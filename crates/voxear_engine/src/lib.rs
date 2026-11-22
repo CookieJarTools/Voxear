@@ -61,6 +61,7 @@ pub mod packages;
 mod mist;
 pub mod particles;
 pub mod portals;
+pub mod prefab_placing;
 pub mod roads;
 pub mod post_scripts;
 pub mod smoke;

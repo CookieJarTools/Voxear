@@ -27,6 +27,7 @@ mod models;
 mod grown_plants;
 mod heat_view;
 mod fit_view;
+mod place_calls;
 mod nav_view;
 mod river_water;
 mod hierarchies;

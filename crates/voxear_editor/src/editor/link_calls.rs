@@ -332,6 +332,7 @@ impl Editor {
             }
             "navigation.status" => self.navigation_status(),
             "ground_fit.land" => self.ground_fit_land(args),
+            "place.prefab" | "place.line_up" | "place.scatter" | "place.brush" => self.place_call(call, args, renderer),
             "road.set_points" | "road.set_mix" | "area_fill.set_outline" => self.road_change(call, args),
             "roads.nearest" => {
                 let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
@@ -825,7 +826,7 @@ impl Editor {
 
     /// Notes a change as a step to undo, unless playing, when it changed the
     /// played world only.
-    fn record(&mut self, edit: Edit) -> bool {
+    pub(super) fn record(&mut self, edit: Edit) -> bool {
         if self.is_playing() {
             return false;
         }
@@ -847,7 +848,7 @@ impl Editor {
     }
 
     /// The Hierarchies and Inspectors show what a call changed.
-    fn shown_again(&mut self) {
+    pub(super) fn shown_again(&mut self) {
         self.refresh_hierarchies();
         let selected = self.selection.filter(|&e| self.game.engine.world.is_alive(e));
         self.show_selection(selected);

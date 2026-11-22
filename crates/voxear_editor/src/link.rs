@@ -619,6 +619,67 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ road, point, along }",
     },
     CallInfo {
+        name: "place.prefab",
+        about: "Makes an instance of a prefab on the ground of the world of blocks there, at `at` along x and z, turned `turn` degrees; with `face_road`, turned to face the road nearest and set `setback` metres back from its edge, as its Placement says. Lands on the ground without its own Ground Fit. One step to undo.",
+        args: &[
+            arg("prefabs", ArgKind::Value, "The prefab, as a list of one: `[{ \"prefab\": <asset> }]`."),
+            arg("at", ArgKind::Vector, "Where, in metres; up is found from the ground."),
+            maybe("turn", ArgKind::Number, "How far it is turned about up, in degrees."),
+            maybe("face_road", ArgKind::Toggle, "Whether it faces the road nearest."),
+            maybe("setback", ArgKind::Number, "How far back from the road's edge, in metres: 1 when left out."),
+            maybe("parent", ArgKind::Obj, "The Obj it goes under."),
+        ],
+        changes: true,
+        returns: "{ objs }",
+    },
+    CallInfo {
+        name: "place.line_up",
+        about: "Lines prefabs up along a Road, each facing it and set back from its edge a little more or less than the last, as often as its weight, no two alike side by side, none where something with a Placement or a Ground Fit stands: on `side` (left, right or both), from `from` to `to` metres along it. The same `seed` gives the same street. One step to undo.",
+        args: &[
+            arg("road", ArgKind::Obj, "The Obj with the Road."),
+            arg("prefabs", ArgKind::Value, "The prefabs, each `{ \"prefab\": <asset>, \"weight\": n }`."),
+            maybe("side", ArgKind::Text, "left, right or both: both when left out."),
+            maybe("from", ArgKind::Number, "Where the stretch starts, in metres along the road."),
+            maybe("to", ArgKind::Number, "Where it ends, in metres along; its end when left out."),
+            maybe("setback", ArgKind::Number, "How far back from the edge, in metres: 1 when left out."),
+            maybe("jitter", ArgKind::Number, "How much more or less, in metres: 0.5 when left out."),
+            maybe("gap", ArgKind::Number, "How far apart, in metres: 1 when left out."),
+            maybe("seed", ArgKind::Whole, "The seed."),
+            maybe("parent", ArgKind::Obj, "The Obj they go under."),
+        ],
+        changes: true,
+        returns: "{ objs }",
+    },
+    CallInfo {
+        name: "place.scatter",
+        about: "Scatters prefabs over an outline or an Area Fill's, about `density` of them each 100 square metres, as often as their weights, turned any way, none where something stands. One step to undo.",
+        args: &[
+            arg("prefabs", ArgKind::Value, "The prefabs, each `{ \"prefab\": <asset>, \"weight\": n }`."),
+            maybe("area", ArgKind::Obj, "An Obj with an Area Fill whose outline to fill."),
+            maybe("outline", ArgKind::Value, "Or the outline, each corner `[x, z]` in metres."),
+            maybe("density", ArgKind::Number, "How many each 100 square metres: 1 when left out."),
+            maybe("seed", ArgKind::Whole, "The seed."),
+            maybe("parent", ArgKind::Obj, "The Obj they go under."),
+        ],
+        changes: true,
+        returns: "{ objs }",
+    },
+    CallInfo {
+        name: "place.brush",
+        about: "A stroke of the prefab brush: prefabs scattered within `radius` metres of `at`, about `density` each 100 square metres; or, with `remove`, the instances of those prefabs there taken away. One step to undo.",
+        args: &[
+            arg("prefabs", ArgKind::Value, "The prefabs, each `{ \"prefab\": <asset>, \"weight\": n }`."),
+            arg("at", ArgKind::Vector, "The brush's middle, in metres."),
+            maybe("radius", ArgKind::Number, "Its radius, in metres: 5 when left out."),
+            maybe("density", ArgKind::Number, "How many each 100 square metres: 4 when left out."),
+            maybe("remove", ArgKind::Toggle, "Whether it takes them away."),
+            maybe("seed", ArgKind::Whole, "The seed."),
+            maybe("parent", ArgKind::Obj, "The Obj they go under."),
+        ],
+        changes: true,
+        returns: "{ objs } or { removed }",
+    },
+    CallInfo {
         name: "world_layers.status",
         about: "The world layers over each world of blocks without end's ground, as it was last streamed: how many Ground Fits, how many chunk columns they reach, and which kinds are hidden to show the bare ground.",
         args: &[],
@@ -1438,6 +1499,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::StreamsWithGround
             | Part::Road
             | Part::AreaFill
+            | Part::Placement
             | Part::NavObstacle
             | Part::CrowdMember
             | Part::MotionMatcher

@@ -1988,6 +1988,7 @@ impl Editor {
                         "made": builder.made,
                         "build_ms": (builder.spent.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
                         "settled": builder.is_settled(),
+                        "model_cells": voxear_engine::walkable_models::stamped_cells(world, entity),
                     })
                 })
                 .collect()
@@ -1995,7 +1996,15 @@ impl Editor {
         let agents = world.query_ref::<&NavAgent>().into_iter().count();
         let mobs = world.query_ref::<&BlockMob>().into_iter().count();
         let (obstacles, carving) = voxear_engine::nav_obstacle::counts(world);
-        done(json!({ "worlds": worlds, "agents": agents, "mobs": mobs, "obstacles": obstacles, "carving": carving }))
+        let walkable = world.query_ref::<&voxear_engine::walkable_models::Walkable>().into_iter().count();
+        done(json!({
+            "worlds": worlds,
+            "agents": agents,
+            "mobs": mobs,
+            "obstacles": obstacles,
+            "carving": carving,
+            "walkable": walkable,
+        }))
     }
 
     fn navigation_path(&mut self, args: &Json) -> Called {

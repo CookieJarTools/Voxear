@@ -107,6 +107,7 @@ pub mod ui_input;
 pub mod ui_panels;
 pub mod upgrade;
 pub mod walkers;
+pub mod walkable_models;
 pub mod water_trails;
 pub mod water;
 pub mod weather;

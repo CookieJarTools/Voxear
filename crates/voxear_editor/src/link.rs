@@ -557,7 +557,7 @@ pub const CALLS: &[CallInfo] = &[
         about: "The navigation kept for each Block World something walks in: how many chunks have places to stand, how many places, how much it keeps, how often it has been made again from the world's blocks and how long that took, and whether it is up to date with them; and how many Nav Agents and Block Mobs there are.",
         args: &[],
         changes: false,
-        returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled }], agents, mobs }",
+        returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled, model_cells }], agents, mobs, walkable }",
     },
     CallInfo {
         name: "ground_fit.land",
@@ -1501,6 +1501,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::AreaFill
             | Part::Placement
             | Part::PrefabBrush
+            | Part::Walkable
             | Part::NavObstacle
             | Part::CrowdMember
             | Part::MotionMatcher

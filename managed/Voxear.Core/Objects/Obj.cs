@@ -584,6 +584,16 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new PrefabBrush(this);
 	}
 
+	/// <summary>The Obj's Walkable, which has its still collider walked on in a world of blocks; null when it has none.</summary>
+	public Walkable? Walkable => Walkable.Of(this);
+
+	/// <summary>Gives the Obj a Walkable, unless it has one, and returns it.</summary>
+	public Walkable AddWalkable()
+	{
+		NativeWhole.AddOrRemoveWhole(NativeWhole.Walkable, this, true);
+		return new Walkable(this);
+	}
+
 	/// <summary>The Obj's LOD Group; null when it has none.</summary>
 	public LodGroup? LodGroup => LodGroup.Of(this);
 

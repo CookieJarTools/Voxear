@@ -38,21 +38,22 @@ impl NavWorlds {
 pub fn update(world: &mut World) {
     let Some(mut navs) = world.remove_resource::<NavWorlds>() else { return };
     voxear_core::profile_scope!("Navigation");
-    navs.worlds.retain(|entity, builder| match world.get::<BlockWorld>(*entity) {
-        Some(blocks) => {
-            builder.update(&blocks.blocks, &blocks.faces);
-            true
-        }
-        None => false,
-    });
+    navs.worlds.retain(|entity, _| world.get::<BlockWorld>(*entity).is_some());
+    for (entity, builder) in navs.worlds.iter_mut() {
+        // Its blocks with its walkable models stamped in (see `walkable_models`).
+        let Some(blocks) = crate::walkable_models::for_navigation(world, *entity) else { continue };
+        let Some(faces) = world.get::<BlockWorld>(*entity).map(|world| world.faces.clone()) else { continue };
+        builder.update(&blocks, &faces);
+    }
     world.insert_resource(navs);
 }
 
 /// World `entity`'s navigation, kept from now on: made now where it is
 /// small, or begun in the background where it is not.
 pub fn nav_of(world: &mut World, entity: Entity) -> Option<Arc<BlockNav>> {
-    let blocks = world.get::<BlockWorld>(entity)?;
-    let (blocks, faces, size) = (blocks.blocks.clone(), blocks.faces.clone(), blocks.block_size);
+    let found = world.get::<BlockWorld>(entity)?;
+    let (faces, size) = (found.faces.clone(), found.block_size);
+    let blocks = crate::walkable_models::for_navigation(world, entity)?;
     if world.resource::<NavWorlds>().is_none() {
         world.insert_resource(NavWorlds::default());
     }

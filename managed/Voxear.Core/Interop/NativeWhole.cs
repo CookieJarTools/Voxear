@@ -31,6 +31,7 @@ internal static class NativeWhole
 	public const int AreaFill = 12;
 	public const int Placement = 13;
 	public const int PrefabBrush = 14;
+	public const int Walkable = 15;
 
 	private const int ReadAll = 0;
 	private const int ChangeSome = 1;

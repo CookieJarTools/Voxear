@@ -1302,6 +1302,12 @@ impl Inspector {
                     meta.range = crate::road_props::road_range(*field).map(|r| r.map(f64::from));
                     meta.tooltip = Some(crate::road_props::road_tooltip(*field).to_string());
                 }
+                if let Prop::WalkableDoor = value {
+                    meta.tooltip = Some(
+                        "Whether it is a door or a gate that opens: walked through rather than round. Default: off."
+                            .to_string(),
+                    );
+                }
                 if let Prop::PrefabBrush(field) = value {
                     meta.tooltip = Some(crate::road_props::brush_tooltip(*field).to_string());
                 }
@@ -2356,6 +2362,7 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
         (Part::AreaFill, "Terrain"),
         (Part::Placement, "Terrain"),
         (Part::PrefabBrush, "Terrain"),
+        (Part::Walkable, "Navigation"),
         (Part::NavAgent, "Navigation"),
         (Part::NavArea, "Navigation"),
         (Part::NavLink, "Navigation"),
@@ -3108,6 +3115,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::AreaFill) => "area_fill",
         Some(Part::Placement) => "placement",
         Some(Part::PrefabBrush) => "prefab_brush",
+        Some(Part::Walkable) => "walkable",
         Some(Part::NavObstacle) => "nav_obstacle",
         Some(Part::CrowdMember) => "crowd_member",
         Some(Part::MotionMatcher) => "motion_matcher",

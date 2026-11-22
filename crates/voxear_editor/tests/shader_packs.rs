@@ -146,7 +146,7 @@ fn tools_list_wear_and_set_a_shader_pack() {
     let listed = call(&mut editor, &mut renderer, "shader_pack.list", json!({}));
     let names: Vec<&str> =
         listed["packs"].as_array().unwrap().iter().filter_map(|pack| pack["name"].as_str()).collect();
-    assert_eq!(names, ["Evening", "Vivid", "Warm"]);
+    assert_eq!(names, ["Evening", "Vivid", "Radiant", "Warm"]);
     assert!(listed["worn"].is_null());
 
     let answer = call(&mut editor, &mut renderer, "shader_pack.wear", json!({ "pack": "builtin:evening" }));

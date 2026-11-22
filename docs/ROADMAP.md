@@ -4366,6 +4366,10 @@ Done:
   kept on disk by a hash that is the same on any machine; a game's packs compiled when it is built.
 - **Vivid**, a second built-in pack: bright, rich colour, a deeper blue sky, vibrance that lifts the dullest colours
   most, warm sunlit colours and dark corners, by its own tonemap and a sky program.
+- **Radiant**, a third built-in pack: a low golden sun in a wide glow, pink clouds and warm haze, foliage glowing
+  against the sun, cool shade and long soft shadows; caves darker the further from the sky, sunbeams through the air
+  where the sun reaches in between blocks, marched through the light kept for the blocks round the camera, sunlit
+  patches and pools where it lands, and torchlight that falls off quickly and is brightest on what faces the torch.
 - **Models lit by a pack's program.** `[surface] models`, `float3 run(ModelSurface surface, ModelLighting light)`, in
   every shader that draws models, given the engine's light whole and by its terms; Evening warms them and lays a rim
   of light round what stands against a low sun.

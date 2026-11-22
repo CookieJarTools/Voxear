@@ -125,7 +125,8 @@ impl ScriptRuntime {
                 && managed.origin_moved.is_some()
                 && managed.particle_hits.is_some()
                 && managed.heat_events.is_some()
-                && managed.ground_events.is_some(),
+                && managed.ground_events.is_some()
+                && managed.column_events.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -435,6 +436,17 @@ impl ScriptRuntime {
         let kinds: Vec<i32> = events.iter().map(|(_, going)| if *going { 0 } else { 1 }).collect();
         let _scope = WorldScope::enter(world);
         unsafe { send(objs.as_ptr(), objs.len() as i32, kinds.as_ptr()) };
+    }
+
+    /// Tells scripts of the columns made and let go this frame, as
+    /// `Blocks.ColumnMade` and `Blocks.ColumnLetGo`.
+    pub fn column_events(&mut self, world: &mut World, events: &[crate::columns::ColumnEventData]) {
+        if events.is_empty() {
+            return;
+        }
+        let send = self.api().column_events.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { send(events.as_ptr(), events.len() as i32) };
     }
 
     /// Tells behaviours of the marks actions passed, as `OnMotionMark`:

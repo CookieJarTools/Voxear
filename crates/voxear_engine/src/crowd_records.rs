@@ -370,31 +370,104 @@ pub(crate) fn take_from_server(world: &mut World, bytes: &[u8]) -> bool {
     true
 }
 
-/// A record drawn far off: its number, its prefab, where it is in this
-/// world, which way it faces, and how fast it walks there, 0 standing.
+/// What a ghost is drawn for: a record, by its prefab's GUID, or a figure a
+/// script set, by its loaded prefab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawnFrom {
+    Record(AssetGuid),
+    Figure(crate::prefab::PrefabId),
+}
+
+/// A record or a figure drawn far off: its key among those drawn (a
+/// record's number, or a figure's above every record's), what it is drawn
+/// for, where it is in this world, which way it faces, and how fast it walks
+/// there, 0 standing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Drawn {
-    pub id: u32,
-    pub prefab: AssetGuid,
+    pub key: u64,
+    pub from: DrawnFrom,
     pub at: Vec3,
     pub yaw: f32,
     pub speed: f32,
 }
 
-/// The records to draw: those within `within` metres of where the game
-/// looks from, the nearest `most`.
+/// A figure a script asks to be drawn far off with no Obj, as `FarFigures`
+/// in C# sets it: its own number, its prefab, where it is from the level's
+/// real middle, which way it faces and how fast it walks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FarFigure {
+    pub id: u32,
+    pub prefab: crate::prefab::PrefabId,
+    pub position: DVec3,
+    pub yaw: f32,
+    pub speed: f32,
+}
+
+/// The figures scripts last set, drawn as records are, and the level they
+/// were set in: another level starts without them.
+#[derive(Clone, Debug, Default)]
+pub struct FarFigures {
+    pub figures: Vec<FarFigure>,
+    level: Option<String>,
+    /// Set since the level was last looked at: they are the open level's.
+    adopting: bool,
+}
+
+/// Puts the figures in `given` in place of those set before (`FarFigures.Set`
+/// in C#), each where it is in this world now. A figure with no prefab is
+/// left out.
+pub fn set_figures(world: &mut World, given: &[voxear_scripting::FarFigureData]) {
+    let origin = WorldOrigin::of(world).0.as_dvec3();
+    let figures = given
+        .iter()
+        .filter(|figure| figure.prefab >= 0)
+        .map(|figure| FarFigure {
+            id: figure.id,
+            prefab: crate::prefab::PrefabId(figure.prefab as u32),
+            position: Vec3::from_array(figure.position).as_dvec3() + origin,
+            yaw: figure.yaw,
+            speed: figure.speed.max(0.0),
+        })
+        .collect();
+    let level = world.resource::<FarFigures>().and_then(|set| set.level.clone());
+    world.insert_resource(FarFigures { figures, level, adopting: true });
+}
+
+/// Forgets the figures set in another level than `level`, the one open.
+pub fn keep_figures_to(world: &mut World, level: Option<&str>) {
+    let Some(set) = world.resource_mut::<FarFigures>() else { return };
+    if set.adopting {
+        (set.level, set.adopting) = (level.map(str::to_string), false);
+    } else if set.level.as_deref() != level {
+        *set = FarFigures { level: level.map(str::to_string), ..FarFigures::default() };
+    }
+}
+
+/// Where figures' keys start, above every record's number.
+const FIGURE_KEYS: u64 = 1 << 32;
+
+/// The records and figures to draw: those within `within` metres of where
+/// the game looks from, the nearest `most` of both.
 pub fn to_draw(world: &World, within: f32, most: usize) -> Vec<Drawn> {
-    let Some(records) = world.resource::<CrowdRecords>() else { return Vec::new() };
     let Some(eye) = crate::terrain::viewer(world) else { return Vec::new() };
     let origin = WorldOrigin::of(world).0.as_dvec3();
-    let mut near: Vec<(f32, Drawn)> = records
-        .records
-        .iter()
-        .map(|record| {
-            let at = (record.position - origin).as_vec3();
-            let speed = if record.destination.is_some() { record.speed } else { 0.0 };
-            (at.distance(eye), Drawn { id: record.id, prefab: record.prefab, at, yaw: record.yaw, speed })
-        })
+    let records = world.resource::<CrowdRecords>().map(|records| records.records.as_slice()).unwrap_or_default();
+    let figures = world.resource::<FarFigures>().map(|set| set.figures.as_slice()).unwrap_or_default();
+    let of_records = records.iter().map(|record| {
+        let speed = if record.destination.is_some() { record.speed } else { 0.0 };
+        let (key, from) = (u64::from(record.id), DrawnFrom::Record(record.prefab));
+        Drawn { key, from, at: (record.position - origin).as_vec3(), yaw: record.yaw, speed }
+    });
+    let of_figures = figures.iter().map(|figure| Drawn {
+        key: FIGURE_KEYS + u64::from(figure.id),
+        from: DrawnFrom::Figure(figure.prefab),
+        at: (figure.position - origin).as_vec3(),
+        yaw: figure.yaw,
+        speed: figure.speed,
+    });
+    let mut near: Vec<(f32, Drawn)> = of_records
+        .chain(of_figures)
+        .map(|drawn| (drawn.at.distance(eye), drawn))
         .filter(|(far, _)| *far <= within)
         .collect();
     near.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -438,7 +511,7 @@ pub fn state(world: &mut World, given: Option<&[u8]>) -> Option<Vec<u8>> {
     Some(Vec::new())
 }
 
-/// The most records drawn at once.
+/// The most records and figures drawn at once.
 pub const MOST_DRAWN: usize = 2000;
 
 /// Marks the Objs drawing a record far off: its models, with nothing else
@@ -447,10 +520,10 @@ pub const MOST_DRAWN: usize = 2000;
 pub struct RecordGhost;
 impl voxear_ecs::Component for RecordGhost {}
 
-/// Each record drawn: the Obj it stands at, the models under it each with
+/// Each record or figure drawn, by its key: the Obj it stands at, the models under it each with
 /// the clips it walks and stands with, and how far through them it is.
 #[derive(Default)]
-pub(crate) struct Ghosts(pub std::collections::HashMap<u32, Ghost>);
+pub(crate) struct Ghosts(pub std::collections::HashMap<u64, Ghost>);
 
 pub(crate) struct Ghost {
     pub root: Entity,

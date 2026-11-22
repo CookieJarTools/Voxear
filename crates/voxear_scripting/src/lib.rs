@@ -20,6 +20,7 @@ mod interop;
 mod layers;
 pub mod blocks;
 mod physics;
+mod columns;
 mod crowds;
 mod plants;
 mod post;
@@ -55,7 +56,8 @@ pub use post::{
     SUN_LOOK_SET, WORLD_ASK, set_post_call,
 };
 pub use plants::{FoliageCall, set_foliage_call};
-pub use crowds::{CrowdRecordsState, set_crowd_records};
+pub use columns::{ColumnEventData, GroundMade, set_ground_made};
+pub use crowds::{CrowdRecordsState, FarFigureData, FarFiguresSet, set_crowd_records, set_far_figures};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};

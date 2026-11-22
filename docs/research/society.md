@@ -403,6 +403,9 @@ itself. Everything else the game already has.
 
 ### The four hooks
 
+**Built** (2026-11-22): hooks 3 and 1, as column events (`Blocks.ColumnMade`, `Blocks.ColumnLetGo`, one event a
+column) and `FarFigures`. The manual's Streams With Ground and Crowds pages show them.
+
 **1. Far figures: ghosts drawn from the game's positions.**
 - **Why.** Past Records beyond (250 m) a resident has no Obj, and only the engine's crowd records are drawn far off.
   C# can only save and restore those as bytes, and the engine moves them, not the game.
@@ -435,8 +438,8 @@ itself. Everything else the game already has.
 - **Why.** Residents of generated houses, and residents on a road, have no house Obj to hear `OnGroundLoaded`
   from. The engine keeps each frame's columns made and let go (`GroundMoves`) for `vox editor call blocks.columns`,
   but C# cannot read them.
-- **What.** `Blocks.ColumnsMade` and `Blocks.ColumnsLetGo` events each frame, with the columns as 32-block
-  coordinates, and `Blocks.IsMade(Vector3)`. Made means the blocks are there. A column's nav may come a few frames
+- **What.** `Blocks.ColumnMade` and `Blocks.ColumnLetGo` events, one a column, with its place among the world's
+  32-block columns, its corner and its size, and `Blocks.IsMade(Vector3)`. Made means the blocks are there. A column's nav may come a few frames
   later, so `Navigation.IsReady(Vector3)` says when an agent can be sent from there.
 - **Tests:** a script hears a column made as the camera nears it and let go as it leaves, and the same columns as
   `blocks.columns` lists.

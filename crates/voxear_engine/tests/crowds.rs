@@ -2,7 +2,8 @@
 //! camera, a Crowd Member's own tier and importance, agents far off
 //! planning and moving less often yet getting where they are sent, in less
 //! of the step, and a walker kept as a record far off, walking on, made
-//! again near and kept in a save (headless: no GPU, no scripts).
+//! again near and kept in a save, and a figure a script sets drawn far off
+//! (headless: no GPU, no scripts).
 
 use std::time::{Duration, Instant};
 
@@ -269,6 +270,50 @@ fn a_walker_far_off_is_kept_as_a_record_walks_on_and_is_made_again_near() {
     game.engine.world.get_mut::<Transform>(eye).unwrap().position = Vec3::new(2000.0, 10.0, 16.0);
     game.tick(FRAME, None);
     assert_eq!(ghosts(&game), 0, "too far to draw");
+}
+
+#[test]
+fn a_figure_a_script_sets_is_drawn_far_off_walks_on_smoothly_and_goes_when_left_out() {
+    use voxear_engine::crowd_records::{RecordGhost, set_figures};
+    use voxear_scripting::FarFigureData;
+    let (dir, mut game, _) = game(32);
+    std::fs::create_dir_all(dir.path().join("Prefabs")).unwrap();
+    std::fs::write(dir.path().join("Prefabs/Walker.prefab"), WALKER).unwrap();
+    game.content.rescan().unwrap();
+    camera(&mut game, Vec3::new(16.0, 10.0, 16.0));
+    let prefab = game.content.prefab(None, "Prefabs/Walker.prefab").unwrap().0 as i32;
+    let figure = |z: f32, speed: f32| FarFigureData { prefab, id: 7, position: [16.0, 6.0, z], yaw: 0.0, speed };
+    let ghost = |game: &Game| {
+        let world = &game.engine.world;
+        let roots: Vec<Vec3> = world
+            .query_ref::<(&RecordGhost, &Transform)>()
+            .without::<voxear_scene::Parent>()
+            .into_iter()
+            .map(|(_, transform)| transform.position)
+            .collect();
+        (roots.len() == 1).then(|| roots[0])
+    };
+    // Set 400 m off, within where records are drawn: drawn there, with no Obj of its own.
+    set_figures(&mut game.engine.world, &[figure(416.0, 0.0)]);
+    game.tick(FRAME, None);
+    assert_eq!(ghost(&game), Some(Vec3::new(16.0, 6.0, 416.0)), "drawn where it was set");
+    // Set again 8 m on, walking: it walks there rather than jumping.
+    set_figures(&mut game.engine.world, &[figure(424.0, 2.0)]);
+    game.tick(FRAME, None);
+    let stepped = ghost(&game).unwrap().z - 416.0;
+    assert!(stepped > 0.01 && stepped < 0.2, "a frame's step: {stepped}");
+    for _ in 0..60 * 4 {
+        game.tick(FRAME, None);
+    }
+    assert_eq!(ghost(&game), Some(Vec3::new(16.0, 6.0, 424.0)), "got there");
+    // A figure with no prefab is left out; set with none, none is drawn.
+    set_figures(&mut game.engine.world, &[FarFigureData { prefab: -1, ..figure(424.0, 0.0) }]);
+    game.tick(FRAME, None);
+    assert_eq!(game.engine.world.query_ref::<&RecordGhost>().into_iter().count(), 0, "gone");
+    // Too far to draw, past 600 m.
+    set_figures(&mut game.engine.world, &[figure(900.0, 0.0)]);
+    game.tick(FRAME, None);
+    assert_eq!(ghost(&game), None, "too far to draw");
 }
 
 /// A project with a camera at (0, 1, 0) looking along +Z through a narrow lens, a sun, and a prefab of the

@@ -3834,6 +3834,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   them, in region files with zstd; levels 5–7 baked for the whole world (12 MB for a 51 km world) with edits lowered
   into them, coarsest first, two more levels to see the whole world; rings 1–2 from runs; hand edits as runs of
   equal blocks with zstd (Fantasy City's 10.3 MB to 42 KB); generator profiling; threads by the machine.
+  - ~~**Stage 0:**~~ done. A world's making compared once a frame, its tables by pointer: the Realm's frame median
+    12.9 → 2.7 ms. Far tiles kept by what makes their ground (look and distances left out), older folders removed but
+    the two last used. One in eight columns made at once kept for the rings at Medium. Tests: a making the same by
+    its tables, tiles' folder kept across look changes, folders pruned, rings asked at eight at once. Next: stage 1,
+    every level made kept on disk with what is built on it, for endless worlds and worlds of a set size alike.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

@@ -128,9 +128,9 @@ impl BlockMaking {
     /// generator, every block this drew drawn the same. Faces more at the
     /// end, as of blocks the world came to hold since, change nothing made.
     fn same(&self, other: &BlockMaking) -> bool {
-        self.file == other.file
+        same_file(&self.file, &other.file)
             && Arc::ptr_eq(&self.world, &other.world)
-            && other.faces.starts_with(&self.faces)
+            && (Arc::ptr_eq(&self.faces, &other.faces) || other.faces.starts_with(&self.faces))
             && self.far_folder == other.far_folder
     }
 
@@ -173,11 +173,74 @@ impl BlockMaking {
 
     /// The folder its far view's tiles are kept in, named by what they are
     /// made from, so a world made another way keeps its own.
+    /// Only what its ground is made from names it: how it is lit, how far it
+    /// is drawn and how its blocks glow change no tile, so those are left out
+    /// of the name, and changing them keeps the tiles.
     pub fn far_tiles(&self) -> Option<std::path::PathBuf> {
-        let made_from = format!("{}\n{:016x}\n{}", self.file.to_text(), self.world.hash(), far::MADE_AS);
+        let usual = BlockFile::default();
+        let mut ground = BlockFile {
+            lighting: usual.lighting,
+            glow_color: usual.glow_color,
+            glow: usual.glow,
+            voxels: usual.voxels,
+            relief: usual.relief,
+            ..self.file.clone()
+        };
+        if let Some(endless) = ground.generate.as_mut().and_then(|generate| generate.endless.as_mut()) {
+            (endless.distance, endless.far) = (0.0, 0.0);
+        }
+        let made_from = format!("{}\n{:016x}\n{}", ground.to_text(), self.world.hash(), far::MADE_AS);
         let hash = crate::layers::stable_hash(made_from.as_bytes());
         self.far_folder.as_ref().map(|folder| folder.join(format!("{hash:016x}")))
     }
+}
+
+/// How many folders of far tiles a world keeps besides the one it is made
+/// with now: those last used, so a setting tried and set back finds its
+/// tiles again.
+const FAR_FOLDERS_KEPT: usize = 2;
+
+/// Removes the folders of far tiles beside `folder`, made another way, but
+/// the `kept` last used: each is named by a hash of what it was made from,
+/// sixteen hex digits, and nothing else in the world's folder is touched.
+pub fn prune_far_tiles(folder: &std::path::Path, kept: usize) {
+    let Some(world) = folder.parent() else { return };
+    let Ok(entries) = std::fs::read_dir(world) else { return };
+    let hashed = |name: &str| name.len() == 16 && name.bytes().all(|b| b.is_ascii_hexdigit());
+    let mut others: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| entry.file_name().to_str().is_some_and(hashed))
+        .map(|entry| entry.path())
+        .filter(|path| path != folder)
+        .map(|path| (std::fs::metadata(&path).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), path))
+        .collect();
+    // Newest first: a folder's time is when a tile was last written into it.
+    others.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in others.into_iter().skip(kept) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
+/// Whether two files are alike, as `==` says, but quickly where they hold
+/// the same tables read from the project's files, their biomes', their
+/// structures' and their slabs': those are compared by where they lie, as a
+/// world is handed the same ones frame after frame, and compared whole they
+/// took milliseconds.
+fn same_file(a: &BlockFile, b: &BlockFile) -> bool {
+    fn same_arc<T>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    let (Some(x), Some(y)) = (&a.generate, &b.generate) else { return a == b };
+    if !(same_arc(&x.placed, &y.placed) && same_arc(&x.built, &y.built) && same_arc(&x.halves, &y.halves)) {
+        return a == b;
+    }
+    let bare = |generate: &BlockGenerate| BlockGenerate { placed: None, built: None, halves: None, ..generate.clone() };
+    bare(x) == bare(y) && BlockFile { generate: None, ..a.clone() } == BlockFile { generate: None, ..b.clone() }
 }
 
 /// The far view's tile `at` of level `level`, as kept in `folder` where it
@@ -630,8 +693,9 @@ impl BlockStreamer {
         }
         // What is built into the far view changed, its ground the same: its tiles are built on again, the old drawn
         // till then, and nothing else is made again.
-        let rebuilt =
-            self.making.as_ref().is_some_and(|kept| kept.same(&making) && kept.built_stamp() != making.built_stamp());
+        // Asked once a frame: a world's file holds its biomes' and structures' tables.
+        let same = self.making.as_ref().is_some_and(|kept| kept.same(&making));
+        let rebuilt = same && self.making.as_ref().is_some_and(|kept| kept.built_stamp() != making.built_stamp());
         if rebuilt {
             // From the first ring either builds into.
             let kept = self.making.as_ref().and_then(|kept| kept.built_from());
@@ -644,14 +708,14 @@ impl BlockStreamer {
         }
         // Its world layers changed, its ground the same: the columns under what changed are made again, the old drawn
         // till then.
-        let relaid = self.making.as_ref().filter(|kept| kept.same(&making)).and_then(|kept| {
+        let relaid = self.making.as_ref().filter(|_| same).and_then(|kept| {
             use super::world_layers::WorldLayers;
             let (old, new) = (kept.generate.layers.get(), making.generate.layers.get());
             let none = WorldLayers::default();
             (old.map(WorldLayers::hash) != new.map(WorldLayers::hash))
                 .then(|| WorldLayers::changed_columns(old.unwrap_or(&none), new.unwrap_or(&none)))
         });
-        if !self.making.as_ref().is_some_and(|kept| kept.same(&making)) {
+        if !same {
             // Made anew: every column let go, the changes on those near kept.
             self.went_since.extend(self.near.iter().copied());
             if !self.near.is_empty() {
@@ -673,9 +737,16 @@ impl BlockStreamer {
             (self.coarse_blocks, self.joining) = Default::default();
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.far_tiles = making.far_tiles();
+            if let Some(folder) = self.far_tiles.clone() {
+                std::thread::spawn(move || prune_far_tiles(&folder, FAR_FOLDERS_KEPT));
+            }
             self.making = Some(Arc::new(making));
             changed = true;
-        } else if self.making.as_ref().is_some_and(|kept| kept.faces != making.faces) {
+        } else if self
+            .making
+            .as_ref()
+            .is_some_and(|kept| !Arc::ptr_eq(&kept.faces, &making.faces) && kept.faces != making.faces)
+        {
             // It has faces more, as once it holds a block it had not held: faces are made with them from here on,
             // and nothing made is made again. A column's faces being made now with those before are right for its
             // blocks as they were, and are made again if its blocks change.
@@ -1223,10 +1294,11 @@ impl BlockStreamer {
         }
         room -= joined;
         // Some of the rings are always being made, however much nearer there is to make, so the horizon keeps up
-        // with a camera flying on: the nearest of them first, as many as make a twelfth of those at once, none
-        // where so few are made at once that a twelfth is none.
+        // with a camera flying on: the nearest of them first, as many as make a twelfth of those at once, rounded,
+        // so one of eight; none where fewer than six are made at once.
         let ring = |level: &Option<u32>| level.is_some_and(|level| level > 0 && level != FINE);
-        let short = (self.at_once / RINGS_ALWAYS).saturating_sub(self.rings_now.load(Ordering::Acquire));
+        let share = (self.at_once + RINGS_ALWAYS / 2) / RINGS_ALWAYS;
+        let short = share.saturating_sub(self.rings_now.load(Ordering::Acquire));
         let rings: Vec<usize> = (0..wanted.len()).filter(|&at| ring(&wanted[at].0)).take(short).collect();
         let first: Vec<(Option<u32>, [i32; 2], i64)> = rings.iter().rev().map(|&at| wanted.remove(at)).collect();
         wanted.splice(0..0, first.into_iter().rev());
@@ -1930,6 +2002,90 @@ mod tests {
             let now = streamer.coarse.get(&at).expect("a coarse column kept");
             assert!(now.iter().zip(&meshes).all(|((_, now), was)| Arc::ptr_eq(now, was)), "{at:?} kept as made");
         }
+    }
+
+    #[test]
+    fn a_worlds_making_is_the_same_by_its_shared_tables_and_other_where_anything_else_differs() {
+        let mut making = making();
+        let halves: Arc<Vec<BlockId>> = Arc::new(vec![0, 3, 0, 5]);
+        making.file.generate.as_mut().unwrap().halves = Some(halves.clone());
+        let again = making.clone();
+        assert!(making.same(&again), "the same tables, by where they lie");
+        // Tables alike but read again are still the same, compared whole.
+        let mut read_again = making.clone();
+        read_again.file.generate.as_mut().unwrap().halves = Some(Arc::new((*halves).clone()));
+        assert!(making.same(&read_again));
+        // Anything else changed, with the same tables, is another making.
+        let mut moved = making.clone();
+        moved.file.generate.as_mut().unwrap().position = [5.0, 0.0];
+        assert!(!making.same(&moved));
+        let mut bigger = making.clone();
+        bigger.file.block_size = 1.0;
+        assert!(!making.same(&bigger));
+        let mut without = making.clone();
+        without.file.generate.as_mut().unwrap().halves = None;
+        assert!(!making.same(&without));
+    }
+
+    #[test]
+    fn far_tiles_keep_their_folder_when_only_the_look_or_the_distances_change() {
+        let mut making = making();
+        making.far_folder = Some(std::path::PathBuf::from("/far"));
+        making.file.generate.as_mut().unwrap().endless = Some(super::super::generate::BlockEndless::default());
+        let folder = making.far_tiles().expect("a folder");
+        let mut looked = making.clone();
+        looked.file.glow = 3.0;
+        looked.file.glow_color = [0.2, 0.4, 1.0];
+        let endless = looked.file.generate.as_mut().unwrap().endless.as_mut().unwrap();
+        (endless.distance, endless.far) = (256.0, 16384.0);
+        assert_eq!(looked.far_tiles(), Some(folder.clone()), "the same ground, the same tiles");
+        let mut moved = making.clone();
+        moved.file.generate.as_mut().unwrap().position = [100.0, 0.0];
+        assert_ne!(moved.far_tiles(), Some(folder.clone()), "other ground, other tiles");
+        let mut sized = making.clone();
+        sized.file.generate.as_mut().unwrap().endless.as_mut().unwrap().size = Some([512, 512]);
+        assert_ne!(sized.far_tiles(), Some(folder), "a set size changes the ground");
+    }
+
+    #[test]
+    fn far_tile_folders_made_another_way_are_removed_but_the_last_used() {
+        let world = std::env::temp_dir().join(format!("voxear-far-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&world);
+        let names = ["0000000000000001", "0000000000000002", "0000000000000003", "0000000000000004"];
+        for (at, name) in names.iter().enumerate() {
+            let folder = world.join(name);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("3_0_0.far"), b"tile").unwrap();
+            // Each written a little after the one before, so the last is the newest.
+            let when = std::time::SystemTime::now() - std::time::Duration::from_secs(100 - at as u64 * 10);
+            std::fs::File::open(&folder).unwrap().set_modified(when).unwrap();
+        }
+        // Not a folder of tiles: never touched.
+        std::fs::create_dir_all(world.join("notes")).unwrap();
+        prune_far_tiles(&world.join(names[0]), 2);
+        let left = |name: &str| world.join(name).is_dir();
+        assert!(left(names[0]), "the one in use, though the oldest");
+        assert!(!left(names[1]), "the oldest other");
+        assert!(left(names[2]) && left(names[3]), "the two last used");
+        assert!(left("notes"));
+        let _ = std::fs::remove_dir_all(&world);
+    }
+
+    #[test]
+    fn rings_are_made_while_near_ground_waits_when_eight_are_made_at_once() {
+        let making = making();
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer { at_once: 8, ..BlockStreamer::default() };
+        streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 600.0), [10.0, 10.0]);
+        let rings = streamer.asked.iter().filter(|(level, _)| *level > 0 && *level != FINE).count();
+        assert_eq!(rings, 1, "one of the first eight asked is a ring's: {:?}", streamer.asked);
+        // Fewer than six at once keep them all for what is nearest.
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut few = BlockStreamer { at_once: 4, ..BlockStreamer::default() };
+        few.update(&mut world, &mut base, &mut pending, making, (100.0, 600.0), [10.0, 10.0]);
+        assert!(few.asked.iter().all(|(level, _)| *level == 0), "{:?}", few.asked);
     }
 
     #[test]

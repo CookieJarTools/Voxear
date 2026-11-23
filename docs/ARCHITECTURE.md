@@ -4241,9 +4241,14 @@ make terrain, how far it reaches and how much goes up a frame is the project's `
 a resource the streamer and renderer read each frame and scripts set, so a change takes hold with nothing made
 again. From the third ring out (`stream::FAR_FROM`) a ring's columns come from the far view (`blocks::generate::far`):
 columns of runs made from the generator's heights, climate and sea, with no block's depth asked of its Volume, kept
-compressed under `.voxear/FarView`, and filled into chunks for the same meshing and drawing as the nearer rings.
+compressed under `.voxear/FarView/<world>/<hash>`, the hash of what makes its ground (`BlockMaking::far_tiles`: its
+file without its lighting, glow, voxels, relief or distances, its generator, `far::MADE_AS`), so changing how it looks
+or how far it reaches keeps the tiles; when a world is made anew, folders made another way are removed but the two last
+used (`prune_far_tiles`, `FAR_FOLDERS_KEPT`), and filled into chunks for the same meshing and drawing as the nearer rings.
 Changes kept for ground not near are raised into every ring's chunks (`stream::raise`) where they fill an eighth of a
-ring's block. Rings fade into each other round where the world is looked at from (`blocks::RingFades`): each ring is
+ring's block. Whether a world is made from what it was last frame is asked once a frame (`BlockMaking::same`), the
+biomes', structures' and slabs' tables compared by pointer first (`same_file`): compared whole, three times a frame,
+they took 8.5 ms of the Realm's frame. Rings fade into each other round where the world is looked at from (`blocks::RingFades`): each ring is
 drawn whole out to as far as its window always reaches and fades out over its last column, the next ring kept
 showing under that band; and a coarse column whose finer columns all come after it fades out over
 `RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
@@ -4257,7 +4262,7 @@ blocks are drawn on past its made columns out to the first ring: columns of them
 meet the near chunks', and given level 0 in the renderer's slots. The streamer asks for what is nearest first in
 metres (`BlockStreamer::ask`), from each place and from where the first is heading a second on (`lead`), each coarser
 ring two near columns further off and a coarse column whose four finer columns lie in the finer windows after all
-else (`COVERED`); a twelfth of the columns at once is kept for the rings whatever is nearer (`RINGS_ALWAYS`) and no
+else (`COVERED`); a twelfth of the columns at once, rounded (one of eight), is kept for the rings whatever is nearer (`RINGS_ALWAYS`) and no
 more than a quarter are far tiles, which take long each. A far tile asks the generator's Volume only for the spans of
 ground that stands (`Voxels::spanned`), never for hollows such as caves, whose network a coarse column would reach
 over far and wide. Block tints' tiles are worked out on the terrain's threads and taken in as they are done. Leaves past the sun's shadows, where no

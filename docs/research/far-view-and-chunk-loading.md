@@ -220,6 +220,11 @@ Each stage stands alone; the gains are from the measurements above.
 | **5. Generator speed** | Profile the Realm's biomes and structures per node. | Near ground; unknown until measured. | Open |
 | **6. Threads by machine** | Thread count from the CPU, apart from the windows' size. | Up to 4× on this machine. | Small |
 
+**Stage 0 is done.** The Realm's frame (3,600 frames at Medium, camera still) went from a median of 12.9 ms to
+2.7 ms, and Block Streaming on the main thread from ~9.5 ms to ~0.7 ms a frame. The machine was less loaded in the
+second run (load average 5 against 23), but this is main-thread work. Stage 1 is to cover endless worlds as much as
+worlds of a set size: every level made once is kept, built, so coming back is a read.
+
 Suggested order: 0, 4, 1, 2, then 3 and 5. Stage 0 and 4 are each a day or less. Stage 2 is what answers the user's
 question.
 

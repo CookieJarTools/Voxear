@@ -301,6 +301,23 @@ impl Editor {
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
             "blocks.restore" => self.blocks_restore(args),
+            "blocks.bake_far" => {
+                let world = match args.get("obj").filter(|obj| !obj.is_null()) {
+                    Some(obj) => Some(link::resolve_obj(&self.game, obj)?),
+                    None => None,
+                };
+                let from = args.get("from").and_then(Json::as_u64).map_or(super::far_bakes::FAR_BAKE_FROM, |v| v as u32);
+                let reach = args.get("reach").and_then(Json::as_f64).map(|v| v as f32);
+                let entity = self.bake_far_view(world, from, reach).map_err(bad)?;
+                done(json!({ "world": link::obj_ref(&self.game, entity), "from": from }))
+            }
+            "blocks.bake_far_status" => done(self.far_bake_json()),
+            "blocks.bake_far_stop" => {
+                if let Some(bake) = &self.far_bake {
+                    bake.baking.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                done(self.far_bake_json())
+            }
             "paint.map" => self.paint_map(args),
             "graph.comments" => self.graph_comments(args),
             "graph.comment.add" | "graph.comment.set" | "graph.comment.remove" => {

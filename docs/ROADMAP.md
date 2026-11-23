@@ -3857,6 +3857,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     rows, varints, the whole in zstd; versions 1–4 still read. Fantasy City's hand-built town, 2.56 M blocks: 10.3 MB
     → 42 KB, read in 3.7 ms. Saves of scenes and edits sent to players who join are as small. Tests: walls and floors
     as runs, every older version read the same, smooth cells' fills, lists out of order, runs past a chunk refused.
+  - ~~**Stage 2:**~~ done. Bake Far View (palette; `blocks.bake_far`, `blocks.bake_far_status`, `blocks.bake_far_stop`):
+    every built tile of levels 3 out over a world of a set size, or 16 km round one without end, coarsest first, on
+    every core but two, stopped and started again where it was; the status bar shows it. Streaming reads baked
+    levels before anything else, coarsest first, on a quick lane of the terrain's threads that never waits behind
+    columns being made. The Realm (51 km) baked in 65 minutes into 232 MB (levels 7–4 in 3 minutes, 57 MB); from a
+    spot never visited, the land shows to the horizon within seconds where unbaked it showed nothing past its own
+    blocks after a minute. Tests: a bake whole, again finding all, stopped; streaming the coarsest first; the editor's
+    calls baking, finding all and stopping; a quick job not waiting behind long ones. Not done: shipping a bake with
+    a game build, rings 1–2 baked.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

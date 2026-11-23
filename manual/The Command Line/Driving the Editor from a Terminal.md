@@ -193,6 +193,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, how many Nav Obstacles there are and carve, and what every Nav Agent and Block Mob is doing |
 | `scene_view.culling` | Whether the Scene views draw only what the game's camera draws, which camera they cull from, and turn it on or off (see [[Playing Your Game]]) |
 | `ground_fit.land`, `world_layers.status`, `world_layers.hide` | Set an Obj with a Ground Fit down on the ground without its own cut, list each world's layers, and hide them to see the bare ground (see [[World Layers]]) |
+| `blocks.bake_far`, `blocks.bake_far_status`, `blocks.bake_far_stop` | Bake a streamed Block World's far view in the background, over the whole world or round where it is seen from, ask how far it has got, and stop it (see [[Block Worlds#Baking the far view]]) |
 | `blocks.columns` | Each world of blocks without end's columns made, and those made and let go last frame, and how many Objs are kept while their ground is away (see [[Streams With Ground]]) |
 | `road.set_points`, `road.set_mix`, `area_fill.set_outline`, `roads.nearest` | Set a Road's points, set down on the ground with `land`, a Road's or an Area Fill's blocks and pattern, and an Area Fill's outline, and find the road nearest a place (see [[Roads]]) |
 | `world_area.set_outline`, `areas.at`, `areas.value` | Set a World Area's outline, and ask which areas hold a place and the data a tag carries there (see [[World Areas]]) |

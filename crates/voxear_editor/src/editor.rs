@@ -53,6 +53,7 @@ mod multiplayer;
 mod pack_calls;
 mod particle_effects;
 mod path_bakes;
+mod far_bakes;
 mod nav_bakes;
 mod probe_bakes;
 mod reverb_bakes;
@@ -257,6 +258,10 @@ pub(crate) enum Command {
     PseudoText,
     /// Bake the open level's sound paths.
     BakePaths,
+    /// Bake the selected or first streamed Block World's far view, or stop
+    /// a bake under way.
+    BakeFarView,
+    StopFarViewBake,
     BakeNav,
     /// Bake the open level's reflection probes.
     BakeProbes,
@@ -380,6 +385,10 @@ pub struct Editor {
     notice: Option<(String, Instant)>,
     /// The open level's sound paths, while they bake.
     path_bake: Option<path_bakes::PathBake>,
+    /// A streamed Block World's far view, while it bakes, and how the last
+    /// bake ended.
+    far_bake: Option<voxear_engine::blocks::FarBake>,
+    far_bake_end: Option<serde_json::Value>,
     nav_bake: Option<nav_bakes::NavBake>,
     /// The open level's reflection probes baking, and how the last bake ended.
     probe_bake: Option<probe_bakes::ProbeBake>,
@@ -767,6 +776,8 @@ impl Editor {
             discard_armed: None,
             notice: None,
             path_bake: None,
+            far_bake: None,
+            far_bake_end: None,
             nav_bake: None,
             probe_bake: None,
             probe_bake_end: None,
@@ -1212,6 +1223,7 @@ impl Editor {
         self.mark_viewport_areas(&views);
         self.update_axis_gizmos();
         self.finish_path_bake();
+        self.finish_far_bake();
         self.finish_nav_bake();
         self.update_probe_bake(renderer);
         self.update_reverb_bake();
@@ -2629,6 +2641,8 @@ impl Editor {
             Command::Layers => self.inspect_layers(),
             Command::PseudoText => self.toggle_pseudo_text(),
             Command::BakePaths => self.bake_paths(),
+            Command::BakeFarView => self.bake_far_view_command(),
+            Command::StopFarViewBake => self.stop_far_bake(),
             Command::BakeNav => self.bake_nav(),
             Command::BakeProbes => self.bake_probes(),
             Command::BakeReverb => self.bake_reverb(),
@@ -3452,6 +3466,7 @@ impl Editor {
             Some((text, _)) => text.clone(),
             None => match self
                 .path_bake_status()
+                .or_else(|| self.far_bake_status())
                 .or_else(|| self.nav_bake_status())
                 .or_else(|| self.probe_bake_status())
                 .or_else(|| self.reverb_bake_status())

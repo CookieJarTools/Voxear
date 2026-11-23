@@ -4261,6 +4261,19 @@ is kept in memory and read on from where it was. Hand edits are raised in after 
 kept stale in it, and go over the network as they did; nothing kept is sent. On a copy of CubeGame at Medium, a column
 read back costs 0.5 ms for the world's own blocks and 10–21 ms for the rest, its faces; made, 60–870 ms. The Realm's
 whole Medium view came back in 12 s (2 minutes cold reached its first ring) and took 8.4 MB.
+**Baked far view** (`stream::bake`, `bake_area`, `Baking`; `kept::has`, `mark_baked`, `baked_levels`;
+`voxear_engine::blocks::start_far_bake`, `FarBake`; editor `far_bakes`). A bake walks every tile of each level from
+the coarsest down to `from` (3 at least) over a world of a set size and a tile round it, or `reach` metres round where
+a world without end is seen from, on threads of its own, passing over tiles kept already from the same stamp; each
+tile is made as streaming makes it (`far_tile_kept`, `build_into`) and kept as `Kind::Built`. The engine makes the
+`BlockMaking` for it as streaming does (`streamed_making`: the file and generator, the woods of the plants it grows,
+the layers of its scene), so the stamps match and streaming reads what was baked. A level finished is written to a
+`baked` file in the folder of kept columns, read again only when its time changes; `ask` puts every column of a
+baked level before all else, coarsest first, those under finer rings too (they are the ground shown until the finer
+rings come), outside the far tiles' share and outside `at_once`, up to twice `at_once` of them at a time, and hands
+them to `workers::spawn_quick`: a queue of their own taken before the rest, run past the pool's limit, so a read of
+12 ms never waits behind columns made in 400. A bake keeps the built tiles alone, not their bare ground. The editor starts one from the palette (Bake Far View, Stop Far View Bake) or `blocks.bake_far`
+(`blocks.bake_far_status`, `blocks.bake_far_stop`), shows it in the status bar, and notes how it ended.
 Changes kept for ground not near are raised into every ring's chunks (`stream::raise`) where they fill an eighth of a
 ring's block. Whether a world is made from what it was last frame is asked once a frame (`BlockMaking::same`), the
 biomes', structures' and slabs' tables compared by pointer first (`same_file`): compared whole, three times a frame,

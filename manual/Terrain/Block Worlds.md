@@ -194,6 +194,18 @@ From the third ring out, the world is the **far view**: up to five more rings, t
 
 Everything a streamed world makes, endless or of a set size, is kept in the project's `.voxear/FarView` folder once made: its own blocks round the camera, and every ring of the far view with the trees and structures on it. Ground seen once comes back at once, from a world's first ring out to its horizon, and is made again only where the world's ground, its generator, its biomes or structures, its layers or the paint over it changed; changing how it looks or how far it is drawn keeps it. The folders of the two ground settings last used are kept beside it, so a setting tried and set back finds its far view again, and older ones are removed. What you build shows in every ring once the camera has gone from it, wherever it fills at least an eighth of a ring's block: a castle stays on the horizon, and a fence post does not grow into a tower. Ground taken out shows only when the camera is near it again.
 
+#### Baking the far view
+
+A streamed world makes its far view as the camera first comes near, and a world with many biomes and structures can take minutes to reach its horizon. **Bake Far View** from the command palette makes it all beforehand: every tile of the far view's rings over the whole world, or for a world without end 16 km round where the Scene view looks from, with its trees and structures, on every core but two. The status bar shows the level under way and the tiles done; **Stop Far View Bake** stops it, and baking again goes on from where it stopped. The coarsest rings are baked first, so the horizon is ready soonest. Select the Block World first where a level has more than one.
+
+Once a ring is baked, the world reads its columns before any others, the coarsest first, so the horizon is there within a second or two of the world loading, and the finer rings and the world's own blocks fill in under it. What you build shows in a baked ring as it does in any. A bake is kept with the far view in `.voxear/FarView`, and is made again only where what it was made from changes, as the rest of the far view is.
+
+```
+vox editor call blocks.bake_far from=3
+vox editor call blocks.bake_far_status
+vox editor call blocks.bake_far_stop
+```
+
 A minimap and a map of the world are made from the same ground as the far view, with what was built and dug: see [[Maps and Minimaps]].
 
 Its own blocks are made a column of chunks further out than they are drawn, and each column's faces are made on those threads too, once the columns round it have their blocks. So every column is made once, its edges meeting the ground beside it, and the game never waits for one.

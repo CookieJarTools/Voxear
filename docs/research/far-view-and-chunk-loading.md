@@ -245,6 +245,23 @@ machine than the first research (load 8–9), so the "made" times are lower than
 and what goes to a player who joins use the same bytes. Older files are read and written as version 5 at the next
 save.
 
+**Stage 2 is done.** Bake Far View (palette, or `vox editor call blocks.bake_far`) bakes levels 3 out over a world
+of a set size, or 16 km round a world without end. The Realm, 51.2 km a side, in a headless editor on 22 threads:
+
+| Levels | Tiles | Time | Built tiles on disk |
+|---|---|---|---|
+| 7–4 | 14,263 | 3 min | 57 MB |
+| 3 | 40,518 | 62 min | 175 MB |
+| All | 54,781 | 65 min | **232 MB** |
+
+The bake's bare-ground copies (another 218 MB) are no longer kept. From a spot 10 km from anywhere streamed before,
+at Medium, camera still: unbaked, after 60 s the view has its own blocks and nothing past them; baked, both far rings
+(968 columns, 2.5–5 km) are in by 6 s, the whole land shows to the horizon from the first seconds, and the near
+ground is drawn by 20 s against 30. Baked columns are read by a quick lane of the terrain's threads, before the
+columns being made: through the usual queue, two at a time, they took 70 s, as each waited behind 400 ms of
+generator work. Rings 1–2 are still made by the generator (stage 3), so the middle distance shows the far rings'
+8 m blocks for a minute at Medium's four threads.
+
 Suggested order: 0, 4, 1, 2, then 3 and 5. Stage 0 and 4 are each a day or less. Stage 2 is what answers the user's
 question.
 

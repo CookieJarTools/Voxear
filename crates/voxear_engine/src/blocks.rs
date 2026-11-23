@@ -1456,6 +1456,87 @@ pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_t
     })
 }
 
+/// What a streamed world of blocks' chunks are made from as it streams:
+/// its file and generator (see [`making`]), the woods of the plants it
+/// grows built into its far view, and the world layers its scene puts over
+/// its ground. A bake of its far view makes it the same way, so what it
+/// keeps is what streaming reads.
+fn streamed_making(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    asset: &BlockWorldAsset,
+    corner: voxear_core::math::Vec3,
+) -> Option<voxear_terrain::blocks::stream::BlockMaking> {
+    let made = voxear_core::profile_marker!("Making").scope();
+    let mut making = making(content, asset)?;
+    drop(made);
+    let wooded = voxear_core::profile_marker!("Far Built").scope();
+    // Woods of the plants it grows, where they are thick enough to show so far off.
+    making.far_built = crate::grown_plants::far_built(world, content, entity);
+    drop(wooded);
+    // The world layers its scene puts over its ground: Ground Fits.
+    let place = crate::ground_fit::WorldPlace { corner, block_size: asset.file.block_size };
+    let drawn = asset.drawn.clone();
+    let layers =
+        crate::ground_fit::layers_of(world, entity, place, &|guid| drawn.number_of(guid), None, &making.generate);
+    making.generate.layers = voxear_terrain::blocks::generate::Layers(layers);
+    Some(making)
+}
+
+/// A bake of a streamed world's far view under way (see
+/// [`start_far_bake`]).
+pub struct FarBake {
+    pub world: voxear_ecs::Entity,
+    pub baking: Arc<voxear_terrain::blocks::stream::Baking>,
+    pub done: std::sync::mpsc::Receiver<Result<usize, String>>,
+}
+
+/// How far round the camera a world without end's far view is baked when
+/// no reach is given, in metres.
+pub const FAR_BAKE_REACH: f32 = 16_384.0;
+
+/// Starts baking the far view of the streamed world of blocks on `entity`
+/// on threads of its own (see `voxear_terrain::blocks::stream::bake`): from
+/// level `from` out, over the whole of a world of a set size, or `reach`
+/// metres round the camera (or its corner) of one without end. Streaming
+/// reads what it bakes as it goes; the levels it finishes come first.
+pub fn start_far_bake(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    from: u32,
+    reach: Option<f32>,
+    threads: usize,
+) -> Result<FarBake> {
+    use voxear_scene::{Transform, WorldTransform};
+    let asset = world.get::<BlockWorldAsset>(entity).context("not a world of blocks")?.clone();
+    let streamed = asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
+    anyhow::ensure!(streamed, "only a streamed world of blocks has a far view to bake");
+    let local = world.get::<Transform>(entity).copied().unwrap_or_default();
+    let placed = world.get::<WorldTransform>(entity).copied();
+    let corner = voxear_terrain::corner(&local, placed.as_ref());
+    let making = streamed_making(world, content, entity, &asset, corner).context("its generator is missing")?;
+    let block = asset.file.block_size.max(0.01);
+    let area = match (voxear_terrain::blocks::stream::bake_area(&making), reach) {
+        (Some(area), None) => area,
+        (_, reach) => {
+            let round = crate::terrain::viewer(world).map_or([0.0, 0.0], |at| [at.x - corner.x, at.z - corner.z]);
+            let reach = reach.unwrap_or(FAR_BAKE_REACH).max(0.0);
+            let blocks = |v: f32| (v / block).round() as i64;
+            [round.map(|v| blocks(v - reach)), round.map(|v| blocks(v + reach))]
+        }
+    };
+    let baking = Arc::new(voxear_terrain::blocks::stream::Baking::default());
+    let (send, done) = std::sync::mpsc::channel();
+    let shared = baking.clone();
+    std::thread::Builder::new().name("voxear-far-bake".into()).spawn(move || {
+        let baked = voxear_terrain::blocks::stream::bake(&making, from, area, threads, &shared);
+        let _ = send.send(baked);
+    })?;
+    Ok(FarBake { world: entity, baking, done })
+}
+
 /// `placed`, a world's biomes, choosing its painted biomes first: kept, so a
 /// world streamed every frame makes the copy once.
 fn painted_biomes(
@@ -1603,19 +1684,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
             continue;
         }
         let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
-        let made = voxear_core::profile_marker!("Making").scope();
-        let Some(mut making) = making(content, &asset) else { continue };
-        drop(made);
-        let wooded = voxear_core::profile_marker!("Far Built").scope();
-        // Woods of the plants it grows, where they are thick enough to show so far off.
-        making.far_built = crate::grown_plants::far_built(world, content, entity);
-        drop(wooded);
-        // The world layers its scene puts over its ground: Ground Fits.
-        let place = crate::ground_fit::WorldPlace { corner, block_size: asset.file.block_size };
-        let drawn = asset.drawn.clone();
-        let layers =
-            crate::ground_fit::layers_of(world, entity, place, &|guid| drawn.number_of(guid), None, &making.generate);
-        making.generate.layers = voxear_terrain::blocks::generate::Layers(layers);
+        let Some(making) = streamed_making(world, content, entity, &asset, corner) else { continue };
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let streamer = streams.0.entry(entity).or_default();
         // As many columns at once as the game's budget lets it, and as many times as far as the world says as

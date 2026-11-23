@@ -537,3 +537,57 @@ fn a_new_flat_world_made_twenty_kilometres_across_streams_and_keeps_blocks_built
         .collect();
     assert!(saved.iter().any(|name| name.ends_with(".blocks")), "its changes written beside it: {saved:?}");
 }
+
+#[test]
+fn a_streamed_worlds_far_view_is_baked_whole_in_the_background_through_the_editors_calls() {
+    let Some((dir, mut renderer, mut editor)) = open() else { return };
+    let world = {
+        let objs = editor.game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        objs.into_iter().find(|(_, name)| name.0 == "World").map(|(obj, _)| obj).expect("the template's world")
+    };
+    let obj = json!({ "entity": world.to_bits() });
+    let set =
+        |field: &str, value: Value| json!({ "obj": obj, "component": "block_world", "field": field, "value": value });
+    // A world 4 km a side, nothing past its edge.
+    done(&mut editor, &mut renderer, "field.set", set("set_size", json!(true)));
+    done(&mut editor, &mut renderer, "field.set", set("world_size", json!([4096.0, 4096.0])));
+    done(&mut editor, &mut renderer, "field.set", set("edge", json!("Nothing")));
+    let wait = |editor: &mut Editor, renderer: &mut Renderer| {
+        let began = Instant::now();
+        loop {
+            let status = done(editor, renderer, "blocks.bake_far_status", json!({}));
+            if status["baking"] == json!(false) {
+                return status;
+            }
+            assert!(status["total"].as_u64().unwrap_or(0) > 0 || status["done"] == json!(0));
+            assert!(began.elapsed() < PATIENCE, "the bake never ended: {status}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // Its coarsest rings, from level 5 out.
+    let started = done(&mut editor, &mut renderer, "blocks.bake_far", json!({ "obj": obj, "from": 5 }));
+    assert_eq!(started["from"], json!(5));
+    let ended = wait(&mut editor, &mut renderer);
+    assert_eq!(ended["last"]["ended"], json!("done"), "{ended}");
+    assert!(ended["last"]["made"].as_u64().unwrap() > 0, "{ended}");
+    // Each level marked baked in the world's folder of kept columns.
+    let guid = editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world).unwrap().guid;
+    let far = dir.path().join("Fits/.voxear/FarView").join(guid.to_string());
+    let baked: Vec<String> = std::fs::read_dir(&far)
+        .unwrap()
+        .flatten()
+        .filter_map(|folder| std::fs::read_to_string(folder.path().join("baked")).ok())
+        .collect();
+    assert_eq!(baked.len(), 1, "one folder baked");
+    let levels: Vec<u32> = baked[0].lines().map(|line| line.parse().unwrap()).collect();
+    assert_eq!(levels, (5..voxear_terrain::blocks::stream::MOST_LEVELS).collect::<Vec<_>>());
+    // Again: all there already, nothing made.
+    done(&mut editor, &mut renderer, "blocks.bake_far", json!({ "from": 5 }));
+    let again = wait(&mut editor, &mut renderer);
+    assert_eq!((again["last"]["ended"].clone(), again["last"]["made"].clone()), (json!("done"), json!(0)));
+    // A bake stopped at once ends stopped.
+    done(&mut editor, &mut renderer, "blocks.bake_far", json!({ "from": 3 }));
+    done(&mut editor, &mut renderer, "blocks.bake_far_stop", json!({}));
+    let stopped = wait(&mut editor, &mut renderer);
+    assert_eq!(stopped["last"]["ended"], json!("stopped"), "{stopped}");
+}

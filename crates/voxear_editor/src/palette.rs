@@ -508,6 +508,8 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         ("Edit Layers", "", "layers", Command::Layers),
         ("Pseudo-localise Text", "", "globe", Command::PseudoText),
         ("Bake Sound Paths", "", "branch", Command::BakePaths),
+        ("Bake Far View", "", "globe", Command::BakeFarView),
+        ("Stop Far View Bake", "", "stop", Command::StopFarViewBake),
         ("Bake Navigation", "", "map-arrow", Command::BakeNav),
         ("Bake Reflection Probes", "", "globe", Command::BakeProbes),
         ("Bake Reverb Probes", "", "audio", Command::BakeReverb),

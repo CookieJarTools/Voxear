@@ -149,6 +149,54 @@ pub fn read(folder: &Path, kind: Kind, level: u32, at: [i32; 2], stamp: u64) -> 
     zstd::decode_all(&compressed[..]).ok()
 }
 
+/// Whether column `at` of `level` of `kind` is kept in `folder`, made from
+/// `stamp`: as [`read`] would find it, without reading it.
+pub fn has(folder: &Path, kind: Kind, level: u32, at: [i32; 2], stamp: u64) -> bool {
+    let path = region_file(folder, kind, level, at);
+    let index = index_of(&path);
+    let mut index = index.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Ok(mut file) = File::open(&path) else { return false };
+    let Ok(metadata) = file.metadata() else { return false };
+    catch_up(&mut index, &mut file, metadata.len()).is_ok()
+        && index.columns.get(&at).is_some_and(|(kept, ..)| *kept == stamp)
+}
+
+/// The file in a folder of kept columns saying which levels were baked
+/// whole (see `stream::bake`), a level a line.
+const BAKED: &str = "baked";
+
+/// Notes in `folder` that level `level` is baked whole over the world.
+pub fn mark_baked(folder: &Path, level: u32) {
+    let mut levels = baked_levels(folder);
+    levels |= 1 << level.min(31);
+    let text: String = (0..32).filter(|level| levels & (1 << level) != 0).map(|level| format!("{level}\n")).collect();
+    let _ = std::fs::create_dir_all(folder);
+    let writing = folder.join(format!("{BAKED}.{}", std::process::id()));
+    if std::fs::write(&writing, text).is_ok() && std::fs::rename(&writing, folder.join(BAKED)).is_err() {
+        let _ = std::fs::remove_file(&writing);
+    }
+}
+
+/// The levels baked whole in `folder`, a bit each: read again only when its
+/// file changes, so asking every frame costs a look at the file's time.
+pub fn baked_levels(folder: &Path) -> u32 {
+    type Seen = Mutex<HashMap<PathBuf, (std::time::SystemTime, u32)>>;
+    static SEEN: OnceLock<Seen> = OnceLock::new();
+    let path = folder.join(BAKED);
+    let Ok(changed) = std::fs::metadata(&path).and_then(|metadata| metadata.modified()) else { return 0 };
+    let mut seen = SEEN.get_or_init(Default::default).lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((when, levels)) = seen.get(&path)
+        && *when == changed
+    {
+        return *levels;
+    }
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let levels = text.lines().filter_map(|line| line.trim().parse::<u32>().ok()).filter(|level| *level < 32);
+    let levels = levels.fold(0u32, |bits, level| bits | 1 << level);
+    seen.insert(path, (changed, levels));
+    levels
+}
+
 /// Keeps `bytes` for column `at` of `level` of `kind` in `folder`, made
 /// from `stamp`. Not kept where the folder cannot be written to, as in a
 /// game installed where it may not write.

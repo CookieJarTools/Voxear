@@ -266,6 +266,96 @@ pub fn prune_far_tiles(folder: &std::path::Path, kept: usize) {
     }
 }
 
+/// How far a bake of a world's far view has got (see [`bake`]), shared
+/// with whoever started it, who may stop it.
+#[derive(Debug, Default)]
+pub struct Baking {
+    /// Tiles baked or found baked already, of all there are to bake.
+    pub done: AtomicUsize,
+    pub total: AtomicUsize,
+    /// The level being baked now.
+    pub level: std::sync::atomic::AtomicU32,
+    /// Set to stop it after the tiles under way.
+    pub stop: std::sync::atomic::AtomicBool,
+}
+
+/// The part of a world a bake covers, in its own blocks from its corner
+/// along x and z, from `low` up to `high`: a world of a set size whole,
+/// its edge's sea or cliffs a tile past it at each level; one without end,
+/// none (whoever bakes it says round where).
+pub fn bake_area(making: &BlockMaking) -> Option<[[i64; 2]; 2]> {
+    let size = making.generate.endless?.size?;
+    Some([[0, 0], size.map(i64::from)])
+}
+
+/// Bakes a world's far view over `area` (see [`bake_area`]): each tile of
+/// each level from the coarsest the world draws down to `from` (the far
+/// view's first at the least), built on as streaming builds on it, kept in
+/// its folder (see `kept`) as streaming keeps the tiles it makes, so
+/// streaming reads them in place of making them. The coarsest level first,
+/// so the horizon is there soonest; a tile kept already from the same
+/// things is passed over, so a bake stopped and started again goes on where
+/// it was. Each level done is marked baked, and streaming then reads its
+/// columns before others. On `threads` threads of its own. The tiles
+/// baked, or why none could be.
+pub fn bake(
+    making: &BlockMaking,
+    from: u32,
+    area: [[i64; 2]; 2],
+    threads: usize,
+    baking: &Baking,
+) -> Result<usize, String> {
+    let folder = making.far_tiles().ok_or("the world has no folder to keep its far view in")?;
+    let levels: Vec<u32> = (from.max(FAR_FROM)..MOST_LEVELS).rev().collect();
+    // A level's tiles over the area, and one more round it, where the world's edge lies.
+    let tiles_of = |level: u32| -> Vec<[i32; 2]> {
+        let span = i64::from(CHUNK) << level;
+        let [low, high] = area;
+        let first = low.map(|v| v.div_euclid(span) as i32 - 1);
+        let last = high.map(|v| (v - 1).div_euclid(span) as i32 + 1);
+        (first[1]..=last[1]).flat_map(|z| (first[0]..=last[0]).map(move |x| [x, z])).collect()
+    };
+    let total: usize = levels.iter().map(|&level| tiles_of(level).len()).sum();
+    baking.total.store(total, Ordering::Relaxed);
+    let mut baked = 0usize;
+    for level in levels {
+        if baking.stop.load(Ordering::Relaxed) {
+            break;
+        }
+        baking.level.store(level, Ordering::Relaxed);
+        let tiles = tiles_of(level);
+        let next = AtomicUsize::new(0);
+        let made = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..threads.max(1) {
+                scope.spawn(|| {
+                    loop {
+                        if baking.stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let Some(&at) = tiles.get(next.fetch_add(1, Ordering::Relaxed)) else { return };
+                        let stamp = making.kept_stamp(level, at);
+                        if !super::kept::has(&folder, super::kept::Kind::Built, level, at, stamp) {
+                            // Built alone: its bare ground kept too would be as large again, for a bake that
+                            // covers the whole world.
+                            let mut tile = far_tile_kept(making, None, level, at);
+                            making.build_into(level, &mut tile);
+                            super::kept::write(&folder, super::kept::Kind::Built, level, at, stamp, &tile.to_raw());
+                            made.fetch_add(1, Ordering::Relaxed);
+                        }
+                        baking.done.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        baked += made.into_inner();
+        if !baking.stop.load(Ordering::Relaxed) {
+            super::kept::mark_baked(&folder, level);
+        }
+    }
+    Ok(baked)
+}
+
 /// Whether two files are alike, as `==` says, but quickly where they hold
 /// the same tables read from the project's files, their biomes', their
 /// structures' and their slabs': those are compared by where they lie, as a
@@ -582,6 +672,9 @@ pub struct BlockStreamer {
     /// How many of those being made are the far view's tiles, and how many
     /// are the rings' columns, the far view's among them.
     far_now: Arc<AtomicUsize>,
+    /// How many columns of levels baked whole are being read now (see
+    /// [`bake`]).
+    baked_now: Arc<AtomicUsize>,
     rings_now: Arc<AtomicUsize>,
     /// Where the first place the world is seen from was last, and when; and
     /// how fast it moves, in metres a second along x and z.
@@ -629,6 +722,7 @@ impl Default for BlockStreamer {
             waiting: 0,
             making_now: Arc::new(AtomicUsize::new(0)),
             far_now: Arc::new(AtomicUsize::new(0)),
+            baked_now: Arc::new(AtomicUsize::new(0)),
             rings_now: Arc::new(AtomicUsize::new(0)),
             moving: None,
             velocity: [0.0; 2],
@@ -1198,6 +1292,10 @@ impl BlockStreamer {
         let mut joins: Vec<(u32, [i32; 2], i64)> = Vec::new();
         let column = CHUNK as f32 * making.file.block_size.max(0.01);
         let places: Vec<[f32; 2]> = from.iter().map(|place| place.at).chain(lead).collect();
+        // The levels baked whole over the world: each column of them is read, not made, so they come first, the
+        // coarsest first, and the horizon is there at once.
+        let baked = self.far_tiles.as_deref().map_or(0, super::kept::baked_levels);
+        let is_baked = move |level: u32| level >= FAR_FROM && level != FINE && level < 32 && baked & (1 << level) != 0;
         for (level, window) in windows.iter().enumerate() {
             let level = level as u32;
             let size = column * (1u32 << level) as f32;
@@ -1219,6 +1317,11 @@ impl BlockStreamer {
                         finer.contains(child) || fine_over(child)
                     })
                 });
+                // A baked column is read in a moment, and under the finer rings it is the ground shown until they
+                // are made: all of them first, so no gap shows while the finer rings are made.
+                if is_baked(level) {
+                    return -(i64::from(level) << 32) + near as i64;
+                }
                 (near + level as f32 * column * 2.0 + if under { COVERED } else { 0.0 }) as i64
             };
             if level == 0 {
@@ -1283,7 +1386,9 @@ impl BlockStreamer {
         }
         wanted.sort_by_key(|(_, _, away)| *away);
         joins.sort_by_key(|(_, _, away)| *away);
-        let mut room = self.at_once.max(1).saturating_sub(self.making_now.load(Ordering::Acquire));
+        // Baked columns read are counted apart (see `read_room`).
+        let making_now = self.making_now.load(Ordering::Acquire).saturating_sub(self.baked_now.load(Ordering::Acquire));
+        let mut room = self.at_once.max(1).saturating_sub(making_now);
         // Faces first: they are what shows, and are quick beside blocks.
         let joined = joins.len().min(room);
         self.waiting = wanted.len() + (joins.len() - joined);
@@ -1327,23 +1432,35 @@ impl BlockStreamer {
         // The far view's tiles take a while each: while anything nearer waits, no more of them at once than leaves
         // most threads to it; with nothing else to make, one on each thread, and none waiting for a thread, so what
         // comes near next waits only for one to finish.
-        let is_far = |level: &Option<u32>| level.is_some_and(|level| level >= FAR_FROM && level != FINE);
+        let read = |level: &Option<u32>| level.is_some_and(is_baked);
+        let is_far = |level: &Option<u32>| level.is_some_and(|level| level >= FAR_FROM && level != FINE) && !read(level);
         let far_room = match wanted.iter().any(|(level, ..)| !is_far(level)) {
             true => (self.at_once / 4).max(1),
             false => crate::workers::threads().max(self.at_once / 4).max(1),
         };
+        // Columns baked are read in a moment each, and are counted apart from those made: as many again as are made
+        // at once, besides them, so they do not wait behind them for a thread one or two at a time, and take little
+        // from them.
+        let read_room = self.at_once.max(1) * 2;
         for (level, at, _) in wanted {
             let far = is_far(&level);
-            if room == 0 {
-                break;
+            let baked = read(&level);
+            if baked && self.baked_now.load(Ordering::Acquire) >= read_room {
+                continue;
+            }
+            if !baked && room == 0 {
+                continue;
             }
             if far && self.far_now.load(Ordering::Acquire) >= far_room {
                 continue;
             }
-            room -= 1;
+            if !baked {
+                room -= 1;
+            }
             self.waiting -= 1;
             // Counted among the far view's tiles and the rings being made while it is.
-            let counts: Vec<Arc<AtomicUsize>> = [(far, &self.far_now), (ring(&level), &self.rings_now)]
+            let counted = [(far, &self.far_now), (ring(&level), &self.rings_now), (baked, &self.baked_now)];
+            let counts: Vec<Arc<AtomicUsize>> = counted
                 .into_iter()
                 .filter(|(counted, _)| *counted)
                 .map(|(_, count)| count.clone())
@@ -1396,7 +1513,7 @@ impl BlockStreamer {
                 built.chunks.extend(pending.chunks.iter().filter(|(key, _)| under(key)).map(|(k, c)| (*k, c.clone())));
             }
             let stamp = making.made_stamp(if fine { FINE } else { level });
-            crate::workers::spawn(move || {
+            let job = move || {
                 if latest.load(Ordering::Acquire) == number {
                     // As it was made before, with what is built on it, where it was kept made from the same things.
                     let kept = far_tiles.as_deref().map(|folder| (folder, making.kept_stamp(level, at)));
@@ -1479,7 +1596,12 @@ impl BlockStreamer {
                     count.fetch_sub(1, Ordering::AcqRel);
                 }
                 making_now.fetch_sub(1, Ordering::AcqRel);
-            });
+            };
+            // A baked column is read in a moment: before the columns being made, never behind them.
+            match baked {
+                true => crate::workers::spawn_quick(job),
+                false => crate::workers::spawn(job),
+            }
         }
     }
 
@@ -2134,6 +2256,59 @@ mod tests {
         let mut few = BlockStreamer { at_once: 4, ..BlockStreamer::default() };
         few.update(&mut world, &mut base, &mut pending, making, (100.0, 600.0), [10.0, 10.0]);
         assert!(few.asked.iter().all(|(level, _)| *level == 0), "{:?}", few.asked);
+    }
+
+    #[test]
+    fn a_world_of_a_set_size_bakes_its_far_view_whole_coarsest_first_and_streams_it_from_the_coarsest_down() {
+        use super::super::{generate::BlockEndless, kept};
+        let folder = std::env::temp_dir().join(format!("voxear-bake-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let mut making = BlockMaking { far_folder: Some(folder.clone()), ..making() };
+        let endless = BlockEndless { size: Some([256, 256]), ..BlockEndless::default() };
+        making.generate.endless = Some(endless);
+        making.file.generate.as_mut().unwrap().endless = Some(endless);
+        let area = bake_area(&making).expect("a world of a set size");
+        assert_eq!(area, [[0, 0], [256, 256]]);
+        // Stopped before it starts: nothing baked, nothing marked.
+        let stopped = Baking::default();
+        stopped.stop.store(true, Ordering::Relaxed);
+        assert_eq!(bake(&making, 3, area, 2, &stopped), Ok(0));
+        let tiles = making.far_tiles().unwrap();
+        assert_eq!(kept::baked_levels(&tiles), 0);
+        // Whole: each level from 3 out to the coarsest, its tiles over the world and one round it.
+        let baking = Baking::default();
+        let baked = bake(&making, 3, area, 4, &baking).unwrap();
+        let (done, total) = (baking.done.load(Ordering::Relaxed), baking.total.load(Ordering::Relaxed));
+        assert_eq!((baked, done), (total, total), "every tile baked");
+        assert_eq!(total, 9 * (MOST_LEVELS - 3) as usize, "three by three tiles a level");
+        let levels = kept::baked_levels(&tiles);
+        assert_eq!(levels, (3..MOST_LEVELS).fold(0, |bits, level| bits | 1 << level));
+        for level in 3..MOST_LEVELS {
+            assert!(kept::has(&tiles, kept::Kind::Built, level, [0, 0], making.kept_stamp(level, [0, 0])));
+        }
+        // Again: everything found baked, nothing made.
+        assert_eq!(bake(&making, 3, area, 4, &Baking::default()), Ok(0));
+        // Streamed one at a time: the baked levels come first, the coarsest first.
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer { at_once: 1, ..BlockStreamer::default() };
+        let mut came: Vec<u32> = Vec::new();
+        let start = std::time::Instant::now();
+        while came.len() < 4 {
+            streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 20_000.0), [10.0, 10.0]);
+            for (level, _) in streamer.coarse.keys() {
+                if !came.contains(level) {
+                    came.push(*level);
+                }
+            }
+            assert!(start.elapsed().as_secs() < 60, "never came: {came:?}");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let drawn = |level: u32| windows(&making.file, 100.0, 20_000.0, [10.0, 10.0]).len() > level as usize;
+        let coarsest = (3..MOST_LEVELS).rev().find(|&level| drawn(level)).unwrap();
+        assert_eq!(came[0], coarsest, "the coarsest first: {came:?}");
+        assert!(came.windows(2).all(|pair| pair[0] > pair[1]), "then each finer one: {came:?}");
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

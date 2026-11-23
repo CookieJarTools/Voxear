@@ -592,6 +592,31 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ position }",
     },
     CallInfo {
+        name: "blocks.bake_far",
+        about: "Starts baking a streamed Block World's far view in the background: every tile of each level from `from` out to the coarsest, over the whole world where it has a set size, or `reach` metres round where it is seen from where it has none, with the trees and structures streaming builds on them, kept in the project's .voxear/FarView. Streaming reads them as they are kept, the coarsest first. A bake stopped and started again goes on where it was. Ask how far it has got with blocks.bake_far_status.",
+        args: &[
+            maybe("obj", ArgKind::Obj, "The Block World; the selected one or the first streamed one when left out."),
+            maybe("from", ArgKind::Whole, "The finest level baked, 3 (the far view's first) when left out."),
+            maybe("reach", ArgKind::Number, "For a world without end, how far round to bake, in metres; 16384 when left out."),
+        ],
+        changes: false,
+        returns: "{ world, from }",
+    },
+    CallInfo {
+        name: "blocks.bake_far_status",
+        about: "How far a bake of a far view has got: the world, tiles done of all and the level under way; or, with none under way, how the last ended and how many tiles it made.",
+        args: &[],
+        changes: false,
+        returns: "{ baking, world, done, total, level } or { baking: false, last }",
+    },
+    CallInfo {
+        name: "blocks.bake_far_stop",
+        about: "Stops a far view's bake after the tiles it is making; what it kept stays.",
+        args: &[],
+        changes: false,
+        returns: "{ baking, ... }",
+    },
+    CallInfo {
         name: "blocks.columns",
         about: "Each world of blocks without end streamed last frame: the chunk columns made round where it is seen from, those made and let go that frame, and how many Objs are kept while their ground is away (see Streams With Ground).",
         args: &[],

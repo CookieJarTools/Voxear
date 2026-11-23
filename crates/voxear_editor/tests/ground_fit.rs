@@ -468,6 +468,7 @@ fn a_new_flat_world_made_twenty_kilometres_across_streams_and_keeps_blocks_built
     let generate = asset(&editor).file.generate.clone().expect("generated now");
     let endless = generate.endless.expect("streamed");
     assert_eq!((endless.size, endless.edge), (Some([20000, 20000]), WorldEdgeKind::Nothing));
+    assert_eq!((endless.distance, endless.far), (256.0, 16384.0), "seeing much of it at once");
     let path = editor.game.content.db().get(asset(&editor).guid).unwrap().path.clone();
     let folder = dir.path().join("Fits");
     let generator = path.trim_end_matches(".blockworld").to_string() + " Flat.worldgen";

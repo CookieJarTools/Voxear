@@ -335,6 +335,13 @@ impl Default for BlockEndless {
 }
 
 impl BlockEndless {
+    /// What a world newly streamed starts with: its own blocks out to 256 m,
+    /// and the far view as far as it goes, so much of the world is seen at
+    /// once.
+    pub fn wide() -> Self {
+        Self { distance: 256.0, far: 16384.0, ..Self::default() }
+    }
+
     /// The blocks its columns are kept within along x and z from its corner,
     /// where nothing lies past its edge.
     pub fn limit(&self) -> Option<[u32; 2]> {

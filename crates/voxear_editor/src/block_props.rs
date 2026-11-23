@@ -1415,7 +1415,8 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         (F::Endless, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };
-            generate.endless = on.then(|| generate.endless.unwrap_or_default());
+            let wide = voxear_terrain::blocks::generate::BlockEndless::wide;
+            generate.endless = on.then(|| generate.endless.unwrap_or_else(wide));
         }
         (F::SetSize | F::WorldSize | F::Edge | F::EdgeWidth | F::SeaDepth | F::CliffHeight, v) => {
             use voxear_terrain::blocks::generate::WorldEdgeKind;
@@ -1544,7 +1545,7 @@ fn stream_flat(game: &mut Game, entity: Entity, file: &mut BlockFile) -> anyhow:
         bottom: 0,
         caves: 0.0,
         overhangs: 0.0,
-        endless: Some(BlockEndless { size: Some(size), edge: WorldEdgeKind::Nothing, ..BlockEndless::default() }),
+        endless: Some(BlockEndless { size: Some(size), edge: WorldEdgeKind::Nothing, ..BlockEndless::wide() }),
         ..BlockGenerate::default()
     });
     file.ground.size = size.map(|side| side.min(voxear_terrain::blocks::file::MOST_ACROSS));

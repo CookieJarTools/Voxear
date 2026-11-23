@@ -3126,6 +3126,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     walks straight out; in some stretches the land rises at once from the bank, as on the outside of a bend, in
     others along a low strip. Where the land is lower than the water a low sloping rim holds it in, for ponds and
     lakes too, in place of flat-topped walls. Rivers do not yet run on to the sea across wide lowland.
+  - ~~**Water that sits in the ground:**~~ done: rivers, pools and lakes no longer stand on raised rims of their
+    own. The Rivers node reads the ground a few metres either side of each stretch and round each pool and lake,
+    and keeps the water a quarter of a block under the lowest of it, falling along the stretch as the river does,
+    so a pond fills its hollow and a stream cuts down into a slope; banks cut deep reach further back, so they are
+    grown over rather than bare rock. Near Rolling Hills' rivers, dry ground raised over half a metre: 612 of 8130
+    places before, 4 of 6998 after. Test: no rim raised round water.
   - ~~**Great rivers to the sea:**~~ done: a world of levels runs a coarse Rivers network first, over points
     256 m apart, from where four square kilometres drain: each great river is carried on 12 km past where it starts
     (the node's new **Run On**), broad and deep, across the lowland to the sea; a hollow spills only towards lower

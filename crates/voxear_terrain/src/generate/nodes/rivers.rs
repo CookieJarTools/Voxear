@@ -25,9 +25,13 @@
 //! its bed, a bowl dropping steeply from its edge to a broad middle, and its
 //! banks rise from just over its water up its valley's sides, Valley metres
 //! either side: in some stretches at once, where it has cut into them as on
-//! the outside of a bend, elsewhere along a low shelving strip. Where the
-//! ground by it is lower than its water, a low rim holds it in, so its
-//! water never stands over the air beside it. Where a stretch drops more
+//! the outside of a bend, elsewhere along a low shelving strip, reaching
+//! further back where it is cut deep. Its water sits in the ground as it
+//! lies: kept a quarter of a block under the ground read a few metres
+//! either side of it and round each pool and lake, so a pond fills its
+//! hollow and a stream cuts down into a slope. Only where the ground dips
+//! between the places read does a low rim hold it in, so its water never
+//! stands over the air beside it. Where a stretch drops more
 //! than Falls metres, the river runs nearly level to a cliff halfway along
 //! it and pours over into a pool at its foot. A hollow that as much as
 //! Lakes hectares drains into holds a lake as high as the lowest of the
@@ -311,11 +315,25 @@ const SHELF: f32 = 0.15;
 const CUT: f32 = 0.3;
 const BANK_STRETCH: f32 = 110.0;
 
+/// How many metres back from the water a bank reaches, at least, for each
+/// metre it rises, within the valley: at most about a 1 in 1.5 slope, so
+/// a river cut down into the ground has sides of the ground's own top and
+/// not bare rock.
+const BANK_RUN: f32 = 3.0;
+
 /// Where the ground beside a river, a pond or a lake lies lower than its
 /// water, how far past the water's edge the rim that holds it in stands at
 /// its lip, and over how many metres more it slopes down to the ground.
 const RIM: f32 = 1.5;
 const LEVEE: f32 = 7.0;
+
+/// How far past the edge of a river's, a pool's or a lake's water the
+/// ground is read to keep its water under, in metres, and how far apart
+/// along a river: water is kept a quarter of a block under the lowest of
+/// it, so the rim above is seldom raised, only where the ground dips
+/// between the places read.
+const EDGE_READS: [f32; 3] = [0.5, 2.0, 4.0];
+const READ_STEP: f32 = 4.0;
 
 /// How far round a pond dug into rising ground its sides slope up to the
 /// ground, in metres.
@@ -930,7 +948,17 @@ impl Finder {
         let looked = self.looked;
         let from = (margin - looked) as usize;
         let wide = (TILE + 2 * looked) as usize;
-        let round: Vec<Point> = (0..wide * wide).map(|at| point(from + at % wide, from + at / wide)).collect();
+        // Those points and as many more round them as a river's water is kept no higher than up its way: as far as
+        // what drains through each is counted.
+        let up = (self.spill as i32 + 1 + self.run).min(REACH);
+        let (first_up, wide_up) = (from - up as usize, wide + 2 * up as usize);
+        let mut all: Vec<Point> =
+            (0..wide_up * wide_up).map(|at| point(first_up + at % wide_up, first_up + at / wide_up)).collect();
+        self.sit_in_ground(&mut all, wide_up, up as usize, |x, z| {
+            point((first_up as i32 + x) as usize, (first_up as i32 + z) as usize)
+        });
+        let round: Vec<Point> =
+            (0..wide * wide).map(|at| all[(at / wide + up as usize) * wide_up + at % wide + up as usize]).collect();
         let wet = |x: usize, z: usize| {
             let point = &round[z * wide + x];
             point.river || point.lake || point.pool > 0.0
@@ -1003,6 +1031,187 @@ impl Finder {
         }
         made.starts.push(made.reach.len() as u32);
         made
+    }
+}
+
+impl Finder {
+    /// Keeps the water of each river, pool and lake among `points`, `side`
+    /// a side, a quarter of a block under the ground round its edge: so it
+    /// sits in the ground as it lies, filling a hollow or cut down into it,
+    /// and no rim need be raised to hold it in. The ground is read along
+    /// each river's stretch down its way, a few metres either side of its
+    /// water, and round each pool and lake; a river's water falls along
+    /// its stretch, so each place is held to the water's height there. And
+    /// a river's water is kept no higher than the water `up` points up its
+    /// way, so it never rises down it. `point` is the point so many steps
+    /// from the first of them, where it is not among them.
+    fn sit_in_ground(&self, points: &mut [Point], side: usize, up: usize, point: impl Fn(i32, i32) -> Point) {
+        let index = |x: i32, z: i32| -> Option<usize> {
+            let inside = (0..side as i32).contains(&x) && (0..side as i32).contains(&z);
+            inside.then(|| z as usize * side + x as usize)
+        };
+        let near = |x: i32, z: i32| index(x, z).map_or_else(|| point(x, z), |at| points[at]);
+        // The places round each one's water, in the world as bent by rivers winding, how far along its stretch
+        // each is (less than nothing round a pool or a lake, whose water is level), and for each one, which are
+        // its and how high the water stands where its river runs to.
+        let mut places: Vec<[f32; 2]> = Vec::new();
+        let mut along: Vec<f32> = Vec::new();
+        let mut spans: Vec<(usize, std::ops::Range<usize>, f32)> = Vec::new();
+        for (at, here) in points.iter().enumerate() {
+            if here.drowned {
+                continue;
+            }
+            let start = places.len();
+            let mut lower = f32::MAX;
+            let (x, z) = ((at % side) as i32, (at / side) as i32);
+            if let Some([dx, dz]) = here.down.filter(|_| here.river) {
+                let (tx, tz) = (x + i32::from(dx), z + i32::from(dz));
+                let to = near(tx, tz);
+                lower = to.level;
+                let wider = to.river || to.lake;
+                let width = |t: f32| if wider { here.width + (to.width - here.width) * t } else { here.width };
+                // Either side of a line through `on` running `way`, `width` across, `t` along the stretch.
+                let mut sides = |on: [f32; 2], way: [f32; 2], width: f32, t: f32| {
+                    let long = (way[0] * way[0] + way[1] * way[1]).sqrt().max(1e-3);
+                    let across = [-way[1] / long, way[0] / long];
+                    for off in EDGE_READS {
+                        for sign in [-1.0, 1.0] {
+                            let out = sign * (width * 0.5 + off);
+                            places.push([on[0] + across[0] * out, on[1] + across[1] * out]);
+                            along.push(t);
+                        }
+                    }
+                };
+                let way = [to.at[0] - here.at[0], to.at[1] - here.at[1]];
+                let steps = ((way[0] * way[0] + way[1] * way[1]).sqrt() / READ_STEP).ceil().max(2.0) as usize;
+                for k in 0..=steps {
+                    let t = k as f32 / steps as f32;
+                    sides([here.at[0] + way[0] * t, here.at[1] + way[1] * t], way, width(t), t);
+                }
+                // Where rivers are carried on, its turn at the point it runs to is drawn as a curve.
+                if let Some([ax, az]) = to.down.filter(|_| self.run > 0 && to.river && !to.lake) {
+                    let after = near(tx + i32::from(ax), tz + i32::from(az));
+                    let start = [(here.at[0] + to.at[0]) * 0.5, (here.at[1] + to.at[1]) * 0.5];
+                    let end = [(to.at[0] + after.at[0]) * 0.5, (to.at[1] + after.at[1]) * 0.5];
+                    for k in 0..=BEND_PIECES / 2 {
+                        let u = k as f32 / BEND_PIECES as f32;
+                        let (a, b, c) = ((1.0 - u) * (1.0 - u), 2.0 * u * (1.0 - u), u * u);
+                        let on = |i: usize| a * start[i] + b * to.at[i] + c * end[i];
+                        let tangent =
+                            |i: usize| 2.0 * (1.0 - u) * (to.at[i] - start[i]) + 2.0 * u * (end[i] - to.at[i]);
+                        sides([on(0), on(1)], [tangent(0), tangent(1)], width(0.5 + u), 0.5 + u);
+                    }
+                }
+            }
+            // Round a pool, and round a lake as far as it reaches.
+            let mut ring = |reach: f32, count: usize| {
+                for off in EDGE_READS {
+                    for k in 0..count {
+                        let angle = k as f32 / count as f32 * std::f32::consts::TAU;
+                        places
+                            .push([here.at[0] + angle.cos() * (reach + off), here.at[1] + angle.sin() * (reach + off)]);
+                        along.push(-1.0);
+                    }
+                }
+            };
+            if here.pool > 0.0 {
+                ring(here.pool, 24);
+            }
+            if here.lake {
+                ring(LAKE_REACH * self.spacing, 64);
+            }
+            if places.len() > start {
+                spans.push((at, start..places.len(), lower));
+            }
+        }
+        if spans.is_empty() {
+            return;
+        }
+        // The ground there, or water already standing on it, which holds water in as well.
+        let bend = self.meander * self.spacing * 0.45;
+        let wide = self.spacing * 1.7;
+        let (xs, zs): (Vec<f32>, Vec<f32>) = places
+            .iter()
+            .map(|&[wx, wz]| {
+                // The place the winding moves there: found a step at a time, as the winding changes slowly.
+                let (mut x, mut z) = (wx, wz);
+                for _ in 0..4 {
+                    (x, z) = (
+                        wx - bend * gradient(x / wide, z / wide, self.seed.wrapping_add(11)),
+                        wz - bend * gradient(x / wide, z / wide, self.seed.wrapping_add(12)),
+                    );
+                }
+                (x, z)
+            })
+            .unzip();
+        let mut read = vec![0.0; xs.len()];
+        let mut standing = vec![NO_WATER; xs.len()];
+        let givens = Givens { x: &xs, z: &zs, ..Givens::default() };
+        match self.standing {
+            true => self.ground.run(xs.len(), givens, &mut [&mut read, &mut standing]),
+            false => self.ground.run(xs.len(), givens, &mut [&mut read]),
+        }
+        let held: Vec<f32> = (0..read.len()).map(|k| read[k].max(standing[k]) - LIP).collect();
+        // The highest each one's water may stand: where it is too high anywhere, found a step at a time between
+        // that and as low as the lowest of the ground read round it, where it would lie level.
+        let mut most = vec![f32::MAX; points.len()];
+        for (at, span, lower) in spans {
+            let level = points[at].level;
+            let fits = |upper: f32| {
+                span.clone().all(|k| match along[k] < 0.0 {
+                    true => upper <= held[k],
+                    false => self.water_along(upper, lower.min(upper), along[k]) <= held[k],
+                })
+            };
+            if fits(level) {
+                continue;
+            }
+            let (mut low, mut high) = (span.clone().map(|k| held[k]).fold(level, f32::min), level);
+            for _ in 0..16 {
+                let middle = (low + high) * 0.5;
+                if fits(middle) { low = middle } else { high = middle }
+            }
+            most[at] = low;
+        }
+        // A river's water no higher than the water up its way: as far down it as `up` points, but into a lake.
+        let mut kept = most.clone();
+        for at in 0..points.len() {
+            if most[at] == f32::MAX || !points[at].river {
+                continue;
+            }
+            let (mut x, mut z) = ((at % side) as i32, (at / side) as i32);
+            for _ in 0..up {
+                let Some([dx, dz]) = points[index(x, z).expect("inside")].down else { break };
+                (x, z) = (x + i32::from(dx), z + i32::from(dz));
+                let Some(there) = index(x, z).filter(|&there| !points[there].lake && !points[there].drowned) else {
+                    break;
+                };
+                kept[there] = kept[there].min(most[at]);
+            }
+        }
+        for (here, kept) in points.iter_mut().zip(kept) {
+            if kept < here.level && !here.drowned {
+                here.level = kept.max(self.sea);
+            }
+        }
+    }
+
+    /// How high a river's water stands `t` of the way along a stretch from
+    /// `upper` high to `lower`, as `reached` lays it: falling evenly, or
+    /// where it drops more than Falls, nearly level to a waterfall halfway
+    /// and nearly level on from its foot.
+    fn water_along(&self, upper: f32, lower: f32, t: f32) -> f32 {
+        let drop = upper - lower;
+        if drop <= self.falls {
+            return upper - drop * t;
+        }
+        match t < 0.5 {
+            true => upper - drop * RUN_DOWN * (t / 0.5),
+            false => {
+                let foot = lower + drop * RUN_DOWN;
+                foot - (foot - lower) * ((t - 0.5) / 0.5)
+            }
+        }
     }
 }
 
@@ -1149,8 +1358,9 @@ impl Finder {
             } else if ground > lip {
                 // The bank rises from just over the water up the valley's side: at once where the river has cut into
                 // it, over a short steep slope; elsewhere along a low shelving strip, the valley's side rising
-                // beyond it.
-                let reach = valley + (valley * CUT - valley) * cut;
+                // beyond it. Where it is cut deep, its bank reaches back further, so it slopes no steeper than ground
+                // grown over.
+                let reach = (valley + (valley * CUT - valley) * cut).max((ground - lip) * BANK_RUN).min(valley);
                 let t = (river.past / reach).min(1.0);
                 let rise = smooth(t) + (t * (2.0 - t) - smooth(t)) * cut;
                 made.height = lip + (ground - lip) * rise;
@@ -1572,6 +1782,34 @@ mod tests {
         }
         assert!(flowing > 100, "{flowing} places where the water flows");
         assert!(uphill * 50 <= flowing, "{uphill} of {flowing} run uphill");
+    }
+
+    #[test]
+    fn water_sits_in_the_ground_and_raises_no_rim_round_it() {
+        let (world, plain) = with_and_without("Rolling Hills");
+        let sea = world.sea_level();
+        let (side, step) = (400, 2.0);
+        let (xs, zs) = grid(-400.0, -400.0, step, side);
+        let (mut heights, mut ground) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
+        world.heights(&xs, &zs, &mut heights);
+        plain.heights(&xs, &zs, &mut ground);
+        let (water, _) = world.water(&xs, &zs).unwrap();
+        // The dry places within 12 m of water over the sea: none stands much over the ground as it lay.
+        let reach = (12.0 / step) as i32;
+        let by_water = |at: usize| {
+            let (x, z) = ((at % side) as i32, (at / side) as i32);
+            (-reach..=reach).any(|dz| {
+                (-reach..=reach).any(|dx| {
+                    let (bx, bz) = (x + dx, z + dz);
+                    let there = (bz * side as i32 + bx) as usize;
+                    (0..side as i32).contains(&bx) && (0..side as i32).contains(&bz) && wet(water[there])
+                })
+            })
+        };
+        let dry: Vec<usize> = (0..xs.len()).filter(|&at| !wet(water[at]) && ground[at] > sea && by_water(at)).collect();
+        let raised = dry.iter().filter(|&&at| heights[at] > ground[at] + 0.5).count();
+        assert!(dry.len() > 2000, "{} dry places by water", dry.len());
+        assert!(raised * 100 <= dry.len(), "{raised} of {} dry places by water raised over the ground", dry.len());
     }
 
     /// Starter `name`'s ground with great rivers run down it before its own rivers: a network over points 256 m

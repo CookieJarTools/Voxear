@@ -3830,6 +3830,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     turned. Manual: Blocks (Logs, Saplings, Breaking), Block Worlds (Trees that come down, Saplings), Structures,
     Blocks and Items from Scripts. Not done: generated trees seeding by themselves, leaves that wither, items and
     falling trees in a save, the fall shown to a player who joins, thin logs in the far view and in smooth worlds.
+- **Baked far view and faster chunk loading** (researched; the measurements and staged plan are in
+  [research/far-view-and-chunk-loading.md](research/far-view-and-chunk-loading.md)). Every level of the far view is
+  made at run time; only rings 3 and up keep their bare ground on disk, and that cache is started afresh whenever a
+  world's file changes. The Realm sees less far because its generator costs 3–5 times the Islands' (a near column
+  465 ms, a ring column ~600 ms, 95% of it trees and structures): at Medium it makes no far tile in its first two
+  minutes. A kept tile reads in 0.08 ms against 71 ms to make it. Stages to pick from: comparing a world's settings
+  once a frame (−8 ms a frame on the Realm) and a cache keyed by its ground; far tiles kept with what is built on
+  them, in region files with zstd; levels 5–7 baked for the whole world (12 MB for a 51 km world) with edits lowered
+  into them, coarsest first, two more levels to see the whole world; rings 1–2 from runs; hand edits as runs of
+  equal blocks with zstd (Fantasy City's 10.3 MB to 42 KB); generator profiling; threads by the machine.
+  - ~~**Stage 0:**~~ done. A world's making compared once a frame, its tables by pointer: the Realm's frame median
+    12.9 → 2.7 ms. Far tiles kept by what makes their ground (look and distances left out), older folders removed but
+    the two last used. One in eight columns made at once kept for the rings at Medium. Tests: a making the same by
+    its tables, tiles' folder kept across look changes, folders pruned, rings asked at eight at once. Next: stage 1,
+    every level made kept on disk with what is built on it, for endless worlds and worlds of a set size alike.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

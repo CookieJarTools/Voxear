@@ -245,6 +245,14 @@ What is wired in, held between **Min** and **Max**.
 
 **In:** In. **Out:** Out.
 
+### World Edge
+
+What is wired in, sunk to a sea bed or raised to a wall of cliffs past the edges of a box, **From** to **To** in metres along X and Z, over **Width** metres inside them, to **Level**. With **Sea**, the ground eases down to the sea bed, keeping the land's own coast where it meets the sea. With **Cliffs**, it rises in three sheer faces with level ledges between them. The edge wanders in and out by up to half the width. **Inside** is 1 inside the box and 0 where the ground has sunk or risen all the way: multiply a mask by it to keep something to the box.
+
+A world of blocks streamed to a set size puts one between its ground and its Output (see [[Block Worlds#A set size|A set size]]), so you need not add it yourself.
+
+**In:** Ground. **Out:** Height, Inside.
+
 ### Math
 
 Two numbers at each place, added, subtracted, multiplied, divided, or the lesser (**Min**) or greater (**Max**) of them. A number divided by 0 gives 0.

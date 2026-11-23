@@ -3920,6 +3920,15 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   scripts' components; a C# cursor. Manual: World Building ▸ World Areas, Routes; Structures; Painting Land. Not
   done: generator town roads joined into the route graph, air routes kept over the ground, an area's outline drawn
   on the ground rather than at its Obj's height, a structure's own size checked against an area's edge.
+- ~~**Streamed worlds of a set size:**~~ done. An endless world can be given a World Size of any number of blocks
+  from its corner, streamed round the camera as without end, and an Edge past it: Sea (the land sinking into it
+  over Edge Width with a coast of its own, the sea bed Sea Depth down, rivers running off into it), Cliffs (three
+  sheer faces with ledges up to Cliff Height, high land past them) or Nothing (no ground, its rock showing in its
+  sides). Sea and Cliffs are the generator's own ground through the new World Edge node, so the far view, the map,
+  structures and rivers keep to them, the biomes' pillars stop at the coast, and the edge wanders. Inspector rows
+  under Endless, reachable through `field.set`. Tests: the node's sea bed, ledges and inside; a world's ground past
+  each edge, no chunk or far tile past a Nothing edge; editor calls setting and undoing them. Manual: Block Worlds ▸
+  A set size, Generator Nodes ▸ World Edge.
 
 ## M9 — Navigation, cameras and Timeline (in progress)
 

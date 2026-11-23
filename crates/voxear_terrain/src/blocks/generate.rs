@@ -272,16 +272,94 @@ fn is_air(block: &BlockId) -> bool {
 
 /// How far round the camera a world of blocks without end is made: its own
 /// chunks out to `distance` metres, and coarser ones drawn out to `far`.
+/// With a `size`, it is streamed as one without end is but reaches only so
+/// many blocks along x and z from its corner, and past that is its `edge`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BlockEndless {
     pub distance: f32,
     pub far: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<[u32; 2]>,
+    #[serde(skip_serializing_if = "is_default_edge")]
+    pub edge: WorldEdgeKind,
+    /// How far inside its edge the sea's coast or the cliffs begin, in metres.
+    pub edge_width: f32,
+    /// How deep the sea bed lies under the sea past a Sea edge, and how high
+    /// the cliffs rise over the sea at a Cliffs edge, in metres.
+    pub edge_depth: f32,
+    pub edge_height: f32,
+}
+
+/// What lies past the edge of a world streamed to a set size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorldEdgeKind {
+    /// Sea without end, the land sinking into it as a coast of its own.
+    #[default]
+    Sea,
+    /// No ground at all.
+    Nothing,
+    /// A wall of cliffs, and high land past it.
+    Cliffs,
+}
+
+impl WorldEdgeKind {
+    pub const ALL: [WorldEdgeKind; 3] = [WorldEdgeKind::Sea, WorldEdgeKind::Nothing, WorldEdgeKind::Cliffs];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            WorldEdgeKind::Sea => "Sea",
+            WorldEdgeKind::Nothing => "Nothing",
+            WorldEdgeKind::Cliffs => "Cliffs",
+        }
+    }
+}
+
+fn is_default_edge(edge: &WorldEdgeKind) -> bool {
+    *edge == WorldEdgeKind::Sea
 }
 
 impl Default for BlockEndless {
     fn default() -> Self {
-        Self { distance: 128.0, far: 1024.0 }
+        Self {
+            distance: 128.0,
+            far: 1024.0,
+            size: None,
+            edge: WorldEdgeKind::Sea,
+            edge_width: 160.0,
+            edge_depth: 40.0,
+            edge_height: 160.0,
+        }
+    }
+}
+
+impl BlockEndless {
+    /// The blocks its columns are kept within along x and z from its corner,
+    /// where nothing lies past its edge.
+    pub fn limit(&self) -> Option<[u32; 2]> {
+        self.size.filter(|_| self.edge == WorldEdgeKind::Nothing)
+    }
+
+    /// The World Edge node its generator's ground goes through, for a world
+    /// lying at `position` metres in its generator's world, of blocks
+    /// `block_size` metres a side, by a sea at `sea` metres; none without a
+    /// size, or with nothing past its edge.
+    pub fn edge_node(
+        &self,
+        position: [f32; 2],
+        block_size: f32,
+        sea: f32,
+    ) -> Option<crate::generate::nodes::WorldEdge> {
+        use crate::generate::nodes::{EdgeShape, WorldEdge};
+        let size = self.size?;
+        let (shape, level) = match self.edge {
+            WorldEdgeKind::Nothing => return None,
+            WorldEdgeKind::Sea => (EdgeShape::Sea, sea - self.edge_depth.max(1.0)),
+            WorldEdgeKind::Cliffs => (EdgeShape::Cliffs, sea + self.edge_height.max(1.0)),
+        };
+        let to = [0, 1].map(|axis| position[axis] + size[axis] as f32 * block_size);
+        Some(WorldEdge { shape, from: position, to, width: self.edge_width.max(1.0), level })
     }
 }
 

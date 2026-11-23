@@ -415,3 +415,31 @@ fn a_world_area_and_routes_are_made_asked_about_and_undone_through_the_editors_c
     let points = named.into_iter().find(|(name, _)| name.0 == "North").map(|(_, route)| route.points.clone()).unwrap();
     assert_eq!(points, [[150.0, 5.0, 101.0], [150.0, 5.0, 200.0]], "the set undone");
 }
+
+#[test]
+fn a_streamed_world_is_given_a_set_size_and_what_lies_past_its_edge_through_the_editors_calls() {
+    use voxear_terrain::blocks::generate::WorldEdgeKind;
+    let Some((_dir, mut renderer, mut editor)) = open() else { return };
+    let world = {
+        let objs = editor.game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        objs.into_iter().find(|(_, name)| name.0 == "World").map(|(obj, _)| obj).expect("the template's world")
+    };
+    let obj = json!({ "entity": world.to_bits() });
+    let set =
+        |field: &str, value: Value| json!({ "obj": obj, "component": "block_world", "field": field, "value": value });
+    done(&mut editor, &mut renderer, "field.set", set("set_size", json!(true)));
+    done(&mut editor, &mut renderer, "field.set", set("world_size", json!([20000.0, 12000.0])));
+    done(&mut editor, &mut renderer, "field.set", set("edge", json!("Cliffs")));
+    done(&mut editor, &mut renderer, "field.set", set("cliff_height", json!(220.0)));
+    let endless = |editor: &Editor| {
+        let asset = editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(world).unwrap();
+        asset.file.generate.as_ref().unwrap().endless.unwrap()
+    };
+    let now = endless(&editor);
+    assert_eq!((now.size, now.edge, now.edge_height), (Some([20000, 12000]), WorldEdgeKind::Cliffs, 220.0));
+    // Each change one step to undo.
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(endless(&editor).edge_height, 160.0);
+    done(&mut editor, &mut renderer, "field.set", set("set_size", json!(false)));
+    assert_eq!(endless(&editor).size, None, "without end again");
+}

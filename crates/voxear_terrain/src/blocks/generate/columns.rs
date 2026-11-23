@@ -617,7 +617,8 @@ pub fn column_chunks_asking(
     [cx, cz]: [i32; 2],
     keep: Option<&mut Option<Asked>>,
 ) -> Vec<([i32; 3], Chunk)> {
-    column_chunks_within(file, generate, world, level, [cx, cz], (None, keep))
+    let limit = generate.endless.and_then(|endless| endless.limit());
+    column_chunks_within(file, generate, world, level, [cx, cz], (limit, keep))
 }
 
 fn column_chunks_within(
@@ -631,9 +632,11 @@ fn column_chunks_within(
     let scale = (1u32 << level.min(16)) as f32;
     let size = file.block_size.max(0.01) * scale;
     let side = CHUNK as i32;
+    // Within a limit, nothing under the corner either.
     let reach = |v: i32, limit: Option<u32>| {
         let end = (v + 1) * side;
-        v * side..limit.map_or(end, |limit| end.min(limit.div_ceil(scale as u32) as i32))
+        let start = if limit.is_some() { (v * side).max(0) } else { v * side };
+        start..limit.map_or(end, |limit| end.min(limit.div_ceil(scale as u32) as i32))
     };
     let within = |axis: usize| limit.map(|limit| limit[axis]);
     let (across, along) = (reach(cx, within(0)), reach(cz, within(1)));

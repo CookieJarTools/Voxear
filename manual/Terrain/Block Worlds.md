@@ -168,6 +168,20 @@ Generated ground can go on **without end**: tick **Endless** under its generator
 | View distance | How far round the camera its own blocks are made, in metres: built on, stood on and drawn |
 | Far distance | How far coarser blocks are drawn beyond, in metres: up to 16 km with metre blocks (see [[Block Worlds#The far view]]) |
 
+### A set size
+
+A world without end can be as large as you like and still end. Tick **Set size**, and its ground is made round the camera as it goes, as without end, but only **World size** blocks along X and Z from its Obj. Nothing is made or kept for ground no one is near, so a world 100 km across costs no more than one of 1 km. Past its edge lies its **Edge**:
+
+| Edge | What lies past it |
+| --- | --- |
+| Sea | Sea without end. The land sinks into it over **Edge width** metres inside the edge, with a coast and beaches of its own, its sea bed **Sea depth** metres down; the generator's rivers run off into it |
+| Cliffs | A wall of cliffs **Cliff height** metres over the sea, rising in sheer faces with ledges between them over **Edge width** metres inside the edge, and high land past it |
+| Nothing | No ground at all: the world stops at its edge, its rock showing in its sides |
+
+The edge wanders in and out by up to half its width, so a coast or a wall of cliffs is no ruled line. A sea or cliffs edge is the generator's own ground (see [[Generator Nodes#World Edge|World Edge]]), so the far view, the map, structures and rivers all keep to it, and the biomes' pillars and arches stop at the coast. Players can walk off a Nothing edge: keep them in with your own wall, or with cliffs.
+
+A world of a set size that is not streamed, with **Endless** off, is made whole when it loads and reaches 4096 blocks a side at most.
+
 Beyond its view distance, it is drawn in rings of coarser blocks, each ring's blocks twice as large as the one inside it, so mountains stand on the horizon at a fraction of the cost. A coarse ring shows the ground until the finer one inside it is drawn, and never where it is. Only its own blocks near the camera can be built on and stood on.
 
 Where the rings begin, their blocks are at their largest on screen: with metre blocks and 256 m of its own, about seven pixels of a screen 1080 tall. **Far block size** in the quality settings keeps them smaller: the first ring is pushed out until its blocks show no larger than it says where it begins, each ring after it twice as far, and the world's own blocks are drawn on past the View distance out to the first ring, made from the generator as the rings are, for drawing alone: nothing stands, grows or is built on them there, and what you built shows as it does in a ring. How large blocks show goes by how high the game's camera sees, not by the window, so a window resized makes nothing again. Ultra keeps them to three pixels, High to four and Medium to six; Low draws the rings where the distances put them. It costs more blocks drawn and more made: on High, with metre blocks and a camera seeing 70° high, its own blocks are drawn out to 384 m where they stopped at 192 m.

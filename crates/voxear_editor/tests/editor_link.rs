@@ -1307,7 +1307,7 @@ fn dungeons_project() -> tempfile::TempDir {
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -60,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0, ..BlockEndless::default() }),
         structures: vec!["Structures/Dungeon.structure".into()],
         ..BlockGenerate::default()
     });

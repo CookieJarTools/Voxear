@@ -78,8 +78,8 @@ protected override void Update()
 From the command line:
 
 ```
-vox editor call world_area.set_outline obj=Town outline='[[-40,-40],[40,-40],[40,40],[-40,40]]'
+vox editor call world_area.set_outline obj=713a4d989c654c6ca23b1d63201e0090:12 outline='[[-40,-40],[40,-40],[40,40],[-40,40]]'
 vox editor call areas.at at=[120,10,95]
 vox editor call areas.value at=[120,10,95] tag='{"path":"Areas/Town.asset"}'
-vox editor call paint.map map=area area=Marsh at=[300,0,80] radius=30
+vox editor call paint.map map=area area=713a4d989c654c6ca23b1d63201e0090:14 at=[300,0,80] radius=30
 ```

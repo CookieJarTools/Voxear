@@ -258,7 +258,7 @@ fn hills() -> tempfile::TempDir {
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -4,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 60.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 60.0, far: 0.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     let scene =

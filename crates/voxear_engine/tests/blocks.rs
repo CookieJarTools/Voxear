@@ -698,7 +698,7 @@ fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -4,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 70.0, far: 300.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 300.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
@@ -753,7 +753,7 @@ fn a_block_world_without_end_is_made_round_the_camera_before_the_first_frame_wit
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -4,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 70.0, far: 300.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 300.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();

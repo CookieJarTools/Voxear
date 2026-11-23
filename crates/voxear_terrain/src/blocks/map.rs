@@ -353,6 +353,7 @@ pub fn map_tile(ground: &MapGround, level: u32, at: [i32; 2]) -> MapTile {
             for woods in plants.iter().filter(|woods| woods.width < cell) {
                 woods.build(making, &mut far);
             }
+            far.keep_within(making.generate.endless.and_then(|endless| endless.limit()));
             made_tile(&far, making, (changes, plants))
         }
     }

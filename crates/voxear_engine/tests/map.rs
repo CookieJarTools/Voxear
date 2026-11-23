@@ -37,7 +37,7 @@ fn project() -> tempfile::TempDir {
         bottom: -16,
         caves: 0.0,
         sea: 4,
-        endless: Some(BlockEndless { distance: 48.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 48.0, far: 0.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     let files = [

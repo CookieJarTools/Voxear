@@ -34,7 +34,7 @@ A sea route lays itself. Put its first point at one harbour and its last at the 
 A laid route is saved as its points. If you paint land under it later, it is drawn red in the Scene view where it runs aground. Lay it again to go round.
 
 ```
-vox editor call route.lay_sea obj=Lane
+vox editor call route.lay_sea obj=713a4d989c654c6ca23b1d63201e0090:15
 ```
 
 ## Finding the way
@@ -59,7 +59,7 @@ Obj.Position = at;
 From the command line:
 
 ```
-vox editor call route.set_points obj=Track points='[[0,0,0],[80,0,20],[140,0,90]]' land=true
+vox editor call route.set_points obj=713a4d989c654c6ca23b1d63201e0090:16 points='[[0,0,0],[80,0,20],[140,0,90]]' land=true
 vox editor call routes.find from=[0,0,0] to=[140,0,90] kind=road
 vox editor call routes.nearest at=[60,0,40] kind=sea
 ```

@@ -25,7 +25,7 @@ fn project(wet: f32) -> tempfile::TempDir {
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -8,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 70.0, far: 300.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 300.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     let scene = format!(

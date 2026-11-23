@@ -241,7 +241,7 @@ fn a_character_walks_through_to_ground_made_for_it_far_off_in_a_world_without_en
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -4,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     let scene = "format = 1\n\n[[obj]]\nid = 1\nname = \"Blocks\"\nposition = [-16.0, 0.0, -16.0]\n\

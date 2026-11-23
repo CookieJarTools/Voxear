@@ -4575,6 +4575,20 @@ scripts once a frame while playing through the `ColumnEvents` entry (`Blocks.Col
 native API 97); in the editor they are dropped. `Blocks.IsMade` asks `blocks::made_round` in the dimension
 scripts ask of.
 
+**Worlds of a set size, streamed** (`BlockEndless::size`, `edge`; `generate::nodes::WorldEdge`). An endless world
+can be given a size in blocks from its corner and an edge kind. Sea and Cliffs are the generator's own ground:
+`cells::source` wires a World Edge node between whatever feeds the Output's Height and the Output, before the
+rivers (so they run off into the sea), its box in the generator's metres from the world's position; its Inside
+output multiplies every biome's land mask, so pillars, arches and overhangs stop at the coast. Sea eases the ground
+down to a bed under the sea level over the edge width with a smoothstep (keeping the land's coast where it is low
+enough), Cliffs raises it in three sheer faces with ledges, both with the edge wandering by integer-hashed value
+noise. Because it is the generator, columns, far tiles, structures, the map, `bare_ground` and sea routes all agree,
+and the source is cached by a key that folds the edge in. Nothing is a limit instead: `BlockEndless::limit` clips
+`column_chunks_within` on both sides (it clipped only the high side for worlds of a set size before), and far tiles
+are cut with `FarTile::keep_within` as made, after anything is built into them, and in the map; a tile wholly past
+the edge asks nothing of the generator. Far tiles' `MADE_AS` went to 6. A set size has no upper bound but 2^30
+blocks; only what is near is made or kept, so its cost does not grow with its size.
+
 **World Areas** (`voxear_engine::world_areas`, `voxear_terrain::blocks::area_layer`). A `WorldArea` is an outline in
 its Obj's space or a number painted on the world's Area map (a fourth `PaintedMap`, 4 m a pixel, in `.maps` version
 2, which still reads version 1), an optional height range, a priority, No Structures, and tags: each an Area Tag data

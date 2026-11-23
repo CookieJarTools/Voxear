@@ -117,11 +117,14 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     let attaching = regions_of(generate).filter(|_| keeps_to_world(graph));
     // Its painted maps, read by its landmass: a generator of its own, known by the maps' handle.
     let painted = generate.painted.0.clone();
-    if voxels && !rivered && !landed && attaching.is_none() && painted.is_none() {
+    // The sea or the cliffs past the edge of a world streamed to a set size.
+    let edge = generate.endless.and_then(|endless| endless.edge_node(generate.position, block_size, world.sea_level()));
+    if voxels && !rivered && !landed && attaching.is_none() && painted.is_none() && edge.is_none() {
         return Source::Own(world);
     }
     let lands = if landed || attaching.is_some() { lands_hash(generate) } else { 0 };
     let lands = lands ^ painted.as_ref().map_or(0, |painted| painted.id.rotate_left(29));
+    let lands = lands ^ edge.as_ref().map_or(0, |edge| crate::layers::stable_hash(format!("{edge:?}").as_bytes()));
     let own = OwnVoxels {
         overhangs: generate.overhangs.max(0.0),
         caves: generate.caves.clamp(0.0, 1.0),
@@ -151,6 +154,19 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         Some((hash, shaped)) if *hash == lands => shaped.clone(),
         _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref()),
     };
+    // Before the rivers, so they run off into the edge's sea; and the biomes' pillars and arches kept inside it.
+    let edged = edge.and_then(|edge| add_edge(&mut graph, edge));
+    let shaped = match edged {
+        Some(edged) => shaped.masked_by(|mask| {
+            use crate::generate::nodes::{Math, Operation};
+            let math = NodeKind::Math(Math { operation: Operation::Multiply, a: 0.0, b: 0.0 });
+            let kept = graph.add(math, [0.0, 0.0]);
+            let wired = graph.connect(mask, 0, kept, 0) && graph.connect(edged, 1, kept, 1);
+            debug_assert!(wired, "a biome's land kept inside a world's edge");
+            kept
+        }),
+        None => shaped,
+    };
     if rivered {
         add_rivers(&mut graph, generate);
     }
@@ -167,6 +183,20 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     }
     moved.push((key, world.clone()));
     made(world)
+}
+
+/// Puts `edge` between what is wired into `graph`'s Output's Height and the
+/// Output, and gives the node.
+fn add_edge(
+    graph: &mut crate::generate::Graph,
+    edge: crate::generate::nodes::WorldEdge,
+) -> Option<crate::generate::NodeId> {
+    let output = graph.output().map(|node| (node.id, node.at))?;
+    let link = graph.link_into(output.0, Output::HEIGHT).copied()?;
+    let node = graph.add(NodeKind::WorldEdge(edge), [output.1[0] - 140.0, output.1[1] + 220.0]);
+    let wired = graph.connect(link.from, link.output, node, 0) && graph.connect(node, 0, output.0, Output::HEIGHT);
+    debug_assert!(wired, "a world's edge wires up");
+    Some(node)
 }
 
 /// Gives every landmass of `graph` the world's painted maps to read.

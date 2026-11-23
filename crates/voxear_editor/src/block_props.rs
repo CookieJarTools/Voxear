@@ -614,6 +614,16 @@ pub enum BlockField {
     Endless,
     ViewDistance,
     FarDistance,
+    /// Whether a world without end is streamed only to a set size, how many
+    /// blocks it reaches along X and Z, and what lies past its edge: the
+    /// sea, how deep, how far in the coast begins; nothing; or cliffs, how
+    /// high.
+    SetSize,
+    WorldSize,
+    Edge,
+    EdgeWidth,
+    SeaDepth,
+    CliffHeight,
     /// The blocks its ground is made of: its top, the layers under it and
     /// how deep they go, and the rest; and the block its generated ground's
     /// sea is filled with.
@@ -720,7 +730,18 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                 Some(ref generate) => {
                     fields.extend([F::Generator, F::Offset, F::Endless]);
                     match generate.endless {
-                        Some(_) => fields.extend([F::ViewDistance, F::FarDistance]),
+                        Some(endless) => {
+                            fields.extend([F::ViewDistance, F::FarDistance, F::SetSize]);
+                            if endless.size.is_some() {
+                                fields.extend([F::WorldSize, F::Edge]);
+                                use voxear_terrain::blocks::generate::WorldEdgeKind as E;
+                                match endless.edge {
+                                    E::Sea => fields.extend([F::SeaDepth, F::EdgeWidth]),
+                                    E::Cliffs => fields.extend([F::CliffHeight, F::EdgeWidth]),
+                                    E::Nothing => {}
+                                }
+                            }
+                        }
                         None => fields.push(F::GroundSize),
                     }
                     fields.extend([F::Lowest, F::Floor]);
@@ -821,6 +842,12 @@ pub fn label(field: BlockField) -> &'static str {
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
+        F::SetSize => "Set size",
+        F::WorldSize => "World size",
+        F::Edge => "Edge",
+        F::EdgeWidth => "Edge width",
+        F::SeaDepth => "Sea depth",
+        F::CliffHeight => "Cliff height",
         F::TopBlock => "Top block",
         F::UnderBlock => "Under block",
         F::UnderDepth => "Under depth",
@@ -856,6 +883,9 @@ pub fn unit(field: BlockField) -> Option<&'static str> {
         | F::Heights
         | F::ViewDistance
         | F::FarDistance
+        | F::EdgeWidth
+        | F::SeaDepth
+        | F::CliffHeight
         | F::LandFrom
         | F::BiomeSize
         | F::LevelLow
@@ -1125,6 +1155,20 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
         F::FarDistance => Value::Number(file()?.generate.as_ref()?.endless?.far),
+        F::SetSize => Value::Toggle(file()?.generate.as_ref()?.endless?.size.is_some()),
+        F::WorldSize => {
+            let size = file()?.generate.as_ref()?.endless?.size?;
+            Value::Vector(size.map(|blocks| blocks as f32).to_vec())
+        }
+        F::Edge => {
+            use voxear_terrain::blocks::generate::WorldEdgeKind;
+            let edge = file()?.generate.as_ref()?.endless?.edge;
+            let at = WorldEdgeKind::ALL.iter().position(|&kind| kind == edge).unwrap_or(0);
+            Value::Choice(at, WorldEdgeKind::ALL.iter().map(|kind| kind.name().to_string()).collect())
+        }
+        F::EdgeWidth => Value::Number(file()?.generate.as_ref()?.endless?.edge_width),
+        F::SeaDepth => Value::Number(file()?.generate.as_ref()?.endless?.edge_depth),
+        F::CliffHeight => Value::Number(file()?.generate.as_ref()?.endless?.edge_height),
         F::TopBlock => block_value(game, entity, file()?.ground.top),
         F::UnderBlock => block_value(game, entity, file()?.ground.under),
         F::UnderDepth => Value::Number(file()?.ground.under_depth as f32),
@@ -1366,6 +1410,24 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Endless, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };
             generate.endless = on.then(|| generate.endless.unwrap_or_default());
+        }
+        (F::SetSize | F::WorldSize | F::Edge | F::EdgeWidth | F::SeaDepth | F::CliffHeight, v) => {
+            use voxear_terrain::blocks::generate::WorldEdgeKind;
+            let Some(endless) = file.generate.as_mut().and_then(|g| g.endless.as_mut()) else { return false };
+            // As large as a world can be: its blocks are counted from its corner in whole numbers.
+            let most = 1u32 << 30;
+            match (field, v) {
+                // A size to begin with as wide as the flat ground of a set size can be.
+                (F::SetSize, Value::Toggle(on)) => endless.size = on.then(|| endless.size.unwrap_or([4096, 4096])),
+                (F::WorldSize, Value::Vector(v)) if v.len() >= 2 && endless.size.is_some() => {
+                    endless.size = Some([v[0], v[1]].map(|n| n.round().clamp(32.0, most as f32) as u32));
+                }
+                (F::Edge, Value::Choice(at, _)) => endless.edge = WorldEdgeKind::ALL[(*at).min(2)],
+                (F::EdgeWidth, v) => endless.edge_width = number(v).unwrap_or(160.0).clamp(1.0, 10_000.0),
+                (F::SeaDepth, v) => endless.edge_depth = number(v).unwrap_or(40.0).clamp(1.0, 10_000.0),
+                (F::CliffHeight, v) => endless.edge_height = number(v).unwrap_or(160.0).clamp(1.0, 10_000.0),
+                _ => return false,
+            }
         }
         (F::ViewDistance | F::FarDistance, v) => {
             let Some(endless) = file.generate.as_mut().and_then(|g| g.endless.as_mut()) else { return false };

@@ -48,7 +48,7 @@ fn caves() -> (tempfile::TempDir, Game, Entity) {
             world: Some(world.into()),
             bottom: -4,
             caves: 0.0,
-            endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+            endless: Some(BlockEndless { distance: 70.0, far: 0.0, ..BlockEndless::default() }),
             ..BlockGenerate::default()
         });
         file.to_text()
@@ -196,7 +196,7 @@ fn dungeons() -> (tempfile::TempDir, Game) {
         world: Some("Worlds/Hills.worldgen".into()),
         bottom: -60,
         caves: 0.0,
-        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0, ..BlockEndless::default() }),
         structures: vec!["Structures/Dungeon.structure".into()],
         ..BlockGenerate::default()
     });

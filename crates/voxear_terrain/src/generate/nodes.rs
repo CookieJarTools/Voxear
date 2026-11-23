@@ -45,6 +45,7 @@ mod terrace;
 #[cfg(test)]
 pub(crate) mod testing;
 mod warp;
+mod world_edge;
 
 mod arches;
 mod cave_network;
@@ -74,6 +75,7 @@ pub use gullies::Gullies;
 pub use height_mask::HeightMask;
 pub use landmass::Land;
 pub use painted_map::{PaintedMapKind, PaintedMapNode};
+pub use world_edge::{EdgeShape, WorldEdge};
 pub use levels::Levels;
 pub use math::{Math, Operation};
 pub use noise::Noise;
@@ -371,6 +373,8 @@ pub enum NodeKind {
     Peaks(Peaks),
     #[serde(rename = "painted_map")]
     PaintedMap(PaintedMapNode),
+    #[serde(rename = "world_edge")]
+    WorldEdge(WorldEdge),
 }
 
 /// What a mask wired in as a program of its own (see
@@ -424,6 +428,7 @@ macro_rules! each_kind {
             NodeKind::Roof($kind) => $do,
             NodeKind::Peaks($kind) => $do,
             NodeKind::PaintedMap($kind) => $do,
+            NodeKind::WorldEdge($kind) => $do,
         }
     };
 }
@@ -451,6 +456,7 @@ impl NodeKind {
             NodeKind::Chasms(Chasms::default()),
             NodeKind::Rivers(Rivers::default()),
             NodeKind::Clamp(Clamp::default()),
+            NodeKind::WorldEdge(WorldEdge::default()),
             NodeKind::Math(Math::default()),
             NodeKind::Blend(Blend::default()),
             NodeKind::Warp(Bend::default()),

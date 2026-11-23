@@ -62,7 +62,7 @@ fn sea_over(land: Landmass, rules: &str) -> tempfile::TempDir {
         bottom: -4,
         caves: 0.0,
         sea: water,
-        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     let scene = format!(
@@ -256,7 +256,7 @@ fn sea_bed(celsius: f32, deep: f32) -> tempfile::TempDir {
         bottom: -8,
         caves: 0.0,
         sea: water,
-        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0, ..BlockEndless::default() }),
         ..BlockGenerate::default()
     });
     let flat = voxear_core::curve::Curve::flat;

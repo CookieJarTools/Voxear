@@ -55,7 +55,7 @@ const VERSION: u8 = 1;
 
 /// The way tiles are made, counted up when it changes, so tiles kept on
 /// disk made another way are made again (see `stream::BlockMaking`).
-pub const MADE_AS: u32 = 5;
+pub const MADE_AS: u32 = 6;
 
 /// How the sea of `block`, its top `top` blocks up, stands at block `y` of
 /// a far tile's column whose ground's surface is `surface`: as `Sea::at`
@@ -78,6 +78,33 @@ const SIDE: usize = CHUNK as usize;
 const LAYERS_SHOWN: i32 = 512;
 
 impl FarTile {
+    /// Takes out every column lying past `limit` blocks of the world's own
+    /// along x and z from its corner, or under the corner, where nothing lies
+    /// past a world's edge; none where there is no limit.
+    pub fn keep_within(&mut self, limit: Option<[u32; 2]>) {
+        let Some(limit) = limit else { return };
+        let scale = 1i64 << self.level.min(16);
+        let side = SIDE as i64;
+        let outside = |at: usize| {
+            let block = [at as i64 % side, at as i64 / side];
+            (0..2).any(|axis| {
+                let first = (self.at[axis] as i64 * side + block[axis]) * scale;
+                first + scale <= 0 || first >= i64::from(limit[axis])
+            })
+        };
+        if !(0..SIDE * SIDE).any(outside) {
+            return;
+        }
+        let (mut starts, mut runs) = (vec![0u32], Vec::new());
+        for at in 0..SIDE * SIDE {
+            if !outside(at) {
+                runs.extend_from_slice(&self.runs[self.starts[at] as usize..self.starts[at + 1] as usize]);
+            }
+            starts.push(runs.len() as u32);
+        }
+        (self.starts, self.runs) = (starts, runs);
+    }
+
     /// The runs of column `[x, z]`, lowest first.
     pub fn column(&self, [x, z]: [u32; 2]) -> &[Run] {
         let at = z as usize * SIDE + x as usize;
@@ -263,6 +290,18 @@ pub fn far_tile_from(
     let scale = (1u32 << level.min(16)) as f32;
     let size = file.block_size.max(0.01) * scale;
     let side = CHUNK as i32;
+    // A tile wholly past a world's edge with nothing past it is empty: nothing is asked of the generator for it.
+    if let Some(limit) = generate.endless.and_then(|endless| endless.limit()) {
+        let span = i64::from(CHUNK) << level.min(16);
+        let past = (0..2).any(|axis| {
+            let first = at[axis] as i64 * span;
+            first + span <= 0 || first >= i64::from(limit[axis])
+        });
+        if past {
+            let (surfaces, starts) = (vec![0.0; SIDE * SIDE], vec![0; SIDE * SIDE + 1]);
+            return FarTile { level, at, sea: (AIR, 0.0), surfaces, starts, runs: Vec::new() };
+        }
+    }
     let source = source(generate, world, file.block_size.max(0.01));
     let world = source.world();
     let Asked { xs, zs, heights, columns, waters } = asked.unwrap_or_else(|| {
@@ -373,6 +412,8 @@ pub fn far_tile_from(
             tile.add(place, low, lowest.min(high + 1), block);
         }
     }
+    // Nothing past a world's edge, where it says so.
+    tile.keep_within(generate.endless.and_then(|endless| endless.limit()));
     tile
 }
 

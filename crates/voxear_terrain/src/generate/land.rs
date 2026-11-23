@@ -180,6 +180,17 @@ pub struct Shaped {
     levels: Option<NodeId>,
 }
 
+impl Shaped {
+    /// The same land, each biome's mask put through `mask` first: kept to
+    /// a world's edge, as its pillars, bridges and overhangs then are.
+    pub fn masked_by(mut self, mut mask: impl FnMut(NodeId) -> NodeId) -> Self {
+        for (_, at) in &mut self.masks {
+            *at = mask(*at);
+        }
+        self
+    }
+}
+
 /// Ground round a place the land keeps clear of: its middle, in metres in
 /// the generator's world, and how far round it the generator's own ground
 /// is kept whole. The land rises over as far again past that.

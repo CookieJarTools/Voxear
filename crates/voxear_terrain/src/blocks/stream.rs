@@ -167,6 +167,8 @@ impl BlockMaking {
         for built in self.far_built.iter().filter(|built| built.from_level().max(1) <= level) {
             built.build(self, tile);
         }
+        // Nothing built past a world's edge where nothing lies past it.
+        tile.keep_within(self.generate.endless.and_then(|endless| endless.limit()));
     }
 
     /// The folder its far view's tiles are kept in, named by what they are
@@ -2721,5 +2723,50 @@ mod tests {
                 assert!(same || *key == edited, "{key:?} made again, smooth: {smooth}");
             }
         }
+    }
+
+    #[test]
+    fn a_world_streamed_to_a_set_size_ends_in_sea_cliffs_or_nothing() {
+        use super::super::generate::{BlockEndless, WorldEdgeKind, ground_generator};
+        let with = |edge: WorldEdgeKind| {
+            let mut making = making();
+            let endless = BlockEndless { size: Some([256, 256]), edge, edge_width: 64.0, ..BlockEndless::default() };
+            making.generate.endless = Some(endless);
+            making.file.generate = Some(making.generate.clone());
+            making
+        };
+        // The world is 512 m a side, from its corner at the generator's position.
+        let sea_making = with(WorldEdgeKind::Sea);
+        let height = |making: &BlockMaking, [x, z]: [f32; 2]| {
+            let ground = ground_generator(&making.generate, &making.world, making.file.block_size);
+            ground.height_at(making.generate.position[0] + x, making.generate.position[1] + z)
+        };
+        let sea = sea_making.world.sea_level();
+        let bare = making();
+        let inside = [256.0, 256.0];
+        assert_eq!(height(&sea_making, inside), height(&bare, inside), "inside, the generator's ground");
+        for past in [[700.0, 256.0], [256.0, -300.0], [-90.0, -90.0]] {
+            let deep = height(&sea_making, past);
+            assert!(deep <= sea - 39.9, "sea bed past the edge at {past:?}: {deep} under a sea at {sea}");
+        }
+        let cliffs = with(WorldEdgeKind::Cliffs);
+        assert!(height(&cliffs, [700.0, 256.0]) >= sea + 159.9, "cliffs past the edge");
+        assert_eq!(height(&cliffs, inside), height(&bare, inside));
+        // Past a Nothing edge no chunk is made, nor any of the far view; inside, as without an edge.
+        let nothing = with(WorldEdgeKind::Nothing);
+        let (file, generate, world) = (&nothing.file, &nothing.generate, &nothing.world);
+        let column = |at: [i32; 2]| super::super::generate::column_chunks_asking(file, generate, world, 0, at, None);
+        // Its 256 blocks are eight chunk columns a side.
+        assert!(!column([0, 0]).is_empty() && !column([7, 7]).is_empty());
+        assert!(column([8, 0]).is_empty() && column([-1, 2]).is_empty() && column([2, 9]).is_empty());
+        let tile = far_tile(file, generate, world, 2, [2, 0]);
+        assert!((0..CHUNK).all(|z| (0..CHUNK).all(|x| tile.column([x, z]).is_empty())), "a tile wholly past it");
+        // Level 4 cells are sixteen blocks: sixteen of them along each side reach the edge.
+        let half = far_tile(file, generate, world, 4, [0, 0]);
+        let shown = |x: u32| (0..16).any(|z| !half.column([x, z]).is_empty());
+        assert!(shown(0) && shown(15) && !shown(16) && !shown(31), "only its columns within");
+        assert!(!(0..16).any(|x| !half.column([x, 20]).is_empty()), "nor past it along z");
+        // And the sea's own height is the same whatever lies past the edge.
+        assert_eq!(height(&nothing, inside), height(&bare, inside));
     }
 }

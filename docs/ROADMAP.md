@@ -2092,7 +2092,8 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 ## M6 — Animation (in progress)
 
 - [x] GPU skinning, and an Animator playing clips from any model file whose skeleton names its bones as the model's
-  does, with root motion; a change of clip never pops (inertialisation)
+  does, with root motion; a change of clip never pops (inertialisation). C#: `Obj.Animator` and `Obj.AddAnimator()`,
+  its clip, speed, looping, `BlendTime` and root motion, `Play` and `Stop`; a script's field can name an Animator
 - [x] motion matching: Motion Sets of states and their clips, the feature database, and a Motion Matcher that
   searches it for how the character is wanted to move and blends the best matches
 - [x] Actions: clips played once over a state's, on the whole body or a part of it
@@ -4377,6 +4378,11 @@ Done:
   passes write each pixel's surface id beside its normal (a model's material, a block face's look and what it is, a
   terrain's), only while a worn pack reads them, the depth pipelines made again with the target. A built game reads
   the files a pack's programs include of its own, as deep as they go.
+- **The sun's shadow in a pass.** `reads = ["shadow"]` gives a pass `sunVisibility(position, reach)`, how much of the
+  sun reaches any point, and `sunShadowsReach`; Radiant's sunbeams now come through tree crowns and past models and
+  characters, in worlds with no block light too.
+- **Wind-bent models in a pack's program.** `MODEL_PLANT`, `bend` and a `through` shadow looked up towards the sun on
+  `ModelSurface`; Radiant lights grass made of boxes through as it does foliage.
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)

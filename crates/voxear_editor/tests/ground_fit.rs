@@ -443,3 +443,96 @@ fn a_streamed_world_is_given_a_set_size_and_what_lies_past_its_edge_through_the_
     done(&mut editor, &mut renderer, "field.set", set("set_size", json!(false)));
     assert_eq!(endless(&editor).size, None, "without end again");
 }
+
+#[test]
+fn a_new_flat_world_made_twenty_kilometres_across_streams_and_keeps_blocks_built_far_out() {
+    use voxear_terrain::blocks::generate::WorldEdgeKind;
+    let Some((dir, mut renderer, mut editor)) = open() else { return };
+    let made = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "Big", "position": [0.0, 400.0, 0.0] }),
+    );
+    let obj = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": obj, "component": "block_world" }));
+    let set = json!({ "obj": obj, "component": "block_world", "field": "ground_size", "value": [20000.0, 20000.0] });
+    done(&mut editor, &mut renderer, "field.set", set);
+    let big = {
+        let objs = editor.game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        objs.into_iter().find(|(_, name)| name.0 == "Big").map(|(obj, _)| obj).unwrap()
+    };
+    let asset =
+        |editor: &Editor| editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(big).unwrap().clone();
+    // Too large to be made whole: streamed, ground made flat by a generator of its own beside it.
+    let generate = asset(&editor).file.generate.clone().expect("generated now");
+    let endless = generate.endless.expect("streamed");
+    assert_eq!((endless.size, endless.edge), (Some([20000, 20000]), WorldEdgeKind::Nothing));
+    let path = editor.game.content.db().get(asset(&editor).guid).unwrap().path.clone();
+    let folder = dir.path().join("Fits");
+    let generator = path.trim_end_matches(".blockworld").to_string() + " Flat.worldgen";
+    assert!(folder.join(&generator).exists(), "{generator}");
+    // Far out, 15 km from its corner, its ground is made where the Scene view looks, flat at its height.
+    let far = [15000.5f32, 0.0, 15000.5];
+    done(
+        &mut editor,
+        &mut renderer,
+        "view.set",
+        json!({ "position": [far[0], 430.0, far[2] - 20.0], "look_at": [far[0], 408.0, far[2]] }),
+    );
+    let began = Instant::now();
+    let top = loop {
+        frames(&mut editor, &mut renderer, 5);
+        let ground =
+            done(&mut editor, &mut renderer, "blocks.get", json!({ "at": [far[0], 407.5, far[2]], "obj": obj }));
+        if ground["block"].is_string() || ground["block"].is_object() {
+            break ground;
+        }
+        assert!(began.elapsed() < PATIENCE, "no ground made far out: {ground}");
+    };
+    let air = done(&mut editor, &mut renderer, "blocks.get", json!({ "at": [far[0], 408.5, far[2]], "obj": obj }));
+    assert!(air["block"].is_null(), "flat at 8 blocks: {top} under {air}");
+    // A block built there by hand, saved, is kept as the world's own.
+    let stone = json!({ "path": "Blocks/Buildings/Stone Bricks.block" });
+    done(
+        &mut editor,
+        &mut renderer,
+        "blocks.set",
+        json!({ "at": [far[0], 408.5, far[2]], "block": stone, "obj": obj }),
+    );
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let built = done(&mut editor, &mut renderer, "blocks.get", json!({ "at": [far[0], 408.5, far[2]], "obj": obj }));
+    assert!(!built["block"].is_null(), "{built}");
+    // Gone from as the view goes 10 km off, and back as it comes again.
+    let at_far = |editor: &mut Editor, renderer: &mut Renderer| {
+        done(editor, renderer, "blocks.get", json!({ "at": [far[0], 408.5, far[2]], "obj": obj }))["block"].clone()
+    };
+    done(
+        &mut editor,
+        &mut renderer,
+        "view.set",
+        json!({ "position": [5000.0, 430.0, 5000.0], "look_at": [5000.0, 408.0, 5020.0] }),
+    );
+    let began = Instant::now();
+    while !at_far(&mut editor, &mut renderer).is_null() {
+        frames(&mut editor, &mut renderer, 5);
+        assert!(began.elapsed() < PATIENCE, "the far column never let go");
+    }
+    done(
+        &mut editor,
+        &mut renderer,
+        "view.set",
+        json!({ "position": [far[0], 430.0, far[2] - 20.0], "look_at": [far[0], 408.0, far[2]] }),
+    );
+    let began = Instant::now();
+    while at_far(&mut editor, &mut renderer) != built["block"] {
+        frames(&mut editor, &mut renderer, 5);
+        assert!(began.elapsed() < PATIENCE, "the block built by hand did not come back");
+    }
+    let saved: Vec<String> = std::fs::read_dir(folder.join(path.rsplit_once('/').map_or("", |(f, _)| f)))
+        .unwrap()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with(path.rsplit('/').next().unwrap().trim_end_matches(".blockworld")))
+        .collect();
+    assert!(saved.iter().any(|name| name.ends_with(".blocks")), "its changes written beside it: {saved:?}");
+}

@@ -3928,7 +3928,10 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   structures and rivers keep to them, the biomes' pillars stop at the coast, and the edge wanders. Inspector rows
   under Endless, reachable through `field.set`. Tests: the node's sea bed, ledges and inside; a world's ground past
   each edge, no chunk or far tile past a Nothing edge; editor calls setting and undoing them. Manual: Block Worlds ▸
-  A set size, Generator Nodes ▸ World Edge.
+  A set size, Generator Nodes ▸ World Edge. Flat ground streams too: **Streamed**, or a Ground Size past 4096, gives
+  the world a flat generator of its own beside its file and streams it to its size, so a new world can be 20 km
+  across and built on by hand anywhere (tested: made 20 km across, a block built 15 km out kept as the view leaves
+  and comes back).
 
 ## M9 — Navigation, cameras and Timeline (in progress)
 

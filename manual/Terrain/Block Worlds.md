@@ -180,7 +180,9 @@ A world without end can be as large as you like and still end. Tick **Set size**
 
 The edge wanders in and out by up to half its width, so a coast or a wall of cliffs is no ruled line. A sea or cliffs edge is the generator's own ground (see [[Generator Nodes#World Edge|World Edge]]), so the far view, the map, structures and rivers all keep to it, and the biomes' pillars and arches stop at the coast. Players can walk off a Nothing edge: keep them in with your own wall, or with cliffs.
 
-A world of a set size that is not streamed, with **Endless** off, is made whole when it loads and reaches 4096 blocks a side at most.
+Flat ground can be as large as you like too. Under **Settings**, tick **Streamed**, or give **Ground size** more than 4096 blocks a side: the world gets a generator of its own beside its file, `<world> Flat.worldgen`, that makes the same flat ground at its height, and it is streamed to its size with nothing past its edge. Its Top, Under and Base blocks stay its own. Build on it anywhere: what you build is kept as the world's changes, written beside it as you save, and comes back as you come near again. Edit its generator to give the flat ground hills later.
+
+Ground that is not streamed, flat or generated with **Endless** off, is made whole when it loads and reaches 4096 blocks a side at most.
 
 Beyond its view distance, it is drawn in rings of coarser blocks, each ring's blocks twice as large as the one inside it, so mountains stand on the horizon at a fraction of the cost. A coarse ring shows the ground until the finer one inside it is drawn, and never where it is. Only its own blocks near the camera can be built on and stood on.
 

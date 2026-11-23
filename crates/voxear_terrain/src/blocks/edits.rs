@@ -12,15 +12,24 @@
 //! metres: each block of the new size whose middle lies in a changed block
 //! takes that block ([`resized`]).
 //!
-//! As bytes: `VXBLOCKS`, its version, then the rest compressed: how many
-//! chunks, and each chunk's place, whether it is its blocks one by one,
-//! whole, or its blocks one by one with how full each is, and then either
-//! how many and each block's place in the chunk and number (and fill), or
-//! its palette, bits and words (see `chunk::Chunk::parts`), and whether its
-//! fills follow, a byte a block; then how many links from a lever or a
-//! button to the blocks it drives (see `usable`), each where it is from
-//! and how far to what it drives, a byte each way. Version 1 had no fills,
-//! version 2 no links.
+//! As bytes: `VXBLOCKS`, its version, then the rest compressed with zstd:
+//! how many chunks, and each chunk's place, whether it is its blocks one by
+//! one, whole, or its blocks one by one with how full each is, and then
+//! either its runs, or its palette, bits and words (see
+//! `chunk::Chunk::parts`) and whether its fills follow, a byte a block; then
+//! how many links from a lever or a button to the blocks it drives (see
+//! `usable`), each where it is from and how far to what it drives, a byte
+//! each way. A run is blocks one after another in the chunk's order, along
+//! x, then z, then up, all set to one block (and fill): how many blocks
+//! after the last run it starts, how many it is and its block, each in as
+//! few bytes as it takes (seven bits a byte, the eighth saying more
+//! follow). Walls, floors and fills are a few runs where they were
+//! thousands of blocks: a hand-built town of 2.5 million changed blocks
+//! went from 10 MB to 42 KB.
+//!
+//! Version 4 and before were compressed with lz4 and listed each block
+//! with its place, two bytes each; version 1 had no fills, version 2 no
+//! links. All are read.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,7 +44,71 @@ const MAGIC: &[u8; 8] = b"VXBLOCKS";
 /// The format this version writes. 4 is 3's, written once dungeons went into
 /// dimensions of their own: changes of an older file may lie in a dungeon
 /// that was under the land and is rock now.
-pub const VERSION: u32 = 4;
+/// 5 keeps blocks one by one as runs, compressed with zstd.
+pub const VERSION: u32 = 5;
+
+/// How hard changes are compressed: zstd's usual level, quick both ways.
+const LEVEL: i32 = 3;
+
+/// Writes `chunk` whole: its palette, bits and words, and whether its fills
+/// follow, a byte a block.
+fn put_whole(body: &mut Vec<u8>, chunk: &Chunk) {
+    let (palette, bits, words) = chunk.parts();
+    body.extend((palette.len() as u16).to_le_bytes());
+    palette.iter().for_each(|block| body.extend(block.to_le_bytes()));
+    body.push(bits as u8);
+    words.iter().for_each(|word| body.extend(word.to_le_bytes()));
+    match chunk.fills() {
+        Some(fills) => {
+            body.push(1);
+            body.extend(fills);
+        }
+        None => body.push(0),
+    }
+}
+
+/// Writes `value` in as few bytes as it takes, seven bits a byte, the
+/// eighth saying another follows.
+fn put_varint(bytes: &mut Vec<u8>, mut value: u32) {
+    loop {
+        let low = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            bytes.push(low);
+            return;
+        }
+        bytes.push(low | 0x80);
+    }
+}
+
+/// The runs of `list`, blocks one after another in a chunk's order all of
+/// one value, by place: each where it starts, how many it is, its value.
+/// Sorted first where it is not, the last of a place kept, as applying it
+/// would.
+fn runs_of<T: Copy + PartialEq>(list: &[(u16, T)]) -> Vec<(u16, u32, T)> {
+    let sorted = list.windows(2).all(|pair| pair[0].0 < pair[1].0);
+    let owned;
+    let list = if sorted {
+        list
+    } else {
+        let mut by_place: BTreeMap<u16, T> = BTreeMap::new();
+        for &(index, value) in list {
+            by_place.insert(index, value);
+        }
+        owned = by_place.into_iter().collect::<Vec<_>>();
+        &owned[..]
+    };
+    let mut runs: Vec<(u16, u32, T)> = Vec::new();
+    for &(index, value) in list {
+        match runs.last_mut() {
+            Some((start, count, kept)) if u32::from(*start) + *count == u32::from(index) && *kept == value => {
+                *count += 1
+            }
+            _ => runs.push((index, 1, value)),
+        }
+    }
+    runs
+}
 
 /// The version of the changes `bytes` hold, where they are changes.
 pub fn version_of(bytes: &[u8]) -> Option<u32> {
@@ -434,6 +507,55 @@ impl BlockEdits {
             match change {
                 ChunkChange::Blocks(changed) => {
                     body.push(0);
+                    let runs = runs_of(changed);
+                    put_varint(&mut body, runs.len() as u32);
+                    let mut after = 0u32;
+                    for (start, count, block) in runs {
+                        put_varint(&mut body, u32::from(start) - after);
+                        put_varint(&mut body, count);
+                        put_varint(&mut body, u32::from(block));
+                        after = u32::from(start) + count;
+                    }
+                }
+                ChunkChange::Whole(chunk) => {
+                    body.push(1);
+                    put_whole(&mut body, chunk);
+                }
+                ChunkChange::Cells(changed) => {
+                    body.push(2);
+                    let pairs: Vec<(u16, (BlockId, Fill))> =
+                        changed.iter().map(|&(index, block, fill)| (index, (block, fill))).collect();
+                    let runs = runs_of(&pairs);
+                    put_varint(&mut body, runs.len() as u32);
+                    let mut after = 0u32;
+                    for (start, count, (block, fill)) in runs {
+                        put_varint(&mut body, u32::from(start) - after);
+                        put_varint(&mut body, count);
+                        put_varint(&mut body, u32::from(block));
+                        body.push(fill);
+                        after = u32::from(start) + count;
+                    }
+                }
+            }
+        }
+        self.put_links(&mut body);
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend(VERSION.to_le_bytes());
+        bytes.extend(zstd::encode_all(&body[..], LEVEL).expect("compressing in memory"));
+        bytes
+    }
+
+    /// The bytes version 4 wrote, its blocks one by one and compressed with
+    /// lz4, marked as of `version` (1 to 4): for testing how older files
+    /// are read.
+    pub fn to_bytes_as(&self, version: u32) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend((self.chunks.len() as u32).to_le_bytes());
+        for (key, change) in &self.chunks {
+            key.iter().for_each(|v| body.extend(v.to_le_bytes()));
+            match change {
+                ChunkChange::Blocks(changed) => {
+                    body.push(0);
                     body.extend((changed.len() as u32).to_le_bytes());
                     for &(index, block) in changed {
                         body.extend(index.to_le_bytes());
@@ -441,19 +563,8 @@ impl BlockEdits {
                     }
                 }
                 ChunkChange::Whole(chunk) => {
-                    let (palette, bits, words) = chunk.parts();
                     body.push(1);
-                    body.extend((palette.len() as u16).to_le_bytes());
-                    palette.iter().for_each(|block| body.extend(block.to_le_bytes()));
-                    body.push(bits as u8);
-                    words.iter().for_each(|word| body.extend(word.to_le_bytes()));
-                    match chunk.fills() {
-                        Some(fills) => {
-                            body.push(1);
-                            body.extend(fills);
-                        }
-                        None => body.push(0),
-                    }
+                    put_whole(&mut body, chunk);
                 }
                 ChunkChange::Cells(changed) => {
                     body.push(2);
@@ -466,45 +577,52 @@ impl BlockEdits {
                 }
             }
         }
-        // Each link where it is from, and how far to what it drives, a byte each way.
+        self.put_links(&mut body);
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend(version.clamp(1, 4).to_le_bytes());
+        bytes.extend(lz4_flex::compress_prepend_size(&body));
+        bytes
+    }
+
+    /// Each link where it is from, and how far to what it drives, a byte
+    /// each way.
+    fn put_links(&self, body: &mut Vec<u8>) {
         let links: Vec<_> = self.links.iter().filter(|(from, to)| (0..3).all(|i| (to[i] - from[i]).abs() <= 127)).collect();
         body.extend((links.len() as u32).to_le_bytes());
         for (from, to) in links {
             from.iter().for_each(|v| body.extend(v.to_le_bytes()));
             body.extend((0..3).map(|i| (to[i] - from[i]) as i8 as u8));
         }
-        let mut bytes = MAGIC.to_vec();
-        bytes.extend(VERSION.to_le_bytes());
-        bytes.extend(lz4_flex::compress_prepend_size(&body));
-        bytes
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         ensure!(bytes.len() >= 12 && &bytes[..8] == MAGIC, "not a file of block changes");
         let version = u32::from_le_bytes(bytes[8..12].try_into().expect("four bytes"));
         ensure!((1..=VERSION).contains(&version), "block changes of version {version}, past {VERSION}");
-        let body = lz4_flex::decompress_size_prepended(&bytes[12..]).context("its changes do not decompress")?;
-        let mut at = 0usize;
-        let mut take = |count: usize| -> Result<&[u8]> {
-            let taken = body.get(at..at + count).context("the changes end early")?;
-            at += count;
-            Ok(taken)
+        let body = match version {
+            5.. => zstd::decode_all(&bytes[12..]).context("its changes do not decompress")?,
+            _ => lz4_flex::decompress_size_prepended(&bytes[12..]).context("its changes do not decompress")?,
         };
+        let mut read = Reader { bytes: &body, at: 0 };
         let word = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("four bytes"));
-        let count = word(take(4)?);
+        let count = word(read.take(4)?);
         let mut chunks = BTreeMap::new();
         for _ in 0..count {
             let mut key = [0i32; 3];
             for v in &mut key {
-                *v = i32::from_le_bytes(take(4)?.try_into().expect("four bytes"));
+                *v = i32::from_le_bytes(read.take(4)?.try_into().expect("four bytes"));
             }
-            let change = match take(1)?[0] {
+            let change = match read.take(1)?[0] {
+                0 if version >= 5 => {
+                    ChunkChange::Blocks(read.runs(false)?.into_iter().map(|(index, block, _)| (index, block)).collect())
+                }
+                2 if version >= 5 => ChunkChange::Cells(read.runs(true)?),
                 0 => {
-                    let changed = word(take(4)?) as usize;
+                    let changed = word(read.take(4)?) as usize;
                     ensure!(changed <= CHUNK_LEN, "more changes than a chunk has blocks");
                     let mut list = Vec::with_capacity(changed);
                     for _ in 0..changed {
-                        let pair = take(4)?;
+                        let pair = read.take(4)?;
                         let index = u16::from_le_bytes([pair[0], pair[1]]);
                         ensure!(usize::from(index) < CHUNK_LEN, "a block past its chunk");
                         list.push((index, u16::from_le_bytes([pair[2], pair[3]])));
@@ -512,30 +630,30 @@ impl BlockEdits {
                     ChunkChange::Blocks(list)
                 }
                 1 => {
-                    let entries = u16::from_le_bytes(take(2)?.try_into().expect("two bytes")) as usize;
+                    let entries = u16::from_le_bytes(read.take(2)?.try_into().expect("two bytes")) as usize;
                     let palette = (0..entries)
-                        .map(|_| Ok(u16::from_le_bytes(take(2)?.try_into().expect("two bytes"))))
+                        .map(|_| Ok(u16::from_le_bytes(read.take(2)?.try_into().expect("two bytes"))))
                         .collect::<Result<Vec<_>>>()?;
-                    let bits = u32::from(take(1)?[0]);
+                    let bits = u32::from(read.take(1)?[0]);
                     let words = if bits == 0 { 0 } else { CHUNK_LEN.div_ceil((64 / bits.max(1)) as usize) };
                     let words = (0..words)
-                        .map(|_| Ok(u64::from_le_bytes(take(8)?.try_into().expect("eight bytes"))))
+                        .map(|_| Ok(u64::from_le_bytes(read.take(8)?.try_into().expect("eight bytes"))))
                         .collect::<Result<Vec<_>>>()?;
                     let chunk = Chunk::from_parts(palette, bits, words).context("a chunk that is not one")?;
-                    match version >= 2 && take(1)?[0] == 1 {
+                    match version >= 2 && read.take(1)?[0] == 1 {
                         true => {
-                            let fills = take(CHUNK_LEN)?.to_vec();
+                            let fills = read.take(CHUNK_LEN)?.to_vec();
                             ChunkChange::Whole(chunk.with_fills(fills).context("fills that are not its blocks'")?)
                         }
                         false => ChunkChange::Whole(chunk),
                     }
                 }
                 2 => {
-                    let changed = word(take(4)?) as usize;
+                    let changed = word(read.take(4)?) as usize;
                     ensure!(changed <= CHUNK_LEN, "more changes than a chunk has blocks");
                     let mut list = Vec::with_capacity(changed);
                     for _ in 0..changed {
-                        let cell = take(5)?;
+                        let cell = read.take(5)?;
                         let index = u16::from_le_bytes([cell[0], cell[1]]);
                         ensure!(usize::from(index) < CHUNK_LEN, "a block past its chunk");
                         list.push((index, u16::from_le_bytes([cell[2], cell[3]]), cell[4]));
@@ -548,13 +666,13 @@ impl BlockEdits {
         }
         let mut links = Vec::new();
         if version >= 3 {
-            let count = word(take(4)?);
+            let count = word(read.take(4)?);
             for _ in 0..count {
                 let mut from = [0i32; 3];
                 for v in &mut from {
-                    *v = i32::from_le_bytes(take(4)?.try_into().expect("four bytes"));
+                    *v = i32::from_le_bytes(read.take(4)?.try_into().expect("four bytes"));
                 }
-                let by = take(3)?;
+                let by = read.take(3)?;
                 links.push((from, std::array::from_fn(|i| from[i] + i32::from(by[i] as i8))));
             }
         }
@@ -568,6 +686,54 @@ pub fn blocks_file(world: &str) -> String {
     match world.strip_suffix(".blockworld") {
         Some(stem) => format!("{stem}.blocks"),
         None => format!("{world}.blocks"),
+    }
+}
+
+/// Reads changes' bytes from the start.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, count: usize) -> Result<&'a [u8]> {
+        let taken = self.bytes.get(self.at..self.at + count).context("the changes end early")?;
+        self.at += count;
+        Ok(taken)
+    }
+
+    /// A number in as few bytes as it takes (see `put_varint`).
+    fn varint(&mut self) -> Result<u32> {
+        let mut value = 0u32;
+        for shift in (0..35).step_by(7) {
+            let byte = self.take(1)?[0];
+            value |= u32::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Ok(value);
+            }
+        }
+        bail!("a number too long")
+    }
+
+    /// A chunk's runs, each block one by one with its fill: read where
+    /// `fills` says the runs keep them, whole where not.
+    fn runs(&mut self, fills: bool) -> Result<Vec<(u16, BlockId, Fill)>> {
+        let count = self.varint()? as usize;
+        ensure!(count <= CHUNK_LEN, "more runs than a chunk has blocks");
+        let mut list = Vec::new();
+        let mut after = 0usize;
+        for _ in 0..count {
+            let start = after + self.varint()? as usize;
+            let length = self.varint()? as usize;
+            let block = self.varint()?;
+            ensure!(block <= u32::from(BlockId::MAX), "a block past those there are");
+            let block = block as BlockId;
+            let fill = if fills { self.take(1)?[0] } else if block == AIR { EMPTY } else { FULL };
+            ensure!(length > 0 && start + length <= CHUNK_LEN, "a run past its chunk");
+            list.extend((start..start + length).map(|index| (index as u16, block, fill)));
+            after = start + length;
+        }
+        Ok(list)
     }
 }
 
@@ -740,6 +906,68 @@ mod tests {
         assert!(
             matches!(BlockEdits::from_bytes(&old).unwrap().chunks[&[0, 0, 0]], ChunkChange::Blocks(ref list) if list == &[(7, AIR)])
         );
+    }
+
+    #[test]
+    fn walls_and_floors_are_kept_as_runs_far_smaller_and_every_older_version_reads_the_same() {
+        // A house: a floor 20 by 20, four walls 6 high of another block, a door cut out, over two chunks.
+        let mut now = BlockMap::default();
+        for z in 20..40 {
+            for x in 20..40 {
+                now.set([x, 10, z], 4);
+            }
+        }
+        for y in 11..17 {
+            for i in 20..40 {
+                for at in [[i, y, 20], [i, y, 39], [20, y, i], [39, y, i]] {
+                    now.set(at, 5);
+                }
+            }
+        }
+        now.set([30, 11, 20], AIR);
+        now.set([30, 12, 20], AIR);
+        let mut edits = BlockEdits::between(&BlockMap::default(), &now);
+        edits.links = vec![([30, 11, 21], [30, 11, 20])];
+        assert!(edits.chunks.values().all(|change| matches!(change, ChunkChange::Blocks(_))));
+        let blocks: usize = edits.cells().len();
+        let bytes = edits.to_bytes();
+        assert_eq!(version_of(&bytes), Some(VERSION));
+        assert_eq!(BlockEdits::from_bytes(&bytes).unwrap(), edits);
+        // Four bytes a block before compressing, as version 4 wrote them; a few runs a row now.
+        let older = edits.to_bytes_as(4);
+        assert!(bytes.len() * 4 < older.len(), "{} bytes against {} for {blocks} blocks", bytes.len(), older.len());
+        for version in 1..=4 {
+            let older = edits.to_bytes_as(version);
+            assert_eq!(version_of(&older), Some(version));
+            let back = BlockEdits::from_bytes(&older).unwrap();
+            assert_eq!(back.chunks, edits.chunks, "version {version}");
+        }
+        // Smooth cells come back with their fills, as runs too.
+        let cells = BlockEdits::of_cells((0..40).map(|x| ([x, 3, 3], 2, if x < 20 { 200 } else { 255 })));
+        assert_eq!(BlockEdits::from_bytes(&cells.to_bytes()).unwrap(), cells);
+    }
+
+    #[test]
+    fn a_list_out_of_order_is_kept_in_order_the_last_of_a_place_winning_and_runs_past_a_chunk_are_refused() {
+        let mixed = BlockEdits {
+            chunks: [([0, 0, 0], ChunkChange::Blocks(vec![(9, 2), (3, 1), (4, 1), (9, 5)]))].into(),
+            links: Vec::new(),
+        };
+        let back = BlockEdits::from_bytes(&mixed.to_bytes()).unwrap();
+        assert_eq!(back.chunks[&[0, 0, 0]], ChunkChange::Blocks(vec![(3, 1), (4, 1), (9, 5)]));
+        // One run of a block reaching past the chunk's last block.
+        let mut body = 1u32.to_le_bytes().to_vec();
+        [0i32, 0, 0].iter().for_each(|v| body.extend(v.to_le_bytes()));
+        body.push(0);
+        body.push(1);
+        put_varint(&mut body, (CHUNK_LEN - 2) as u32);
+        put_varint(&mut body, 5);
+        put_varint(&mut body, 1);
+        body.extend(0u32.to_le_bytes());
+        let mut bad = MAGIC.to_vec();
+        bad.extend(VERSION.to_le_bytes());
+        bad.extend(zstd::encode_all(&body[..], 3).unwrap());
+        assert!(BlockEdits::from_bytes(&bad).is_err());
     }
 }
 

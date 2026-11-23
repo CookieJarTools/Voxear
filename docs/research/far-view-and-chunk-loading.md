@@ -240,6 +240,11 @@ zstd; hand edits are put in as each is read. On copies of CubeGame at Medium, ca
 What is read back is mostly making faces. The settled pictures match, cold against warm. These runs had a quieter
 machine than the first research (load 8–9), so the "made" times are lower than in the tables above.
 
+**Stage 4 is done.** `.blocks` version 5: blocks one by one as runs, zstd. Fantasy City's edits as saved, version 4:
+10,279,103 B, read in 4.6 ms. Version 5: 41,959 B, written in 5.3 ms, read in 3.7 ms, the same edits back. Scene saves
+and what goes to a player who joins use the same bytes. Older files are read and written as version 5 at the next
+save.
+
 Suggested order: 0, 4, 1, 2, then 3 and 5. Stage 0 and 4 are each a day or less. Stage 2 is what answers the user's
 question.
 

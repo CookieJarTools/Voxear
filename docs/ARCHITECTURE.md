@@ -4224,7 +4224,11 @@ blocks change size gets a new pool, and its old one is drawn until the new one h
 world too large to make again within a frame is made on other threads and shown as it was until then
 (`block_props::Making`). A change remakes
 the chunks it reaches and those beside it it shades, on every core; changes are kept as what differs from what a
-world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts'.
+world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts', and sent
+so to players who join. Since version 5 a chunk's blocks one by one are kept as runs along the chunk's order (x, then
+z, then up), each its start after the last, its length and its block as varints (and its fill, for smooth ground),
+and the whole compressed with zstd: Fantasy City's 2.56 M changed blocks went from 10.3 MB (lz4, four bytes a block)
+to 42 KB, read in 3.7 ms. Versions 1–4 are still read; `BlockEdits::to_bytes_as` writes them for tests.
 Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, and from its
 Volume how far into the ground each block is, which pushes cliffs in and out and hollows caves; a generator with no
 Volume has the world's own overhangs and caves wired into a copy of its graph as the nodes that make them, so both

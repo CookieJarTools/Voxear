@@ -3853,6 +3853,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Tests: records read by stamp, the last kept read, a region written afresh, a spoilt record not read, chunks kept
     whole; the rings kept on disk and read back, a tower kept in a tile, a tower built near shown in kept rings.
     Next: stage 4 (compact edits) or stage 2 (baked far levels for the whole world).
+  - ~~**Stage 4:**~~ done. `.blocks` version 5: a chunk's blocks one by one kept as runs of one block along its
+    rows, varints, the whole in zstd; versions 1–4 still read. Fantasy City's hand-built town, 2.56 M blocks: 10.3 MB
+    → 42 KB, read in 3.7 ms. Saves of scenes and edits sent to players who join are as small. Tests: walls and floors
+    as runs, every older version read the same, smooth cells' fills, lists out of order, runs past a chunk refused.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

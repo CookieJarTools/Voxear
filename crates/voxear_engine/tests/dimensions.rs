@@ -787,8 +787,7 @@ fn a_change_saved_in_a_dungeon_under_the_land_goes_once_dungeons_are_in_dimensio
         let (key, index) = change(block);
         edits.chunks.insert(key, ChunkChange::Blocks(vec![(index, number)]));
     }
-    let mut bytes = edits.to_bytes();
-    bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
+    let bytes = edits.to_bytes_as(3);
     // The same world with its dungeons in dimensions of their own, those changes beside it.
     let moved = tempfile::tempdir().unwrap();
     write_dungeons(moved.path(), "own_dimension");

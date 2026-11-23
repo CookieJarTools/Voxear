@@ -3839,6 +3839,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the two last used. One in eight columns made at once kept for the rings at Medium. Tests: a making the same by
     its tables, tiles' folder kept across look changes, folders pruned, rings asked at eight at once. Next: stage 1,
     every level made kept on disk with what is built on it, for endless worlds and worlds of a set size alike.
+  - ~~**Stage 1:**~~ done. Every column a streamed world makes, endless or of a set size, is kept as made at every
+    level (its own blocks, rings 1–2 and the far tiles with trees and structures built in) in region files of 8×8
+    columns with zstd, each stamped with what it was made from; hand edits are put in as it is read. A column read
+    back costs 0.5–25 ms against 60–870 ms made; the Realm's whole Medium view came back in 12 s and the Islands' in
+    14 s (cold: 2 minutes and more), in 8–11 MB. The cache folder also folds in the biomes' and structures' contents.
+    Tests: records read by stamp, the last kept read, a region written afresh, a spoilt record not read, chunks kept
+    whole; the rings kept on disk and read back, a tower kept in a tile, a tower built near shown in kept rings.
+    Next: stage 4 (compact edits) or stage 2 (baked far levels for the whole world).
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

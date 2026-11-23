@@ -173,6 +173,33 @@ impl BlockMaking {
 
     /// The folder its far view's tiles are kept in, named by what they are
     /// made from, so a world made another way keeps its own.
+    /// A number for the paint over column `at` of `level`, a little past its
+    /// sides, which its generator reads: 0 where none is painted there.
+    fn painted_within(&self, level: u32, at: [i32; 2]) -> u64 {
+        self.generate.painted.0.as_ref().map_or(0, |painted| {
+            let span = CHUNK as f32 * self.file.block_size.max(0.01) * (1u32 << level.min(16)) as f32;
+            let corner =
+                [self.generate.position[0] + at[0] as f32 * span, self.generate.position[1] + at[1] as f32 * span];
+            let margin = 64.0;
+            painted.maps().hash_within([corner.map(|v| v - margin), corner.map(|v| v + span + margin)])
+        })
+    }
+
+    /// A number for everything a column `at` of `level` is made from
+    /// besides its ground, which its folder is named by (see
+    /// [`BlockMaking::far_tiles`]): what is built into its ring, the world's
+    /// layers where any reaches it, and the paint over it. A column kept
+    /// with another number is made again. `level` is 0 for the world's own
+    /// blocks, drawn or not.
+    fn kept_stamp(&self, level: u32, at: [i32; 2]) -> u64 {
+        let built = if level == 0 { 0 } else { self.built_stamp() };
+        let layers = self.generate.layers.get().filter(|layers| layers.reaches_level(level, at));
+        let layers = layers.map_or(0, super::world_layers::WorldLayers::hash);
+        let painted = self.painted_within(level, at);
+        let stamps = [built, layers, painted, u64::from(level)];
+        crate::layers::stable_hash(&stamps.map(u64::to_le_bytes).concat())
+    }
+
     /// Only what its ground is made from names it: how it is lit, how far it
     /// is drawn and how its blocks glow change no tile, so those are left out
     /// of the name, and changing them keeps the tiles.
@@ -189,11 +216,28 @@ impl BlockMaking {
         if let Some(endless) = ground.generate.as_mut().and_then(|generate| generate.endless.as_mut()) {
             (endless.distance, endless.far) = (0.0, 0.0);
         }
-        let made_from = format!("{}\n{:016x}\n{}", ground.to_text(), self.world.hash(), far::MADE_AS);
+        // And what its biomes and structures are, which its file names but does not hold: one edited is other ground.
+        let tables = self.file.generate.as_ref().map_or(String::new(), |generate| {
+            let biomes = generate.placed.as_ref().map(|placed| format!("{:?}{:?}", placed.biomes, placed.blocks));
+            let built = generate.built.as_ref().map(|built| format!("{:?}{:?}", built.list, built.turns));
+            format!("{biomes:?}{built:?}")
+        });
+        let tables = crate::layers::stable_hash(tables.as_bytes());
+        let made_from = format!(
+            "{}\n{:016x}\n{tables:016x}\n{}\n{}",
+            ground.to_text(),
+            self.world.hash(),
+            far::MADE_AS,
+            KEPT_AS
+        );
         let hash = crate::layers::stable_hash(made_from.as_bytes());
         self.far_folder.as_ref().map(|folder| folder.join(format!("{hash:016x}")))
     }
 }
+
+/// The way coarse columns are kept (see `kept`), counted up when it
+/// changes, so those kept another way are made again.
+const KEPT_AS: u32 = 1;
 
 /// How many folders of far tiles a world keeps besides the one it is made
 /// with now: those last used, so a setting tried and set back finds its
@@ -256,38 +300,16 @@ pub fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, lev
 }
 
 fn far_tile_bare(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
-    // Kept by the paint over it too, a little past its sides: a tile painted over is another tile.
-    let painted = making.generate.painted.0.as_ref().map_or(0, |painted| {
-        let span = CHUNK as f32 * making.file.block_size.max(0.01) * (1u32 << level.min(16)) as f32;
-        let corner =
-            [making.generate.position[0] + at[0] as f32 * span, making.generate.position[1] + at[1] as f32 * span];
-        let margin = 64.0;
-        painted.maps().hash_within([corner.map(|v| v - margin), corner.map(|v| v + span + margin)])
-    });
-    let name = match painted {
-        0 => format!("{level}_{}_{}.far", at[0], at[1]),
-        painted => format!("{level}_{}_{}_{painted:016x}.far", at[0], at[1]),
-    };
-    let path = folder.map(|folder| folder.join(name));
-    let read = path.as_ref().and_then(|path| std::fs::read(path).ok());
-    let kept = read.and_then(|bytes| FarTile::from_bytes(&bytes).ok());
+    // Kept by the paint over it too: a tile painted over is another tile.
+    let painted = making.painted_within(level, at);
+    let read = folder.and_then(|folder| super::kept::read(folder, super::kept::Kind::Ground, level, at, painted));
+    let kept = read.and_then(|bytes| FarTile::from_raw(&bytes).ok());
     if let Some(tile) = kept.filter(|tile| tile.level == level && tile.at == at) {
         return tile;
     }
     let tile = far_tile(&making.file, &making.generate, &making.world, level, at);
-    if let Some(path) = path {
-        // Written whole beside it, then put in its place, so a tile read as it is written is never half of one: by a
-        // name of this program's own, as two programs may make the same tile at once.
-        static WRITING: AtomicU64 = AtomicU64::new(0);
-        let writing = WRITING.fetch_add(1, Ordering::Relaxed);
-        let writing = path.with_extension(format!("far.{}.{writing}", std::process::id()));
-        let written = path.parent().map(std::fs::create_dir_all).transpose().and_then(|_| {
-            std::fs::write(&writing, tile.to_bytes())?;
-            std::fs::rename(&writing, &path)
-        });
-        if written.is_err() {
-            let _ = std::fs::remove_file(&writing);
-        }
+    if let Some(folder) = folder {
+        super::kept::write(folder, super::kept::Kind::Ground, level, at, painted, &tile.to_raw());
     }
     tile
 }
@@ -1376,10 +1398,30 @@ impl BlockStreamer {
             let stamp = making.made_stamp(if fine { FINE } else { level });
             crate::workers::spawn(move || {
                 if latest.load(Ordering::Acquire) == number {
+                    // As it was made before, with what is built on it, where it was kept made from the same things.
+                    let kept = far_tiles.as_deref().map(|folder| (folder, making.kept_stamp(level, at)));
+                    let read = kept.and_then(|(folder, stamp)| {
+                        super::kept::read(folder, super::kept::Kind::Built, level, at, stamp)
+                    });
+                    let write = |bytes: &[u8]| {
+                        if let Some((folder, stamp)) = kept {
+                            super::kept::write(folder, super::kept::Kind::Built, level, at, stamp, bytes);
+                        }
+                    };
                     let mut chunks = if level >= FAR_FROM {
-                        let mut tile = far_tile_kept(&making, far_tiles.as_deref(), level, at);
-                        making.build_into(level, &mut tile);
+                        let read = read.and_then(|bytes| FarTile::from_raw(&bytes).ok());
+                        let tile = match read.filter(|tile| tile.level == level && tile.at == at) {
+                            Some(tile) => tile,
+                            None => {
+                                let mut tile = far_tile_kept(&making, far_tiles.as_deref(), level, at);
+                                making.build_into(level, &mut tile);
+                                write(&tile.to_raw());
+                                tile
+                            }
+                        };
                         far_chunks(&tile, making.file.smooth)
+                    } else if let Some(chunks) = read.and_then(|bytes| super::kept::chunks_from_bytes(&bytes).ok()) {
+                        chunks
                     } else {
                         // What is built into a ring this near is built into the tile its ground would be, and put
                         // into its chunks: the tile made from what its chunks asked of the generator.
@@ -1394,6 +1436,7 @@ impl BlockStreamer {
                             making.build_into(level, &mut built);
                             put_built(&mut chunks, &bare, &built);
                         }
+                        write(&super::kept::chunks_to_bytes(&chunks));
                         chunks
                     };
                     raise(&mut chunks, &built, level, making.file.smooth);
@@ -1783,7 +1826,11 @@ mod tests {
 
     #[test]
     fn a_tower_built_near_stays_in_the_coarse_rings_once_the_camera_goes_away() {
-        let making = making();
+        // Its rings kept on disk as the first flight makes them, and read back for the second: what was built is put
+        // into them as they are read.
+        let folder = std::env::temp_dir().join(format!("voxear-tower-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let making = BlockMaking { far_folder: Some(folder.clone()), ..making() };
         let fly = |tower: bool| {
             let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
             let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
@@ -1817,6 +1864,7 @@ mod tests {
         };
         assert!(quads(&bare) > 0, "the ground there drawn coarse");
         assert!(quads(&built) > quads(&bare), "and the tower with it: {} against {}", quads(&built), quads(&bare));
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
@@ -1917,26 +1965,26 @@ mod tests {
         let world = streamed();
         let levels: HashSet<i32> = world.far.keys().map(|key| key[0]).collect();
         assert!((1..=6).all(|level| levels.contains(&level)), "rings out to 6 km: {levels:?}");
-        // Each far tile kept, by level and place, in a folder of what it was made from.
+        // Each coarse column kept, by level and place, in a folder of what it was made from: the far tiles' bare
+        // ground, and every column as it was made, the world's own blocks and the nearer rings too.
         let kept: Vec<std::path::PathBuf> = std::fs::read_dir(&folder).unwrap().flatten().map(|e| e.path()).collect();
         assert_eq!(kept.len(), 1);
-        let tiles: Vec<String> =
+        let files: Vec<String> =
             std::fs::read_dir(&kept[0]).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
-        assert!(tiles.iter().all(|name| name.ends_with(".far")) && tiles.iter().any(|name| name.starts_with("3_")));
-        assert!(!tiles.iter().any(|name| name.starts_with("2_")), "nearer rings are made in full: {tiles:?}");
+        assert!(files.iter().all(|name| name.ends_with(".kept")), "{files:?}");
+        for first in ["g3_", "b0_", "b1_", "b2_", "b3_", "b6_"] {
+            assert!(files.iter().any(|name| name.starts_with(first)), "{first} kept: {files:?}");
+        }
+        assert!(!files.iter().any(|name| name.starts_with("g2_")), "nearer rings have no far tile: {files:?}");
         // A tower put into a kept tile shows as the world is made again: the tile was read back, not made anew.
-        let (name, key) = world
-            .far
-            .keys()
-            .filter(|key| key[0] == 6)
-            .map(|key| (format!("6_{}_{}.far", key[1], key[3]), *key))
-            .find(|(name, _)| tiles.contains(name))
-            .expect("a level 6 tile drawn");
-        let path = kept[0].join(&name);
-        let mut tile = FarTile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        let key = *world.far.keys().find(|key| key[0] == 6).expect("a level 6 tile drawn");
+        let at = [key[1], key[3]];
+        let stamp = making.kept_stamp(6, at);
+        let bytes = super::super::kept::read(&kept[0], super::super::kept::Kind::Built, 6, at, stamp).expect("kept");
+        let mut tile = FarTile::from_raw(&bytes).unwrap();
         let top = tile.column([16, 16]).last().map_or(0, |run| run.to);
         tile.add([16, 16], top, top + 40, 3);
-        std::fs::write(&path, tile.to_bytes()).unwrap();
+        super::super::kept::write(&kept[0], super::super::kept::Kind::Built, 6, at, stamp, &tile.to_raw());
         let again = streamed();
         let quads = |world: &BlockWorld| -> usize {
             world
@@ -2764,13 +2812,15 @@ mod tests {
         let still: Vec<Arc<Chunk>> =
             world.blocks.chunks().filter(|(k, _)| [k[0], k[2]] == far_column).map(|(_, c)| c.clone()).collect();
         assert!(untouched.iter().zip(&still).all(|(a, b)| Arc::ptr_eq(a, b)), "a column it never reached is not made");
-        // A far tile under the paint is kept apart from the unpainted one, which stays as it was.
+        // A far tile under the paint is kept by the paint over it: never taken for the unpainted one.
         let folder = std::env::temp_dir().join(format!("voxear-painted-far-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
-        let bare = far_tile_kept(&super::tests::making(), Some(&folder), 3, [0, 0]);
+        let unpainted = super::tests::making();
+        let bare = far_tile_kept(&unpainted, Some(&folder), 3, [0, 0]);
         let tile = far_tile_kept(&making, Some(&folder), 3, [0, 0]);
         assert_ne!(tile.surface([2, 2]), bare.surface([2, 2]));
-        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2);
+        assert_eq!(far_tile_kept(&making, Some(&folder), 3, [0, 0]), tile, "the painted one, as kept");
+        assert_eq!(far_tile_kept(&unpainted, Some(&folder), 3, [0, 0]), bare, "the bare one, made again");
         let _ = std::fs::remove_dir_all(&folder);
     }
 

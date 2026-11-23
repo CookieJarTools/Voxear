@@ -156,6 +156,17 @@ impl FarTile {
     /// Its runs as a few bytes, compressed: to keep on disk, so a place seen
     /// once comes back at once.
     pub fn to_bytes(&self) -> Vec<u8> {
+        lz4_flex::compress_prepend_size(&self.to_raw())
+    }
+
+    /// A tile from what [`FarTile::to_bytes`] gave.
+    pub fn from_bytes(compressed: &[u8]) -> Result<Self> {
+        Self::from_raw(&lz4_flex::decompress_size_prepended(compressed)?)
+    }
+
+    /// Its runs as bytes, not compressed: for a store that compresses many
+    /// together (see `blocks::kept`).
+    pub fn to_raw(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(16 + self.surfaces.len() * 6 + self.runs.len() * 10);
         bytes.extend(MAGIC);
         bytes.push(VERSION);
@@ -174,13 +185,12 @@ impl FarTile {
                 bytes.extend(run.block.to_le_bytes());
             }
         }
-        lz4_flex::compress_prepend_size(&bytes)
+        bytes
     }
 
-    /// A tile from what [`FarTile::to_bytes`] gave.
-    pub fn from_bytes(compressed: &[u8]) -> Result<Self> {
-        let bytes = lz4_flex::decompress_size_prepended(compressed)?;
-        let mut read = Reader { bytes: &bytes, at: 0 };
+    /// A tile from what [`FarTile::to_raw`] gave.
+    pub fn from_raw(bytes: &[u8]) -> Result<Self> {
+        let mut read = Reader { bytes, at: 0 };
         ensure!(read.take(4)? == MAGIC && read.take(1)?[0] == VERSION, "not a far tile this version reads");
         let level = read.u32()?;
         let at = [read.i32()?, read.i32()?];

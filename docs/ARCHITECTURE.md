@@ -4245,6 +4245,18 @@ compressed under `.voxear/FarView/<world>/<hash>`, the hash of what makes its gr
 file without its lighting, glow, voxels, relief or distances, its generator, `far::MADE_AS`), so changing how it looks
 or how far it reaches keeps the tiles; when a world is made anew, folders made another way are removed but the two last
 used (`prune_far_tiles`, `FAR_FOLDERS_KEPT`), and filled into chunks for the same meshing and drawing as the nearer rings.
+The folder's hash also folds in what its biomes and structures are (their tables' `Debug`), which the file names but
+does not hold. **Kept levels** (`blocks::kept`): every column a streamed world makes, at every level, is kept in that
+folder as it was made, before changes are raised into it: its own blocks (level 0, near and drawn-only alike, as
+chunks), rings 1–2 (chunks, with what is built into them) and the far tiles (runs, built on, `Kind::Built`), beside the
+far tiles' bare ground (`Kind::Ground`). Each column is a record in a region file of 8×8 columns of one level
+(`b<level>_<rx>_<rz>.kept`, `f` for `FINE`), with its place, a stamp (`BlockMaking::kept_stamp`: what is built into its
+ring, the layers' hash where any layer reaches it, the paint over it) and its bytes in zstd. Files are only appended to;
+the last record of a column is the one read; a file mostly of replaced records is written afresh. An index of each file
+is kept in memory and read on from where it was. Hand edits are raised in after a column is read, so they are never
+kept stale in it, and go over the network as they did; nothing kept is sent. On a copy of CubeGame at Medium, a column
+read back costs 0.5 ms for the world's own blocks and 10–21 ms for the rest, its faces; made, 60–870 ms. The Realm's
+whole Medium view came back in 12 s (2 minutes cold reached its first ring) and took 8.4 MB.
 Changes kept for ground not near are raised into every ring's chunks (`stream::raise`) where they fill an eighth of a
 ring's block. Whether a world is made from what it was last frame is asked once a frame (`BlockMaking::same`), the
 biomes', structures' and slabs' tables compared by pointer first (`same_file`): compared whole, three times a frame,

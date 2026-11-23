@@ -225,6 +225,21 @@ Each stage stands alone; the gains are from the measurements above.
 second run (load average 5 against 23), but this is main-thread work. Stage 1 is to cover endless worlds as much as
 worlds of a set size: every level made once is kept, built, so coming back is a read.
 
+**Stage 1 is done.** Every column a streamed world makes is kept, at every level, built on, in region files with
+zstd; hand edits are put in as each is read. On copies of CubeGame at Medium, camera still:
+
+| | Realm, made | Realm, read back | Islands, made | Islands, read back |
+|---|---|---|---|---|
+| Near column | 191 ms | 0.5 ms | 62 ms | 0.5 ms |
+| Drawn-only column | 211 ms | 21 ms | 93 ms | 25 ms |
+| Ring 1 / ring 2 | 231 / 438 ms | 15 / 10 ms | 140 / 211 ms | 18 / 13 ms |
+| Far tile, rings 3 / 4 | 874 / 36 ms | 11 / 12 ms | 368 / 111 ms | 13 / 13 ms |
+| The whole view in | ring 1 only by 120 s | **12 s** | 120 s | **14 s** |
+| On disk | | 8.4 MB | | 11 MB |
+
+What is read back is mostly making faces. The settled pictures match, cold against warm. These runs had a quieter
+machine than the first research (load 8–9), so the "made" times are lower than in the tables above.
+
 Suggested order: 0, 4, 1, 2, then 3 and 5. Stage 0 and 4 are each a day or less. Stage 2 is what answers the user's
 question.
 

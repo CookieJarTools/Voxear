@@ -11,7 +11,16 @@ public static unsafe class Time
 
 	public static float FixedDelta => Native.Api->Time->FixedDelta;
 
-	public static float TimeScale => Native.Api->Time->TimeScale;
+	/// <summary>
+	/// How fast the game's time goes: 1 as fast as real time, 0.5 half as fast, 0 stopped, at most 100. Delta and the
+	/// fixed steps go by it, UnscaledDelta does not. Set, it takes effect from the next frame; Project Settings ▸ Time
+	/// sets what it starts at.
+	/// </summary>
+	public static float TimeScale
+	{
+		get => Native.Api->Time->TimeScale;
+		set => ProjectSettings.ChangeTimeScale(value);
+	}
 
 	public static double Elapsed => Native.Api->Time->Elapsed;
 

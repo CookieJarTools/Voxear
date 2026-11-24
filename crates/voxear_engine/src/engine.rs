@@ -47,6 +47,20 @@ const MAX_FIXED_STEPS: u32 = 5;
 /// The simulation: world, systems, behaviours and time. Rendering and
 /// windowing sit outside so the same engine runs headless, in the player and
 /// in the editor.
+/// How fast the game's time goes, as a world resource the engine takes up
+/// each frame (see [`Engine::set_time_scale`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimeScale(pub f32);
+
+impl TimeScale {
+    /// The most time may be sped up by.
+    pub const MOST: f32 = 100.0;
+
+    pub fn new(scale: f32) -> Self {
+        Self(if scale.is_finite() { scale.clamp(0.0, Self::MOST) } else { 1.0 })
+    }
+}
+
 pub struct Engine {
     pub world: World,
     pub schedule: Schedule,
@@ -216,6 +230,19 @@ impl Engine {
     pub fn live_fields(&mut self, handles: &[BehaviourHandle]) -> anyhow::Result<Vec<Option<toml::Table>>> {
         let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
         scripts.live_fields(&mut self.world, handles)
+    }
+
+    /// Every field of a behaviour on `entity`, private and unsaved ones too,
+    /// for the Inspector's Debug mode: the running instance's while the game
+    /// plays (see [`ScriptRuntime::debug_fields`]).
+    pub fn debug_fields(
+        &mut self,
+        entity: Entity,
+        spec: &voxear_scene::BehaviourSpec,
+        handle: Option<BehaviourHandle>,
+    ) -> anyhow::Result<(bool, Vec<voxear_scripting::DebugField>)> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.debug_fields(&mut self.world, entity, spec, handle)
     }
 
     /// Sets a running behaviour's field, as the Inspector edits it while the
@@ -389,6 +416,13 @@ impl Engine {
         self.time.fixed_delta = seconds.clamp(1.0 / 480.0, 0.5);
     }
 
+    /// Sets how fast the game's time goes, 1 as fast as real time and 0
+    /// stopped, from the next frame, as `Time.TimeScale` does: frames' and
+    /// fixed steps' time, not the unscaled time.
+    pub fn set_time_scale(&mut self, scale: f32) {
+        self.world.insert_resource(TimeScale::new(scale));
+    }
+
     /// Sets the longest a frame counts as, in seconds, so a hitch does not
     /// throw everything forward, and the most fixed steps a frame runs.
     pub fn set_frame_limits(&mut self, longest: f32, fixed_steps: u32) {
@@ -552,6 +586,9 @@ impl Engine {
     /// next phase. Each step is a profiling sample (see
     /// `voxear_core::profiling`), with each behaviour's callback in it.
     pub fn tick(&mut self, unscaled_delta: f32) {
+        if let Some(scale) = self.world.resource::<TimeScale>() {
+            self.time.time_scale = scale.0;
+        }
         self.time.advance_within(unscaled_delta, self.longest_frame);
         crate::portals::begin_frame(&mut self.world);
         self.physics_events.clear();

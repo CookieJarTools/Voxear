@@ -1542,14 +1542,15 @@ float streamBlocked(Frame* frame, float3 there, float clear)
 {
     float4 clip = transform(frame->viewProj, float4(there, 1.0));
     float2 uv = clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5;
-    if (clip.w <= frame->near || any(uv <= 0.0) || any(uv >= 1.0))
+    float ahead = clipViewDepth(frame, clip);
+    if (ahead <= frame->near || any(uv <= 0.0) || any(uv >= 1.0))
     {
         return 0.0;
     }
     float behind = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(uv * float2(frame->viewport)), 0)).r;
-    float gap = (behind > 0.0 ? frame->near / behind : 1e4) - clip.w;
+    float gap = viewDepthOr(frame, behind, 1e4) - ahead;
     // Something in front of the water there, near enough to be standing in it; or the bed just under it.
-    float3 toCamera = normalize(frame->cameraPosition - there);
+    float3 toCamera = towardsEye(frame, there);
     return gap < 0.0 ? step(-2.5, gap) : saturate(1.0 - gap * saturate(toCamera.y + 0.15) / clear) * 0.7;
 }
 
@@ -2200,7 +2201,7 @@ float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughne
             return 0.0;
         }
         float behind = depths.Load(int3(int2(uv * size), 0)).r;
-        bool past = clip.w > (behind > 0.0 ? frame->near / behind : 1e4);
+        bool past = clipViewDepth(frame, clip) > viewDepthOr(frame, behind, 1e4);
         if (past && inFront)
         {
             // Where between the last step and this one the ray went behind the picture.
@@ -2211,7 +2212,7 @@ float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughne
                 float mid = (low + high) * 0.5;
                 float4 c = lerp(from, to, mid * mid);
                 float b = depths.Load(int3(int2(saturate(c.xy / c.w * 0.5 + 0.5) * size), 0)).r;
-                bool further = c.w > (b > 0.0 ? frame->near / b : 1e4);
+                bool further = clipViewDepth(frame, c) > viewDepthOr(frame, b, 1e4);
                 low = further ? low : mid;
                 high = further ? mid : high;
             }
@@ -2219,7 +2220,8 @@ float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughne
             uv = saturate(c.xy / c.w * 0.5 + 0.5);
             float b = depths.Load(int3(int2(uv * size), 0)).r;
             // Met there, rather than gone behind something much nearer, out of sight.
-            if (c.w - (b > 0.0 ? frame->near / b : 1e4) < max(0.3, c.w * 0.04))
+            float ahead = clipViewDepth(frame, c);
+            if (ahead - viewDepthOr(frame, b, 1e4) < max(0.3, ahead * 0.04))
             {
                 float2 edge = min(uv, 1.0 - uv);
                 float sure = saturate(min(edge.x, edge.y) / 0.08) * (1.0 - high * high);
@@ -2269,7 +2271,7 @@ FragmentOut waterFragment(WaterOut input)
     if (ground > input.world.y)
     {
         float behind = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(input.position.xy), 0)).r;
-        float gap = behind > 0.0 ? frame->near / behind - frame->near / max(input.position.z, 1e-7) : 1e4;
+        float gap = behind > 0.0 ? viewDepthOf(frame, behind) - viewDepthOf(frame, input.position.z) : 1e4;
         float2 xz = input.world.xz;
         float steep = max(max(floorHeight(frame, xz + float2(0.25, 0.0)), floorHeight(frame, xz - float2(0.25, 0.0))),
                           max(floorHeight(frame, xz + float2(0.0, 0.25)), floorHeight(frame, xz - float2(0.0, 0.25))))
@@ -2379,7 +2381,7 @@ FragmentOut waterFragment(WaterOut input)
     slope += stirred.slope;
     variance += stirred.variance;
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) + input.up);
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     // From under the water the surface shows its underside; from the air, a wave above the camera its front. Which
     // it is goes by where this pixel's view starts, so with the camera half in, each half sees its own side.
     float3 near;
@@ -2449,8 +2451,8 @@ FragmentOut waterFragment(WaterOut input)
     // What lies under it: how far through the water, bent by the waves, and dimmed a colour at a time.
     float2 pixel = input.position.xy;
     float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
-    float surfaceDepth = frame->near / max(input.position.z, 1e-7);
-    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float surfaceDepth = viewDepthOf(frame, input.position.z);
+    float sceneDepth = viewDepthOr(frame, behindDepth, 1e4);
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
     // A Pool's water ends at its sides and bottom, whatever lies past them; a Stream's at its bed.
@@ -2469,7 +2471,7 @@ FragmentOut waterFragment(WaterOut input)
         {
             float2 bent = bentOnScreen(seenAt, clip.xy / clip.w * 0.5 + 0.5 - seenAt);
             float there = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(bent * float2(frame->viewport)), 0)).r;
-            seenAt = (there > 0.0 ? frame->near / there : 1e4) > surfaceDepth ? bent : seenAt;
+            seenAt = viewDepthOr(frame, there, 1e4) > surfaceDepth ? bent : seenAt;
         }
     }
     // As sharp as clear water shows what is under it, blurring only where it is deep or rough.
@@ -2664,7 +2666,7 @@ FragmentOut waterFragment(WaterOut input)
 #endif
     if (atmosphere)
     {
-        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), eyeDistance(frame, input.world));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
@@ -2734,7 +2736,7 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     float t = frame->time;
     float2 p = input.rest;
     float3 up = normalize(input.up);
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     float age;
     // Where on its plates, in metres, and how wide a plate is.
     float2 plate;
@@ -2974,7 +2976,7 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     float2 pixel = input.position.xy;
     if (atmosphere)
     {
-        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), eyeDistance(frame, input.world));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
@@ -3149,7 +3151,7 @@ SpatterOut lavaSpatterVertex(uint vertexId : SV_VertexID)
     size = max(size, 0.001 * far);
     // Facing the camera, drawn out along the way it flies across the view, the spray into streaks.
     float3 moving = velocity - float3(0.0, PARTICLE_GRAVITY * flown, 0.0);
-    float3 toCamera = (frame->cameraPosition - world) / max(far, 1e-4);
+    float3 toCamera = isOrthographic(frame) ? -frame->cameraForward : (frame->cameraPosition - world) / max(far, 1e-4);
     float3 across = moving - toCamera * dot(moving, toCamera);
     float seen = length(across);
     float3 flying = seen > 1e-3 ? across / seen : float3(0.0, 1.0, 0.0);
@@ -3378,7 +3380,7 @@ FragmentOut lavaWall(Frame* frame, WallOut input, WaterBody lava, float below)
     float crack = 1.0 - smoothstep(0.02, 0.05, cell.x);
     float kelvin = lerp(600.0, 1350.0, saturate(below / max(lava.size.y, 0.1) + 0.3));
     float3 emitted = blackbody(kelvin) * crack * lava.lava.y * 4.0;
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     Surface s;
@@ -3404,7 +3406,7 @@ FragmentOut wallFragment(WallOut input)
 {
     Frame* frame = push.frame;
     WaterBody water = buffers()->waterBodies[input.body];
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     bool facing = dot(input.normal, v) > 0.0;
     // A Dry Area shows its far walls from inside it; a Pool its near walls from outside it.
     bool pool = water.kind == WATER_POOL;
@@ -3448,9 +3450,9 @@ FragmentOut dryMeshWallFragment(WallOut input, bool front : SV_IsFrontFace)
     }
     float2 pixel = input.position.xy;
     float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
-    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float sceneDepth = viewDepthOr(frame, behindDepth, 1e4);
     float2 mask = textures[NonUniformResourceIndex(frame->ocean.dryMask)].Load(int3(int2(pixel), 0)).rg;
-    float back = frame->near / max(1.0 - mask.y, 1e-7);
+    float back = viewDepthOf(frame, 1.0 - mask.y);
     if (sceneDepth < back + 0.05)
     {
         discard;
@@ -3461,7 +3463,7 @@ FragmentOut dryMeshWallFragment(WallOut input, bool front : SV_IsFrontFace)
 // The water body `water`'s wall at the fragment, seen from the side; nothing over the water's surface.
 FragmentOut wallWater(Frame* frame, WallOut input, WaterBody water)
 {
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     bool pool = water.kind == WATER_POOL;
     float surface = wallSurface(frame, water, input.world);
     if (input.world.y > surface || (!pool && frame->ocean.enabled == 0))
@@ -3478,8 +3480,8 @@ FragmentOut wallWater(Frame* frame, WallOut input, WaterBody water)
 
     float2 pixel = input.position.xy;
     float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
-    float wallDepth = frame->near / max(input.position.z, 1e-7);
-    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float wallDepth = viewDepthOf(frame, input.position.z);
+    float sceneDepth = viewDepthOr(frame, behindDepth, 1e4);
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - wallDepth, 0.0) / along;
     thickness = pool ? min(thickness, poolExit(water, input.world, v)) : thickness;
@@ -3509,7 +3511,7 @@ FragmentOut wallWater(Frame* frame, WallOut input, WaterBody water)
     color = lerp(color, ambient * 0.9 + sunLight * 0.1, rim * 0.7);
     if (atmosphere)
     {
-        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), eyeDistance(frame, input.world));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
@@ -4141,7 +4143,7 @@ float2 blockFallWhite(Frame* frame, float3 at, float3 face, float fallen)
 [shader("fragment")]
 float blockWaterExitFragment(BlockWaterOut input) : SV_Target0
 {
-    float3 camera = push.frame->cameraPosition;
+    float3 camera = eyeFor(push.frame, input.world);
     if (dot(camera - input.world, input.normal) > 0.0)
     {
         discard;
@@ -4180,7 +4182,7 @@ BlockWaterLook blockWaterLook(BlockWorld world, uint surface)
 FragmentOut blockIceLit(Frame* frame, BlockWaterOut input, float2 corner, float blockSize, bool below)
 {
     float3 at = input.world;
-    float3 v = normalize(frame->cameraPosition - at);
+    float3 v = towardsEye(frame, at);
     int2 block = int2(floor((at.xz - corner) / blockSize));
     float2 level = levelXZ(frame, at.xz, 4096.0);
     float3 albedo = lerp(float3(0.58, 0.72, 0.83), float3(0.85, 0.9, 0.95), seaNoise(level / 9.0 + 77.0));
@@ -4209,7 +4211,7 @@ FragmentOut blockIceLit(Frame* frame, BlockWaterOut input, float2 corner, float 
     float2 pixel = input.position.xy;
     if (atmosphere && !below)
     {
-        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(at - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), eyeDistance(frame, at));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     color = cloudsBefore(frame, pixel / float2(frame->viewport), at, color);
@@ -4234,7 +4236,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     }
     BlockWorld world = buffers()->blockWorlds[input.water.x];
     BlockWaterLook look = blockWaterLook(world, input.water.y);
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     float3 face = normalize(input.normal);
     // A rough sea stands under its top faces by as much as its swell has sunk it: where the view meets it.
     float3 at = input.world;
@@ -4296,7 +4298,7 @@ FragmentOut blockWaterLit(
     bool swollen,
     bool below)
 {
-    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 v = towardsEye(frame, input.world);
     bool level = abs(face.y) > 0.5;
     // Ripples on its top and its underside, as a Pool's with none of the sea's swell, carried along as it flows;
     // its sides stand still.
@@ -4375,8 +4377,8 @@ FragmentOut blockWaterLit(
 
     // How far through the water the view goes: to what lies behind it, or where it leaves the water, if sooner.
     float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
-    float surfaceDepth = swollen ? dot(at - frame->cameraPosition, frame->cameraForward) : frame->near / max(input.position.z, 1e-7);
-    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float surfaceDepth = swollen ? dot(at - frame->cameraPosition, frame->cameraForward) : viewDepthOf(frame, input.position.z);
+    float sceneDepth = viewDepthOr(frame, behindDepth, 1e4);
     if (swollen && sceneDepth < surfaceDepth - 0.01)
     {
         // What stands in a trough, in front of the water.
@@ -4384,7 +4386,7 @@ FragmentOut blockWaterLit(
     }
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
-    float here = length(at - frame->cameraPosition);
+    float here = length(at - eyeFor(frame, at));
     float leaves = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(int2(pixel), 0)).r;
     if (leaves > here)
     {
@@ -4402,7 +4404,7 @@ FragmentOut blockWaterLit(
         {
             float2 bent = bentOnScreen(seenAt, clip.xy / clip.w * 0.5 + 0.5 - seenAt);
             float there = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(bent * float2(frame->viewport)), 0)).r;
-            seenAt = (there > 0.0 ? frame->near / there : 1e4) > surfaceDepth ? bent : seenAt;
+            seenAt = viewDepthOr(frame, there, 1e4) > surfaceDepth ? bent : seenAt;
         }
     }
     float blur = sqrt(s.roughness) * 1.2 + log2(1.0 + thickness * 0.12);
@@ -4605,7 +4607,8 @@ InsideOut blockSeaInsideFragment(UnderOut input)
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
     float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
     float3 from = nearH.xyz / nearH.w;
-    float3 ray = normalize(from - frame->cameraPosition);
+    bool ortho = isOrthographic(frame);
+    float3 ray = ortho ? frame->cameraForward : normalize(from - frame->cameraPosition);
     float below = body.toWorld.c3.y - from.y;
     if (below <= 0.0)
     {
@@ -4613,8 +4616,8 @@ InsideOut blockSeaInsideFragment(UnderOut input)
     }
     float behind = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
     float along = max(dot(ray, frame->cameraForward), 0.05);
-    float reach = behind > 0.0 ? frame->near / behind / along : 1e4;
-    reach = min(reach - length(from - frame->cameraPosition), 600.0);
+    float reach = behind > 0.0 ? viewDepthOf(frame, behind) / along : 1e4;
+    reach = min(reach - (ortho ? frame->near : length(from - frame->cameraPosition)), 600.0);
     float3 at, facing;
     float crest, rough;
     bool under;
@@ -4659,7 +4662,9 @@ struct Under
     float line;
     float3 through;
     float3 glow;
-    // Which way the pixel looks, how far it sees, and the water's surface over the near plane and its colours.
+    // Where the pixel's view starts, which way it looks, how far it sees, and the water's surface over the near plane
+    // and its colours.
+    float3 from;
     float3 view;
     float distance;
     float surface;
@@ -4733,7 +4738,10 @@ Under underwaterAt(Frame* frame, float2 pixel, bool wedge = false)
     float surface;
     float3 absorb;
     u.line = waterlineAt(frame, pixel, near, surface, absorb);
-    u.view = normalize(near - frame->cameraPosition);
+    // An orthographic camera's view starts at the near plane and runs straight ahead.
+    bool ortho = isOrthographic(frame);
+    u.from = ortho ? near : frame->cameraPosition;
+    u.view = ortho ? frame->cameraForward : normalize(near - frame->cameraPosition);
     if (u.line >= 1e3)
     {
         return u;
@@ -4749,7 +4757,7 @@ Under underwaterAt(Frame* frame, float2 pixel, bool wedge = false)
     if (depth > 0.0)
     {
         float4 farH = transform(frame->invViewProj, float4(ndc, depth, 1.0));
-        u.distance = length(farH.xyz / farH.w - frame->cameraPosition);
+        u.distance = length(farH.xyz / farH.w - u.from);
     }
     // The water's own colours: a Pool's, or the sea's.
     float3 deep = frame->ocean.deep;
@@ -4839,7 +4847,7 @@ float3 lightShafts(Frame* frame, Under u, float2 pixel)
     for (uint i = 0; i < STEPS; i++)
     {
         float t = (float(i) + jitter) / float(STEPS) * reach;
-        float3 p = frame->cameraPosition + u.view * t;
+        float3 p = u.from + u.view * t;
         float below = u.surface - p.y;
         if (below <= 0.0)
         {
@@ -4847,7 +4855,7 @@ float3 lightShafts(Frame* frame, Under u, float2 pixel)
         }
         float2 surfaced = p.xz - down.xz / slant * below;
         // As blurred as a step spans, a pixel wide and a step long, so the streaks do not sparkle.
-        float footprint = max(2.0 * t / (max(tall, 1e-3) * float(frame->viewport.y)), reach / float(STEPS) * 0.25);
+        float footprint = max(2.0 * screenDistance(frame, t) / (max(tall, 1e-3) * float(frame->viewport.y)), reach / float(STEPS) * 0.25);
         float focused = shaftsAt(frame, surfaced, below, footprint);
         float lit = sunShadow(frame, p, float3(0.0, 1.0, 0.0));
         total += lit * focused * exp(-u.medium.extinction * t - u.medium.fade * below / slant);
@@ -4913,8 +4921,8 @@ float3 waterSpecks(Frame* frame, Under u, float reach, float3 sunLight, float3 s
     static const float CELL = 0.5;
     static const uint CELLS = 16;
     // The grid is walked from the level's middle, so the specks stay where they are as the world's middle moves.
-    float3 shift = levelPosition(frame, frame->cameraPosition, 1024.0) - frame->cameraPosition;
-    float3 origin = frame->cameraPosition + shift;
+    float3 shift = levelPosition(frame, u.from, 1024.0) - u.from;
+    float3 origin = u.from + shift;
     float3 way = u.view;
     float tall = length(float3(frame->viewProj.c0.y, frame->viewProj.c1.y, frame->viewProj.c2.y));
     // How many metres a pixel spans a metre away.
@@ -4976,7 +4984,7 @@ float3 waterSpecks(Frame* frame, Under u, float reach, float3 sunLight, float3 s
             float miss = length(at - (origin + way * along));
             // How many metres a pixel spans there, and nearer than the lens focuses, how far it is spread, as a soft
             // brighter mote.
-            float pixel = spans * along;
+            float pixel = spans * screenDistance(frame, along);
             float spread = along < 0.45 ? (0.45 - along) * 0.008 : 0.0;
             float radius = max(size + spread, pixel * 0.8);
             float covered = exp(-(miss * miss) / (radius * radius)) * (size * size) / (radius * radius) * min(size / pixel, 4.0);

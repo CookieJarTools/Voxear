@@ -401,8 +401,8 @@ Next in M3:
     and `Changed` with each kind's own event
   - [x] list and tree views at runtime from C#, filled from code: `ListView<T>` and `TreeView<T>`, with `MakeRow`
     and `BindRow`, rows filled in the frame they show in, and the selection
-  - [ ] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
-    organised, so a game can be tuned for each platform and quality level without touching code:
+  - [x] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
+    organised, so a game can be tuned without touching code:
     - [x] Project Settings and Preferences in the side bar's drawer, laid out alike: the categories down the side,
       titled sections with rarely wanted settings folded under Advanced, a search across every category that matches
       names, sections and the words of tooltips, a tooltip on every setting with its default, values changed from
@@ -414,6 +414,15 @@ Next in M3:
       fixed step, the longest frame and fixed steps a frame (`[time]`), and which input actions the game plays
       with (`[input]`); Preferences gains the Console's rows, gizmos, networked Play's test players and network,
       and a list of every shortcut
+    - [x] Unity's sections set against the engine, and what the engine had only in code or the environment
+      brought in: the time scale (`[time]`, `Time.TimeScale` settable), vsync, HDR output and the GPU's mesh
+      shaders, decompression and ray tracing (`[graphics]`, the environment still winning), the press point and
+      the sticks' deadzone (`[input]`, `ProjectSettings.ChangeInput`), and the most voices and the speed of
+      sound (`[audio]`); each read from C# (`ProjectSettings.Graphics`, `.Input`), set by `project.set`, carried
+      into builds, and in Play mode `ProjectSettings` now reads as in a build; what the engine has no setting
+      for yet is listed on the manual's page, and below
+  - [ ] **Project Settings, the rest**: what Unity's Project Settings have that the engine has no setting for yet,
+    so a game can be tuned for each platform and quality level:
     - one `.toml` file per category in `ProjectSettings/`, written only where it differs from the default, so they
       read well in version control; build profiles change them key by key, as they do now
     - per-platform overrides (Linux and Windows now, more as platforms come), as Unity's platform tabs, and
@@ -425,20 +434,15 @@ Next in M3:
       and the frame cap
     - **Player**: company and product name, version, icon and splash, the window (resolution, full screen or
       windowed, resizable, running in the background), the cursor and the display scale
-    - **Graphics**: the default lighting look, HDR output, the default tonemapper, mesh shaders or their fallback,
-      GPU decompression, and shader variants kept or stripped
-    - **Physics and Physics 2D**: gravity, the fixed step, solver iterations, sleep, default friction and
-      bounciness, body limits, and the layers and collision matrix that exist already
-    - **Time**: the fixed step, the largest frame step, and the time scale
-    - **Audio**: sample rate, buffer size, the most voices at once, default bus volumes, Doppler and the speed of
-      sound, and Steam Audio's quality (HRTF, reflection rays, baking)
-    - **Input**: the default actions, stick dead zones, default sensitivities, and input while unfocused
+    - **Graphics**: the default lighting look, the default tonemapper, and shader variants kept or stripped
+    - **Physics and Physics 2D**: solver iterations, sleep, default friction and bounciness, and body limits
+    - **Audio**: sample rate, buffer size, default bus volumes, and Steam Audio's quality (HRTF, reflection rays,
+      baking)
+    - **Input**: default sensitivities, and input while unfocused
     - **Scripting and compilation**: the C# language version, nullable, warnings as errors, defines per platform,
       optimisation, trimming, and the script execution order
-    - **Content and loading**: compression, streaming and memory budgets, and default import settings per asset
-      kind
-    - **Localization**, **Saving**, **UI** (the default theme, font and scaling) and **Tags and Layers**, brought
-      in from where they are kept now
+    - **Content and loading**: streaming and memory budgets, and default import settings per asset kind
+    - **Saving** and **UI** (the default theme, font and scaling), brought in from where they are kept now
     - C#: every setting read as a typed value (`Physics.Gravity`, `Time.FixedDelta`, `Quality.Current`), the ones
       that may change while the game runs set from code, and quality levels picked by reference, never by name
     - a game's own settings: a class marked `[ProjectSettings]` gets its own category in the window, saved with
@@ -478,23 +482,24 @@ Next in M3:
       the first frames are caught; with "wait for the editor" the build holds at startup until it is connected
     - a connection chip in each panel's bar saying what it is looking at (the editor, Play mode or a build), to
       switch between them, and a build that closes or drops leaving its last capture readable
-  - [ ] **The Inspector's Debug mode**, as Unity's, switched from the Inspector's menu, each Inspector its own:
-    - every value of a script, private and `[NonSerialized]` ones too, read-only where the Inspector would not
-      write them, with the attributes that group, hide or draw them set aside, so what is really there shows
+  - [x] **The Inspector's Debug mode**, as Unity's, switched from the Inspector's `⋯` menu, each Inspector its own,
+    and from `vox editor call` (`inspector.mode`, `inspector.debug`); its rows read-only:
+    - every value of a script, private and `[NonSerialized]` ones too, each saying whether scenes save it, with the
+      attributes that group, hide or draw them set aside, so what is really there shows
     - every component on the Obj, the engine's own as well (its entity, Name, Parent, World Transform, prefab
       links and behaviour handles), and a C# component's raw fields
-    - references shown as what they hold (an asset's GUID and path, an Obj's entity and scene path) beside the
-      usual picker
+    - references shown as what they hold (an asset's GUID and path, an Obj's entity and scene path)
     - while playing, the live state behind the components: a body's velocity and whether it sleeps, a voice's
-      position and volume, the LOD shown, and an animation's time once there are animations
+      position and volume, the LOD shown, and a played clip's time
     - for an asset, its GUID, its `.meta` and import data, and what it depends on and what uses it
     - copy a value, or its path in the scene file, from a row's menu
-  - [ ] **Finding a setting by what it does**, for when its name is not known: one search over every setting the
-    editor has (Project Settings, the Lighting panel, the Settings drawer, Preferences, the Inspector's components
-    and import settings) that matches rough words against each setting's name, group, tooltip and description,
-    and words that mean the same (shimmer, sparkle, flicker), not only the name:
-    - in the palette (Ctrl+K) and in each settings window's own search, ranked by how well each matched, with the
-      words it matched marked and the line of the tooltip that matched shown under the name
+  - [x] **Finding a setting by what it does**, for when its name is not known: one search over every setting the
+    editor has (Project Settings, the Lighting panel, Preferences, the components of the open level's Objs and
+    import settings) that matches rough words against each setting's name, group and tooltip, and words that mean
+    the same (shimmer, sparkle, flicker), not only the name, and `vox editor call settings.find`:
+    - in the palette (Ctrl+K), ranked by how well each matched, with the words it matched marked and the line of
+      the tooltip that matched beside it; in each settings window's own search the same match, the line that
+      matched under the name, its words marked
     - picking one opens its page or panel, scrolls to it and flashes its row, and selects what it belongs to
       where it is on an Obj or asset
     - settings hidden for now, as those of a feature turned off, still found, saying what turns them on
@@ -4317,6 +4322,18 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     each as a tool and `--describe` lists them. Tests: a call listed with its arguments and made with a default
     left out, and refused without one (engine); in the editor, listed, made through `game.call` and by its name,
     an Obj moved as one step to undo, a call for play refused while editing.
+- [x] **Orthographic cameras.** A Camera's Projection, perspective or orthographic, and its Size, half the height
+  it sees: every ray parallel, things the same size however far. Every pass draws it right (depth to distance, the
+  camera's rays, view vectors, fog, screen-space passes, light clusters, LODs by screen share, shadow cascades as
+  boxes) through a handful of lens functions in the shaders. Inspector, C# (`Camera.Projection`, `Camera.Size`,
+  `MakeOrthographic`), scene files, `field.set` and `vox mcp`; the Scene view's **Ortho** button and
+  `scene_view.projection`, Frame fitting its size. Tests: lens maths, cascades as boxes, two cubes the same size at
+  2 m and 12 m on the GPU.
+- [x] **Drawing in pixels.** `[post.pixels]`: the scene drawn at a whole pixel size (or about a number of rows) and
+  enlarged nearest, every pass at the small size, TAA off; snapping keeps an orthographic camera on its pixels' grid
+  and moves the picture by the rest in whole screen pixels, so nothing crawls as it glides. Lighting window,
+  C# (`post.Pixels.DrawAt`), `lighting.set`, and a shader pack's `[pixels]`. Tests: every 4×4 block one colour; a
+  snapped glide the same picture moved, an unsnapped one crawling.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 
@@ -4461,6 +4478,9 @@ Done:
   characters, in worlds with no block light too.
 - **Wind-bent models in a pack's program.** `MODEL_PLANT`, `bend` and a `through` shadow looked up towards the sun on
   `ModelSurface`; Radiant lights grass made of boxes through as it does foliage.
+- **Pixel**, a fourth built-in pack, and what it needed: the scene drawn in big square pixels (`[pixels]`, its size a
+  player's option), sun, sky and lamp light stepped into flat bands of their colour over a shade colour, the sky
+  stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## Small voxels (in progress: stage 1 built)

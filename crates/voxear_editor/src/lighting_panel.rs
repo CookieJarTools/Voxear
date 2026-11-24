@@ -95,6 +95,7 @@ const CONTACT: When = &[(&["post", "contact_shadows", "enabled"], "true")];
 const REFLECT: When = &[(&["post", "reflections", "enabled"], "true")];
 const TAA: When = &[(&["post", "anti_aliasing", "mode"], "taa")];
 const BLUR: When = &[(&["post", "motion_blur", "enabled"], "true")];
+const PIXELS: When = &[(&["post", "pixels", "enabled"], "true")];
 
 const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
@@ -377,6 +378,14 @@ const SETTINGS: &[Info] = &[
         help: "How much of the last frame TAA keeps: higher is smoother and steadier, lower reacts faster to what moves." },
     Info { path: &["post", "anti_aliasing", "taa_jitter"], title: "TAA jitter", group: "Quality", kind: number(0.0, 2.0, "px"), when: TAA,
         help: "How far, in pixels, the camera is shifted from frame to frame for TAA to gather detail from. 1 is right for nearly every scene." },
+    Info { path: &["post", "pixels", "enabled"], title: "Pixels", group: "Pixels", kind: Kind::Toggle, when: ALWAYS,
+        help: "Draws the scene at a few pixels to the screen's many and enlarges it with hard edges, as pixel art is. Anti-aliasing and sharpening are off while it is on." },
+    Info { path: &["post", "pixels", "size"], title: "Pixel size", group: "Pixels", kind: Kind::Whole { max: 32 }, when: PIXELS,
+        help: "How many screen pixels each drawn pixel covers, across and down." },
+    Info { path: &["post", "pixels", "height"], title: "Rows", group: "Pixels", kind: Kind::Whole { max: 2160 }, when: PIXELS,
+        help: "About how many rows of pixels to draw, in place of the pixel size: the whole pixel size nearest to giving them. 0 leaves it to the pixel size." },
+    Info { path: &["post", "pixels", "snap"], title: "Snap", group: "Pixels", kind: Kind::Toggle, when: PIXELS,
+        help: "Keeps an orthographic camera on the grid of its pixels, so they do not crawl or shimmer as it glides." },
 ];
 
 /// What a look pack has that lighting settings have not: a line saying
@@ -513,6 +522,10 @@ pub struct LightingPanel {
     fields: LightingFields,
     /// The lighting shown, as the scene names it.
     shown: Option<String>,
+    /// A setting found by a search, by its title, to show once its tab is
+    /// laid out, and the row shown.
+    revealing: Option<&'static str>,
+    flash: crate::setting_search::Flash,
 }
 
 impl LightingPanel {
@@ -582,6 +595,8 @@ impl LightingPanel {
             bake_note,
             fields,
             shown: None,
+            revealing: None,
+            flash: crate::setting_search::Flash::default(),
         }
     }
 
@@ -743,7 +758,24 @@ impl LightingPanel {
     }
 
     /// What was changed on the page this frame.
+    /// Shows a setting a search found: its tab, then once laid out, its
+    /// row scrolled to and marked for a moment.
+    pub fn reveal(&mut self, ui: &mut Ui, group: &'static str, title: &'static str) {
+        self.fields.set_group(ui, group);
+        self.revealing = Some(title);
+    }
+
+    /// The row a search showed last, while it is marked.
+    pub fn found_row(&self) -> Option<NodeId> {
+        self.flash.marked()
+    }
+
     pub fn update(&mut self, ui: &mut Ui) -> Option<LightingAction> {
+        self.flash.update(ui);
+        if let Some(row) = self.revealing.and_then(|title| self.fields.row_of(title)).filter(|&r| ui.rect(r)[3] > 0.0) {
+            self.revealing = None;
+            self.flash.show(ui, row);
+        }
         if ui.changed(self.scene) {
             let chosen = self.choices.get(ui.selected_option(self.scene)).cloned().flatten();
             return Some(LightingAction::SetScene(chosen));
@@ -1120,6 +1152,22 @@ impl LightingFields {
     }
 }
 
+/// Every setting of the page, for the search over every setting: its path
+/// as a `.lighting` file writes it, its title, its tab, what it does, and
+/// where it shows only while others are set so, what those are.
+pub fn described() -> Vec<(String, &'static str, &'static str, &'static str, Option<String>)> {
+    let title_of = |path: &[&str]| SETTINGS.iter().find(|info| info.path == path).map_or("", |info| info.title);
+    let when = |info: &Info| -> Option<String> {
+        let each = info.when.iter().map(|(path, value)| match *value {
+            "true" => format!("{} on", title_of(path)),
+            value => format!("{} {value}", title_of(path)),
+        });
+        let said: Vec<String> = each.collect();
+        (!said.is_empty()).then(|| format!("Shown with {}", said.join(" and ")))
+    };
+    SETTINGS.iter().map(|info| (info.path.join("."), info.title, info.group, info.help, when(info))).collect()
+}
+
 /// A setting by its path as a `.lighting` file writes it, `post.bloom.intensity`,
 /// as the page's rows name it.
 pub fn setting_path(dotted: &str) -> Option<&'static [&'static str]> {
@@ -1190,6 +1238,7 @@ fn group_help(group: &str) -> &'static str {
         "Baked" => "Baked lighting: lightmaps on the Objs with a Lightmap, light probes for the rest, traced once by Bake Lighting and saved beside the level.",
         "Lens" => "Camera effects: focus blur and motion blur.",
         "Quality" => "How edges are smoothed and sharpened, and the scale the scene is drawn at.",
+        "Pixels" => "The scene drawn in big square pixels and enlarged with hard edges, as pixel art is.",
         "Pack" => "What the pack says of itself. In the other tabs, an empty row is the level's own setting.",
         "Blocks" => "How every Block World's faces are drawn under the pack.",
         "Water" => "How water looks under the pack, wherever it is: the sea, Pools and the water of Block Worlds.",

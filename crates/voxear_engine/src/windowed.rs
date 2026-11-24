@@ -157,9 +157,15 @@ impl App {
         let size = window.inner_size();
         let handles =
             WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
+        // The project's `[graphics]`: vsync and the GPU's features, unless the environment says otherwise.
+        let graphics = self.game.project.file.graphics;
+        graphics.put();
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
-        // HDR output to try a display with before a game's options set it: `VOXEAR_HDR=on`, `hdr10` or `scrgb`.
-        if let Some(hdr) = std::env::var("VOXEAR_HDR").ok().and_then(|asked| hdr_choice(&asked)) {
+        // HDR output to start with before a game's options set it: the project's, or to try a display with,
+        // `VOXEAR_HDR=on`, `hdr10` or `scrgb`.
+        let asked = std::env::var("VOXEAR_HDR").ok().and_then(|asked| hdr_choice(&asked));
+        let project = (graphics.hdr != crate::project::HdrName::Off).then(|| graphics.hdr.into());
+        if let Some(hdr) = asked.or(project) {
             self.game.display.hdr.hdr = hdr;
             self.game.display.hdr_changed = true;
         }

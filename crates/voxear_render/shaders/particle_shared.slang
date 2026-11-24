@@ -88,7 +88,7 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
 {
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float3 toCamera = normalizeOr(frame->cameraPosition - world, float3(0.0, 1.0, 0.0));
+    float3 toCamera = towardsEyeOr(frame, world, float3(0.0, 1.0, 0.0));
     float3 ambient = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
         : gradientAmbient(frame, 0.5);
     if (frame->ddgi.enabled != 0)
@@ -97,7 +97,7 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     }
     float3 lit = sunLight * sunShadow(frame, world, -frame->sunDirection);
     float2 pixel = (clip.xy / clip.w * 0.5 + 0.5) * float2(frame->viewport);
-    uint base = clusterAt(frame, pixel, max(clip.w, frame->near)) * (frame->clusterMaxLights + 1);
+    uint base = clusterAt(frame, pixel, max(clipViewDepth(frame, clip), frame->near)) * (frame->clusterMaxLights + 1);
     for (uint i = 0; i < buffers()->clusters[base]; i++)
     {
         Light lamp = buffers()->lights[buffers()->clusters[base + 1 + i]];
@@ -132,7 +132,7 @@ void particleLightSix(Frame* frame, float3 world, float4 clip, float3 right, flo
         six[side] += sun * saturate(dot(toSun, sides[side]));
     }
     float2 pixel = (clip.xy / clip.w * 0.5 + 0.5) * float2(frame->viewport);
-    uint base = clusterAt(frame, pixel, max(clip.w, frame->near)) * (frame->clusterMaxLights + 1);
+    uint base = clusterAt(frame, pixel, max(clipViewDepth(frame, clip), frame->near)) * (frame->clusterMaxLights + 1);
     for (uint i = 0; i < buffers()->clusters[base]; i++)
     {
         Light lamp = buffers()->lights[buffers()->clusters[base + 1 + i]];
@@ -181,7 +181,8 @@ ParticleOut particleNone(ParticleSystem system, float2 corner)
 // lay it over the scene behind.
 float4 particleFog(Frame* frame, float3 world, float4 clip)
 {
-    float3 ray = world - frame->cameraPosition;
+    float3 eye = eyeFor(frame, world);
+    float3 ray = world - eye;
     float distance = max(length(ray), 1e-4);
     float2 uv = saturate(clip.xy / clip.w * 0.5 + 0.5);
     float3 added = 0.0;
@@ -195,7 +196,7 @@ float4 particleFog(Frame* frame, float3 world, float4 clip)
     if (push.textures.y != NO_TEXTURE)
     {
         float far = frame->post.fogVolumeFar;
-        float4 fog = volumeAt(push.textures.y, uv, min(clip.w, far), far);
+        float4 fog = volumeAt(push.textures.y, uv, min(clipViewDepth(frame, clip), far), far);
         return float4(added * fog.a + fog.rgb, through * fog.a);
     }
     if (frame->post.fogDensity <= 0.0)
@@ -203,7 +204,7 @@ float4 particleFog(Frame* frame, float3 world, float4 clip)
         return float4(added, through);
     }
     float falloff = max(frame->post.fogHeightFalloff, 1e-4);
-    float density = frame->post.fogDensity * exp(-falloff * (frame->cameraPosition.y - frame->post.fogBaseHeight));
+    float density = frame->post.fogDensity * exp(-falloff * (eye.y - frame->post.fogBaseHeight));
     float amount = 1.0 - heightFogThrough(density, falloff, ray);
     float glow = pow(saturate(dot(ray / distance, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
     float3 color = (fogColourToward(frame, ray / distance) + frame->sunColor * glow * 0.15) * fogOpenness(frame, world);
@@ -337,7 +338,7 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
     }
     output.color = float4(shown, saturate(color.a * fade));
     output.fade = 1.0;
-    output.depth = clip.w;
+    output.depth = clipViewDepth(frame, clip);
     output.position = clip;
     return output;
 }
@@ -391,7 +392,7 @@ float4 particleFragment(ParticleOut input) : SV_Target0
     }
     int2 under = int2(input.position.xy * float(max(push.textures.z, 1u)));
     float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(under, 0)).r;
-    float gap = (behind > 0.0 ? frame->near / behind : 1e4) - input.depth;
+    float gap = viewDepthOr(frame, behind, 1e4) - input.depth;
     if (gap <= 0.0)
     {
         discard;

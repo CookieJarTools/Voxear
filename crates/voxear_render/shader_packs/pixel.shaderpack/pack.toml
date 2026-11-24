@@ -1,0 +1,33 @@
+format = 1
+description = "Pixel art: the scene drawn in big square pixels, sun, sky and lamp light stepped into a few flat bands that fall away into a coloured shade, and dark outlines round everything."
+
+[options]
+pixel_size = { kind = "number", range = [1.0, 12.0], default = 4.0, label = "Pixel size", about = "How many screen pixels each drawn pixel covers, across and down; 1 draws at the screen's own size" }
+bands = { kind = "number", range = [2.0, 8.0], default = 5.0, label = "Bands", about = "How many flat steps light falls through from brightest to the shade" }
+outline = { kind = "number", range = [0.0, 1.0], default = 0.7, label = "Outline", about = "How dark the lines round things and where they meet are; 0 draws none" }
+shade = { kind = "color", default = [0.12, 0.10, 0.17], label = "Shade colour", about = "The colour what no light reaches falls to" }
+
+# The scene drawn small and enlarged with hard edges; an orthographic camera kept on its pixels' grid.
+[pixels]
+size = "pixel_size"
+snap = true
+
+# Block faces and models lit in flat bands of their light's colour over the shade; the sky stepped too.
+[surface]
+blocks = "faces.slang"
+models = "models.slang"
+sky = "sky.slang"
+
+# A plain curve in the engine's tonemap's place, the one the surface programs step their bands for.
+[[pass]]
+name = "Pixel grade"
+program = "grade.slang"
+at = "tonemap"
+reads = ["color"]
+
+# Dark lines where depth jumps, round what stands in front, and where faces meet at an angle.
+[[pass]]
+name = "Pixel outlines"
+program = "outline.slang"
+at = "final"
+reads = ["color", "depth", "normals"]

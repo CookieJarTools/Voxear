@@ -32,9 +32,14 @@ struct SkyFragmentOut
     float2 velocity : SV_Target1;
 };
 
-// The sky is infinitely far away, so only camera rotation moves it.
+// The sky is infinitely far away, so only camera rotation moves it; an orthographic camera sees it all one way, so
+// nothing on it moves.
 float2 skyMotion(Frame* frame, float3 direction)
 {
+    if (isOrthographic(frame))
+    {
+        return 0.0;
+    }
     float4 current = transform(frame->unjitteredViewProj, float4(direction, 0.0));
     float4 previous = transform(frame->prevViewProj, float4(direction, 0.0));
     return (current.xy / current.w - previous.xy / previous.w) * 0.5;
@@ -199,8 +204,8 @@ float3 atmosphereSky(Frame* frame, float3 direction, out float3 disc)
 SkyFragmentOut skyFragment(SkyOut input)
 {
     Frame* frame = push.frame;
-    float4 near = transform(frame->invViewProj, float4(input.ndc, 1.0, 1.0));
-    float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
+    EyeRay ray = eyeRay(frame, input.ndc);
+    float3 direction = ray.direction;
     SkyFragmentOut o;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 disc = 0.0;
@@ -271,12 +276,12 @@ SkyFragmentOut skyFragment(SkyOut input)
         float2 uv = cloudsUv(frame, input.ndc * 0.5 + 0.5);
         float marched = clouds.distances == NO_TEXTURE ? 0.0
             : textures[NonUniformResourceIndex(clouds.distances)].SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], uv, 0.0).r;
-        along = marched > 0.0 && marched < 1e6 ? marched : cloudsAlong(frame, direction);
+        along = marched > 0.0 && marched < 1e6 ? marched : cloudsAlong(frame, ray.origin, direction);
     }
     float2 were;
-    if (along > 0.0 && cloudsWere(frame, direction, along, were))
+    if (along > 0.0 && cloudsWere(frame, ray.origin, direction, along, were))
     {
-        float4 now = transform(frame->unjitteredViewProj, float4(direction, 0.0));
+        float4 now = transform(frame->unjitteredViewProj, isOrthographic(frame) ? float4(ray.origin + direction * along, 1.0) : float4(direction, 0.0));
         o.velocity = lerp(o.velocity, now.xy / now.w * 0.5 + 0.5 - were, saturate(covered * 20.0));
     }
     return o;
@@ -393,8 +398,7 @@ float4 aerialPerspectiveFragment(LutOut input) : SV_Target0
     uint slice = pixel.x / uint(AERIAL_SLICES);
     float2 inSlice = (float2(pixel.x % uint(AERIAL_SLICES), pixel.y) + 0.5) / AERIAL_SLICES;
     float2 ndc = inSlice * 2.0 - 1.0;
-    float4 near = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
-    float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
+    float3 direction = eyeRay(frame, ndc).direction;
     float depth = (float(slice) + 0.5) / AERIAL_SLICES;
     float kilometres = depth * depth * AERIAL_SLICES * AERIAL_KM_PER_SLICE;
     uint steps = clamp((slice + 1) * 2, 2u, 64u);
@@ -451,10 +455,10 @@ float4 cloudShadowsFragment(LutOut input) : SV_Target0
     return float4(exp(-through), 0.0, 0.0, 1.0);
 }
 
-// Soft clouds along a ray from a camera `camera` metres over the ground: what they add in colour, in alpha how much
+// Soft clouds along a ray from `eye`, `camera` metres over the ground: what they add in colour, in alpha how much
 // of the sky behind shows through, and in `distance` how far off they are, in metres. The layer is marched from a
 // start that moves each frame.
-float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera, float3 sun, float3 sky, out float distance,
+float4 cloudsMarched(Frame* frame, float2 pixel, float3 eye, float3 direction, float camera, float3 sun, float3 sky, out float distance,
     uint steps = CLOUD_STEPS, uint sunSteps = CLOUD_SUN_STEPS)
 {
     Clouds clouds = frame->lighting.clouds;
@@ -518,7 +522,7 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
         // How high the ray is here, over ground that curves away under it.
         float up = camera + direction.y * t + t * t * flat / (2.0 * CLOUD_EARTH);
         float height = (up - clouds.base) / clouds.thickness;
-        float2 xz = frame->cameraPosition.xz + direction.xz * t;
+        float2 xz = eye.xz + direction.xz * t;
         float density = cloudDensityAt(frame, xz, height, true);
         if (density <= 0.0)
         {
@@ -572,7 +576,7 @@ static const uint CLOUD_BLOCK_STEPS = 128;
 // cube ends the walk, its face lit all one colour by where it faces and by the cubes between it and the sun. A soft
 // one takes out some of the light, by how much of it is cloud and how far the ray goes through it, is lit as mist
 // is, and the walk goes on. Their layer is flat: they are not drawn far enough off for the Earth's curve to show.
-float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun, float3 sky, out float distance)
+float4 cloudBlocksSeen(Frame* frame, float3 eye, float3 direction, float camera, float3 sun, float3 sky, out float distance)
 {
     Clouds clouds = frame->lighting.clouds;
     float4 nothing = float4(0.0, 0.0, 0.0, 1.0);
@@ -599,7 +603,7 @@ float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun,
         return nothing;
     }
     // In cubes: across the clouds' own pattern, and up from the layer's underside.
-    float3 origin = float3(frame->cameraPosition.x - clouds.drift.x, -low, frame->cameraPosition.z - clouds.drift.y) / block;
+    float3 origin = float3(eye.x - clouds.drift.x, -low, eye.z - clouds.drift.y) / block;
     float3 rate = direction / block;
     float3 toward = float3(direction.x >= 0.0 ? 1.0 : -1.0, direction.y >= 0.0 ? 1.0 : -1.0, direction.z >= 0.0 ? 1.0 : -1.0);
     float3 cell = floor(origin + rate * (from + 0.001 * block));
@@ -719,9 +723,9 @@ float4 cloudsKept(LutOut input, out float marched)
     Frame* frame = push.frame;
     Clouds clouds = frame->lighting.clouds;
     float2 unjittered = frame->jitter * 2.0 / float2(frame->viewport);
-    float4 near = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0 + unjittered, 1.0, 1.0));
-    float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
-    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    EyeRay ray = eyeRay(frame, input.uv * 2.0 - 1.0 + unjittered);
+    float3 direction = ray.direction;
+    float camera = max(levelHeight(frame, ray.origin), 1.0);
     float3 sun, sky;
     cloudLight(frame, sun, sky);
 
@@ -735,12 +739,12 @@ float4 cloudsKept(LutOut input, out float marched)
         float index = float(frame->frameIndex % 16) + 1.0;
         float2 within = frac(index * float2(0.7548776662, 0.5698402910)) - 0.5;
         float2 uv = input.uv + within * float2(ddx(input.uv.x), ddy(input.uv.y));
-        float4 through = transform(frame->invViewProj, float4(uv * 2.0 - 1.0 + unjittered, 1.0, 1.0));
-        seen = cloudBlocksSeen(frame, normalize(through.xyz / through.w - frame->cameraPosition), camera, sun, sky, distance);
+        EyeRay through = eyeRay(frame, uv * 2.0 - 1.0 + unjittered);
+        seen = cloudBlocksSeen(frame, through.origin, through.direction, camera, sun, sky, distance);
     }
     else
     {
-        seen = cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance);
+        seen = cloudsMarched(frame, input.position.xy, ray.origin, direction, camera, sun, sky, distance);
     }
     float covered = 1.0 - seen.a;
     marched = covered > 0.0 ? distance : 0.0;
@@ -761,7 +765,7 @@ float4 cloudsKept(LutOut input, out float marched)
     // either lags them and lets go in jumps. Where this ray meets no cloud, its middle of their layer is followed,
     // as a cloud moving into it was there.
     float2 was;
-    if (!cloudsWere(frame, direction, distance > 0.0 ? distance : cloudsAlong(frame, direction), was))
+    if (!cloudsWere(frame, ray.origin, direction, distance > 0.0 ? distance : cloudsAlong(frame, ray.origin, direction), was))
     {
         return seen;
     }
@@ -811,8 +815,8 @@ float4 cloudPanoramaFragment(LutOut input) : SV_Target0
     bool blocks = clouds.kind == CLOUDS_BLOCKS;
     float distance;
     float reach = blocks ? CLOUD_BLOCK_REACH : CLOUD_REACH;
-    float4 seen = blocks ? cloudBlocksSeen(frame, direction, camera, sun, sky, distance)
-        : cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance, CLOUD_PANORAMA_STEPS, CLOUD_PANORAMA_SUN_STEPS);
+    float4 seen = blocks ? cloudBlocksSeen(frame, frame->cameraPosition, direction, camera, sun, sky, distance)
+        : cloudsMarched(frame, input.position.xy, frame->cameraPosition, direction, camera, sun, sky, distance, CLOUD_PANORAMA_STEPS, CLOUD_PANORAMA_SUN_STEPS);
     float covered = 1.0 - seen.a;
     if (covered > 0.0)
     {

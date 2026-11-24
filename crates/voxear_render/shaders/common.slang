@@ -1140,7 +1140,9 @@ struct CullCamera
     float tanHalf;
     // 1 while the camera is another view's.
     uint borrowed;
-    uint pad;
+    // For an orthographic camera, half the height it sees in metres, and lodScale the screen's pixels a metre and
+    // tanHalf that half height at every distance (see cullDistance); 0 for a perspective one.
+    float ortho;
 };
 
 struct Frame
@@ -1198,8 +1200,11 @@ struct Frame
     uint2 glassShadow;
     // As meshletCapacity, for the two-sided shadow lists.
     uint meshletTwoSidedCapacity;
-    uint meshletPad0;
-    uint meshletPad1;
+    // For an orthographic camera (src/lens.rs), half the height it sees in metres, and how far past its near plane
+    // it sees, its depth falling evenly from 1 at the near plane to 0 there; orthoHalfHeight 0 for a perspective one.
+    // Read them through isOrthographic, viewDepthOf, eyeRay, towardsEye and screenDistance.
+    float orthoHalfHeight;
+    float orthoDepth;
     uint meshletPad2;
     Lighting lighting;
     Ddgi ddgi;
@@ -1245,6 +1250,145 @@ float3 gradientSkyLight(Frame* frame, float up)
 {
     float3 above = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
     return lerp(frame->groundColor, above, up) * GRADIENT_AMBIENT * frame->ambient;
+}
+
+// ---- The camera's lens: perspective or orthographic (src/lens.rs). Code that turns depth into distance, or makes the
+// camera's rays, goes through these, so an orthographic camera is drawn right by every pass.
+
+// Whether the frame's camera is orthographic: each of its rays runs along cameraForward from its own point of the near
+// plane, and its depth falls evenly with distance rather than as near over it.
+bool isOrthographic(Frame* frame)
+{
+    return frame->orthoHalfHeight > 0.0;
+}
+
+// How far in front of the camera, along cameraForward, what is drawn at `depth` lies: near / depth for a perspective
+// camera, evenly from the near plane to orthoDepth past it for an orthographic one.
+float viewDepthOf(Frame* frame, float depth)
+{
+    if (isOrthographic(frame))
+    {
+        return frame->near + (1.0 - saturate(depth)) * frame->orthoDepth;
+    }
+    return frame->near / max(depth, 1e-7);
+}
+
+// As viewDepthOf, but `sky` where nothing is drawn, at depth 0.
+float viewDepthOr(Frame* frame, float depth, float sky)
+{
+    return depth > 0.0 ? viewDepthOf(frame, depth) : sky;
+}
+
+// The depth something `z` metres in front of the camera is drawn at, the other way round from viewDepthOf.
+float depthOfView(Frame* frame, float z)
+{
+    if (isOrthographic(frame))
+    {
+        return saturate(1.0 - (z - frame->near) / frame->orthoDepth);
+    }
+    return frame->near / max(z, 1e-7);
+}
+
+// How far in front of the camera a point the frame's viewProj took to `clip` lies: its w for a perspective camera,
+// read from its depth for an orthographic one, whose w is always 1.
+float clipViewDepth(Frame* frame, float4 clip)
+{
+    if (isOrthographic(frame))
+    {
+        return frame->near + (1.0 - clip.z / clip.w) * frame->orthoDepth;
+    }
+    return clip.w;
+}
+
+// A ray the camera sees along: where it starts and which way it runs, unit length.
+struct EyeRay
+{
+    float3 origin;
+    float3 direction;
+};
+
+// The ray through `ndc`, from -1 to 1 across the drawn picture, as the frame's (jittered) matrices draw it: from the
+// camera for a perspective camera, from its point of the near plane along cameraForward for an orthographic one.
+EyeRay eyeRay(Frame* frame, float2 ndc)
+{
+    float4 near = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
+    EyeRay ray;
+    if (isOrthographic(frame))
+    {
+        ray.origin = near.xyz / near.w;
+        ray.direction = frame->cameraForward;
+        return ray;
+    }
+    ray.origin = frame->cameraPosition;
+    ray.direction = normalize(near.xyz / near.w - frame->cameraPosition);
+    return ray;
+}
+
+// The way from `world` back to the eye that sees it, unit length: to the camera for a perspective camera, against
+// cameraForward for an orthographic one. Light reflected this way is what the camera sees.
+float3 towardsEye(Frame* frame, float3 world)
+{
+    if (isOrthographic(frame))
+    {
+        return -frame->cameraForward;
+    }
+    return normalize(frame->cameraPosition - world);
+}
+
+// As towardsEye, but `fallback` for a point at a perspective camera itself.
+float3 towardsEyeOr(Frame* frame, float3 world, float3 fallback)
+{
+    if (isOrthographic(frame))
+    {
+        return -frame->cameraForward;
+    }
+    return normalizeOr(frame->cameraPosition - world, fallback);
+}
+
+// How far the eye's ray runs to reach `world`: from the camera for a perspective camera, from the near plane's point
+// for an orthographic one. What fades or fogs with distance from the viewer measures it so.
+float eyeDistance(Frame* frame, float3 world)
+{
+    if (isOrthographic(frame))
+    {
+        return max(dot(world - frame->cameraPosition, frame->cameraForward), 0.0);
+    }
+    return length(world - frame->cameraPosition);
+}
+
+// Where the eye's ray that reaches `world` starts: the camera for a perspective camera, as far back along
+// cameraForward as eyeDistance measures for an orthographic one.
+float3 eyeFor(Frame* frame, float3 world)
+{
+    if (isOrthographic(frame))
+    {
+        return world - frame->cameraForward * eyeDistance(frame, world);
+    }
+    return frame->cameraPosition;
+}
+
+// The distance something's size on screen is measured at: `distance` for a perspective camera, where lodScale over it
+// is the screen's pixels a metre there; 1 for an orthographic one, whose lodScale is its pixels a metre everywhere.
+float screenDistance(Frame* frame, float distance)
+{
+    return isOrthographic(frame) ? 1.0 : distance;
+}
+
+// As screenDistance, for the camera culling and LODs are judged from.
+float cullDistance(CullCamera cull, float distance)
+{
+    return cull.ortho > 0.0 ? 1.0 : distance;
+}
+
+// The way from the cull camera to `world` it looks along, not unit length: from the camera for a perspective camera,
+// along its forward axis for an orthographic one, whose depth falls evenly that way.
+float3 cullLook(CullCamera cull, float3 world)
+{
+    if (cull.ortho > 0.0)
+    {
+        return -normalize(float3(cull.viewProj.c0.z, cull.viewProj.c1.z, cull.viewProj.c2.z)) * 1.0e5;
+    }
+    return world - cull.position;
 }
 
 // How far in front of the frame's cut `world` is, for SV_ClipDistance: what is behind it is not drawn.

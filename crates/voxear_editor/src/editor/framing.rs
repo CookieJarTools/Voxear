@@ -45,11 +45,21 @@ impl Editor {
         };
         let world = &self.game.engine.world;
         let Some(camera) = world.get::<Transform>(self.scene.camera) else { return };
-        let fov = world.get::<Camera>(self.scene.camera).map_or(60.0, |lens| lens.fov_y_degrees);
-        // Far enough that the sphere around it fits the view's height.
-        let distance = radius * MARGIN / (fov.to_radians() / 2.0).sin();
+        let lens = world.get::<Camera>(self.scene.camera).copied().unwrap_or_default();
+        // Far enough that the sphere around it fits the view's height; an orthographic view sees as much at every
+        // distance, so it is sized to fit, from well in front.
+        let distance = match lens.projection {
+            voxear_render::Projection::Orthographic => radius * MARGIN * 4.0 + lens.near,
+            voxear_render::Projection::Perspective => radius * MARGIN / (lens.fov_y_degrees.to_radians() / 2.0).sin(),
+        };
         let to = centre - camera.rotation * Vec3::Z * distance;
         self.glide = Some(Glide { from: camera.position, to, done: 0.0 });
+        if lens.projection == voxear_render::Projection::Orthographic {
+            let world = &mut self.game.engine.world;
+            if let Some(camera) = world.get_mut::<Camera>(self.scene.camera) {
+                camera.size = radius * MARGIN;
+            }
+        }
     }
 
     /// Moves the camera along its glide, which flying the camera ends.

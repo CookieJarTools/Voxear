@@ -47,7 +47,7 @@ public sealed class ShaderPackOption
 	/// <summary>A choice's choices, in order; empty for a number or a toggle.</summary>
 	public IReadOnlyList<string> Choices { get; }
 
-	/// <summary>Its value now: a number as it is, a toggle 0 or 1, a choice its place among the choices.</summary>
+	/// <summary>Its value now: a number as it is, a toggle 0 or 1, a choice its place among the choices, a colour its sRGB to 8 bits each, red highest.</summary>
 	public float Value { get; }
 
 	/// <summary>A toggle's value: whether it is on.</summary>
@@ -58,12 +58,28 @@ public sealed class ShaderPackOption
 		? Choices[Math.Clamp((int)MathF.Round(Value), 0, Choices.Count - 1)]
 		: string.Empty;
 
+	/// <summary>A colour option's value; black for any other.</summary>
+	public Color Color => Kind == ShaderPackOptionKind.Color ? ColorOf(Value) : Color.Black;
+
+	internal static float ValueOf(Color color)
+	{
+		static int Channel(float c) => (int)MathF.Round(Math.Clamp(c, 0f, 1f) * 255f);
+		return (Channel(color.R) << 16) | (Channel(color.G) << 8) | Channel(color.B);
+	}
+
+	private static Color ColorOf(float value)
+	{
+		var bits = (int)Math.Clamp(MathF.Round(value), 0f, 16777215f);
+		return new Color(((bits >> 16) & 255) / 255f, ((bits >> 8) & 255) / 255f, (bits & 255) / 255f);
+	}
+
 	public override string ToString()
 	{
 		return Kind switch
 		{
 			ShaderPackOptionKind.Toggle => $"{Label}: {(IsOn ? "on" : "off")}",
 			ShaderPackOptionKind.Choice => $"{Label}: {Chosen}",
+			ShaderPackOptionKind.Color => $"{Label}: {Color}",
 			_ => $"{Label}: {Value:0.##}",
 		};
 	}

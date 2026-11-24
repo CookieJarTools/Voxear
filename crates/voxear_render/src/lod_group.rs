@@ -169,11 +169,20 @@ pub struct LodCamera {
     pub position: Vec3,
     /// The tangent of half its vertical field of view.
     pub tan_half_fov: f32,
+    /// For an orthographic camera, half the height it sees, in metres: then
+    /// a group's share of the screen is the same at every distance.
+    pub ortho: Option<f32>,
 }
 
 impl LodCamera {
     pub fn new(position: Vec3, fov_y_degrees: f32) -> Self {
-        Self { position, tan_half_fov: (fov_y_degrees.to_radians() * 0.5).tan().max(1e-4) }
+        Self { position, tan_half_fov: (fov_y_degrees.to_radians() * 0.5).tan().max(1e-4), ortho: None }
+    }
+
+    /// As `camera` sees from `position`.
+    pub fn of(position: Vec3, camera: &crate::Camera) -> Self {
+        let ortho = (camera.projection == crate::Projection::Orthographic).then_some(camera.size.max(1e-3));
+        Self { ortho, ..Self::new(position, camera.fov_y_degrees) }
     }
 }
 
@@ -266,7 +275,8 @@ fn measure(world: &World, group: Entity, bounds: Option<(Vec3, Vec3)>, camera: L
         None => (at, EMPTY_SIZE),
     };
     let away = center.distance(camera.position).max(1e-4);
-    LodView { size: size / (2.0 * away * camera.tan_half_fov), distance, center }
+    let half_height = camera.ortho.unwrap_or(away * camera.tan_half_fov);
+    LodView { size: size / (2.0 * half_height), distance, center }
 }
 
 /// Where an Obj's groups and levels lie in [`Within::lists`]: from where, and

@@ -21,6 +21,18 @@ enum OptionControl {
     Number(NodeId, NodeId),
     Toggle(NodeId),
     Choice(NodeId),
+    /// Red, green and blue in sRGB from 0 to 1, and a swatch of the colour.
+    Color([NodeId; 3], NodeId),
+}
+
+/// Shows a colour option's value in its fields and swatch.
+fn show_color(ui: &mut Ui, (fields, swatch): ([NodeId; 3], NodeId), value: f32) {
+    let srgb = voxear_render::shader_packs::value_color(value);
+    for (field, channel) in fields.into_iter().zip(srgb) {
+        ui.set_text(field, &crate::inspector::number(channel));
+    }
+    let [r, g, b] = srgb.map(|c| (c * 255.0).round() as u8);
+    ui.set_inline_style(swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
 }
 
 /// What was changed on the page.
@@ -193,6 +205,11 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
                     ui.add_class(dropdown, "value-choice");
                     OptionControl::Choice(dropdown)
                 }
+                OptionKind::Color { .. } => {
+                    let (fields, swatch) = crate::inspector::color_fields(ui, row);
+                    show_color(ui, (fields, swatch), option.default_value());
+                    OptionControl::Color(fields, swatch)
+                }
             };
             options.push((option.key.clone(), control));
         }
@@ -223,6 +240,15 @@ impl ShaderPackFields {
                 },
                 OptionControl::Toggle(toggle) if ui.changed(*toggle) => f32::from(u8::from(ui.is_checked(*toggle))),
                 OptionControl::Choice(dropdown) if ui.changed(*dropdown) => ui.selected_option(*dropdown) as f32,
+                OptionControl::Color(fields, _) if fields.iter().any(|field| ui.changed(*field)) => {
+                    let mut srgb = voxear_render::shader_packs::value_color(self.values[at]);
+                    for (channel, field) in srgb.iter_mut().zip(fields) {
+                        if let Ok(typed) = ui.text(*field).trim().parse::<f32>() {
+                            *channel = typed.clamp(0.0, 1.0);
+                        }
+                    }
+                    voxear_render::shader_packs::color_value(srgb)
+                }
                 _ => continue,
             };
             self.values[at] = value;
@@ -273,6 +299,7 @@ impl ShaderPackFields {
                 }
                 OptionControl::Toggle(toggle) => ui.set_checked(toggle, value >= 0.5),
                 OptionControl::Choice(dropdown) => ui.set_selected_option(dropdown, value as usize),
+                OptionControl::Color(fields, swatch) => show_color(ui, (fields, swatch), value),
             }
         }
     }

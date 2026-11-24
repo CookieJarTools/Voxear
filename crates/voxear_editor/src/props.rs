@@ -985,7 +985,11 @@ pub enum Prop {
     NavObstacle(crate::nav_props::NavObstacleField),
     /// A value of an Obj's Crowd Member (see `nav_props`).
     CrowdMember(crate::nav_props::CrowdMemberField),
+    /// A Camera's projection: perspective or orthographic.
+    Projection,
     FieldOfView,
+    /// An orthographic Camera's size: half the height it sees.
+    OrthoSize,
     Near,
     Exposure,
     Sound,
@@ -1173,7 +1177,9 @@ impl Prop {
             }
             Prop::LightmapScale | Prop::LightmapCast | Prop::LightmapReceive => Part::Lightmap,
             Prop::ProbeGroupFill | Prop::ProbeGroupSpacing | Prop::ProbeGroupCount => Part::LightProbeGroup,
-            Prop::FieldOfView | Prop::Near | Prop::Exposure | Prop::CameraFollows => Part::Camera,
+            Prop::Projection | Prop::FieldOfView | Prop::OrthoSize | Prop::Near | Prop::Exposure | Prop::CameraFollows => {
+                Part::Camera
+            }
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
             Prop::ProbeUpdate
             | Prop::ProbeInterval
@@ -1905,7 +1911,9 @@ impl Prop {
             Prop::FoliageShadow => "shadow_distance",
             Prop::FoliageImpostors => "impostors",
             Prop::FoliageImpostorDistance => "impostor_distance",
+            Prop::Projection => "projection",
             Prop::FieldOfView => "fov",
+            Prop::OrthoSize => "size",
             Prop::Near => "near",
             Prop::Exposure => "exposure",
             Prop::Sound => "sound",
@@ -2305,7 +2313,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props.push(Prop::ProbeGroupCount);
             props
         }
-        Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure, Prop::CameraFollows],
+        Part::Camera => {
+            // A perspective camera's field of view, or an orthographic one's size.
+            let ortho = world.get::<Camera>(entity).is_some_and(|c| c.projection == voxear_render::Projection::Orthographic);
+            let shape = if ortho { Prop::OrthoSize } else { Prop::FieldOfView };
+            vec![Prop::Projection, shape, Prop::Near, Prop::Exposure, Prop::CameraFollows]
+        }
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::ReverbProbe => vec![Prop::ReverbSize, Prop::ReverbSpacing],
         Part::ReflectionProbe => {
@@ -3207,7 +3220,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::FoliageShadow => "Shadow distance",
         Prop::FoliageImpostors => "Impostors",
         Prop::FoliageImpostorDistance => "Impostors from",
+        Prop::Projection => "Projection",
         Prop::FieldOfView => "Field of view",
+        Prop::OrthoSize => "Size",
         Prop::Near => "Near",
         Prop::Exposure => "Exposure",
         Prop::Sound => "Sound",
@@ -4505,7 +4520,13 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Choice(index, Impostors::ALL.iter().map(|i| i.name().to_string()).collect())
         }
         Prop::FoliageImpostorDistance => Value::Number(world.get::<Foliage>(entity)?.impostor_distance),
+        Prop::Projection => {
+            let projection = camera()?.projection;
+            let index = voxear_render::Projection::ALL.iter().position(|p| *p == projection).unwrap_or(0);
+            Value::Choice(index, voxear_render::Projection::ALL.iter().map(|p| p.name().to_string()).collect())
+        }
         Prop::FieldOfView => Value::Number(camera()?.fov_y_degrees),
+        Prop::OrthoSize => Value::Number(camera()?.size),
         Prop::Near => Value::Number(camera()?.near),
         Prop::Exposure => Value::Number(camera()?.exposure),
         Prop::Sound => Value::Asset(match audio()?.sound.and_then(|id| game.content.sound_guid(id)) {
@@ -6083,6 +6104,10 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::VolumePriority, Value::Number(n)) => {
             with(world, entity, |volume: &mut PostVolume| volume.priority = n.round() as i32)
         }
+        (Prop::Projection, Value::Choice(index, _)) => with(world, entity, |camera: &mut Camera| {
+            camera.projection = voxear_render::Projection::ALL[index.min(voxear_render::Projection::ALL.len() - 1)]
+        }),
+        (Prop::OrthoSize, Value::Number(n)) => with(world, entity, |camera: &mut Camera| camera.size = n.max(0.01)),
         (Prop::FieldOfView, Value::Number(n)) => {
             with(world, entity, |camera: &mut Camera| camera.fov_y_degrees = n.clamp(1.0, 179.0))
         }
@@ -6975,6 +7000,24 @@ mod tests {
         assert!(!props(&world, volume, &Part::VoxelVolume, &types).contains(&Prop::VoxelGrass));
         let source = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
         assert_eq!(voxel_value(source, &Prop::VoxelStamps), Some(Value::Fixed("0 box models".into())));
+    }
+
+    /// A Camera shows its projection, then its field of view while it is
+    /// perspective and its size while it is orthographic, as `projection`
+    /// and `size` for tools.
+    #[test]
+    fn a_camera_shows_its_field_of_view_or_its_size_by_its_projection() {
+        let mut world = World::new();
+        let eye = world.spawn((voxear_scene::Transform::IDENTITY, Camera::default()));
+        let types = ScriptTypes::default();
+        let shown = props(&world, eye, &Part::Camera, &types);
+        assert_eq!(shown[..2], [Prop::Projection, Prop::FieldOfView]);
+        world.get_mut::<Camera>(eye).unwrap().projection = voxear_render::Projection::Orthographic;
+        let shown = props(&world, eye, &Part::Camera, &types);
+        assert_eq!(shown[..2], [Prop::Projection, Prop::OrthoSize]);
+        assert!(!shown.contains(&Prop::FieldOfView));
+        assert_eq!([Prop::Projection.lock_key(), Prop::OrthoSize.lock_key()], ["projection", "size"]);
+        assert_eq!([label(&Prop::Projection), label(&Prop::OrthoSize)], ["Projection", "Size"]);
     }
 
     #[test]

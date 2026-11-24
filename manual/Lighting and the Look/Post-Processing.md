@@ -278,6 +278,31 @@ Things moving fast, and things just come into view, have no earlier frames to bu
 
 To compare, `vox render --render-scale 0.67` draws one picture at a given scale.
 
+## Drawing in pixels
+
+`[post.pixels]` draws the scene at a few pixels to the screen's many and enlarges the picture with every drawn pixel a square block of whole screen pixels, never smoothed: the hard-edged look of pixel art. Every pass draws at the small size, a shader pack's too, so lighting, outlines and grading all land on the big pixels; TAA, FXAA and sharpening are off while it is on, as they would blur it.
+
+```toml
+[post.pixels]
+enabled = true
+size = 4        # screen pixels each drawn pixel covers, across and down, 1 to 32
+height = 0      # or about how many rows to draw, 270 say, in place of size: the nearest whole pixel size that gives them
+snap = true     # keep an orthographic camera on the grid of its pixels
+```
+
+`size` keeps the pixels the same on every screen, more of them on a bigger one; `height` keeps about as many rows of pixels on every screen, the pixels bigger on a bigger one. Either way a drawn pixel covers a whole number of screen pixels, so none is wider than another.
+
+**Snapping** is for an [[Cameras#Orthographic cameras|orthographic camera]]. As a camera glides, the world slides under the grid of drawn pixels, and each pixel's colour flips as an edge crosses it: edges crawl and fine patterns shimmer. With `snap` on, the camera is moved onto the grid of its drawn pixels, so everything falls on the same pixels from frame to frame, and the enlarged picture is moved by what is left over, in whole screen pixels. The picture then glides smoothly, a screen pixel at a time, and each drawn pixel keeps its colour. A perspective camera is drawn as it is: its pixels cannot all keep their place as it moves.
+
+In the editor, the Lighting window's **Pixels** rows set the same. From a script, the easy way in is one call, and the full one the settings themselves:
+
+```csharp
+Post.Change(post => post.Pixels.DrawAt(4));
+Post.Change(post => { post.Pixels.Enabled = true; post.Pixels.Height = 240; post.Pixels.Snap = true; });
+```
+
+Tools set them with `vox editor call lighting.set path=post.pixels.size value=4`, and `vox mcp` gives the same to an AI. A shader pack can ask for it while it is worn (see [[Shader Packs]]), as the built-in **Pixel** pack does.
+
 ## Upscalers
 
 Voxear's own upscaler is what `render_scale` uses. **AMD FSR 3** is a second choice, built in from AMD's own source, for any GPU that can run it, NVIDIA's and Intel's too. NVIDIA DLSS and Intel XeSS are on the list as well, greyed out, with the reasons below.

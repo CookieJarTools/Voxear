@@ -41,6 +41,45 @@ pub struct PostProcess {
     pub motion_blur: MotionBlur,
     /// Splits colours towards the screen edges, like a cheap lens. 0 is off.
     pub chromatic_aberration: f32,
+    /// The scene drawn at a few pixels to the screen's many and enlarged
+    /// with hard edges, as pixel art is (see `pixels`).
+    pub pixels: Pixels,
+}
+
+/// Drawing in pixels: every pass draws the scene at a few pixels to the
+/// screen's many, and the picture is enlarged to the view nearest, each
+/// drawn pixel a square block of whole screen pixels, never blurred. TAA,
+/// FXAA and sharpening are off while it is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Pixels {
+    pub enabled: bool,
+    /// Screen pixels each drawn pixel covers, each way, 1 to 32.
+    pub size: u32,
+    /// Advanced: about how many rows of pixels to draw, in place of `size`:
+    /// the whole pixel size nearest to giving them. 0 leaves `size` to say.
+    pub height: u32,
+    /// Keeps an orthographic camera on the grid of its pixels and moves the
+    /// enlarged picture by the rest, so pixels do not crawl or shimmer as
+    /// it glides. A perspective camera is drawn as it is.
+    pub snap: bool,
+}
+
+impl Default for Pixels {
+    fn default() -> Self {
+        Self { enabled: false, size: 4, height: 0, snap: true }
+    }
+}
+
+impl Pixels {
+    /// Screen pixels each drawn pixel covers, for a view `shown` rows high.
+    pub fn size_for(&self, shown: u32) -> u32 {
+        let size = match self.height {
+            0 => self.size,
+            rows => (shown as f32 / rows as f32).round() as u32,
+        };
+        size.clamp(1, crate::pixels::MOST_PIXEL_SIZE)
+    }
 }
 
 /// How hard ambient occlusion looks for what shades each pixel: how many
@@ -608,6 +647,7 @@ impl PostProcess {
             depth_of_field: DepthOfField::default(),
             motion_blur: MotionBlur::default(),
             chromatic_aberration: 0.0,
+            pixels: Pixels::default(),
         }
     }
 

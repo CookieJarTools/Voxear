@@ -16,6 +16,29 @@ use voxear_ui::{NodeId, Style, Ui};
 
 use crate::inspector::{number, prop};
 
+/// Every import setting, for the search over every setting: the kind of
+/// asset it is of, its label, and what it does.
+pub const DESCRIBED: &[(&str, &str, &str)] = &[
+    ("Model", "Units", "The unit the file's lengths are in, so the model comes in at its real size."),
+    ("Model", "Scale", "Makes the model bigger or smaller as it comes in, times its units."),
+    ("Model", "Normals", "Which way each face points, for its shading: as the file has them, or worked out."),
+    ("Model", "Smoothing angle", "Faces meeting at less than this angle shade smoothly; sharper edges stay hard."),
+    ("Model", "Tangents", "The direction normal maps bend light along: as the file has them, or worked out."),
+    ("Model", "Use its own LODs", "Uses the levels of detail the file has, rather than making them."),
+    ("Model", "Make LODs", "Makes simpler copies of the model to draw far away, so it costs less."),
+    ("Model", "Import materials", "Brings in the file's materials, its colours and pictures, with it."),
+    ("Model", "Wind masks", "Which parts of a plant model sway in the wind, and how much."),
+    ("Model", "Lightmap UVs", "A second set of UVs for baked light, made where the file has none."),
+    ("Animation", "Loop", "Whether a clip plays again from the start when it ends."),
+    ("Animation", "Direction", "The way a clip moves the character, for motion matching."),
+    ("Animation", "Speed", "How fast a clip moves the character, for motion matching."),
+    ("Texture", "Max size", "The largest the picture is kept: smaller saves memory and looks blurrier close up."),
+    ("Texture", "Compress in builds", "Packs the picture smaller in builds: less memory, a little less sharp."),
+    ("Texture", "Flip Green", "Turns a normal map made the other way up, so bumps are not dents."),
+    ("Sound", "Load", "Whether the sound loads whole before it plays, or streams from the file, for long music."),
+    ("Sound", "Volume", "How loud the sound is, before its Audio Source's own volume."),
+];
+
 /// Import settings applied, to write and import with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ImportSettings {

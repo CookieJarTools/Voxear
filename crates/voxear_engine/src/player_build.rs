@@ -257,6 +257,11 @@ pub fn build(
         gravity: project.file.physics.gravity,
         gravity_2d: project.file.physics.gravity_2d,
         input_actions: project.file.input.actions.clone(),
+        press_point: project.file.input.press_point,
+        stick_dead_zone: project.file.input.stick_dead_zone,
+        graphics: project.file.graphics,
+        speed_of_sound: project.file.audio.speed_of_sound,
+        voices: project.file.audio.voices,
     };
     settings.write(&data)?;
     timed("player", stage);

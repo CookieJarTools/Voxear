@@ -277,6 +277,27 @@ pub fn set_option(world: &mut World, key: &str, value: f32) -> Result<f32> {
     Ok(kept)
 }
 
+/// A colour option's value from sRGB written as `#rrggbb`, or `r,g,b` from
+/// 0 to 1, for one set from the command line or a call.
+pub fn color_text_value(option: &PackOption, text: &str) -> Option<f32> {
+    if !matches!(option.kind, OptionKind::Color { .. }) {
+        return None;
+    }
+    let text = text.trim();
+    let srgb = match text.strip_prefix('#') {
+        Some(hex) if hex.len() == 6 => {
+            let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok().map(|c| f32::from(c) / 255.0);
+            [channel(0)?, channel(2)?, channel(4)?]
+        }
+        Some(_) => return None,
+        None => {
+            let parts: Vec<f32> = text.split(',').map(|part| part.trim().parse().ok()).collect::<Option<_>>()?;
+            <[f32; 3]>::try_from(parts).ok()?
+        }
+    };
+    Some(voxear_render::shader_packs::color_value(srgb))
+}
+
 /// A choice option's value by the choice's name, for one set from a menu
 /// or the command line.
 pub fn choice_value(option: &PackOption, choice: &str) -> Option<f32> {
@@ -496,6 +517,7 @@ pub fn option_json(option: &PackOption, value: f32) -> serde_json::Value {
         OptionKind::Toggle { .. } => serde_json::Value::Bool(value >= 0.5),
         OptionKind::Choice { choices, .. } => choices.get(value as usize).cloned().unwrap_or_default().into(),
         OptionKind::Number { .. } => serde_json::json!(value),
+        OptionKind::Color { .. } => serde_json::json!(voxear_render::shader_packs::value_color(value)),
     };
     json
 }

@@ -86,22 +86,23 @@ fn the_engines_the_projects_and_a_players_packs_are_listed_and_worn() {
         ("Evening", PackSource::Builtin),
         ("Vivid", PackSource::Builtin),
         ("Radiant", PackSource::Builtin),
+        ("Pixel", PackSource::Builtin),
         ("Warm", PackSource::Game),
         ("Mine", PackSource::Player),
     ];
     assert_eq!(names, listed);
-    assert_eq!(packs[3].description, "A test grade.");
+    assert_eq!(packs[4].description, "A test grade.");
 
     // The project's, by its manifest's path: known by its GUID from then on, and drawn.
     let world = &mut game.engine.world;
     shader_packs::wear(world, &mut game.content, "Packs/Warm.shaderpack/pack.toml").unwrap();
-    assert_eq!(shader_packs::worn(&game.engine.world), Some(packs[3].reference.as_str()));
+    assert_eq!(shader_packs::worn(&game.engine.world), Some(packs[4].reference.as_str()));
     assert_eq!(shader_packs::standing(&game.engine.world), Some(Standing::Drawn));
     let worn = game.engine.world.resource::<WornShaderPack>().expect("handed to the renderer");
     assert_eq!((worn.pack.passes.len(), worn.options[..2].to_vec()), (1, vec![1.0, 0.0]));
 
     // The player's, by its folder; the engine's, by its name; and none.
-    for reference in [packs[4].reference.as_str(), "builtin:evening"] {
+    for reference in [packs[5].reference.as_str(), "builtin:evening"] {
         shader_packs::wear(&mut game.engine.world, &mut game.content, reference).unwrap();
         assert_eq!(shader_packs::worn(&game.engine.world), Some(reference));
         assert!(drawn(&game).is_some(), "{reference} drawn");

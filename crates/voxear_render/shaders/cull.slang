@@ -64,7 +64,7 @@ uint instanceLod(Frame* frame, Instance instance, Mesh mesh, float3 center, floa
     {
         // From the main camera, so shadows draw the LOD the view does.
         float tanHalf = frame->cull.tanHalf;
-        float share = radius / (max(length(center - frame->cull.position), frame->cull.near) * tanHalf);
+        float share = radius / (cullDistance(frame->cull, max(length(center - frame->cull.position), frame->cull.near)) * tanHalf);
         float ends[8] = { instance.lodScreen0.x, instance.lodScreen0.y, instance.lodScreen0.z, instance.lodScreen0.w,
                           instance.lodScreen1.x, instance.lodScreen1.y, instance.lodScreen1.z, instance.lodScreen1.w };
         uint lod = 0;
@@ -351,7 +351,7 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     }
 
     // Judged from the camera culling borrows, where it borrows one, as from the view's own otherwise.
-    float distance = max(length(center - frame->cull.position) - radius, frame->cull.near);
+    float distance = cullDistance(frame->cull, max(length(center - frame->cull.position) - radius, frame->cull.near));
     uint lod = instanceLod(frame, instance, mesh, center, radius, scale, frame->cull.lodScale / distance, frame->lodThreshold);
     bool inFrustum = insidePlanes(frame->cull.planes, center, radius);
     bool twoSided = (material.flags & MATERIAL_TWO_SIDED) != 0;

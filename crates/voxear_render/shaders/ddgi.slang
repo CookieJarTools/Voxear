@@ -616,7 +616,7 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     // The surface's own normal, normal map and all, as the depth passes kept it.
     float3 position = worldPositionAt(depthTexture, pixel);
     float3 eye = frame->cameraPosition;
-    float3 view = normalizeOr(eye - position, -frame->cameraForward);
+    float3 view = towardsEyeOr(frame, position, -frame->cameraForward);
     float3 normal = octDecode(surface.rg * 2.0 - 1.0);
     normal = dot(normal, view) < 0.0 ? -normal : normal;
     float3 centre = float3(0.0, 0.0, dot(position - eye, frame->cameraForward));

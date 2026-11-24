@@ -117,6 +117,15 @@ struct PackSunShadows
     float4 cascadeTexel;
 };
 
+// A colour option's value, its sRGB channels to 8 bits each, red highest (src/shader_packs.rs color_value), as linear
+// colour.
+float3 packOptionColor(float value)
+{
+    uint bits = uint(clamp(value, 0.0, 16777215.0) + 0.5);
+    float3 srgb = float3((bits >> 16) & 255u, (bits >> 8) & 255u, bits & 255u) / 255.0;
+    return select(srgb <= 0.04045, srgb / 12.92, pow((srgb + 0.055) / 1.055, 2.4));
+}
+
 // The frame as every program of a pack sees it. Directions are in the world, unit length; colours linear.
 struct PackFrame
 {
@@ -192,4 +201,8 @@ struct PackFrame
     uint leafLight;
     // The sun's shadow maps, for a pass that reads `shadow`; null for one that does not, or without the sun's shadows.
     PackSunShadows* sunShadows;
+    // For an orthographic camera, half the height it sees in metres, and how far past its near plane it sees, its
+    // depth falling evenly from 1 to 0 over it; orthoHalfHeight 0 for a perspective camera.
+    float orthoHalfHeight;
+    float orthoDepth;
 };

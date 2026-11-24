@@ -10,6 +10,8 @@ namespace Voxear;
 /// // Aiming narrows the view.
 /// var camera = eye.Camera;
 /// camera.FieldOfView = Mathf.Lerp(70f, 55f, aiming);
+/// // A room seen from above, 6 m up and down, every ray parallel.
+/// camera.MakeOrthographic(6f);
 /// </code>
 /// </summary>
 public readonly struct Camera : IEquatable<Camera>, IObjComponent
@@ -18,6 +20,8 @@ public readonly struct Camera : IEquatable<Camera>, IObjComponent
 	private const int NearValue = 4;
 	private const int ExposureValue = 5;
 	private const int FollowsValue = 6;
+	private const int ProjectionValue = 7;
+	private const int SizeValue = 8;
 
 	public static readonly Camera None = default;
 
@@ -37,6 +41,27 @@ public readonly struct Camera : IEquatable<Camera>, IObjComponent
 	{
 		get { return Number(FieldOfViewValue); }
 		set { Set(FieldOfViewValue, value); }
+	}
+
+	/// <summary>Perspective, further off smaller, or orthographic, every ray parallel, as a plan or a room drawn from above.</summary>
+	public CameraProjection Projection
+	{
+		get { return Number(ProjectionValue) >= 0.5f ? CameraProjection.Orthographic : CameraProjection.Perspective; }
+		set { Set(ProjectionValue, value == CameraProjection.Orthographic ? 1f : 0f); }
+	}
+
+	/// <summary>With an orthographic projection, half the height it sees, in metres.</summary>
+	public float Size
+	{
+		get { return Number(SizeValue); }
+		set { Set(SizeValue, value); }
+	}
+
+	/// <summary>Makes it orthographic, seeing <paramref name="halfHeight"/> metres up and down from its middle.</summary>
+	public void MakeOrthographic(float halfHeight)
+	{
+		Projection = CameraProjection.Orthographic;
+		Size = halfHeight;
 	}
 
 	/// <summary>How close it sees, in metres: nearer than this is cut away.</summary>

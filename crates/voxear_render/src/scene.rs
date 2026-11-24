@@ -1,7 +1,7 @@
 //! Rendering components on Objs, and extraction of what to draw from the
 //! world each frame.
 
-use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4, camera::lh::proj::vulkan};
+use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::TextureId;
 use voxear_scene::{Destroying, Hidden, Parent, Switch, Switched, Transform, WorldTransform};
@@ -21,15 +21,21 @@ use crate::{
 /// Renders the scene from this Obj, looking along its +Z like Unity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
+    /// With a perspective projection, how much it sees up and down.
     pub fov_y_degrees: f32,
     pub near: f32,
     pub exposure: f32,
+    /// Perspective, further off smaller, or orthographic, every ray
+    /// parallel (see `lens`).
+    pub projection: crate::Projection,
+    /// With an orthographic projection, half the height it sees, in metres.
+    pub size: f32,
 }
 impl Component for Camera {}
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { fov_y_degrees: 60.0, near: 0.1, exposure: 1.0 }
+        Self { fov_y_degrees: 60.0, near: 0.1, exposure: 1.0, projection: crate::Projection::Perspective, size: 5.0 }
     }
 }
 
@@ -275,6 +281,9 @@ pub struct ExtractedFrame {
     pub light_key: crate::ddgi::LightKey,
     /// The camera's vertical field of view, in radians, for an upscaler.
     pub fov_y: f32,
+    /// How the view is drawn in pixels and enlarged, when it is (see
+    /// `pixels`).
+    pub pixels: Option<crate::pixels::PixelGrid>,
     pub instances: Vec<GpuInstance>,
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
@@ -713,12 +722,6 @@ pub fn extract(
     let steady_sky = sky;
     sky.zenith += crate::weather::FLASH_COLOUR * flash;
     sky.horizon += crate::weather::FLASH_COLOUR * flash;
-    let fov = camera.fov_y_degrees.to_radians();
-    let view = Mat4::from_rotation_translation(rotation, position).inverse();
-    let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
-    // The lights' depth slices start from a usual near distance even for a camera seeing from very close.
-    let cluster_near = camera.near.max(0.1);
-    let unjittered = projection * view;
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
     let own_post = match elsewhere {
@@ -772,22 +775,52 @@ pub fn extract(
     // With TAA, the scene may be drawn smaller and upscaled; LODs are still picked for the view's own size.
     let output_height = height;
     let output_size = (width, height);
+    // A shader pack may ask for the scene drawn in pixels, in place of the settings' own.
+    let pixels = worn_pack_pixels(world).unwrap_or(post.pixels);
+    let mut lens = crate::Lens::of(&camera, aspect);
+    // Drawn in pixels, the scene is drawn small and enlarged nearest, with nothing to smooth it: no TAA, FXAA or
+    // sharpening. A view through a Portal is drawn at the size it is given.
+    let mut grid = match (options.debug_view, through) {
+        (DEBUG_VIEW_NONE, None) => crate::pixels::PixelGrid::new(output_size, &pixels, pixels.snap && lens.ortho.is_some()),
+        _ => None,
+    };
+    let mut post = post;
+    if grid.is_some() {
+        post.anti_aliasing.mode = AntiAliasingMode::Off;
+        post.anti_aliasing.sharpness = 0.0;
+    }
     let taa = post.anti_aliasing.mode == AntiAliasingMode::Taa;
     let scale = match taa {
         true => options.render_scale.map_or_else(|| post.anti_aliasing.drawn_scale(), |scale| scale.clamp(0.25, 1.0)),
         false => 1.0,
     };
-    let (width, height) = render_size((width, height), scale);
+    let (width, height) = match &grid {
+        Some(grid) => grid.drawn,
+        None => render_size((width, height), scale),
+    };
+    let fov = lens.fov_y;
+    // The drawn picture sees its margin round the view too; an orthographic camera snaps onto its pixels' grid.
+    let position = match &mut grid {
+        Some(grid) => {
+            lens = lens.grown(grid.growth(output_size));
+            let metres = 2.0 * lens.half_height(1.0) / height as f32;
+            grid.snap(position, rotation, metres)
+        }
+        None => position,
+    };
+    let view = Mat4::from_rotation_translation(rotation, position).inverse();
+    let projection = lens.projection();
+    // The lights' depth slices start from a usual near distance even for a camera seeing from very close.
+    let cluster_near = camera.near.max(0.1);
+    let unjittered = projection * view;
     // Each drawn pixel covers 1 / scale² of the output's, so the jitter needs as many more phases to reach them.
     let phases = ((8.0 / (scale * scale)).ceil() as u64).clamp(8, 64);
     let jitter = match taa {
         true => taa_jitter(frame_index, post.anti_aliasing.taa_jitter, phases),
         false => [0.0; 2],
     };
-    // Offsetting the column that multiplies view depth shifts the image by a constant amount in NDC.
-    let mut jittered_projection = projection;
-    jittered_projection.z_axis.x += jitter[0] * 2.0 / width as f32;
-    jittered_projection.z_axis.y += jitter[1] * 2.0 / height as f32;
+    // Moving the projection shifts the image by a constant amount in NDC.
+    let jittered_projection = lens.moved(projection, [jitter[0] * 2.0 / width as f32, jitter[1] * 2.0 / height as f32]);
     let view_proj = jittered_projection * view;
 
     let mut gpu_post = post.to_gpu(sky.horizon);
@@ -803,12 +836,14 @@ pub fn extract(
     let pictured = sky.picture_texture.filter(|_| sky.mode == SkyMode::Gradient).and(sky.picture_light);
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
-        planes: through.map_or_else(|| frustum_planes(position, rotation, fov, aspect, camera.near), |t| t.planes),
+        planes: through.map_or_else(|| lens.planes(position, rotation), |t| t.planes),
         cut: through.map_or(crate::gpu::NO_CUT, |through| through.cut),
         camera_position: vec3(position),
         camera_forward: vec3(rotation * Vec3::Z),
         near: camera.near,
-        lod_scale: output_height as f32 / (2.0 * (fov * 0.5).tan()),
+        lod_scale: crate::Lens::of(&camera, aspect).pixels_a_metre(output_height),
+        ortho: lens.ortho.unwrap_or(0.0),
+        ortho_depth: crate::ORTHO_DEPTH,
         lod_threshold: options.lod_threshold,
         debug_view: options.debug_view,
         hiz_texture: NO_TEXTURE,
@@ -864,28 +899,27 @@ pub fn extract(
         Some((culler, at, turned, _)) => {
             let (cull_width, cull_height) = cull_size.unwrap_or(output_size);
             let cull_aspect = cull_width as f32 / cull_height.max(1) as f32;
-            let cull_fov = culler.fov_y_degrees.to_radians();
+            let cull_lens = crate::Lens::of(&culler, cull_aspect);
             let cull_view = Mat4::from_rotation_translation(turned, at).inverse();
-            let cull_projection = vulkan::perspective_infinite_reverse(cull_fov, cull_aspect, culler.near);
-            let lod_scale = cull_height as f32 / (2.0 * (cull_fov * 0.5).tan());
+            let lod_scale = cull_lens.pixels_a_metre(cull_height);
             let drawn_height = render_size((cull_width, cull_height), scale).1;
             crate::gpu::GpuCull {
-                view_proj: cols(cull_projection * cull_view),
-                planes: frustum_planes(at, turned, cull_fov, cull_aspect, culler.near),
+                view_proj: cols(cull_lens.projection() * cull_view),
+                planes: cull_lens.planes(at, turned),
                 position: vec3(at),
                 lod_scale,
                 near: culler.near,
-                tan_half: drawn_height as f32 / (2.0 * lod_scale),
+                tan_half: cull_lens.ortho.unwrap_or(drawn_height as f32 / (2.0 * lod_scale)),
                 borrowed: 1,
-                _pad: 0,
+                ortho: cull_lens.ortho.unwrap_or(0.0),
             }
         }
         None => crate::gpu::GpuCull::own(&frame),
     };
     // What LOD Groups hide from the camera culling is judged from is neither drawn nor lit.
     let lod_camera = match borrowed {
-        Some((culler, at, ..)) => LodCamera::new(at, culler.fov_y_degrees),
-        None => LodCamera::new(seen_from, camera.fov_y_degrees),
+        Some((culler, at, ..)) => LodCamera::of(at, &culler),
+        None => LodCamera::of(seen_from, &camera),
     };
     let lods = LodChoices::new(world, lod_camera, sphere);
     let mut lights = Vec::new();
@@ -1104,7 +1138,7 @@ pub fn extract(
     frame.lighting.clouds.flash = flash;
 
     if sun_found {
-        let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near, origin };
+        let view = shadows::View { position, rotation, fov_y: fov, aspect: lens.aspect, near: camera.near, ortho: lens.ortho, origin };
         let (distance, split) = sun_look.map_or((shadows::SHADOW_DISTANCE, shadows::SHADOW_SPLIT), |look| {
             (look.shadow_distance, look.shadow_split)
         });
@@ -1225,7 +1259,8 @@ pub fn extract(
     ExtractedFrame {
         canopy_cookie,
         light_key,
-        fov_y: camera.fov_y_degrees.to_radians(),
+        fov_y: lens.fov_y,
+        pixels: grid,
         block_voxels: worn.and_then(|worn| worn.voxels),
         block_water: water_look.block_water(),
         frame,
@@ -1270,7 +1305,13 @@ pub(crate) fn rebase(model: &mut crate::gpu::Mat4Cols, offset: Vec3) {
     }
 }
 
-/// Inward-facing side and near planes of an infinite perspective frustum.
+/// The drawing in pixels a worn shader pack asks for, in place of the
+/// settings' own: none without one, or where its size is 1.
+fn worn_pack_pixels(world: &World) -> Option<crate::Pixels> {
+    let worn = world.resource::<crate::shader_packs::WornShaderPack>()?;
+    worn.pack.manifest.pixels?.settings(&worn.options)
+}
+
 /// Whether `entity` or an Obj it is under is `Hidden`.
 pub(crate) fn hidden(world: &World, entity: Entity) -> bool {
     let mut at = Some(entity);
@@ -1283,27 +1324,6 @@ pub(crate) fn hidden(world: &World, entity: Entity) -> bool {
         at = world.get::<Parent>(here).map(|parent| parent.0);
     }
     false
-}
-
-fn frustum_planes(position: Vec3, rotation: Quat, fov_y: f32, aspect: f32, near: f32) -> [[f32; 4]; 6] {
-    let forward = rotation * Vec3::Z;
-    let right = rotation * Vec3::X;
-    let up = rotation * Vec3::Y;
-    let half_v = fov_y * 0.5;
-    let half_h = (half_v.tan() * aspect).atan();
-    let plane = |normal: Vec3| {
-        let normal = normal.normalize();
-        [normal.x, normal.y, normal.z, -normal.dot(position)]
-    };
-    let near_plane = [forward.x, forward.y, forward.z, -forward.dot(position) - near];
-    [
-        plane(right * half_h.cos() + forward * half_h.sin()),
-        plane(-right * half_h.cos() + forward * half_h.sin()),
-        plane(up * half_v.cos() + forward * half_v.sin()),
-        plane(-up * half_v.cos() + forward * half_v.sin()),
-        near_plane,
-        [0.0, 0.0, 0.0, 1.0],
-    ]
 }
 
 /// The size a view of `size` is drawn at, at `scale` of it, at least a
@@ -1450,7 +1470,8 @@ mod tests {
 
     #[test]
     fn frustum_keeps_what_is_in_front_and_drops_the_rest() {
-        let planes = frustum_planes(Vec3::ZERO, Quat::IDENTITY, 60f32.to_radians(), 16.0 / 9.0, 0.1);
+        let lens = crate::Lens { fov_y: 60f32.to_radians(), aspect: 16.0 / 9.0, near: 0.1, ortho: None };
+        let planes = lens.planes(Vec3::ZERO, Quat::IDENTITY);
         assert!(inside(&planes, Vec3::new(0.0, 0.0, 10.0), 0.5));
         assert!(inside(&planes, Vec3::new(0.0, 0.0, 10_000.0), 0.5), "the far plane is at infinity");
         assert!(!inside(&planes, Vec3::new(0.0, 0.0, -10.0), 0.5), "behind the camera");
@@ -1462,7 +1483,8 @@ mod tests {
     #[test]
     fn camera_looks_along_positive_z() {
         let view = Mat4::from_rotation_translation(Quat::IDENTITY, Vec3::ZERO).inverse();
-        let clip = vulkan::perspective_infinite_reverse(1.0, 1.0, 0.1) * view * Vec4::new(0.0, 1.0, 5.0, 1.0);
+        let lens = crate::Lens { fov_y: 1.0, aspect: 1.0, near: 0.1, ortho: None };
+        let clip = lens.projection() * view * Vec4::new(0.0, 1.0, 5.0, 1.0);
         let ndc = clip.truncate() / clip.w;
         assert!(clip.w > 0.0, "points in front have positive w");
         assert!(ndc.y < 0.0, "up in the world is up on screen, which is -Y in Vulkan");

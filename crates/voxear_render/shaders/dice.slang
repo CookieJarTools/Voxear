@@ -38,7 +38,7 @@ static const uint DICE_OVERFLOW = 9;
 // it spans pixels over `detail`, at most `most`.
 float diceFactor(Frame* frame, float3 a, float3 b, float detail, float most)
 {
-    float away = max(length((a + b) * 0.5 - frame->cull.position), frame->cull.near);
+    float away = cullDistance(frame->cull, max(length((a + b) * 0.5 - frame->cull.position), frame->cull.near));
     float pixels = length(b - a) * frame->cull.lodScale / away;
     return clamp(ceil(pixels / detail), 1.0, most);
 }
@@ -95,7 +95,7 @@ void diceSplitMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         float3 normals = buffers()->vertices[v.x].normal + buffers()->vertices[v.y].normal + buffers()->vertices[v.z].normal;
         float3 worldNormals = instance.normal0.xyz * normals.x + instance.normal1.xyz * normals.y + instance.normal2.xyz * normals.z;
         facing = normalizeOr(dot(facing, worldNormals) < 0.0 ? -facing : facing, float3(0.0, 1.0, 0.0));
-        if (dot(facing, frame->cull.position - p0) < -margin)
+        if (dot(facing, -cullLook(frame->cull, p0)) < -margin)
         {
             continue;
         }
@@ -406,7 +406,7 @@ VertexOut dicedPoint(uint vertexId, uint drawId)
     float own = abs(area) > 1e-10 ? sqrt(length(cross(dp1, dp2)) / abs(area)) : 1.0;
     float metresAUv = mesh.lods[0].uvSpan > 0.0 ? mesh.lods[0].uvSpan : own;
     float scale = max(length(instance.model.c0.xyz), max(length(instance.model.c1.xyz), length(instance.model.c2.xyz)));
-    float metresAPixel = away / frame->lodScale;
+    float metresAPixel = screenDistance(frame, away) / frame->lodScale;
     float texelsAnEdge = metresAPixel * material.detail * float(width) / max(metresAUv * scale, 1e-6);
     float level = max(log2(max(texelsAnEdge, 1.0)), 0.0);
     float rise = diceHeight(material, here.uv, level);

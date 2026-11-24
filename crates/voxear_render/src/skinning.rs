@@ -273,7 +273,11 @@ pub(crate) fn viewers(world: &World, cameras: &[(Option<Entity>, f32)]) -> Optio
         let camera = found.iter().find(|(entity, ..)| chosen.is_none_or(|chosen| chosen == *entity));
         let Some((_, camera, at, rotation)) = camera else { return None };
         let tan = (camera.fov_y_degrees.to_radians() * 0.5).tan();
-        let half_angle = (tan * (1.0 + aspect * aspect).sqrt()).atan();
+        // An orthographic camera sees all that is in front of it, however far to the side, within its box.
+        let half_angle = match camera.projection {
+            crate::Projection::Orthographic => std::f32::consts::FRAC_PI_2,
+            crate::Projection::Perspective => (tan * (1.0 + aspect * aspect).sqrt()).atan(),
+        };
         viewers.push(Viewer { at: *at, ahead: *rotation * Vec3::Z, half_angle });
     }
     Some(viewers)

@@ -414,12 +414,14 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
     // half size), the resolve putting them together.
     float2 halfPixel = float2(int2(input.position.xy) * 2 + smokeTurn(frame)) + 0.5;
     float2 uv = halfPixel / float2(push.size);
-    float4 nearH = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, 1.0, 1.0));
-    float3 eye = frame->cameraPosition;
-    float3 way = normalize(nearH.xyz / nearH.w - eye);
+    EyeRay ray = eyeRay(frame, uv * 2.0 - 1.0);
+    float3 eye = ray.origin;
+    float3 way = ray.direction;
     float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(uv * float2(frame->viewport)), 0)).r;
-    float depth = behind > 0.0 ? frame->near / behind : 1e9;
-    float scene = depth >= SMOKE_NEAR ? depth / max(dot(way, frame->cameraForward), 1e-3) : 1e9;
+    float depth = viewDepthOr(frame, behind, 1e9);
+    // An orthographic camera's rays start at its near plane.
+    float rayStart = isOrthographic(frame) ? frame->near : 0.0;
+    float scene = depth >= SMOKE_NEAR ? (depth - rayStart) / max(dot(way, frame->cameraForward), 1e-3) : 1e9;
 
     // Where the view is inside any smoke's grid, and the finest cells it meets.
     float enter = 1e9;
@@ -568,7 +570,7 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         }
         // The lamps in this pixel's cluster, scattered as evenly every way.
         float3 lamps = 0.0;
-        uint base = clusterAt(frame, halfPixel * 2.0, t * dot(way, frame->cameraForward)) * (frame->clusterMaxLights + 1);
+        uint base = clusterAt(frame, halfPixel * 2.0, rayStart + t * dot(way, frame->cameraForward)) * (frame->clusterMaxLights + 1);
         for (uint l = 0; l < buffers()->clusters[base]; l++)
         {
             Light lamp = buffers()->lights[buffers()->clusters[base + 1 + l]];
@@ -601,7 +603,7 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
 float smokeSceneDepth(Frame* frame, uint texture, int2 pixel)
 {
     float depth = textures[NonUniformResourceIndex(texture)].Load(int3(pixel, 0)).r;
-    return depth > 0.0 ? frame->near / depth : 1e4;
+    return viewDepthOr(frame, depth, 1e4);
 }
 
 // How far the march went along the view at full-size `pixel`: to the scene,
@@ -728,9 +730,8 @@ float4 smokeResolveFragment(SmokeOut input) : SV_Target0
     {
         return fresh;
     }
-    float4 nearH = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
-    float3 way = normalize(nearH.xyz / nearH.w - frame->cameraPosition);
-    float4 before = transform(frame->prevViewProj, float4(frame->cameraPosition + way * far, 1.0));
+    EyeRay ray = eyeRay(frame, input.uv * 2.0 - 1.0);
+    float4 before = transform(frame->prevViewProj, float4(ray.origin + ray.direction * far, 1.0));
     float2 then = before.xy / before.w * 0.5 + 0.5;
     if (before.w <= 0.0 || any(then < 0.0) || any(then > 1.0))
     {

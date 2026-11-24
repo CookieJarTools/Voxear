@@ -1471,7 +1471,7 @@ pub(crate) fn resolve_obj(
         active: data.is_active(),
         off: data.off_components(),
         behaviours: behaviour_specs(data)?,
-        camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
+        camera: data.camera.map(|c| c.camera()),
         light,
         post_volume: data.post_volume.as_ref().map(PostVolumeData::component).transpose()?,
         reflection_probe: data.reflection_probe.as_ref().map(crate::scene_file::ReflectionProbeData::component),

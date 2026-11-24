@@ -148,6 +148,35 @@ pub struct PlayerSettings {
     /// The input actions the project's `[input]` picks, by GUID or path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_actions: Option<String>,
+    /// The project's `[input]` press point and sticks' deadzone.
+    #[serde(default = "default_press_point")]
+    pub press_point: f32,
+    #[serde(default = "default_stick_dead_zone")]
+    pub stick_dead_zone: [f32; 2],
+    /// What the game asks of the GPU, as the project's `[graphics]` says.
+    #[serde(default)]
+    pub graphics: crate::project::GraphicsSettings,
+    /// How fast sound goes, and the most voices at once, from `[audio]`.
+    #[serde(default = "default_speed_of_sound")]
+    pub speed_of_sound: f32,
+    #[serde(default = "default_voices")]
+    pub voices: u32,
+}
+
+fn default_press_point() -> f32 {
+    crate::project::InputSettings::default().press_point
+}
+
+fn default_stick_dead_zone() -> [f32; 2] {
+    crate::project::InputSettings::default().stick_dead_zone
+}
+
+fn default_speed_of_sound() -> f32 {
+    crate::project::AudioSettings::default().speed_of_sound
+}
+
+fn default_voices() -> u32 {
+    crate::project::AudioSettings::default().voices
 }
 
 fn default_gravity() -> [f32; 3] {
@@ -329,6 +358,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
                 ray_traced: settings.ray_traced,
                 ray_quality: settings.ray_quality,
                 ray_budget: settings.ray_budget,
+                speed_of_sound: settings.speed_of_sound,
+                voices: settings.voices,
             },
             network: settings.network.clone(),
             floating_origin: settings.floating_origin.clone(),
@@ -342,7 +373,12 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             water_trails: settings.water_trails,
             foliage: settings.foliage,
             time: settings.time,
-            input: crate::project::InputSettings { actions: settings.input_actions.clone() },
+            input: crate::project::InputSettings {
+                actions: settings.input_actions.clone(),
+                press_point: settings.press_point,
+                stick_dead_zone: settings.stick_dead_zone,
+            },
+            graphics: settings.graphics,
             navigation: settings.navigation.clone(),
             crowds: settings.crowds.clone(),
             modules: Some(settings.modules),

@@ -1809,6 +1809,27 @@ history on camera cuts.
 undo, `Post` in C#, HDR display output (an encode pass after the UI, see `display`), and the looks' sun canopy
 (`SunLook::canopy`, the `canopy` cookie) and near-only depth of field.
 
+**Lenses.** A Camera is perspective or orthographic (`lens::Projection`, its `size` half the height an orthographic
+one sees). `lens::Lens` makes either's projection, both reverse-Z: perspective infinite, depth `near / distance`;
+orthographic `ORTHO_DEPTH` (4096 m) past the near plane, depth falling evenly from 1 to 0, w 1, TAA's jitter in the
+last column. It also gives the frustum's planes (an orthographic box with a far plane), `lod_scale` (pixels a metre at
+a metre, or everywhere) and a grown lens for a margin. `GpuFrame::ortho`/`ortho_depth` and `GpuCull::ortho` (half
+heights, 0 for perspective) tell the shaders, which turn depth into distance, make the camera's rays and measure
+screen sizes through `common.slang`'s `viewDepthOf`, `depthOfView`, `eyeRay`, `towardsEye`, `eyeDistance`,
+`clipViewDepth`, `screenDistance` and `cullDistance`, never `near / depth` or `cameraPosition` directly; the
+screen-space passes rebuild view-space positions without dividing by depth. Cascades take a box's corners, LOD Groups
+and skinning a constant screen share. `PackFrame` carries the same two numbers (`isOrthographic`,
+`distanceOfDepth`, `viewRayStart` in `shader_pack.slang`).
+
+**Drawing in pixels.** `[post.pixels]` (or a worn pack's `[pixels]`, `PackPixels`) makes `extract` draw the view at
+`pixels::PixelGrid::drawn`: the shown size over a whole pixel size, rounded up, plus a margin of one each side when an
+orthographic camera snaps. The lens grows to cover what is drawn; TAA, FXAA and sharpening are off. Snapping moves
+the camera onto the grid of drawn pixels in its own plane, measured from the world's middle (`PixelGrid::snap`), and
+keeps the rest, ±½ a drawn pixel. Every pass, post-processing and a pack's included, then runs at the drawn size,
+the composite or finish writing a small image of the output's format, and the Enlarge pass (`post_passes::enlarge`,
+`enlargeFragment`) fills the view, each drawn pixel a block of screen pixels, read nearest from where the view's
+first pixel falls, the rest moving it in whole screen pixels. UI panels and debug draw go on at the view's size after.
+
 **Upscalers.** AMD FSR 3.1 is built in (`fsr3`): AMD's MIT shaders, vendored in `voxear_render/fsr3/amd`,
 compiled to SPIR-V by `build.rs` with slangc for the one set of options Voxear uses, their bindings read from
 slangc's reflection into a table, and run by a host of Voxear's in one frame-graph pass, FSR's images the view's
@@ -3201,6 +3222,50 @@ as the Inspector's own control goes only in a markup's `next` element; its eleme
   on its Obj, as `[Button]`s do. The fields the copy ends with changed come back as a table, each set in the scene
   as part of the frame's one step to undo. The behaviour's usual rows are built in a panel after the inspector,
   which moves into its markup's `next` element (`Ui::move_into`), or out of sight without one.
+
+### The Inspector's Debug mode *(implemented)*
+
+Each Inspector's `⋯` button, beside its padlock, switches it between Normal and Debug, as Unity's Inspector menu
+does; each Inspector keeps its own (`Inspector::debug`). In Debug mode `Inspector::show` builds nothing of its
+own: it leaves a `debug_inspector::DebugView` in its root, and the editor fills it each second, four times a
+second while playing, from rows `debug_inspector::obj_rows` and `asset_rows` make:
+
+- **The engine's own state**: the entity, Name, scene path, Parent, children, layer, the world transform from
+  `world_matrix`, `PrefabInstance` and `FromPrefab`, and each behaviour's handle while it runs.
+- **Every component as the scene file writes it**: `scene_file::capture` of the Obj alone, as TOML, a section for
+  each table, inner tables as dotted keys; a string that reads as a GUID shows the asset's path beside it.
+- **Every field of each C# behaviour**: `ScriptRuntime::debug_fields` asks Voxear.Core's `DebugFields` (through
+  `InspectorCalls`, `debug-read`), which reflects every instance field from the behaviour's class down to
+  `object`, public or not, saved by scenes or not, a backing field by its property's name, with its value in words.
+  Playing, it reads the running instance by its handle; editing, a copy made from the scene's values, as `[Button]`s
+  are run. No attribute groups, hides or draws them.
+- **Live state while playing**: a body's velocity, spin and sleep from the `PhysicsScene`, an Audio Source's voice
+  from `GameAudio::source_voice`, and the LOD drawn for the Game or Scene view's camera (`lod_inspector::drawn_lod`).
+- **An asset's**: its GUID, kind, mount and size, its `.meta` flattened, what it names
+  (`content_build::asset_needs`, as a build finds them) and what of the project names it, read once.
+
+Rows are read-only; a row's menu copies its value or its path in the scene file (`Ui::copy_text`). Tools reach it
+with `inspector.mode` and `inspector.debug`. C# has no API to the editor's panels, so neither is reached from it.
+
+### Finding a setting by what it does *(implemented)*
+
+`setting_search` holds one list of every setting the editor has (`everything`): Project Settings' and Preferences'
+`Setting`s, the Lighting panel's (`lighting_panel::described`, with what must be set for one to show), import
+settings (`import_fields::DESCRIBED`), and the fields of the components on the open level's Objs, each component's
+once, with the tooltip the Inspector shows (`inspector::field_tooltip`). `search` matches each word typed against a
+setting's label, where it is and its tooltip, a word's start or a word it starts (`shadows` and `shadow`), and the
+words of its group in `SAME` (shimmer, flicker, aliasing…); every word must match something. A label match counts
+most, then where it is, then the tooltip, and a word that means the same less than the word itself; a label that
+reads as the query letter by letter gets the palette's score on top. Each result carries the words it matched and
+the line of its tooltip that did.
+
+The palette gathers the list as it opens and ranks results beside its own, marking the matched words in the title
+(rich text) and showing the tooltip's line; a setting it already lists by name keeps its entry. Each settings
+window's search uses the same match, with the line that matched under a row found by its tooltip. A result is
+found again by `Place::key`: a Project Settings or Preferences key, or `lighting:`, `component:` and `import:` keys,
+which `Editor::show_found` opens: its window, the Lighting panel's tab, or the Obj selected in the Inspector, and once
+laid out, the row scrolled to (`Ui::scroll_into_view`) and marked for a moment (`setting_search::Flash`). Tools use
+`settings.find`, and `settings.show` takes any of these keys.
 
 ### The design
 

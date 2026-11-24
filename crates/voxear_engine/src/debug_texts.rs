@@ -7,7 +7,7 @@
 
 use voxear_core::{
     debug_draw,
-    math::{Mat4, Vec3, camera::lh::proj::vulkan},
+    math::{Mat4, Vec3},
 };
 use voxear_ecs::{Entity, World};
 use voxear_render::Camera;
@@ -162,7 +162,7 @@ fn view_projection(world: &World, camera: Option<Entity>, rect: [f32; 4]) -> Opt
         })?;
     let aspect = rect[2] / rect[3].max(1.0);
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
-    Some(vulkan::perspective_infinite_reverse(lens.fov_y_degrees.to_radians(), aspect, lens.near) * view)
+    Some(voxear_render::Lens::of(&lens, aspect).projection() * view)
 }
 
 #[cfg(test)]

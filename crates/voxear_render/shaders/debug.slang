@@ -34,14 +34,18 @@ struct DebugOut
 };
 
 // Moves `a` along the line towards `b` until it is in front of the near
-// plane, where w is the distance from the camera.
-float4 inFront(float4 a, float4 b, float near)
+// plane: where w is the distance from the camera for a perspective camera,
+// and where depth comes down to 1 for an orthographic one, whose w is 1.
+float4 inFront(float4 a, float4 b, float near, bool ortho)
 {
-    if (a.w >= near)
+    float from = ortho ? 1.0 - a.z : a.w;
+    float to = ortho ? 1.0 - b.z : b.w;
+    float edge = ortho ? 0.0 : near;
+    if (from >= edge)
     {
         return a;
     }
-    float t = (near - a.w) / max(b.w - a.w, 1e-6);
+    float t = (edge - from) / max(to - from, 1e-6);
     return lerp(a, b, t);
 }
 
@@ -60,13 +64,14 @@ DebugOut debugVertex(uint vertexId : SV_VertexID)
     o.across = 0.0;
     o.width = drawn.width > 0.0 ? drawn.width : asfloat(push.textures.w);
     // Wholly behind the camera: nothing to draw.
-    if (a.w < near && b.w < near)
+    bool ortho = isOrthographic(frame);
+    if (ortho ? a.z > 1.0 && b.z > 1.0 : a.w < near && b.w < near)
     {
         o.position = float4(0.0, 0.0, -1.0, 1.0);
         return o;
     }
-    float4 start = inFront(a, b, near);
-    float4 end = inFront(b, a, near);
+    float4 start = inFront(a, b, near, ortho);
+    float4 end = inFront(b, a, near, ortho);
 
     float2 halfView = float2(frame->viewport) * 0.5;
     float2 direction = end.xy / end.w * halfView - start.xy / start.w * halfView;
@@ -79,7 +84,7 @@ DebugOut debugVertex(uint vertexId : SV_VertexID)
     {
         float3 up = float3(frame->view.c0.y, frame->view.c1.y, frame->view.c2.y);
         float tall = abs(transform(frame->unjitteredViewProj, float4(up, 0.0)).y);
-        o.width = max(drawn.width * tall * halfView.y / max(p.w, near), 1.0);
+        o.width = max(drawn.width * tall * halfView.y / screenDistance(frame, max(p.w, near)), 1.0);
     }
     // A pixel more than the width, for the soft edge.
     float reach = o.width * 0.5 + 1.0;
@@ -146,7 +151,7 @@ SolidOut debugSolidVertex(uint vertexId : SV_VertexID)
 [shader("fragment")]
 float4 debugSolidFragment(SolidOut i) : SV_Target
 {
-    float facing = dot(i.normal, normalize(push.frame->cameraPosition - i.world));
+    float facing = dot(i.normal, towardsEye(push.frame, i.world));
     if (facing < 0.0)
     {
         discard;

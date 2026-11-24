@@ -27,6 +27,15 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 
 The rays show when the camera looks towards the sun. They are worked out at half size, forty steps a pixel, and cost about half a millisecond a frame at 1440p on an RTX 3070; the whole pack's passes, looking into the sun, about 0.8 ms. Facing away from the sun the rays cost nothing.
 
+**Pixel** is pixel art: the scene drawn in big square pixels and enlarged with hard edges, the light of the sun, the sky and lamps stepped into a few flat bands of their own colour that fall away into a coloured shade, the sky stepped too, and a dark line a pixel wide round everything and where faces meet, as where a table stands on the floor. It suits a room lit by a lamp seen from above by an [[Cameras#Orthographic cameras|orthographic camera]], which it keeps on the grid of its pixels so they do not crawl as it glides (see [[Post-Processing#Drawing in pixels]]). It draws fewer pixels than the screen has, so it costs less than drawing without it.
+
+| Option | What it does |
+| --- | --- |
+| **Pixel size** | How many screen pixels each drawn pixel covers, across and down, 1 to 12; 1 leaves the level's own setting |
+| **Bands** | How many flat steps light falls through from brightest to the shade, 2 to 8 |
+| **Outline** | How dark the lines round things and where they meet are, 0 to 1; 0 draws none |
+| **Shade colour** | The colour what no light reaches falls to: a deep purple at first |
+
 ## Letting players choose
 
 `ShaderPackScreen.Open()` shows a ready-made menu: a row for each pack with what it looks like, the one worn marked, and **None** at the top; under them, the options of the pack worn, a slider, toggle or dropdown each with its tooltip, and a line saying when it is compiling or why it did not compile. It sits down the left of the screen so the game shows beside it. A click wears a pack: it compiles on a thread the first time, a few seconds, the game drawn as it was meanwhile, and after that it is worn at once.
@@ -53,6 +62,7 @@ ShaderPacks.Use(ShaderPack.Evening);
 ShaderPacks.SetOption("warmth", 0.9f);
 ShaderPacks.SetOption("rays", false);
 ShaderPacks.SetOption("curve", "Filmic");
+ShaderPacks.SetOption("shade", Color.Hex("#1f1b2a"));
 ```
 
 | | |
@@ -130,6 +140,7 @@ description = "A cool dusk: blue haze far off, and a gentle grade."
 haze = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Haze", about = "How thick the haze is" }
 outlines = { kind = "toggle", default = false, label = "Outlines", about = "A dark line round every shape" }
 look = { kind = "choice", choices = ["Soft", "Bold"], default = "Soft", label = "Look" }
+shade = { kind = "color", default = [0.12, 0.10, 0.17], label = "Shade", about = "The colour of the darkest shade" }
 
 [[pass]]
 name = "Haze"
@@ -145,6 +156,20 @@ reads = ["color"]
 ```
 
 Each `[[pass]]` names its program, the point of the frame it runs at, and what it reads. Passes run in the order of their points, and as the manifest lists them at one point.
+
+An option is a `number` on a slider, a `toggle`, a `choice` from a dropdown, or a `color`, sRGB from 0 to 1, which the Inspector shows as a swatch and its red, green and blue. A program reads it as `options().shade`, a linear `float3`; a script sets it with `ShaderPacks.SetOption("shade", color)`, and the command line and tools as `#1f1b2a` or `0.12,0.1,0.17`.
+
+### Drawing in pixels
+
+`[pixels]` draws the scene in big square pixels while the pack is worn, in place of the level's own setting (see [[Post-Processing#Drawing in pixels]]): every pass, the pack's too, runs at the small size, and the picture is enlarged with hard edges after the last of them.
+
+```toml
+[pixels]
+size = "pixel_size"   # a number option of the pack's, so a player picks it; or a whole number, 4
+snap = true           # keep an orthographic camera on the grid of its pixels
+```
+
+A size of 1 leaves the level's own setting, so a player can turn the pixels off by setting the option to 1.
 
 ### Where a pass runs
 

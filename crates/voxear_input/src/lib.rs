@@ -29,7 +29,10 @@ pub mod glyphs;
 pub mod layouts;
 
 use anyhow::{Context, Result};
-pub use actions::{ActionKind, ActionState, ActionsFile, Binding, CategoryData, Processor};
+pub use actions::{
+    ActionKind, ActionState, ActionsFile, Binding, CategoryData, PRESS_POINT, Processor, STICK_DEADZONE,
+    defaults as input_defaults, set_defaults as set_input_defaults,
+};
 pub use devices::{Device, Devices, Family, Mouse, Pad, Scheme};
 pub use glyphs::{Glyph, GlyphShape};
 use winit::event::WindowEvent;

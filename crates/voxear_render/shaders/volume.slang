@@ -87,10 +87,11 @@ float fogOpenness(Frame* frame, float3 point)
 {
     // Among blocks lit by the light kept for them, as much as their sky light lets in at the camera and at the point:
     // mist in a cave is dark.
+    float3 eye = eyeFor(frame, point);
     float2 litCamera;
     float2 litPoint;
     float4 glow;
-    bool keptAtCamera = blockLightAround(frame->cameraPosition, litCamera, glow);
+    bool keptAtCamera = blockLightAround(eye, litCamera, glow);
     bool keptAtPoint = blockLightAround(point, litPoint, glow);
     if (keptAtCamera || keptAtPoint)
     {
@@ -104,7 +105,7 @@ float fogOpenness(Frame* frame, float3 point)
     float open = max(dot(sky, FOG_LUMA), 1e-5);
     float3 bakedAtCamera;
     float3 bakedAtPoint;
-    bool camera = probeVolumeLight(frame, frame->cameraPosition, float3(0.0), bakedAtCamera);
+    bool camera = probeVolumeLight(frame, eye, float3(0.0), bakedAtCamera);
     bool far = probeVolumeLight(frame, point, float3(0.0), bakedAtPoint);
     if (camera || far)
     {
@@ -117,8 +118,8 @@ float fogOpenness(Frame* frame, float3 point)
     {
         return 1.0;
     }
-    float3 back = normalize(frame->cameraPosition - point);
-    float atCamera = dot(ddgiLightAround(frame, frame->cameraPosition, back, sky), FOG_LUMA) / open;
+    float3 back = normalize(eye - point);
+    float atCamera = dot(ddgiLightAround(frame, eye, back, sky), FOG_LUMA) / open;
     float atPoint = dot(ddgiLightAround(frame, point, back, sky), FOG_LUMA) / open;
     return saturate((atCamera + atPoint) * 0.5);
 }

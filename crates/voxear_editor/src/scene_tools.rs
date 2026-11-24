@@ -15,7 +15,7 @@
 //! dragging snaps: to the snap distance, to 15 degrees, or to tenths of the
 //! scale.
 
-use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
+use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{audio::AudioSource, grown_plants::GrownColumn};
 use voxear_render::{Camera, Foliage, Light, MeshHandle, MeshRenderer, ModelRenderer, Renderer};
@@ -101,8 +101,10 @@ pub struct ViewCamera {
     pub up: Vec3,
     /// Left, top, width and height.
     pub rect: [f32; 4],
-    /// World units per logical pixel one unit in front of the camera.
+    /// World units per logical pixel one unit in front of the camera, or
+    /// everywhere for an orthographic camera.
     spread: f32,
+    ortho: bool,
     /// The dimension it shows: what is in any other has no marks in it.
     pub dimension: voxear_scene::DimensionId,
 }
@@ -111,10 +113,10 @@ impl ViewCamera {
     pub fn new(world: &World, camera: Entity, rect: [f32; 4]) -> Option<Self> {
         let lens = world.get::<Camera>(camera)?;
         let transform = world.get::<Transform>(camera)?;
-        let fov = lens.fov_y_degrees.to_radians();
         let aspect = rect[2] / rect[3].max(1.0);
+        let shape = voxear_render::Lens::of(lens, aspect);
         let view = Mat4::from_rotation_translation(transform.rotation, transform.position).inverse();
-        let view_projection = vulkan::perspective_infinite_reverse(fov, aspect, lens.near) * view;
+        let view_projection = shape.projection() * view;
         Some(Self {
             view_projection,
             inverse: view_projection.inverse(),
@@ -123,7 +125,8 @@ impl ViewCamera {
             right: transform.rotation * Vec3::X,
             up: transform.rotation * Vec3::Y,
             rect,
-            spread: 2.0 * (fov * 0.5).tan() / rect[3].max(1.0),
+            spread: 2.0 * shape.half_height(1.0) / rect[3].max(1.0),
+            ortho: shape.ortho.is_some(),
             dimension: voxear_scene::dimension_of(world, camera),
         })
     }
@@ -142,7 +145,7 @@ impl ViewCamera {
     pub fn ray(&self, point: [f32; 2]) -> (Vec3, Vec3) {
         let x = (point[0] - self.rect[0]) / self.rect[2] * 2.0 - 1.0;
         let y = (point[1] - self.rect[1]) / self.rect[3] * 2.0 - 1.0;
-        // Reverse depth: 1 is the near plane, and the far one is at infinity.
+        // Reverse depth: 1 is the near plane, and the far one is at infinity, or for an orthographic camera far off.
         let unproject = |depth: f32| {
             let p = self.inverse * Vec4::new(x, y, depth, 1.0);
             p.truncate() / p.w
@@ -153,7 +156,8 @@ impl ViewCamera {
 
     /// World units a number of logical pixels spans at a point.
     pub fn world_size(&self, point: Vec3, pixels: f32) -> f32 {
-        (point - self.position).dot(self.forward).max(0.01) * self.spread * pixels
+        let away = if self.ortho { 1.0 } else { (point - self.position).dot(self.forward).max(0.01) };
+        away * self.spread * pixels
     }
 }
 

@@ -1,6 +1,6 @@
 //! A script and the First-Person View: it gives the camera's Obj a view,
 //! sets how it looks and where, and reads the camera's field of view back
-//! after changing it. Builds a copy of Hello with one more script; skips
+//! after changing it, then makes it orthographic. Builds a copy of Hello with one more script; skips
 //! itself without .NET and the managed build.
 
 use voxear_core::logging::LogCapture;
@@ -28,6 +28,9 @@ public sealed class Looker : SystemBase
 		camera.FieldOfView = 50f;
 		Log.Info($"view {view.IsValid} {view.Sensitivity} {view.Yaw} {view.Pitch} {view.Eyes.Z} {view.Camera.Obj == eye}");
 		Log.Info($"fov {eye.Camera.FieldOfView} {eye.Camera.IsValid} {Obj.Find("Ground").Camera.IsValid}");
+		Log.Info($"projection {camera.Projection} {camera.Size}");
+		camera.MakeOrthographic(6f);
+		Log.Info($"projection {camera.Projection} {camera.Size}");
 	}
 
 	protected override void Update()
@@ -58,12 +61,17 @@ fn a_script_gives_an_obj_a_first_person_view_and_sets_its_camera() {
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
     assert!(lines.iter().any(|l| l == "view True 0.25 30 85 0.2 True"), "the tilt is held to its limit: {lines:#?}");
     assert!(lines.iter().any(|l| l == "fov 50 True False"), "{lines:#?}");
+    assert!(lines.iter().any(|l| l == "projection Perspective 5"), "perspective at first: {lines:#?}");
+    assert!(lines.iter().any(|l| l == "projection Orthographic 6"), "then orthographic: {lines:#?}");
     let world = &game.engine.world;
     let views: Vec<FirstPersonView> = world.query_ref::<&FirstPersonView>().into_iter().cloned().collect();
     assert_eq!(views.len(), 1);
     assert_eq!(views[0].sensitivity, 0.25);
     let fovs: Vec<f32> = world.query_ref::<&Camera>().into_iter().map(|c| c.fov_y_degrees).collect();
     assert_eq!(fovs, [50.0]);
+    let lenses: Vec<(voxear_render::Projection, f32)> =
+        world.query_ref::<&Camera>().into_iter().map(|c| (c.projection, c.size)).collect();
+    assert_eq!(lenses, [(voxear_render::Projection::Orthographic, 6.0)]);
 }
 
 /// A copy of Hello, inside the repository, where its scripts find the

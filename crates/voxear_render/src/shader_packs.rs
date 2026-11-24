@@ -73,7 +73,7 @@ pub const MAX_OPTIONS: usize = 32;
 
 /// The engine's own packs: what each is named by after `builtin:`, what a
 /// menu calls it, and its files.
-pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 3] = [
+pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 4] = [
     (
         "evening",
         "Evening",
@@ -111,6 +111,19 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 3] = [
             ("sky.slang", include_str!("../shader_packs/radiant.shaderpack/sky.slang")),
             ("models.slang", include_str!("../shader_packs/radiant.shaderpack/models.slang")),
             ("window.slang", include_str!("../shader_packs/radiant.shaderpack/window.slang")),
+        ],
+    ),
+    (
+        "pixel",
+        "Pixel",
+        &[
+            ("pack.toml", include_str!("../shader_packs/pixel.shaderpack/pack.toml")),
+            ("bands.slang", include_str!("../shader_packs/pixel.shaderpack/bands.slang")),
+            ("faces.slang", include_str!("../shader_packs/pixel.shaderpack/faces.slang")),
+            ("models.slang", include_str!("../shader_packs/pixel.shaderpack/models.slang")),
+            ("sky.slang", include_str!("../shader_packs/pixel.shaderpack/sky.slang")),
+            ("grade.slang", include_str!("../shader_packs/pixel.shaderpack/grade.slang")),
+            ("outline.slang", include_str!("../shader_packs/pixel.shaderpack/outline.slang")),
         ],
     ),
 ];
@@ -360,6 +373,23 @@ pub enum OptionKind {
         choices: Vec<String>,
         default: usize,
     },
+    /// A colour, picked from its swatch: sRGB from 0 to 1.
+    Color {
+        default: [f32; 3],
+    },
+}
+
+/// A colour option's value as its one number holds it: its sRGB channels
+/// to 8 bits each, red highest, which a float holds exactly.
+pub fn color_value(srgb: [f32; 3]) -> f32 {
+    let [r, g, b] = srgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u32);
+    ((r << 16) | (g << 8) | b) as f32
+}
+
+/// The sRGB colour a colour option's value holds.
+pub fn value_color(value: f32) -> [f32; 3] {
+    let bits = value.round().clamp(0.0, 16_777_215.0) as u32;
+    [bits >> 16, bits >> 8, bits].map(|c| (c & 255) as f32 / 255.0)
 }
 
 impl PackOption {
@@ -369,6 +399,7 @@ impl PackOption {
             OptionKind::Number { default, .. } => *default,
             OptionKind::Toggle { default } => f32::from(u8::from(*default)),
             OptionKind::Choice { default, .. } => *default as f32,
+            OptionKind::Color { default } => color_value(*default),
         }
     }
 
@@ -378,6 +409,7 @@ impl PackOption {
             OptionKind::Number { low, high, .. } => value.clamp(*low, *high),
             OptionKind::Toggle { .. } => f32::from(u8::from(value >= 0.5)),
             OptionKind::Choice { choices, .. } => value.round().clamp(0.0, choices.len().saturating_sub(1) as f32),
+            OptionKind::Color { .. } => value.round().clamp(0.0, 16_777_215.0),
         }
     }
 }
@@ -397,6 +429,39 @@ pub struct PackManifest {
     pub surfaces: PackSurfaces,
     /// How the sun's shadows are drawn and read under it.
     pub shadows: PackShadows,
+    /// The scene drawn in pixels under it, enlarged with hard edges (see
+    /// `pixels`), in place of the settings' own.
+    pub pixels: Option<PackPixels>,
+}
+
+/// What a pack asks of drawing in pixels (`[pixels]`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackPixels {
+    pub size: PackPixelSize,
+    /// Keeps an orthographic camera on the grid of its pixels.
+    pub snap: bool,
+}
+
+/// Screen pixels each drawn pixel covers, under a pack: a whole number, or a
+/// number option's, by its place among the pack's options, so a player picks
+/// it. 1 or less leaves the settings' own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackPixelSize {
+    Fixed(u32),
+    Option(usize),
+}
+
+impl PackPixels {
+    /// The settings it puts in place under `options`, the pack's values in
+    /// its manifest's order: none where its size is 1 or less.
+    pub fn settings(&self, options: &[f32]) -> Option<crate::Pixels> {
+        let size = match self.size {
+            PackPixelSize::Fixed(size) => size,
+            PackPixelSize::Option(at) => options.get(at).map_or(1, |value| value.round().max(0.0) as u32),
+        };
+        let size = size.min(crate::pixels::MOST_PIXEL_SIZE);
+        (size > 1).then_some(crate::Pixels { enabled: true, size, height: 0, snap: self.snap })
+    }
 }
 
 /// What a pack sets of the sun's shadows: each in place of the level's
@@ -488,7 +553,28 @@ struct ManifestFile {
     #[serde(default)]
     shadows: ShadowsData,
     #[serde(default)]
+    pixels: Option<PixelsData>,
+    #[serde(default)]
     engine: Option<toml::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PixelsData {
+    size: PixelSizeData,
+    #[serde(default = "yes")]
+    snap: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PixelSizeData {
+    Fixed(u32),
+    Option(String),
 }
 
 fn pack_format() -> u32 {
@@ -516,6 +602,13 @@ enum OptionData {
     Choice {
         choices: Vec<String>,
         default: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default)]
+        about: String,
+    },
+    Color {
+        default: [f32; 3],
         #[serde(default)]
         label: String,
         #[serde(default)]
@@ -635,6 +728,27 @@ fn check_name(name: &str, what: &str) -> Result<()> {
 }
 
 /// A program's file: a `.slang` file in the pack's own folder.
+/// `[pixels] size`, checked: a whole number of screen pixels, or the name of
+/// a number option among `options`.
+fn pixel_size(data: &PixelSizeData, options: &[PackOption]) -> Result<PackPixelSize> {
+    let most = crate::pixels::MOST_PIXEL_SIZE;
+    match data {
+        PixelSizeData::Fixed(size) => {
+            ensure!((1..=most).contains(size), "size: from 1 to {most} screen pixels, not {size}");
+            Ok(PackPixelSize::Fixed(*size))
+        }
+        PixelSizeData::Option(name) => {
+            let at = options.iter().position(|option| option.key == *name);
+            let at = at.with_context(|| format!("size: no option `{name}`; name a number option, or give a number"))?;
+            ensure!(
+                matches!(options[at].kind, OptionKind::Number { .. }),
+                "size: the option `{name}` is not a number"
+            );
+            Ok(PackPixelSize::Option(at))
+        }
+    }
+}
+
 /// The `[shadows]` table, checked.
 fn shadows(data: &ShadowsData) -> Result<PackShadows> {
     if let Some(filter) = &data.filter {
@@ -733,11 +847,18 @@ impl PackManifest {
         let mut written: Vec<(String, OptionData)> = file.options.into_iter().collect();
         written.sort_by_key(|(key, _)| order.iter().position(|named| named == key).unwrap_or(usize::MAX));
         let options = written.into_iter().map(|(key, data)| option(key, data)).collect::<Result<Vec<_>>>()?;
+        let pixels = match &file.pixels {
+            Some(data) => Some(PackPixels { size: pixel_size(&data.size, &options).context("[pixels]")?, snap: data.snap }),
+            None => None,
+        };
         ensure!(options.len() <= MAX_OPTIONS, "{} options are more than the {MAX_OPTIONS} a pack has", options.len());
         ensure!(file.passes.len() <= MAX_PASSES, "{} passes are more than {MAX_PASSES}", file.passes.len());
         ensure!(
-            !file.passes.is_empty() || !surfaces.named().is_empty() || shadows != PackShadows::default(),
-            "the pack has no [[pass]], no [surface] programs and no [shadows]"
+            !file.passes.is_empty()
+                || !surfaces.named().is_empty()
+                || shadows != PackShadows::default()
+                || pixels.is_some(),
+            "the pack has no [[pass]], no [surface] programs, no [shadows] and no [pixels]"
         );
         // Every target is named by the pass that writes it.
         let mut targets: Vec<PackTarget> = Vec::new();
@@ -817,7 +938,7 @@ impl PackManifest {
         let tonemaps =
             passes.iter().filter(|pass| pass.point == PackPoint::Tonemap && pass.writes == PassWrites::Color);
         ensure!(tonemaps.count() <= 1, "two passes write the colour at the tonemap; one takes the engine's place");
-        Ok(Self { description: file.description, options, passes, targets, surfaces, shadows })
+        Ok(Self { description: file.description, options, passes, targets, surfaces, shadows, pixels })
     }
 
     /// Every program the pack names, each once: its passes', its surface
@@ -905,6 +1026,10 @@ fn option(key: String, data: OptionData) -> Result<PackOption> {
             ensure!(distinct, "the option `{key}` has two choices the programs would name alike");
             PackOption { label: named(label), about, kind: OptionKind::Choice { choices, default: chosen }, key }
         }
+        OptionData::Color { default, label, about } => {
+            ensure!(default.iter().all(|c| (0.0..=1.0).contains(c)), "the option `{key}`'s colour is sRGB from 0 to 1");
+            PackOption { label: named(label), about, kind: OptionKind::Color { default }, key }
+        }
     })
 }
 
@@ -951,6 +1076,7 @@ fn options_code(manifest: &PackManifest) -> String {
             OptionKind::Number { .. } => "float",
             OptionKind::Toggle { .. } => "bool",
             OptionKind::Choice { .. } => "uint",
+            OptionKind::Color { .. } => "float3",
         };
         code.push_str(&format!("    {kind} {};\n", option.key));
     }
@@ -975,6 +1101,8 @@ fn options_code(manifest: &PackManifest) -> String {
             OptionKind::Number { .. } => read,
             OptionKind::Toggle { .. } => format!("{read} >= 0.5"),
             OptionKind::Choice { .. } => format!("uint({read} + 0.5)"),
+            // Linear, from the sRGB its 24 bits hold.
+            OptionKind::Color { .. } => format!("packOptionColor({read})"),
         };
         code.push_str(&format!("    o.{} = {value};\n", option.key));
     }
@@ -1624,6 +1752,10 @@ pub(crate) struct GpuPackFrame {
     /// Where the sun's shadow maps are described ([`GpuPackShadows`]), for
     /// a pass that reads `shadow`; 0 for none.
     pub sun_shadows: u64,
+    /// For an orthographic camera, half the height it sees and how far past
+    /// its near plane, as the engine's frame has them; 0 for a perspective one.
+    pub ortho: f32,
+    pub ortho_depth: f32,
 }
 
 /// Where in the pack's frame buffer the sun's shadow maps are written,
@@ -1746,6 +1878,8 @@ impl GpuPackFrame {
             display_peak: frame.post.display_peak.max(1.0),
             leaf_light: NO_TEXTURE,
             sun_shadows: 0,
+            ortho: frame.ortho,
+            ortho_depth: frame.ortho_depth,
             sky_light: facts.addresses[0],
             light_window: facts.addresses[1],
             light_bytes: facts.addresses[2],
@@ -2204,6 +2338,42 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
     }
 
     #[test]
+    fn pixels_follow_a_number_option_or_a_number_and_one_leaves_the_settings_own() {
+        let text = "[options]\nsize = { kind = \"number\", range = [1.0, 8.0], default = 4.0 }\n[pixels]\nsize = \"size\"\n";
+        let manifest = PackManifest::parse(text).unwrap();
+        let pixels = manifest.pixels.unwrap();
+        assert_eq!(pixels, PackPixels { size: PackPixelSize::Option(0), snap: true });
+        assert_eq!(pixels.settings(&[6.0]).map(|p| (p.size, p.snap)), Some((6, true)));
+        assert_eq!(pixels.settings(&[1.0]), None, "a size of 1 leaves the settings' own");
+        let fixed = PackManifest::parse("[pixels]\nsize = 3\nsnap = false\n").unwrap().pixels.unwrap();
+        assert_eq!(fixed.settings(&[]).map(|p| (p.size, p.snap)), Some((3, false)));
+        for (bad, says) in [
+            ("[pixels]\nsize = \"none\"\n", "no option `none`"),
+            ("[pixels]\nsize = 40\n", "from 1 to 32"),
+            ("[options]\non = { kind = \"toggle\", default = true }\n[pixels]\nsize = \"on\"\n", "not a number"),
+        ] {
+            let error = format!("{:#}", PackManifest::parse(bad).expect_err(bad));
+            assert!(error.contains(says), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_colour_option_keeps_its_srgb_in_one_number_and_reads_as_linear() {
+        let text = "[options]\nshade = { kind = \"color\", default = [0.2, 0.4, 1.0] }\n[pixels]\nsize = 2\n";
+        let manifest = PackManifest::parse(text).unwrap();
+        let option = &manifest.options[0];
+        let value = option.default_value();
+        let back = value_color(value);
+        for (a, b) in back.iter().zip([0.2, 0.4, 1.0]) {
+            assert!((a - b).abs() <= 0.5 / 255.0, "{back:?}");
+        }
+        assert_eq!(value_color(color_value([1.0, 0.0, 0.5])), [1.0, 0.0, 128.0 / 255.0]);
+        assert_eq!(option.kept(2.0e7), 16_777_215.0, "kept to 24 bits");
+        assert!(options_code(&manifest).contains("float3 shade;"));
+        assert!(options_code(&manifest).contains("o.shade = packOptionColor(frame()->options[0].x);"));
+    }
+
+    #[test]
     fn a_manifest_that_cannot_be_drawn_says_why() {
         let pass = "[[pass]]\nname = \"A\"\nprogram = \"a.slang\"\nat = \"final\"\n";
         let fails = |text: &str, says: &str| {
@@ -2366,7 +2536,7 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
     #[test]
     fn the_frame_a_pack_reads_is_laid_out_as_the_shader_has_it() {
         // Five matrices, then ten rows of sixteen bytes, the options, the images and five pointers.
-        assert_eq!(size_of::<GpuPackFrame>(), 5 * 64 + 10 * 16 + 4 * MAX_OPTIONS + 16 + 8 * MAX_TARGETS + 8 + 40);
+        assert_eq!(size_of::<GpuPackFrame>(), 5 * 64 + 10 * 16 + 4 * MAX_OPTIONS + 16 + 8 * MAX_TARGETS + 8 + 48);
         // The sun's space, the table, textures and the rest (scalar layout, as the shaders are compiled), each level's
         // window and the cascades.
         assert_eq!(size_of::<GpuPackShadows>(), 48 + 8 + 32 + 16 * crate::vsm::LEVELS + 64 * 4 + 32);

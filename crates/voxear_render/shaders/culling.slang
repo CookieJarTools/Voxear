@@ -46,7 +46,8 @@ bool occluded(Frame* frame, float3 center, float radius)
     {
         float3 corner = center + radius * float3((i & 1) != 0 ? 1.0 : -1.0, (i & 2) != 0 ? 1.0 : -1.0, (i & 4) != 0 ? 1.0 : -1.0);
         float4 clip = transform(frame->cull.viewProj, float4(corner, 1.0));
-        if (clip.w <= frame->cull.near)
+        // An orthographic camera's w is 1: past its near plane, depth goes over 1.
+        if (frame->cull.ortho > 0.0 ? clip.z >= clip.w : clip.w <= frame->cull.near)
         {
             // Crosses the near plane: too close to judge, so draw it.
             return false;
@@ -152,7 +153,7 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
     float radius = meshlet.radius * culler.scale + culler.grow;
     bool inside;
     // From the camera, a lamp, or along the sun's light from far off. A two-sided list is tested as the list beside it.
-    float3 toCenter = center - frame->cull.position;
+    float3 toCenter = cullLook(frame->cull, center);
     uint list = shadowListOf(culler.list);
     if (list >= LIST_LOCAL_SHADOW)
     {

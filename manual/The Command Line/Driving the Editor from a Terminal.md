@@ -191,6 +191,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `towns.near` | Read the towns a Block World's generator lays out near a point, with each building's structure, floor, facing and door, none of their ground made (see [[Structures]]) |
 | `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`, `obj.move_to_dimension` | List the dimensions made, show one in the Scene view, make a `.dimension` file of a kind, open or let go of one, and move an Obj into another |
 | `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, how many Nav Obstacles there are and carve, and what every Nav Agent and Block Mob is doing |
+| `scene_view.projection` | Whether the Scene view in use sees orthographic or in perspective, and turn it either way, as its Ortho button does (see [[Cameras]]) |
 | `scene_view.culling` | Whether the Scene views draw only what the game's camera draws, which camera they cull from, and turn it on or off (see [[Playing Your Game]]) |
 | `ground_fit.land`, `world_layers.status`, `world_layers.hide` | Set an Obj with a Ground Fit down on the ground without its own cut, list each world's layers, and hide them to see the bare ground (see [[World Layers]]) |
 | `blocks.bake_far`, `blocks.bake_far_status`, `blocks.bake_far_stop` | Bake a streamed Block World's far view in the background, over the whole world or round where it is seen from, ask how far it has got, and stop it (see [[Block Worlds#Baking the far view]]) |
@@ -227,6 +228,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
 | `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |
+| `settings.find` | Find any setting the editor has by what it does, in rough words: Project Settings, Preferences, the Lighting panel, the open level's components and import settings, best first, with the line of its tooltip that matched; `settings.show` opens one where it is |
+| `inspector.mode`, `inspector.debug` | Switch an Inspector between Normal and Debug, and read what Debug mode shows of an Obj or an asset, row by row |
 | `project.get` | The project's `voxear.toml`, as JSON |
 | `world_quality.get`, `world_quality.set` | What making block worlds spends: its preset or each number, and whether this machine keeps its own |
 | `docs.search`, `docs.read` | Find and read pages of this manual and your own |

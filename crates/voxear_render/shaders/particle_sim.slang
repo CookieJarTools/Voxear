@@ -122,7 +122,7 @@ float3 surfaceFacing(Frame* frame, int2 pixel, float3 at)
     float3 across = (!hasLeft || (hasRight && dot(acrossRight, acrossRight) < dot(acrossLeft, acrossLeft))) ? acrossRight : acrossLeft;
     float3 along = (!hasUp || (hasDown && dot(acrossDown, acrossDown) < dot(acrossUp, acrossUp))) ? acrossDown : acrossUp;
     float3 facing = normalizeOr(cross(across, along), float3(0.0, 1.0, 0.0));
-    return dot(facing, frame->cameraPosition - at) < 0.0 ? -facing : facing;
+    return dot(facing, towardsEye(frame, at)) < 0.0 ? -facing : facing;
 }
 
 // A particle `radius` wide at `position` in the world, going at `velocity`, against what the main view sees: put
@@ -134,7 +134,7 @@ bool meetScene(Frame* frame, float radius, float bounce, float friction, float s
     facing = float3(0.0, 1.0, 0.0);
     struck = 0.0;
     float4 clip = transform(frame->viewProj, float4(position, 1.0));
-    if (clip.w <= frame->near)
+    if (clipViewDepth(frame, clip) <= frame->near)
     {
         return false;
     }

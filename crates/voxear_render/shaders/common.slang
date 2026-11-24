@@ -2157,6 +2157,12 @@ struct VoxelVolume
     float3 corner;
     // How rough its voxels are.
     float roughness;
+    // An endless volume's window (src/voxel_volume/endless.rs): its least sector in the world, which its corner is
+    // the place of; whether it is one; and a sector with nothing in it, for one of the window's slots not yet made
+    // for the sector the walk is in.
+    int3 windowSector;
+    uint windowed;
+    uint* emptySector;
 };
 
 struct VoxelVolumes

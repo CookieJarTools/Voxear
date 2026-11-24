@@ -1082,6 +1082,8 @@ impl Renderer {
         let started = std::time::Instant::now();
         loop {
             self.voxels.prepare(&self.gpu, &mut self.frames, world)?;
+            // Endless volumes' columns round the camera made now, outside the frames.
+            self.voxels.make_endless_now(&self.gpu, (&self.pipelines, &self.bindless))?;
             if !self.voxels.making() {
                 return Ok(true);
             }
@@ -2177,6 +2179,8 @@ impl Renderer {
         let terrain_draws = terrains.record(&mut fg, frames);
         let block_draws = blocks.record(&mut fg, frames);
         let voxel_draws = voxels.drawn();
+        // Endless volumes' columns made round the camera, before any view walks them.
+        let voxel_pools = voxels.record(&mut fg, *pipelines, frame.slot);
         let ui = &ui_buffers[frame.slot];
         // The UI's shaded backgrounds read the time from `output`.
         let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
@@ -2298,6 +2302,7 @@ impl Renderer {
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
                 voxels: voxel_draws.clone(),
+                voxel_pools: voxel_pools.clone(),
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
                 sound: sound.filter(|_| !sound_done),
                 baked: baked_frame.clone(),
@@ -2872,6 +2877,8 @@ struct ViewSetup {
     blocks: std::sync::Arc<[blocks::DrawnBlocks]>,
     /// The Voxel Volumes drawn this frame, and their corners.
     voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3)]>,
+    /// What endless volumes' making writes this frame, which the voxel passes read.
+    voxel_pools: Vec<graph::BufferId>,
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
@@ -3777,6 +3784,7 @@ impl View {
                     voxel_volume::ViewVoxels {
                         coarse: Some(fg.import_buffer(coarse)),
                         seen: Some(fg.import_buffer(seen)),
+                        pools: setup.voxel_pools.clone(),
                         ..view
                     }
                 })

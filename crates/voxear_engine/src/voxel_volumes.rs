@@ -9,6 +9,9 @@
 //! ground_on = true
 //! ground = { height = 2.0, hills = 1.5, grass = 0.6, flowers = 0.2 }
 //!
+//! An endless one has `endless = true` and how far it reaches round the
+//! camera, `reach = 64.0`.
+//!
 //! [[obj.voxel_volume.stamps]]
 //! model = "Plants/Oak.boxmodel"
 //! at = [12.0, 2.0, 9.0]
@@ -37,6 +40,10 @@ pub struct VoxelVolumeData {
     pub ground: VoxelGround,
     /// The box models stamped into it.
     pub stamps: Vec<VoxelStampData>,
+    /// Whether its ground goes on without end, made round the camera as far
+    /// as `reach` metres each way.
+    pub endless: bool,
+    pub reach: f32,
 }
 
 impl Default for VoxelVolumeData {
@@ -49,6 +56,8 @@ impl Default for VoxelVolumeData {
             ground_on: made.ground.is_some(),
             ground: made.ground.unwrap_or_default(),
             stamps: Vec::new(),
+            endless: made.endless,
+            reach: made.reach,
         }
     }
 }
@@ -98,6 +107,8 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         roughness: data.roughness,
         ground: data.ground_on.then_some(data.ground),
         stamps,
+        endless: data.endless,
+        reach: data.reach,
     }
 }
 

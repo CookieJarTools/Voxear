@@ -14,6 +14,12 @@ Add one with **Add Component ▸ Rendering ▸ Voxel Volume**, or make one with 
 
 A volume is made again on a thread of its own whenever it changes; until then the last one made is drawn. A meadow 80 m by 120 m at 16 voxels a metre, with sixty trees stamped in, takes under two seconds.
 
+## Endless ground
+
+With **Endless** on, the volume's own ground goes on without end. It is made on the GPU round the camera, as far as **Reach** metres each way, and made again ahead as the camera moves, the nearest first. The volume's size then says only how tall it is. Its Obj's place is where the ground's pattern starts, so the same settings always make the same ground. An endless volume has no stamps yet.
+
+A reach of 64 m at 16 voxels a metre keeps about 100 MB on the GPU. The ground round a camera standing still is made in under a second. Flying at 10 m/s, new columns 4 m a side are made on about one frame in eight, for about 0.8 ms of the GPU's time each.
+
 ## Its own ground
 
 With **Ground** on, the volume has rolling ground of its own voxels, grass on it and flowers here and there:
@@ -55,5 +61,5 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 
 - Its voxels cast no shadow onto meshes, blocks or terrain.
 - It isn't turned or scaled with its Obj.
-- It is drawn whole, however far away it is.
+- It is drawn whole, however far away it is; an endless one ends at its reach.
 - Its voxels can't be changed one by one from the editor or from scripts yet.

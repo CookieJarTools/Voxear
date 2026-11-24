@@ -10,8 +10,9 @@ some small-cube decoration. The look wanted is:
   time.
 
 Written 2026-11-24, measured on the RTX 3070 at 1920×1080. The prototype is
-[`crates/voxear_rhi/examples/small_voxels.rs`](../../crates/voxear_rhi/examples/small_voxels.rs) and its shader
-`small_voxels.slang` beside it.
+[`crates/voxear_rhi/examples/small_voxels/`](../../crates/voxear_rhi/examples/small_voxels/main.rs). It holds
+the world made on the CPU (`main.rs`) and on the GPU (`gpu_make.rs`, `make.slang`), and three ways of drawing
+it: the walk and the coarse first pass (`trace.slang`), and bricks drawn as boxes (`raster.slang`).
 
 ## The short version
 
@@ -19,24 +20,29 @@ Written 2026-11-24, measured on the RTX 3070 at 1920×1080. The prototype is
   - Every block world today is drawn as meshes of quads, and quads are what break.
   - The 256 m scene below, meshed at 1/16 m, has 455 million faces showing: 372 million quads even after joining
     runs of one colour, about 3 GB. Voxear's blocks already struggle at 0.4 m.
-- **What works is tracing the voxels on the GPU.** A compute shader walks each pixel's ray through a sparse grid
-  of bricks, and the world keeps no meshes at all. The prototype draws a 256 m meadow and forest of 1/16 m voxels:
+- **Tracing the voxels on the GPU works.** A compute shader walks each pixel's ray through a sparse grid of
+  bricks, and the world keeps no meshes at all. The prototype draws a 256 m meadow and forest of 1/16 m voxels:
   - 3.0 ms at 1080p for the picture itself;
   - 4.6 ms with traced shadows and ambient occlusion;
-  - 343 MB on the GPU, made in 3.8 s on 24 cores.
+  - 343 MB on the GPU.
 
   The frame time hardly depends on the world's size. The memory grows with its area and with the square of the
   voxels to a metre.
-- **The recommended shape keeps the block world.**
-  - The one-metre grid stays the world's layout, as it is now. Generator graphs, region files, `Blocks` in C#,
-    physics, navigation and the network all keep working on it.
-  - Each kind of block is drawn as a pattern of 16×16×16 small voxels, shared by every block of that kind.
-  - Only what is unique (plants, trees, carved spots, small-voxel buildings) is kept as bricks of its own.
+- **The fastest ways found, measured against each other on the same worlds:**
+  - **Making the world on the GPU** is 11 to 16 times faster than on all 24 CPU cores. The 256 m world took 225 ms
+    against 3.6 s, and both made the same world.
+  - **Drawing:** a coarse pass first, one ray every 4×4 pixels against whole bricks, lets every ray start near what
+    it will hit. It took 5–45% off the picture.
+  - Drawing each brick as a box with triangles and walking only inside it was no faster here.
+- **No blocks are needed.** The world is small voxels throughout, with no one-metre grid under it. Memory is kept
+  down by:
+  - a palette in each brick;
+  - sharing bricks that repeat, such as many trees of one kind;
+  - making the world again on the GPU as it comes into view, and keeping only what players changed.
 
-  Ground and grass at 1/16 m measured 110 MB for 256 m square as unique bricks. As patterns they cost about what
-  blocks cost now.
+  Drawing block worlds as patterns of small voxels stays an option, for the worlds of blocks that exist.
 - **Distance is handled in rings.** Voxels are 1/16 m near the camera, then 1/8 and 1/4 m further out, then
-  one-metre blocks, then the far view that is already baked.
+  coarser still to the horizon.
 - **The plan has seven stages.** Stage 1 alone gives small-voxel models and props in any scene. Stages 1 and 2
   give the meadow picture. Stages 1 to 5 give the town to the horizon, editable a voxel at a time.
 
@@ -123,10 +129,11 @@ weighed:
 **Chosen: the three levels, walked in compute,** with one more level above the sectors for long rays through
 empty sky.
 
-### D. Blocks that hold patterns of small voxels
+### D. Blocks that hold patterns of small voxels (an option for block worlds)
 
-The one-metre block world stays as it is: its chunks, palettes, edits and region files. Each kind of block gets a
-pattern of 16³ voxels, for example:
+This is for worlds of blocks that already exist, not for a world of small voxels. The one-metre block world stays
+as it is: its chunks, palettes, edits and region files. Each kind of block gets a pattern of 16³ voxels, for
+example:
 
 - a grass block is dirt with blades on top;
 - a leaf block is a cloud of leaves that thins towards the air beside it;
@@ -140,18 +147,20 @@ hash of the place picks a variant and turning of the pattern, so the repeats don
 - **Where it falls short:** shapes finer than a block need bricks of their own. That covers a tree's crown, a
   flower or a dug hole. Option C keeps those.
 
-**Chosen: D on top of C.** That is how the town, the meadow and a world of blocks can all be small voxels without a
-gigabyte of bricks.
+**Chosen: C, a world of small voxels throughout.** D is a later option for today's block worlds.
 
 ## The prototype
 
 `cargo run --release -p voxear_rhi --example small_voxels -- 256 16 out`
 
-That makes a world 256 m across at 16 voxels a metre and writes the pictures to `out`.
+That makes a world 256 m across at 16 voxels a metre and writes the pictures to `out`. Each view is drawn by every
+method in turn. `SMALL_VOXELS_FACES=1` also counts the faces meshing would need, and `SMALL_VOXELS_GROUND_ONLY=1`
+leaves out the trees and flowers.
 
 - **The scene.** A meadow of one-voxel grass blades and flowers before a forest of round-crowned trees and
   conifers, with hills behind and to the sides.
-- **Generation.** It is made on the CPU on every core and uploaded once.
+- **Generation.** It is made on the CPU on every core and uploaded once, then made again on the GPU and checked
+  against the CPU's.
 - **The trace.** One compute pass at 1920×1080 walks the rays and casts a second ray for moonlight shadows.
   Ambient occlusion comes from the voxels round each face's corners.
 - **Storage.**
@@ -203,7 +212,8 @@ What the numbers say:
   the trees' outlines take hundreds.
 
   ![Steps a pixel](../images/small-voxels/prototype-steps.webp)
-- **Making the world: 17 m² a ms at 1/16 m on 24 cores**, with a simple generator.
+- **Making the world on the CPU: 17 m² a ms at 1/16 m on 24 cores**, with a simple generator. The GPU is 11–16
+  times faster: see "Faster ways, measured".
   - Walking at 5 m/s with 256 m in view brings 1,280 m² a second into view: 75 ms of all 24 cores.
   - Running at 10 m/s doubles that.
   - Flying at 40 m/s needs the coarser rings, which are made 4 to 20 times faster.
@@ -220,6 +230,85 @@ What the numbers say:
 - Instanced models in the bricks.
 - Streaming while moving.
 
+## Faster ways, measured
+
+Is the walk the fastest way to draw these worlds, and the CPU the fastest way to make them? Each candidate was
+built into the prototype and measured on the same worlds and views. Each round of 80 drew every method in turn, so
+other work on the GPU weighed on them alike: other sessions kept it 25–40% busy. Each figure is the least of the
+last 60 rounds.
+
+### Making the world on the GPU
+
+The generator was written again as four compute passes:
+
+1. Each column's height, grass blade and top.
+2. Each column of bricks lists the bricks that ground, grass or a plant's bounds reach.
+3. One group of 512 threads a listed brick, a thread a voxel. It keeps the brick if anything is in it, and writes
+   its materials in the order of its bits.
+4. One group a sector puts its bricks in order for the walk.
+
+Plants are placed on the CPU, which takes milliseconds.
+
+| World | Voxels | CPU, 24 threads | GPU | Faster | GPU a ms | Placing plants (CPU) | Same world? |
+|---|---|---|---|---|---|---|---|
+| 256 m | 1/16 m | 3,559 ms | 225 ms | 16× | 291 m² | 33 ms | bricks 0.01% fewer, pictures within 0.01% of pixels |
+| 512 m | 1/16 m | 16,363 ms | 1,135 ms | 14× | 231 m² | 142 ms | bricks 0.01% fewer, 0.02% of pixels |
+| 128 m | 1/32 m | 4,591 ms | 285 ms | 16× | 57 m² | 11 ms | the same bricks, no pixel more than 24 levels off |
+| 256 m | 1/8 m | 661 ms | 54 ms | 12× | 1,214 m² | 34 ms | bricks 0.06% fewer, 0.03% of pixels |
+| 1,024 m | 1/8 m | 11,631 ms | 1,089 ms | 11× | 963 m² | 524 ms | bricks 0.04% fewer, 0.03% of pixels |
+
+The few differences come from floating point rounding on the two sides.
+
+- **The brick pass is 95% of the GPU's time**, and it is not tuned. It works through 3.5 to 4.6 times as many
+  bricks as it keeps, because a tree's whole bounding box is listed. Testing a brick against the crowns' shells
+  before filling it would cut that by about half. Placing plants on the GPU as well would remove the CPU's part.
+- **Streaming is cheap with it.** At 1/16 m, walking at 5 m/s with 256 m in view brings 1,280 m² a second into
+  view: about 4.4 ms of GPU a second, under a tenth of a millisecond a frame. On the CPU it was 75 ms of all 24
+  cores.
+- **The CPU still needs what is near**, for collision and for the edits it checks. Those bricks are read back or
+  made on the CPU only round the players.
+
+### Three ways of drawing
+
+- **The walk:** as described above.
+- **Coarse first:** one ray every 4×4 pixels walks against whole bricks, as if each brick were solid. Each pixel's
+  ray then starts a brick and a half short of the nearest distance its four corner rays reached. Where all four
+  reached the sky, it draws sky without walking.
+- **Bricks as boxes:** a compute pass culls the bricks to the view and sorts them into 32 bands of distance, nearest
+  first, so the depth test can throw away bricks behind. Each brick's camera-facing sides are drawn as triangles.
+  Each pixel walks only inside its own brick, at most two dozen steps, and writes which voxel it saw. One compute
+  pass then shades each pixel once.
+
+"Picture" is the picture alone, and "lit" adds traced shadows and occlusion. "Meadow" is from 1.1 m above the grass,
+and "over" from 30 m up.
+
+| World | Voxels | Meadow picture: walk / coarse first / boxes | Meadow lit | Over picture | Over lit |
+|---|---|---|---|---|---|
+| 256 m | 1/16 m | 3.05 / **2.72** / 3.70 ms | 4.63 / **4.26** / 5.54 ms | 3.08 / **2.04** / 4.40 ms | 4.45 / **3.48** / 7.91 ms |
+| 128 m | 1/32 m | 4.14 / **2.35** / 4.47 ms | 4.71 / **3.35** / 5.67 ms | 3.67 / **2.00** / 4.91 ms | 5.49 / **3.95** / 7.78 ms |
+| 256 m | 1/8 m | 2.21 / 2.07 / **2.05** ms | 3.66 / **3.52** / 3.54 ms | 2.72 / **2.11** / 3.43 ms | 4.04 / **3.47** / 7.57 ms |
+| 1,024 m | 1/8 m | 3.21 / **2.80** / 5.54 ms | 5.59 / **5.00** / 8.38 ms | 3.88 / **3.09** / 6.91 ms | 7.69 / **5.88** / 9.90 ms |
+
+- **Coarse first is the fastest, 5–45% under the walk.** It gains most where rays cross empty air before they hit:
+  from above, and at 1/32 m.
+  - Its pictures match the walk but for 0.1–5% of pixels, nearly all far ones that stop at a different level of
+    detail.
+  - It is not exact. Something thinner than the gap between two coarse rays, nearer than both of their hits, could
+    be stepped past. A version for the engine walks the coarse rays as cones, so nothing between them is missed.
+- **Bricks as boxes was no faster.**
+  - Every brick in view, about a million at 256 m, is culled, sorted and drawn, and each pixel is covered by
+    several bricks before the nearest wins.
+  - Shading inside the brick pass, before the depth test had settled, was far slower: 26 ms with shadows. That is
+    why it writes what it saw and shades afterwards.
+  - It also misses the brick the camera stands in, and needs care where bricks cross the near plane.
+  - It would gain with last frame's depth to cull hidden bricks, but so would the walk, by starting each ray near
+    where last frame's ray stopped.
+- **Not tried here:**
+  - Starting each ray from last frame's distance, moved to this frame's camera: likely the next win after coarse
+    first.
+  - The GPU's ray tracing hardware with a box per brick.
+  - Drawing at a lower resolution for TAA to fill in, which scales with the pixels as any pass does.
+
 ## How it fits what exists
 
 - **The renderer.**
@@ -229,43 +318,39 @@ What the numbers say:
   - **Sun shadows.** Voxels get traced shadows, as in the prototype. Lighting a mesh pixel also traces the sun ray
     through the voxels, and lighting a voxel samples the shadow maps for meshes.
   - **GI.** It already has a software path (`trace_software.slang`). Its rays walk the bricks instead of triangles.
-- **Block Worlds.** The chunk grid, palettes and `Fill` stay.
-  - Block definitions gain a **Voxels** look: a pattern from a box model, sculpted in the box model editor, which
-    already makes 16³ chunks. It has variants, and a choice to thin towards air for leaves.
-  - Ground cover rows become voxel stamps.
-  - The relief look (`blockCubes`) is the same idea, done in shading only. Patterns replace it near and keep it as
-    the cheap far tier.
-- **Generator graphs.** They make blocks as now. The patterns give the detail. Nodes for small-voxel stamps
-  (rocks, flowers, crowns) place unique bricks as `FarTile::add` places structures.
+- **A Voxel World of its own.** No blocks under it.
+  - It is a component like Block World: its bricks, the rings that stream round the camera, the generator that
+    makes them on the GPU, and the changes players made.
+  - Today's Block Worlds are left as they are. Drawing them as patterns (option D) is a later option.
+- **Generator graphs.**
+  - The node graph that makes block worlds now is compiled to a compute shader. Heights, biomes, caves and
+    stamps are worked out per voxel, as `make.slang` does by hand.
+  - Plant and structure stamps are placed as now and filled on the GPU.
+  - A graph that can't run on the GPU runs on the CPU, at a sixteenth of the speed.
 - **Streamed worlds and the far view.**
-  - Near the camera, rings of unique bricks: 1/16 m to about 128 m, then 1/8 m to about 256 m, then 1/4 m to
-    1 km.
-  - Past that, the baked far view (`FarTile` runs at one metre per column, coarsest first) as now. At 1 km a
-    one-metre block is about a pixel.
-  - The patterns cost nothing to stream: blocks stream as they do now.
-  - Estimated worst case with every ring unique and no palettes: about 760 MB. With patterns for the ground and
-    palettes, a few hundred.
-- **Region files and saves.** Block edits are kept as now (`.blocks` version 5, runs and zstd). A voxel edit is
-  kept as the brick that differs from what the pattern or the generator made: its mask and materials, zstd'd.
-  Only bricks someone changed are written.
+  - Rings round the camera: 1/16 m to about 128 m, then 1/8 m to about 256 m, then 1/4 m to 1 km, then 1/2 m and
+    1 m to the horizon. Each ring is made on the GPU as it comes into view, from the generator and the changes.
+  - The baked far view's idea carries over: far rings made once and kept on disk, coarsest first.
+  - Estimated worst case with every ring unique and no palettes: about 760 MB. With palettes and shared bricks,
+    a few hundred.
+- **Region files and saves.** A changed brick is kept with its mask and materials, zstd'd. Only bricks a player
+  or the editor changed are written, as `.blocks` keeps only changed blocks now. Everything else is made again
+  from the generator.
 - **Network edits.** Edits go out as commands that every machine plays the same way: carve a ball, set a voxel,
-  stamp a model, each with its block kind. A joining player gets the changed bricks in compacted form, as block
+  stamp a model, each with its material. A joining player gets the changed bricks in compacted form, as block
   changes are sent now.
 - **Physics.**
-  - Solid blocks collide as now. A block's pattern gives its shape: the whole cube, or boxes from the pattern's
-    4³ groups.
+  - The bricks round each body, at most a few metres, are kept on the CPU too. They are meshed into collision at
+    1/8 m, or given a collision shape that reads the brick masks.
   - Grass, flowers and leaves have a material that doesn't collide.
-  - Unique bricks near a body are meshed into collision at 1/8 m, or given a collision shape that reads the brick
-    masks.
-- **Navigation.** Agents walk blocks as now. Where voxels were edited, the brick masks give a walkable grid at
-  1/2 m.
-- **Block light.** Each block's two lights are sampled smoothly at the voxel's place, so torches and sky light
-  reach in under overhangs and into caves at voxel scale with nothing kept per voxel.
+- **Navigation.** The brick masks give a walkable grid at 1/2 m, and the 2×2×2 groups one at 1/8 m where it
+  matters.
+- **Light from torches and the sky.** A light grid at 1/2 m, one value a brick, spreads light as block light
+  does now and is sampled smoothly at each voxel. It is kept on the GPU beside the bricks.
 - **C#.**
-  - `Blocks` keeps working.
-  - A new `Voxels` class adds `Carve(middle, radius)`, `Set(position, block)`, `Stamp(model, at, turn)` and
-    `Raycast`, the last returning a voxel hit with its block.
-  - Patterns and models are typed asset references with pickers, never names in strings.
+  - A new `Voxels` class adds `Carve(middle, radius)`, `Set(position, material)`, `Stamp(model, at, turn)` and
+    `Raycast`, the last returning a voxel hit with its material.
+  - Materials and models are typed asset references with pickers, never names in strings.
   - Everything is reachable from `vox editor call` and `vox mcp`.
 - **Swaying plants.** Traced voxels do not move with a vertex shader.
   - Near the camera, swaying grass and flowers stay today's ground cover meshes, which sway, push aside and
@@ -279,25 +364,30 @@ one.
 
 | Stage | What it gives | GPU | Memory | Work |
 |---|---|---|---|---|
-| 1. **Voxel pass and Voxel Volumes** | A sparse brick volume as an Obj, traced into the frame's depth and surfaces with traced sun shadows; box models stamped into it; seen in the editor and in renders | ~2 ms at 67% scale, +1 ms shadows | 1.3 KB/m² of detail | 3–4 |
-| 2. **Blocks drawn as patterns** | A Block World drawn by the tracer with 16³ patterns per block kind, slopes cut by `Fill`, leaves thinning at the edges; ground and hills of small voxels | about stage 1's | patterns, 4 KB a kind | 3 |
-| 3. **Plants and trees of small voxels** | Ground cover, grown plants and `.voxplant` crowns as voxel stamps; then models shared between bricks so a forest costs one tree per kind | +0.5 ms | 230 MB a 256 m forest unshared; tens of MB shared | 3 |
+| 1. **Voxel pass and Voxel Volumes** | A sparse brick volume as an Obj, drawn with the coarse first pass into the frame's depth and surfaces, with traced sun shadows; box models stamped into it; seen in the editor and in renders | ~2 ms at 67% scale, +1 ms shadows | 1.3 KB/m² of detail | 3–4 |
+| 2. **Voxel World made on the GPU** | A world of small voxels throughout, made by a generator graph compiled to compute shaders, round the camera, in one ring at first; ground, grass and hills | <0.1 ms a frame while walking | 110 MB for 256 m of ground and grass | 3–4 |
+| 3. **Plants and trees of small voxels** | Ground cover, grown plants and crowns as voxel stamps filled on the GPU; then models shared between bricks so a forest costs one tree per kind | +0.5 ms | 230 MB a 256 m forest unshared; tens of MB shared | 3 |
 | 4. **Editing a voxel at a time** | `Voxels` in C#, an editor brush, changed bricks in region files, edit commands over the network, picking | – | changed bricks only | 2–3 |
-| 5. **Distance in rings** | 1/16, 1/8, 1/4 m rings and blocks beyond, streamed within the world budget, then the baked far view | +0.5 ms | 400–760 MB | 3 |
-| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, block light sampled smoothly | 1–2 ms | – | 2 |
-| 7. **Physics, navigation and debris at voxel scale** | Collision from patterns and bricks, broken pieces as falling voxel objects, voxel characters | – | – | 3–4 |
+| 5. **Distance in rings** | 1/16, 1/8, 1/4 m rings and coarser to the horizon, made as they come into view, far rings kept on disk | +0.5 ms | 400–760 MB | 3 |
+| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid | 1–2 ms | – | 2 |
+| 7. **Physics, navigation and debris at voxel scale** | Collision from the bricks round each body, broken pieces as falling voxel objects, voxel characters | – | – | 3–4 |
 
-- **Stages 1 and 2 give the night meadow.** Ground, grass and hills come from patterns, and flowers and crowns
-  from stamps.
+Block Worlds drawn as patterns of small voxels (option D) can follow any time after stage 1, for the worlds of
+blocks that exist.
+
+- **Stages 1 to 3 give the night meadow.** Ground, grass and hills come from the generator, and flowers and
+  crowns from stamps.
 - **Stages 1 to 5 give the town to the horizon,** editable a voxel at a time. Stages 6 and 7 bring the lighting and
   physics up to the same scale.
 - **Stage 1 stands alone.** Voxel props, ruins and statues in any scene, today's block worlds included, are worth
   having without the rest.
+- **Next measurement before stage 1:** starting rays from last frame's distance, and coarse rays walked as cones,
+  so the first pass is exact.
 - **Risks.**
   - Fitting the traced depth and surfaces into TAA and the existing passes without seams where meshes meet
     voxels.
   - Shimmer in far crowns, which needs the levels of detail plus TAA.
-  - The cost of rays that skim the grass.
+  - The cost of rays that skim the grass, which the coarse first pass does not remove.
 
 ## Kept elsewhere
 

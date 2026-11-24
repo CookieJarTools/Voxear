@@ -13,15 +13,19 @@
 //! ```
 
 use std::{
-    ffi::CStr,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
 };
 
+mod gpu_make;
+
 use anyhow::{Context, Result};
-use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, ShaderModule, create_compute_pipeline, vk};
+use voxear_rhi::{
+    Bindless, Buffer, Gpu, GraphicsPipelineDesc, ImageDesc, MemoryLocation, ShaderModule, create_compute_pipeline,
+    create_graphics_pipeline, vk,
+};
 
 /// Sectors are 64 voxels a side, bricks 8.
 const SECTOR: i32 = 64;
@@ -66,6 +70,7 @@ struct GpuView {
 struct GpuPush {
     world: u64,
     view: u64,
+    draw: u64,
 }
 
 // Materials, linear colours.
@@ -299,14 +304,12 @@ struct ColumnOut {
     solid: u64,
 }
 
-fn make(scene: &Scene) -> Made {
+/// The trees and flowers, placed on jittered grids, how many of them are trees, and each sector column's list of
+/// those that reach into it.
+fn place(scene: &Scene) -> (Vec<Plant>, usize, Vec<Vec<usize>>) {
     let v = scene.voxel;
     let columns = (scene.across / v) as i32 / SECTOR;
-    let tall = (HEIGHT_METRES / v) as i32 / SECTOR;
-    let sector_count = [columns, tall, columns];
     let to_voxels = |m: f32| (m / v).floor() as i32;
-
-    // Plants, placed on jittered grids and listed by sector column.
     let mut plants: Vec<Plant> = Vec::new();
     let cell = 6.0;
     let cells = (scene.across / cell) as i32;
@@ -375,6 +378,39 @@ fn make(scene: &Scene) -> Made {
             }
         }
     }
+
+    (plants, tree_count, by_column)
+}
+
+/// A plant as the GPU's generator reads it (make.slang, `plantMaterial`).
+fn plant_ints(plant: &Plant) -> [i32; 32] {
+    let mut ints = [0i32; 32];
+    let (low, high) = plant.bounds();
+    ints[8..11].copy_from_slice(&low);
+    ints[11..14].copy_from_slice(&high);
+    match plant {
+        Plant::Flower { x, z, base, stem, kind } => {
+            ints[..6].copy_from_slice(&[0, *x, *z, *base, *stem, i32::from(*kind)]);
+        }
+        Plant::Round { x, z, base, trunk, crowns } => {
+            ints[..5].copy_from_slice(&[1, *x, *z, *base, *trunk]);
+            for (k, c) in crowns.iter().enumerate().take(4) {
+                ints[16 + k * 4..20 + k * 4].copy_from_slice(c);
+            }
+        }
+        Plant::Cone { x, z, base, height, radius } => {
+            ints[..6].copy_from_slice(&[2, *x, *z, *base, *height, *radius]);
+        }
+    }
+    ints
+}
+
+fn make(scene: &Scene) -> Made {
+    let v = scene.voxel;
+    let columns = (scene.across / v) as i32 / SECTOR;
+    let tall = (HEIGHT_METRES / v) as i32 / SECTOR;
+    let sector_count = [columns, tall, columns];
+    let (plants, tree_count, by_column) = place(scene);
 
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
@@ -605,6 +641,28 @@ fn make_column(
     out
 }
 
+/// Each brick's place in bricks, found from the sectors, in the bricks' order.
+fn brick_places(made: &Made) -> Vec<[i32; 3]> {
+    let [cx, cy, cz] = made.sector_count;
+    let mut places = vec![[0i32; 3]; made.bricks.len() / BRICK_WORDS];
+    for s in 0..(cx * cy * cz) as usize {
+        let at = s * SECTOR_WORDS;
+        if made.sectors[at + 24] == EMPTY {
+            continue;
+        }
+        let (sx, rest) = (s as i32 % cx, s as i32 / cx);
+        let (sz, sy) = (rest % cz, rest / cz);
+        let mut k = made.sectors[at + 24] as usize;
+        for bi in 0..512usize {
+            if made.sectors[at + (bi >> 5)] >> (bi & 31) & 1 == 1 {
+                places[k] = [sx * 8 + (bi % 8) as i32, sy * 8 + ((bi / 8) % 8) as i32, sz * 8 + (bi / 64) as i32];
+                k += 1;
+            }
+        }
+    }
+    places
+}
+
 /// Faces of solid voxels that show (beside empty ones), and the quads they
 /// make when runs of one material along one side are joined, for comparing
 /// with meshing the same voxels.
@@ -642,27 +700,7 @@ fn faces(made: &Made) -> (u64, u64) {
     };
     let count = made.bricks.len() / BRICK_WORDS;
     let next = AtomicUsize::new(0);
-    // Each brick's place, found once from the sectors.
-    let mut places = vec![[0i32; 3]; count];
-    for s in 0..(cx * cy * cz) as usize {
-        let at = s * SECTOR_WORDS;
-        if made.sectors[at + 24] == EMPTY {
-            continue;
-        }
-        let (sx, rest) = (s as i32 % cx, s as i32 / cx);
-        let (sz, sy) = (rest % cz, rest / cz);
-        let mut k = made.sectors[at + 24] as usize;
-        for bi in 0..512usize {
-            if made.sectors[at + (bi >> 5)] >> (bi & 31) & 1 == 1 {
-                places[k] = [
-                    sx * 64 + (bi % 8) as i32 * 8,
-                    sy * 64 + ((bi / 8) % 8) as i32 * 8,
-                    sz * 64 + (bi / 64) as i32 * 8,
-                ];
-                k += 1;
-            }
-        }
-    }
+    let places: Vec<[i32; 3]> = brick_places(made).iter().map(|p| p.map(|a| a * 8)).collect();
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     let sums: Vec<(u64, u64)> = std::thread::scope(|s| {
         let workers: Vec<_> = (0..threads)
@@ -721,8 +759,10 @@ fn compile(source: &Path, out: &Path) -> Result<Vec<u8>> {
             "-O2",
             "-fvk-use-scalar-layout",
             "-fvk-use-entrypoint-name",
-            "-o",
         ])
+        .arg("-I")
+        .arg(source.parent().unwrap())
+        .arg("-o")
         .arg(out)
         .output()
         .context("running slangc")?;
@@ -730,20 +770,72 @@ fn compile(source: &Path, out: &Path) -> Result<Vec<u8>> {
     Ok(std::fs::read(out)?)
 }
 
-fn upload(gpu: &Gpu, name: &str, bytes: &[u8]) -> Result<Buffer> {
-    let buffer = gpu.create_buffer(
+fn buffer(gpu: &Gpu, name: &str, size: u64, extra: vk::BufferUsageFlags) -> Result<Buffer> {
+    gpu.create_buffer(
         name,
-        bytes.len().max(4) as u64,
+        size.max(4),
         vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::TRANSFER_DST
-            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            | vk::BufferUsageFlags::TRANSFER_SRC
+            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+            | extra,
         MemoryLocation::GpuOnly,
-    )?;
+    )
+}
+
+fn upload(gpu: &Gpu, name: &str, bytes: &[u8]) -> Result<Buffer> {
+    let made = buffer(gpu, name, bytes.len() as u64, vk::BufferUsageFlags::empty())?;
     // Large buffers go up a piece at a time.
     for (i, piece) in bytes.chunks(256 << 20).enumerate() {
-        gpu.upload_buffer(&buffer, (i as u64) * (256 << 20), piece)?;
+        gpu.upload_buffer(&made, (i as u64) * (256 << 20), piece)?;
     }
-    Ok(buffer)
+    Ok(made)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuDraw {
+    places: u64,
+    drawn: u64,
+    bands: u64,
+    draws: u64,
+    brick_count: u32,
+    near: f32,
+    coarse: u64,
+    coarse_step: u32,
+    coarse_size: [u32; 2],
+    pad: u32,
+    seen: u64,
+    depths: u64,
+}
+
+const FROM_COARSE: u32 = 8;
+const BANDS: u64 = 32;
+const COARSE_STEP: u32 = 4;
+const NEAR: f32 = 0.02;
+
+/// The three ways of drawing measured: every pixel's ray walked through the
+/// whole grid; the same after a coarse pass finds where each patch of rays
+/// first meets a brick; and each brick's box drawn with triangles and
+/// walked inside alone.
+#[derive(Clone, Copy, PartialEq)]
+enum Method {
+    Trace,
+    Coarse,
+    Bricks,
+    /// The plain walk through the world the GPU made, to check it against the CPU's.
+    GpuMade,
+}
+
+impl Method {
+    fn name(self) -> &'static str {
+        match self {
+            Method::Trace => "trace",
+            Method::Coarse => "coarse-first",
+            Method::Bricks => "bricks",
+            Method::GpuMade => "trace-gpu-made",
+        }
+    }
 }
 
 struct Shot {
@@ -753,6 +845,46 @@ struct Shot {
     pitch: f32,
     flags: u32,
     lod_scale: f32,
+}
+
+fn compute_barrier(gpu: &Gpu, cmd: vk::CommandBuffer, dst: vk::PipelineStageFlags2, dst_access: vk::AccessFlags2) {
+    let barrier = vk::MemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::ALL_TRANSFER)
+        .src_access_mask(vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::TRANSFER_WRITE)
+        .dst_stage_mask(dst)
+        .dst_access_mask(dst_access);
+    unsafe {
+        gpu.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[barrier]));
+    }
+}
+
+fn image_barrier(
+    gpu: &Gpu,
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    aspect: vk::ImageAspectFlags,
+    layout: vk::ImageLayout,
+    stage: vk::PipelineStageFlags2,
+    access: vk::AccessFlags2,
+) {
+    let barrier = vk::ImageMemoryBarrier2::default()
+        .image(image)
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(layout)
+        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+        .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .dst_stage_mask(stage)
+        .dst_access_mask(access)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: aspect,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        });
+    unsafe {
+        gpu.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().image_memory_barriers(&[barrier]));
+    }
 }
 
 fn main() -> Result<()> {
@@ -799,10 +931,34 @@ fn main() -> Result<()> {
     let gpu = Gpu::new_headless()?;
     println!("GPU: {}", gpu.info.name);
     let bindless = Bindless::new(&gpu)?;
-    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/small_voxels.slang");
-    let spirv = compile(&here, &folder.join("small_voxels.spv"))?;
-    let module = ShaderModule::new(&gpu, "small voxels", &spirv)?;
-    let pipeline = create_compute_pipeline(&gpu, bindless.pipeline_layout, "small voxels", &module, c"traceView")?;
+    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/small_voxels");
+    let trace_module =
+        ShaderModule::new(&gpu, "small voxels trace", &compile(&here.join("trace.slang"), &folder.join("trace.spv"))?)?;
+    let raster_module = ShaderModule::new(
+        &gpu,
+        "small voxels bricks",
+        &compile(&here.join("raster.slang"), &folder.join("raster.spv"))?,
+    )?;
+    let layout = bindless.pipeline_layout;
+    let trace_view = create_compute_pipeline(&gpu, layout, "trace", &trace_module, c"traceView")?;
+    let coarse_view = create_compute_pipeline(&gpu, layout, "coarse", &trace_module, c"coarseView")?;
+    let count_bands = create_compute_pipeline(&gpu, layout, "count bands", &raster_module, c"countBands")?;
+    let start_bands = create_compute_pipeline(&gpu, layout, "start bands", &raster_module, c"startBands")?;
+    let sort_bands = create_compute_pipeline(&gpu, layout, "sort bands", &raster_module, c"sortBands")?;
+    let shade_bricks = create_compute_pipeline(&gpu, layout, "shade bricks", &raster_module, c"shadeBricks")?;
+    let colour_format = [vk::Format::R32G32_UINT];
+    let draw_bricks = create_graphics_pipeline(
+        &gpu,
+        layout,
+        &GraphicsPipelineDesc {
+            color_formats: &colour_format,
+            depth_format: Some(vk::Format::D32_SFLOAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS,
+            cull: vk::CullModeFlags::NONE,
+            ..GraphicsPipelineDesc::new("bricks", &raster_module, c"brickVertex", c"brickFragment")
+        },
+    )?;
 
     let up_started = Instant::now();
     let sectors = upload(&gpu, "sectors", bytemuck::cast_slice(&made.sectors))?;
@@ -814,6 +970,16 @@ fn main() -> Result<()> {
         .collect();
     let palette = upload(&gpu, "palette", bytemuck::cast_slice(&palette))?;
     println!("uploaded in {:.0} ms", up_started.elapsed().as_secs_f64() * 1000.0);
+    let places: Vec<u32> =
+        brick_places(&made).iter().map(|p| p[0] as u32 | (p[1] as u32) << 11 | (p[2] as u32) << 21).collect();
+    let places = upload(&gpu, "places", bytemuck::cast_slice(&places))?;
+    let drawn = buffer(&gpu, "drawn", brick_count as u64 * 4, vk::BufferUsageFlags::empty())?;
+    let bands = buffer(&gpu, "bands", BANDS * 3 * 4, vk::BufferUsageFlags::empty())?;
+    let draws = buffer(&gpu, "draws", 16, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
+    let coarse_size = [width / COARSE_STEP + 2, height / COARSE_STEP + 2];
+    let coarse = buffer(&gpu, "coarse", u64::from(coarse_size[0] * coarse_size[1]) * 4, vk::BufferUsageFlags::empty())?;
+    let seen = buffer(&gpu, "seen", u64::from(width * height) * 8, vk::BufferUsageFlags::empty())?;
+    let depths = buffer(&gpu, "depths", u64::from(width * height) * 4, vk::BufferUsageFlags::empty())?;
     let world = GpuWorld {
         sectors: sectors.address,
         bricks: bricks.address,
@@ -823,13 +989,50 @@ fn main() -> Result<()> {
         voxel: scene.voxel,
     };
     let world_buffer = upload(&gpu, "world", bytemuck::bytes_of(&world))?;
-    let output = gpu.create_buffer(
-        "output",
-        u64::from(width * height) * 4,
-        vk::BufferUsageFlags::STORAGE_BUFFER
-            | vk::BufferUsageFlags::TRANSFER_SRC
-            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        MemoryLocation::GpuOnly,
+    let make_module =
+        ShaderModule::new(&gpu, "small voxels make", &compile(&here.join("make.slang"), &folder.join("make.spv"))?)?;
+    let gpu_made = gpu_make::make_on_gpu(&gpu, &bindless, &make_module, &scene, &made)?;
+    let gpu_world_buffer = upload(
+        &gpu,
+        "gpu-made world",
+        bytemuck::bytes_of(&GpuWorld {
+            sectors: gpu_made.sectors.address,
+            bricks: gpu_made.bricks.address,
+            materials: gpu_made.materials.address,
+            ..world
+        }),
+    )?;
+    let draw = GpuDraw {
+        places: places.address,
+        drawn: drawn.address,
+        bands: bands.address,
+        draws: draws.address,
+        brick_count: brick_count as u32,
+        near: NEAR / scene.voxel,
+        coarse: coarse.address,
+        coarse_step: COARSE_STEP,
+        coarse_size,
+        pad: 0,
+        seen: seen.address,
+        depths: depths.address,
+    };
+    let draw_buffer = upload(&gpu, "draw", bytemuck::bytes_of(&draw))?;
+    let output = buffer(&gpu, "output", u64::from(width * height) * 4, vk::BufferUsageFlags::empty())?;
+    let colour_desc = ImageDesc::new(
+        width,
+        height,
+        vk::Format::R32G32_UINT,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+    );
+    let colour = gpu.create_image("colour", colour_desc)?;
+    let depth = gpu.create_image(
+        "depth",
+        ImageDesc::new(
+            width,
+            height,
+            vk::Format::D32_SFLOAT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+        ),
     )?;
     let queries = unsafe {
         gpu.device.create_query_pool(
@@ -840,32 +1043,12 @@ fn main() -> Result<()> {
 
     let cam = scene.camera;
     let ground = scene.ground(cam[0], cam[1]);
+    let low = [cam[0], ground + 1.1, cam[1]];
+    let high = [cam[0], ground + 30.0, cam[1] - 30.0];
     let shots = [
-        Shot { name: "meadow", eye: [cam[0], ground + 1.1, cam[1]], yaw: 0.0, pitch: 7.0, flags: 3, lod_scale: 2.0 },
-        Shot {
-            name: "meadow-primary-only",
-            eye: [cam[0], ground + 1.1, cam[1]],
-            yaw: 0.0,
-            pitch: 7.0,
-            flags: 0,
-            lod_scale: 2.0,
-        },
-        Shot {
-            name: "meadow-no-lod",
-            eye: [cam[0], ground + 1.1, cam[1]],
-            yaw: 0.0,
-            pitch: 7.0,
-            flags: 3,
-            lod_scale: 0.0,
-        },
-        Shot {
-            name: "meadow-steps",
-            eye: [cam[0], ground + 1.1, cam[1]],
-            yaw: 0.0,
-            pitch: 7.0,
-            flags: 7,
-            lod_scale: 2.0,
-        },
+        Shot { name: "meadow", eye: low, yaw: 0.0, pitch: 7.0, flags: 3, lod_scale: 2.0 },
+        Shot { name: "meadow-primary-only", eye: low, yaw: 0.0, pitch: 7.0, flags: 0, lod_scale: 2.0 },
+        Shot { name: "meadow-steps", eye: low, yaw: 0.0, pitch: 7.0, flags: 4, lod_scale: 2.0 },
         Shot {
             name: "close",
             eye: [cam[0] + 0.3, ground + 1.0, cam[1] + 2.0],
@@ -874,23 +1057,10 @@ fn main() -> Result<()> {
             flags: 3,
             lod_scale: 2.0,
         },
-        Shot {
-            name: "over",
-            eye: [cam[0], ground + 30.0, cam[1] - 30.0],
-            yaw: 0.0,
-            pitch: -12.0,
-            flags: 3,
-            lod_scale: 2.0,
-        },
-        Shot {
-            name: "over-no-lod",
-            eye: [cam[0], ground + 30.0, cam[1] - 30.0],
-            yaw: 0.0,
-            pitch: -12.0,
-            flags: 3,
-            lod_scale: 0.0,
-        },
+        Shot { name: "over", eye: high, yaw: 0.0, pitch: -12.0, flags: 3, lod_scale: 2.0 },
+        Shot { name: "over-primary-only", eye: high, yaw: 0.0, pitch: -12.0, flags: 0, lod_scale: 2.0 },
     ];
+    let methods = [Method::Trace, Method::Coarse, Method::Bricks, Method::GpuMade];
     let moon = {
         let s = [-0.35f32, 0.8, -0.45];
         let l = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
@@ -898,41 +1068,189 @@ fn main() -> Result<()> {
     };
     let fov = 62.0f32.to_radians();
     for shot in shots {
-        let (yaw, pitch) = (shot.yaw.to_radians(), shot.pitch.to_radians());
-        let forward = [yaw.sin() * pitch.cos(), pitch.sin(), yaw.cos() * pitch.cos()];
-        let right = [yaw.cos(), 0.0, -yaw.sin()];
-        let up = [
-            forward[1] * right[2] - forward[2] * right[1],
-            forward[2] * right[0] - forward[0] * right[2],
-            forward[0] * right[1] - forward[1] * right[0],
-        ];
-        // `up` above is forward x right, which points down; the shader wants it up.
-        let up = [-up[0], -up[1], -up[2]];
-        let view = GpuView {
-            eye: shot.eye.map(|a| a / scene.voxel),
-            pixel_angle: 2.0 * (fov / 2.0).tan() / height as f32,
-            forward,
-            tan_half: (fov / 2.0).tan(),
-            right,
-            aspect: width as f32 / height as f32,
-            up,
-            flags: shot.flags,
-            sun: moon,
-            lod_scale: shot.lod_scale,
-            size: [width, height],
-            output: output.address,
-        };
-        let view_buffer = upload(&gpu, "view", bytemuck::bytes_of(&view))?;
-        let push = GpuPush { world: world_buffer.address, view: view_buffer.address };
-        let mut times = Vec::new();
-        for _ in 0..80 {
+        let mut traced: Option<Vec<u8>> = None;
+        // Each method's view, then the methods taken in turn each round, so that other work on the GPU weighs on
+        // them alike.
+        let mut views = Vec::new();
+        for method in methods {
+            let (yaw, pitch) = (shot.yaw.to_radians(), shot.pitch.to_radians());
+            let forward = [yaw.sin() * pitch.cos(), pitch.sin(), yaw.cos() * pitch.cos()];
+            let right = [yaw.cos(), 0.0, -yaw.sin()];
+            let up = [
+                forward[1] * right[2] - forward[2] * right[1],
+                forward[2] * right[0] - forward[0] * right[2],
+                forward[0] * right[1] - forward[1] * right[0],
+            ];
+            // `up` above is forward x right, which points down; the shader wants it up.
+            let up = [-up[0], -up[1], -up[2]];
+            let view = GpuView {
+                eye: shot.eye.map(|a| a / scene.voxel),
+                pixel_angle: 2.0 * (fov / 2.0).tan() / height as f32,
+                forward,
+                tan_half: (fov / 2.0).tan(),
+                right,
+                aspect: width as f32 / height as f32,
+                up,
+                flags: shot.flags | if method == Method::Coarse { FROM_COARSE } else { 0 },
+                sun: moon,
+                lod_scale: shot.lod_scale,
+                size: [width, height],
+                output: output.address,
+            };
+            views.push((method, upload(&gpu, "view", bytemuck::bytes_of(&view))?));
+        }
+        let run = |method: Method, push: GpuPush| -> Result<f64> {
             gpu.immediate(|cmd| unsafe {
-                gpu.device.cmd_reset_query_pool(cmd, queries, 0, 2);
-                gpu.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
-                bindless.push(&gpu, cmd, &push);
-                gpu.device.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::TOP_OF_PIPE, queries, 0);
-                gpu.device.cmd_dispatch(cmd, width.div_ceil(8), height.div_ceil(8), 1);
-                gpu.device.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::BOTTOM_OF_PIPE, queries, 1);
+                let device = &gpu.device;
+                device.cmd_reset_query_pool(cmd, queries, 0, 2);
+                device.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::TOP_OF_PIPE, queries, 0);
+                let compute = |pipeline, groups: [u32; 2]| {
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
+                    bindless.push(&gpu, cmd, &push);
+                    device.cmd_dispatch(cmd, groups[0], groups[1], 1);
+                };
+                let rw = vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE;
+                match method {
+                    Method::Trace | Method::GpuMade => compute(trace_view, [width.div_ceil(8), height.div_ceil(8)]),
+                    Method::Coarse => {
+                        compute(coarse_view, [coarse_size[0].div_ceil(8), coarse_size[1].div_ceil(8)]);
+                        compute_barrier(&gpu, cmd, vk::PipelineStageFlags2::COMPUTE_SHADER, rw);
+                        compute(trace_view, [width.div_ceil(8), height.div_ceil(8)]);
+                    }
+                    Method::Bricks => {
+                        device.cmd_fill_buffer(cmd, bands.handle, 0, vk::WHOLE_SIZE, 0);
+                        compute_barrier(&gpu, cmd, vk::PipelineStageFlags2::COMPUTE_SHADER, rw);
+                        let groups = (brick_count as u32).div_ceil(256);
+                        compute(count_bands, [groups, 1]);
+                        compute_barrier(&gpu, cmd, vk::PipelineStageFlags2::COMPUTE_SHADER, rw);
+                        compute(start_bands, [1, 1]);
+                        compute_barrier(&gpu, cmd, vk::PipelineStageFlags2::COMPUTE_SHADER, rw);
+                        compute(sort_bands, [groups, 1]);
+                        compute_barrier(
+                            &gpu,
+                            cmd,
+                            vk::PipelineStageFlags2::DRAW_INDIRECT
+                                | vk::PipelineStageFlags2::VERTEX_SHADER
+                                | vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                            vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::SHADER_READ,
+                        );
+                        image_barrier(
+                            &gpu,
+                            cmd,
+                            colour.handle,
+                            vk::ImageAspectFlags::COLOR,
+                            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                        );
+                        image_barrier(
+                            &gpu,
+                            cmd,
+                            depth.handle,
+                            vk::ImageAspectFlags::DEPTH,
+                            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                                | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
+                                | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
+                        );
+                        let colours = [vk::RenderingAttachmentInfo::default()
+                            .image_view(colour.view)
+                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .clear_value(vk::ClearValue { color: vk::ClearColorValue { uint32: [EMPTY; 4] } })];
+                        let depth_attachment = vk::RenderingAttachmentInfo::default()
+                            .image_view(depth.view)
+                            .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .clear_value(vk::ClearValue {
+                                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+                            });
+                        let area =
+                            vk::Rect2D { offset: vk::Offset2D::default(), extent: vk::Extent2D { width, height } };
+                        let rendering = vk::RenderingInfo::default()
+                            .render_area(area)
+                            .layer_count(1)
+                            .color_attachments(&colours)
+                            .depth_attachment(&depth_attachment);
+                        device.cmd_begin_rendering(cmd, &rendering);
+                        device.cmd_set_viewport(
+                            cmd,
+                            0,
+                            &[vk::Viewport {
+                                x: 0.0,
+                                y: 0.0,
+                                width: width as f32,
+                                height: height as f32,
+                                min_depth: 0.0,
+                                max_depth: 1.0,
+                            }],
+                        );
+                        device.cmd_set_scissor(cmd, 0, &[area]);
+                        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, draw_bricks);
+                        bindless.push(&gpu, cmd, &push);
+                        device.cmd_draw_indirect(cmd, draws.handle, 0, 1, 16);
+                        device.cmd_end_rendering(cmd);
+                        // What each pixel saw, and its depth, copied out for the shading pass.
+                        let to_copy = |image: vk::Image, aspect, layout, stage, access| {
+                            let barrier = vk::ImageMemoryBarrier2::default()
+                                .image(image)
+                                .old_layout(layout)
+                                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                                .src_stage_mask(stage)
+                                .src_access_mask(access)
+                                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                                .subresource_range(vk::ImageSubresourceRange {
+                                    aspect_mask: aspect,
+                                    base_mip_level: 0,
+                                    level_count: 1,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                });
+                            device.cmd_pipeline_barrier2(
+                                cmd,
+                                &vk::DependencyInfo::default().image_memory_barriers(&[barrier]),
+                            );
+                            let region = vk::BufferImageCopy::default()
+                                .image_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: aspect,
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .image_extent(vk::Extent3D { width, height, depth: 1 });
+                            let target =
+                                if aspect == vk::ImageAspectFlags::COLOR { seen.handle } else { depths.handle };
+                            device.cmd_copy_image_to_buffer(
+                                cmd,
+                                image,
+                                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                                target,
+                                &[region],
+                            );
+                        };
+                        to_copy(
+                            colour.handle,
+                            vk::ImageAspectFlags::COLOR,
+                            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                        );
+                        to_copy(
+                            depth.handle,
+                            vk::ImageAspectFlags::DEPTH,
+                            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                            vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        );
+                        compute_barrier(&gpu, cmd, vk::PipelineStageFlags2::COMPUTE_SHADER, rw);
+                        compute(shade_bricks, [width.div_ceil(8), height.div_ceil(8)]);
+                    }
+                }
+                device.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::BOTTOM_OF_PIPE, queries, 1);
             })?;
             let mut stamps = [0u64; 2];
             unsafe {
@@ -943,32 +1261,91 @@ fn main() -> Result<()> {
                     vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
                 )?
             };
-            times.push((stamps[1] - stamps[0]) as f64 * f64::from(gpu.info.timestamp_period) / 1e6);
+            Ok((stamps[1] - stamps[0]) as f64 * f64::from(gpu.info.timestamp_period) / 1e6)
+        };
+        let push_of = |method: Method, view: &Buffer| GpuPush {
+            world: if method == Method::GpuMade { gpu_world_buffer.address } else { world_buffer.address },
+            view: view.address,
+            draw: draw_buffer.address,
+        };
+        let mut times = vec![Vec::new(); views.len()];
+        for _ in 0..80 {
+            for (k, (method, view)) in views.iter().enumerate() {
+                times[k].push(run(*method, push_of(*method, view))?);
+            }
         }
-        let mut last: Vec<f64> = times[20..].to_vec();
-        last.sort_by(f64::total_cmp);
-        println!(
-            "{}: least {:.2} ms, median {:.2} ms over {} frames",
-            shot.name,
-            last[0],
-            last[last.len() / 2],
-            last.len()
-        );
-        let pixels = gpu.read_buffer(&output, 0, u64::from(width * height) * 4)?;
-        let file = std::fs::File::create(folder.join(format!("{}.png", shot.name)))?;
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.write_header()?.write_image_data(&pixels)?;
-        gpu.destroy_buffer(view_buffer);
+        for (k, (method, view)) in views.into_iter().enumerate() {
+            run(method, push_of(method, &view))?;
+            let mut last: Vec<f64> = times[k][20..].to_vec();
+            last.sort_by(f64::total_cmp);
+            let pixels = gpu.read_buffer(&output, 0, u64::from(width * height) * 4)?;
+            // How far this method's picture is from the plain walk's, over the pixels both drew ground in.
+            let mut differs = String::new();
+            if let Some(base) = &traced {
+                let (mut sum, mut count, mut far) = (0u64, 0u64, 0u64);
+                for (a, b) in pixels.chunks(4).zip(base.chunks(4)) {
+                    let d = (0..3).map(|i| (i32::from(a[i]) - i32::from(b[i])).unsigned_abs()).max().unwrap();
+                    sum += u64::from(d);
+                    count += 1;
+                    far += u64::from(d > 24);
+                }
+                differs = format!(
+                    ", against the walk: mean {:.2} levels, {:.2}% of pixels by more than 24",
+                    sum as f64 / count.max(1) as f64,
+                    far as f64 * 100.0 / count.max(1) as f64
+                );
+            }
+            println!(
+                "{} {}: least {:.2} ms, median {:.2} ms over {} frames{differs}",
+                shot.name,
+                method.name(),
+                last[0],
+                last[last.len() / 2],
+                last.len()
+            );
+            let file = std::fs::File::create(folder.join(format!("{}-{}.png", shot.name, method.name())))?;
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header()?.write_image_data(&pixels)?;
+            if method == Method::Trace {
+                traced = Some(pixels);
+            }
+            gpu.destroy_buffer(view);
+        }
     }
     gpu.wait_idle();
-    unsafe { gpu.device.destroy_query_pool(queries, None) };
-    for buffer in [sectors, bricks, materials, palette, world_buffer, output] {
-        gpu.destroy_buffer(buffer);
+    unsafe {
+        gpu.device.destroy_query_pool(queries, None);
+        for pipeline in [trace_view, coarse_view, count_bands, start_bands, sort_bands, shade_bricks, draw_bricks] {
+            gpu.device.destroy_pipeline(pipeline, None);
+        }
     }
-    unsafe { gpu.device.destroy_pipeline(pipeline, None) };
-    module.destroy(&gpu);
-    let _: &CStr = c"done";
+    for made in [
+        sectors,
+        bricks,
+        materials,
+        palette,
+        world_buffer,
+        output,
+        places,
+        drawn,
+        bands,
+        draws,
+        coarse,
+        draw_buffer,
+        seen,
+        depths,
+    ] {
+        gpu.destroy_buffer(made);
+    }
+    for made in [gpu_made.sectors, gpu_made.bricks, gpu_made.materials, gpu_world_buffer] {
+        gpu.destroy_buffer(made);
+    }
+    make_module.destroy(&gpu);
+    gpu.destroy_image(colour);
+    gpu.destroy_image(depth);
+    trace_module.destroy(&gpu);
+    raster_module.destroy(&gpu);
     Ok(())
 }

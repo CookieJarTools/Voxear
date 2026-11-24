@@ -4473,16 +4473,22 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - **Meshing is out.** Meshing at 1/16 m would be 372M quads for a 256 m scene.
   - **Tracing works.** A prototype traces sparse bricks of 1/16 m voxels in a compute pass
     (`voxear_rhi` example `small_voxels`). A 256 m meadow and forest takes 3.0 ms at 1080p for the picture,
-    4.6 ms with traced shadows and occlusion, and 343 MB, and is made in 3.8 s on 24 cores.
-- **The plan keeps Block Worlds.** The one-metre grid stays the world. Each kind of block is drawn as a 16³ pattern
-  of small voxels, and only what is unique is kept as bricks. Stages:
+    4.6 ms with traced shadows and occlusion, and 343 MB.
+  - **Faster ways, measured against each other.**
+    - Making the world on the GPU is 11–16× faster than on 24 CPU cores: 225 ms against 3.6 s for 256 m, the same
+      world.
+    - A coarse first pass takes 5–45% off drawing.
+    - Drawing bricks as boxes was no faster.
+- **The plan is a world of small voxels throughout, with no blocks under it.** Stages:
   1. a voxel pass and Voxel Volumes;
-  2. blocks drawn as patterns;
+  2. a Voxel World made on the GPU by generator graphs;
   3. plants and trees of small voxels;
   4. editing a voxel at a time, saved and sent over the network;
-  5. distance in rings, then the baked far view;
+  5. distance in rings;
   6. lighting at voxel scale;
   7. physics, navigation and debris at voxel scale.
+
+  Drawing today's Block Worlds as small-voxel patterns stays an option.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

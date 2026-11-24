@@ -96,7 +96,7 @@
 <circle cx="56" cy="872" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
 <text x="80" y="877" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e"></text>
 <text x="120" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Small voxels</text>
-<text x="380" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Worlds of voxels a few centimetres across, traced on the GPU over blocks</text>
+<text x="380" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Worlds of voxels a few centimetres across, made and traced on the GPU</text>
 <circle cx="56" cy="912" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
 <text x="80" y="917" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M13</text>
 <text x="120" y="917" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Virtualised geometry</text>

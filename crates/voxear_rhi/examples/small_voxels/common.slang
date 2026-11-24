@@ -1,4 +1,4 @@
-// A world of small voxels traced on the GPU, for measuring (examples/small_voxels.rs): no meshes, one thread a
+// A world of small voxels traced on the GPU, for measuring (main.rs): no meshes, one thread a
 // pixel walks its ray through a three-level grid.
 //
 // - A sector is 8x8x8 bricks (64 voxels a side). Its 512 bits say which bricks it has, and the bricks it has are
@@ -36,10 +36,32 @@ struct View
     uint* output;
 };
 
+// What the brick drawing reads and writes (raster.slang), and the coarse pass's distances (trace.slang).
+struct Draw
+{
+    // Where each brick is, in bricks, and which are drawn, nearest band first.
+    uint* places;
+    uint* drawn;
+    // How many bricks are drawn in each band, then where each band starts, then the draws themselves.
+    uint* bands;
+    uint* draws;
+    uint brickCount;
+    float near;
+    // The distance each coarse ray reached before meeting a brick, one every `coarseStep` pixels.
+    float* coarse;
+    uint coarseStep;
+    uint2 coarseSize;
+    uint pad;
+    // What the brick drawing saw at each pixel (the brick, and its voxel, side, level and steps), and its depth.
+    uint2* seen;
+    float* depths;
+};
+
 struct Push
 {
     World* world;
     View* view;
+    Draw* draw;
 };
 
 [[vk::push_constant]] ConstantBuffer<Push> push;
@@ -55,6 +77,8 @@ static const float STEP_COARSENING = 0.01;
 static const uint SHADOWS = 1u;
 static const uint OCCLUSION = 2u;
 static const uint SHOW_STEPS = 4u;
+static const uint FROM_COARSE = 8u;
+static const uint BANDS = 32;
 
 struct Hit
 {
@@ -299,68 +323,54 @@ float3 skyOf(float3 d)
     return sky;
 }
 
-[shader("compute")]
-[numthreads(8, 8, 1)]
-void traceView(uint3 id: SV_DispatchThreadID)
+// The colour of the pixel whose ray along `d` met `hit`, lit by the moon with a traced shadow and the voxels round
+// it, fogged by distance.
+float3 shadeHit(World* world, View* view, float3 d, Hit hit, inout int steps)
 {
-    View* view = push.view;
-    World* world = push.world;
-    if (id.x >= view->size.x || id.y >= view->size.y)
-    {
-        return;
-    }
-    float2 ndc = (float2(id.xy) + 0.5) / float2(view->size) * 2.0 - 1.0;
-    float3 d = normalize(view->forward + view->right * (ndc.x * view->tanHalf * view->aspect) + view->up * (ndc.y * view->tanHalf));
     float footScale = view->pixelAngle * view->lodScale;
-    Hit hit;
-    float3 colour;
-    bool found = trace(world, view->eye, d, 1e9, 0.0, footScale, hit);
-    int steps = hit.steps;
-    if (found)
+    int3 n = int3(0);
+    if (hit.axis >= 0)
     {
-        int3 n = int3(0);
-        if (hit.axis >= 0)
-        {
-            n[hit.axis] = d[hit.axis] > 0.0 ? -1 : 1;
-        }
-        float3 at = view->eye + d * hit.t;
-        float3 albedo = colourOf(world, hit);
-        // Each voxel a shade of its own, as the reference's small cubes are.
-        float grain = float(hashOf(hit.cell >> hit.level) >> 8) / 16777216.0;
-        albedo *= 0.85 + 0.3 * grain;
-        float3 normal = float3(n);
-        float lit = saturate(dot(normal, view->sun));
-        float shadow = 1.0;
-        if ((view->flags & SHADOWS) != 0u && lit > 0.0)
-        {
-            Hit blocked;
-            float foot = hit.t * footScale;
-            // A hit on a coarser level is a whole group's or brick's face: the shadow ray starts a group or brick out,
-            // in the cell the view's ray came through, and walks the same level, or it would meet its own cell.
-            float out = hit.level == 0 ? 0.02 : (hit.level == 1 ? 2.02 : 8.02);
-            float3 from = at + normal * out;
-            if (trace(world, from, view->sun, 64.0 / world->voxel, foot, 0.0, blocked))
-            {
-                shadow = 0.0;
-            }
-            steps += blocked.steps;
-        }
-        float open = 1.0;
-        if ((view->flags & OCCLUSION) != 0u && hit.level == 0 && hit.axis >= 0)
-        {
-            open = occlusion(world, hit.cell, hit.axis, n, at);
-        }
-        float3 moon = float3(0.50, 0.62, 1.0) * 1.5;
-        float3 ambient = float3(0.16, 0.21, 0.38) * (0.6 + 0.4 * normal.y) * (0.35 + 0.65 * open);
-        colour = albedo * (moon * lit * shadow + ambient);
-        float metres = hit.t * world->voxel;
-        colour = lerp(colour, float3(0.07, 0.09, 0.18), 1.0 - exp(-metres * 0.0025));
+        n[hit.axis] = d[hit.axis] > 0.0 ? -1 : 1;
     }
-    else
+    float3 at = view->eye + d * hit.t;
+    float3 albedo = colourOf(world, hit);
+    // Each voxel a shade of its own, as the reference's small cubes are.
+    float grain = float(hashOf(hit.cell >> hit.level) >> 8) / 16777216.0;
+    albedo *= 0.85 + 0.3 * grain;
+    float3 normal = float3(n);
+    float lit = saturate(dot(normal, view->sun));
+    float shadow = 1.0;
+    if ((view->flags & SHADOWS) != 0u && lit > 0.0)
     {
-        colour = skyOf(d);
+        Hit blocked;
+        float foot = hit.t * footScale;
+        // A hit on a coarser level is a whole group's or brick's face: the shadow ray starts a group or brick out,
+        // in the cell the view's ray came through, and walks the same level, or it would meet its own cell.
+        float out = hit.level == 0 ? 0.02 : (hit.level == 1 ? 2.02 : 8.02);
+        float3 from = at + normal * out;
+        if (trace(world, from, view->sun, 64.0 / world->voxel, foot, 0.0, blocked))
+        {
+            shadow = 0.0;
+        }
+        steps += blocked.steps;
     }
-    if ((view->flags & SHOW_STEPS) != 0u)
+    float open = 1.0;
+    if ((view->flags & OCCLUSION) != 0u && hit.level == 0 && hit.axis >= 0)
+    {
+        open = occlusion(world, hit.cell, hit.axis, n, at);
+    }
+    float3 moon = float3(0.50, 0.62, 1.0) * 1.5;
+    float3 ambient = float3(0.16, 0.21, 0.38) * (0.6 + 0.4 * normal.y) * (0.35 + 0.65 * open);
+    float3 colour = albedo * (moon * lit * shadow + ambient);
+    float metres = hit.t * world->voxel;
+    return lerp(colour, float3(0.07, 0.09, 0.18), 1.0 - exp(-metres * 0.0025));
+}
+
+// A pixel's colour as it is written: steps shown when asked, exposed, tonemapped and packed.
+uint finish(float3 colour, uint flags, int steps)
+{
+    if ((flags & SHOW_STEPS) != 0u)
     {
         float s = float(steps) / 200.0;
         colour = float3(saturate(s), saturate(s - 1.0), saturate(1.0 - s)) * 0.8;
@@ -369,5 +379,11 @@ void traceView(uint3 id: SV_DispatchThreadID)
     colour = colour / (1.0 + colour);
     colour = pow(colour, float3(1.0 / 2.2));
     uint3 c = uint3(saturate(colour) * 255.0 + 0.5);
-    view->output[id.y * view->size.x + id.x] = c.x | (c.y << 8) | (c.z << 16) | 0xFF000000u;
+    return c.x | (c.y << 8) | (c.z << 16) | 0xFF000000u;
+}
+
+float3 rayOf(View* view, float2 pixel)
+{
+    float2 ndc = pixel / float2(view->size) * 2.0 - 1.0;
+    return normalize(view->forward + view->right * (ndc.x * view->tanHalf * view->aspect) + view->up * (ndc.y * view->tanHalf));
 }

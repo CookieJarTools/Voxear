@@ -8,6 +8,9 @@ architecture is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the plan in [do
 - **A build folder of your own.** In a worktree, set `CARGO_TARGET_DIR` to a folder of your own under the main
   checkout's `target/` (for example `target/my-task-build`). Never build a worktree into the shared `target/`:
   two checkouts in one folder rebuild each other's work every time.
+- **Shared between build folders:** `target/build-cache` keeps the built physics library and compiled shaders,
+  and `target/pipelines` the GPU pipelines the tests compile. Leave both when you delete your build folder: a
+  new one copies from them in place of making them again.
 - **Check free space before a large build**, and delete your build folder when your work has landed. A full
   drive fails at the link step with errors that do not mention space.
 - Development and test builds optimise the engine's own crates a little (`opt-level = 1`) and keep line numbers
@@ -28,9 +31,6 @@ then, not for each change.
 - **Tests that open a GPU** (the renderer's, most of the editor's, some of the engine's) run with
   `-- --test-threads=8`, or `2` while an editor, a game or another test run is using the same GPU. More at once
   runs the GPU out of memory, which shows as tests failing at random. The helper adds the flag.
-- **Compiled GPU pipelines are kept in `target/pipelines`**, shared by every build folder. Leave it when you
-  delete your build folder: a new one finds them there, and the first GPU test after a shader change compiles
-  them once for all the others.
 - **Timing a pass on the GPU:** take the least of about sixty frames, not one frame.
 - **A picture is checked close up.** Crop and enlarge the part in question and compare it with the picture
   from before; a thumbnail hides what is wrong.

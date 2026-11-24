@@ -46,6 +46,38 @@ impl fmt::Debug for Entity {
     }
 }
 
+/// A map keyed by entities, hashed quickly: an entity is already two numbers
+/// no other live entity shares, so they are only mixed, not hashed as a
+/// string would be.
+pub type EntityMap<V> = std::collections::HashMap<Entity, V, std::hash::BuildHasherDefault<EntityHasher>>;
+
+/// A set of entities, hashed as [`EntityMap`] does.
+pub type EntitySet = std::collections::HashSet<Entity, std::hash::BuildHasherDefault<EntityHasher>>;
+
+/// Hashes an [`Entity`] by mixing its index and generation.
+#[derive(Default)]
+pub struct EntityHasher(u64);
+
+impl std::hash::Hasher for EntityHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EntityLocation {
     pub archetype: ArchetypeId,

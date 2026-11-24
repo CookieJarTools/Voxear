@@ -2799,6 +2799,17 @@ impl Content {
         self.triangles_of(&reference)
     }
 
+    /// The key of a mesh's triangles where they have been read already, and
+    /// `Some(None)` for a mesh found to have none; `None` where they are not
+    /// read yet. Nothing is copied, for a collider's check each frame.
+    pub fn triangles_known(&self, mesh: Result<MeshHandle, &AssetRef>) -> Option<Option<u64>> {
+        let reference = match mesh {
+            Ok(mesh) => self.mesh_refs.get(&mesh)?,
+            Err(reference) => reference,
+        };
+        self.triangles.get(reference).map(|found| found.as_ref().map(|triangles| triangles.key))
+    }
+
     /// A mesh's triangles by its reference, for a collider whose mesh
     /// nothing draws, as on a server.
     pub fn triangles_of(&mut self, reference: &AssetRef) -> Option<ColliderMesh> {

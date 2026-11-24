@@ -623,6 +623,17 @@ struct Kept {
     /// the step, for a rider (see [`PhysicsScene::bring_up_platforms`]): the
     /// step sweeps it on from there, so it still pushes what is in its way.
     swept_from: Option<(Vec3, Quat)>,
+    /// Its Obj's matrix when it was last looked at, and that matrix's scale (rounded), turn and place, so an
+    /// Obj that has not moved is not taken apart again each step.
+    seen: Option<Seen>,
+}
+
+#[derive(Clone, Copy)]
+struct Seen {
+    matrix: Mat4,
+    scale: Vec3,
+    rotation: Quat,
+    position: Vec3,
 }
 
 /// A Character Controller's character, what it was made from, where its
@@ -687,7 +698,7 @@ const ENDLESS_TILES_A_STEP: usize = 4;
 /// The Jolt world for the Objs with colliders, while the game plays.
 pub struct PhysicsScene {
     world: PhysicsWorld,
-    bodies: HashMap<Entity, Kept>,
+    bodies: voxear_ecs::EntityMap<Kept>,
     owners: HashMap<BodyId, Entity>,
     characters: HashMap<Entity, Walker>,
     joints: HashMap<Entity, (JointId, JointKey)>,
@@ -817,9 +828,38 @@ struct PlantBodies {
 /// The layer an Obj is on, 0 without one, in its dimension: 32 more for
 /// each dimension, so bodies of two dimensions never collide.
 fn layer(world: &World, entity: Entity) -> u16 {
+    layer_in(world, entity, voxear_scene::dimension_of(world, entity))
+}
+
+/// An Obj's layer in physics, in the dimension it is in.
+fn layer_in(world: &World, entity: Entity, dimension: voxear_scene::DimensionId) -> u16 {
     let own = world.get::<Layer>(entity).map_or(0, |layer| layer.0);
-    let dimension = voxear_scene::dimension_of(world, entity).0 % crate::DIMENSIONS;
+    let dimension = dimension.0 % crate::DIMENSIONS;
     dimension * 32 + u16::from(own % 32)
+}
+
+/// An Obj's local-to-world matrix, as `voxear_scene::world_matrix` gives it, and the dimension it is in, as
+/// `voxear_scene::dimension_of` does, from one walk up its parents.
+fn placed_in(world: &World, entity: Entity) -> (Mat4, voxear_scene::DimensionId) {
+    let mut matrix = Mat4::IDENTITY;
+    let mut dimension = None;
+    let mut at = Some(entity);
+    for _ in 0..256 {
+        let Some(obj) = at else { break };
+        if dimension.is_none() {
+            dimension = world.get::<voxear_scene::InDimension>(obj).map(|own| own.0);
+        }
+        let Some(t) = world.get::<Transform>(obj) else { break };
+        matrix = Mat4::from_scale_rotation_translation(t.scale, t.rotation, t.position) * matrix;
+        at = world.get::<Parent>(obj).map(|parent| parent.0);
+    }
+    let dimension = match (dimension, at) {
+        (Some(dimension), _) => dimension,
+        // The walk stopped short of the root, at an Obj without a Transform or a hierarchy too deep.
+        (None, Some(obj)) => voxear_scene::dimension_of(world, obj),
+        (None, None) => voxear_scene::DimensionId::LEVEL,
+    };
+    (matrix, dimension)
 }
 
 /// Two Objs as a pair, the same whichever comes first.
@@ -837,7 +877,7 @@ impl PhysicsScene {
     pub fn new() -> Self {
         Self {
             world: PhysicsWorld::default(),
-            bodies: HashMap::new(),
+            bodies: Default::default(),
             owners: HashMap::new(),
             characters: HashMap::new(),
             joints: HashMap::new(),
@@ -1069,8 +1109,8 @@ impl PhysicsScene {
             .filter(|(entity, _)| switched.is_on(world, *entity, voxear_scene::Switch::Collider))
             .map(|(entity, collider)| (entity, *collider))
             .collect();
-        let gone: Vec<Entity> =
-            self.bodies.keys().copied().filter(|entity| !colliders.iter().any(|(e, _)| e == entity)).collect();
+        let kept: voxear_ecs::EntitySet = colliders.iter().map(|(entity, _)| *entity).collect();
+        let gone: Vec<Entity> = self.bodies.keys().copied().filter(|entity| !kept.contains(entity)).collect();
         for entity in gone {
             self.remove(entity);
             self.forget(entity);
@@ -1431,8 +1471,8 @@ impl PhysicsScene {
                 (entity, plants.clone(), model)
             })
             .collect();
-        let gone: Vec<Entity> =
-            self.plants.keys().copied().filter(|entity| !found.iter().any(|(e, ..)| e == entity)).collect();
+        let standing: voxear_ecs::EntitySet = found.iter().map(|(entity, ..)| *entity).collect();
+        let gone: Vec<Entity> = self.plants.keys().copied().filter(|entity| !standing.contains(entity)).collect();
         for entity in gone {
             self.remove_plants(entity);
         }
@@ -1582,11 +1622,20 @@ impl PhysicsScene {
     /// body over the step and any other at once, as Unity teleports a
     /// Rigidbody whose Transform is set.
     fn sync_body(&mut self, world: &World, entity: Entity, collider: Collider, dt: f32) {
-        let (scale, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
-        // The scale is rounded, as one read back from a turned body's matrix is a hair off what was set,
-        // and the body would be made again, losing its speed, each step it turns.
-        let scale = (scale * 1e4).round() / 1e4;
-        let (rigidbody, layer) = (world.get::<Rigidbody>(entity).copied(), layer(world, entity));
+        let (matrix, dimension) = placed_in(world, entity);
+        let seen = match self.bodies.get(&entity).and_then(|kept| kept.seen).filter(|seen| seen.matrix == matrix) {
+            Some(seen) => seen,
+            None => {
+                let (scale, rotation, position) = matrix.to_scale_rotation_translation();
+                // The scale is rounded, as one read back from a turned body's matrix is a hair off what was set,
+                // and the body would be made again, losing its speed, each step it turns.
+                let scale = (scale * 1e4).round() / 1e4;
+                Seen { matrix, scale, rotation, position }
+            }
+        };
+        let (scale, rotation, position) = (seen.scale, seen.rotation, seen.position);
+        let rigidbody = world.get::<Rigidbody>(entity).copied();
+        let layer = layer_in(world, entity, dimension);
         let mesh = world.get::<ColliderMesh>(entity).filter(|_| collider.shape == ColliderShape::Mesh);
         let key = BodyKey { collider, rigidbody, scale, layer, mesh: mesh.map(|mesh| mesh.key) };
         // Gone into another dimension, or onto another layer, the body is put there as it is, keeping its speed.
@@ -1604,8 +1653,13 @@ impl PhysicsScene {
             if collider.shape == ColliderShape::Mesh && mesh.is_none() {
                 return;
             }
-            return self.add(entity, key, mesh.cloned(), position, rotation);
+            self.add(entity, key, mesh.cloned(), position, rotation);
+            if let Some(kept) = self.bodies.get_mut(&entity) {
+                kept.seen = Some(seen);
+            }
+            return;
         };
+        kept.seen = Some(seen);
         let moved = !same_place(kept.placed, (position, rotation));
         let early = kept.swept_from.take();
         kept.placed = if moved { (position, rotation) } else { kept.placed };
@@ -1692,7 +1746,8 @@ impl PhysicsScene {
             return tracing::warn!("physics is full; an Obj's collider is left out");
         };
         self.owners.insert(body, entity);
-        self.bodies.insert(entity, Kept { body, shape, key, placed: (position, rotation), swept_from: None });
+        let kept = Kept { body, shape, key, placed: (position, rotation), swept_from: None, seen: None };
+        self.bodies.insert(entity, kept);
     }
 
     fn remove(&mut self, entity: Entity) {
@@ -2212,6 +2267,34 @@ fn is_step(value: &f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_still_collider_under_a_parent_follows_it_when_it_moves_and_is_scaled() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let house = world.spawn((Transform::from_position(Vec3::new(10.0, 0.0, 0.0)),));
+        let wall = world.spawn((Transform::from_position(Vec3::new(0.0, 1.0, 0.0)), Parent(house), Collider::default()));
+        let mut physics = PhysicsScene::new();
+        let place = |physics: &PhysicsScene| physics.world().transform(physics.body(wall).unwrap()).0;
+        for _ in 0..3 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        assert_eq!(place(&physics), Vec3::new(10.0, 1.0, 0.0), "standing still where it was put");
+        let body = physics.body(wall);
+
+        // Only the parent moves; the wall's own Transform is as it was.
+        world.get_mut::<Transform>(house).unwrap().position = Vec3::new(20.0, 0.0, 5.0);
+        physics.step(&mut world, 1.0 / 60.0);
+        assert_eq!(place(&physics), Vec3::new(20.0, 1.0, 5.0), "carried with its parent");
+        assert_eq!(physics.body(wall), body, "moved, not made again");
+
+        // Scaled, its shape is made again at the new size.
+        world.get_mut::<Transform>(house).unwrap().scale = Vec3::splat(2.0);
+        physics.step(&mut world, 1.0 / 60.0);
+        assert_eq!(place(&physics), Vec3::new(20.0, 2.0, 5.0));
+        let hit = physics.raycast(Vec3::new(20.0, 2.0, -5.0), Vec3::Z, 10.0, u32::MAX, false).expect("the wall");
+        assert!((hit.distance - 9.0).abs() < 0.01, "its near side a metre from its middle, not half: {}", hit.distance);
+    }
 
     #[test]
     fn a_rigidbody_falls_onto_a_collider_and_its_transform_follows() {

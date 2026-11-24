@@ -9,11 +9,9 @@
 //! what is drawn and what lights, not the Objs themselves: their scripts
 //! keep running.
 
-use std::collections::{HashMap, HashSet};
-
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Vec3};
-use voxear_ecs::{Component, Entity, World};
+use voxear_ecs::{Component, Entity, EntityMap, EntitySet, World};
 use voxear_scene::{Destroying, Parent, Transform, WorldTransform};
 
 use crate::{
@@ -183,9 +181,9 @@ impl LodCamera {
 #[derive(Debug, Default)]
 pub struct LodChoices {
     /// Each group's view and the level it shows.
-    pub groups: HashMap<Entity, (LodView, Option<usize>)>,
+    pub groups: EntityMap<(LodView, Option<usize>)>,
     /// The Objs with a mesh or a light that are in a level not shown.
-    pub hidden: HashSet<Entity>,
+    pub hidden: EntitySet,
 }
 
 impl LodChoices {
@@ -204,7 +202,7 @@ impl LodChoices {
             return Self::default();
         }
         // Which group and level each level's Obj is.
-        let mut levels: HashMap<Entity, (usize, usize)> = HashMap::new();
+        let mut levels: EntityMap<(usize, usize)> = EntityMap::default();
         for (group, (_, lod)) in groups.iter().enumerate() {
             for (level, at) in lod.levels.iter().enumerate() {
                 for &obj in &at.objs {
@@ -214,29 +212,31 @@ impl LodChoices {
         }
 
         // What each mesh and light is in, and the box around each group's meshes.
-        let mut members: Vec<(Entity, Vec<(usize, usize)>)> = Vec::new();
+        let mut within = Within { world, levels: &levels, known: EntityMap::default(), lists: Vec::new() };
+        let mut members: Vec<(Entity, Run)> = Vec::new();
         let mut boxes: Vec<Option<(Vec3, Vec3)>> = vec![None; groups.len()];
-        let renderers = world.query_ref::<(Entity, &MeshRenderer)>().without::<Destroying>();
-        for (entity, renderer) in renderers {
-            let within = levels_above(world, &levels, entity);
-            if within.is_empty() {
+        let renderers = world.query_ref::<(Entity, &MeshRenderer, Option<&Parent>, Option<&WorldTransform>)>();
+        for (entity, renderer, parent, placed) in renderers.without::<Destroying>() {
+            let run = within.of(entity, parent.map(|parent| parent.0), 0);
+            if run.is_empty() {
                 continue;
             }
             if let Some((center, radius)) = sphere(renderer.mesh) {
-                let model = matrix(world, entity);
+                let model = placed.map_or_else(|| matrix(world, entity), |placed| placed.0);
                 let reach = radius * max_scale(model);
                 let center = model.transform_point3(center);
-                for &(group, _) in &within {
+                for &(group, _) in within.list(run) {
                     let (low, high) = boxes[group].get_or_insert((center, center));
                     (*low, *high) = (low.min(center - reach), high.max(center + reach));
                 }
             }
-            members.push((entity, within));
+            members.push((entity, run));
         }
-        for (entity, _) in world.query_ref::<(Entity, &Light)>().without::<Destroying>() {
-            let within = levels_above(world, &levels, entity);
-            if !within.is_empty() {
-                members.push((entity, within));
+        let lights = world.query_ref::<(Entity, &Light, Option<&Parent>)>().without::<Destroying>();
+        for (entity, _, parent) in lights {
+            let run = within.of(entity, parent.map(|parent| parent.0), 0);
+            if !run.is_empty() {
+                members.push((entity, run));
             }
         }
 
@@ -250,7 +250,7 @@ impl LodChoices {
         }
         choices.hidden = members
             .into_iter()
-            .filter(|(_, within)| within.iter().any(|&(group, level)| shown[group] != Some(level)))
+            .filter(|(_, run)| within.list(*run).iter().any(|&(group, level)| shown[group] != Some(level)))
             .map(|(entity, _)| entity)
             .collect();
         choices
@@ -269,19 +269,62 @@ fn measure(world: &World, group: Entity, bounds: Option<(Vec3, Vec3)>, camera: L
     LodView { size: size / (2.0 * away * camera.tan_half_fov), distance, center }
 }
 
-/// The groups and levels an Obj is in, through its parents: the nearest
-/// first, as a level of a group inside another group's level is in both.
-fn levels_above(world: &World, levels: &HashMap<Entity, (usize, usize)>, entity: Entity) -> Vec<(usize, usize)> {
-    let mut found = Vec::new();
-    let mut at = Some(entity);
-    for _ in 0..MAX_DEPTH {
-        let Some(current) = at else { break };
-        if let Some(&level) = levels.get(&current) {
-            found.push(level);
-        }
-        at = world.get::<Parent>(current).map(|parent| parent.0);
+/// Where an Obj's groups and levels lie in [`Within::lists`]: from where, and
+/// how many.
+#[derive(Clone, Copy)]
+struct Run(u32, u32);
+
+impl Run {
+    fn is_empty(self) -> bool {
+        self.1 == 0
     }
-    found
+}
+
+/// The groups and levels Objs are in through their parents, the nearest
+/// first, as a level of a group inside another group's level is in both.
+/// Each parent's are worked out once, for all the Objs under it.
+struct Within<'w> {
+    world: &'w World,
+    levels: &'w EntityMap<(usize, usize)>,
+    known: EntityMap<Run>,
+    lists: Vec<(usize, usize)>,
+}
+
+impl Within<'_> {
+    fn of(&mut self, entity: Entity, parent: Option<Entity>, depth: usize) -> Run {
+        let own = self.levels.get(&entity).copied();
+        let Some(parent) = parent.filter(|_| depth < MAX_DEPTH) else {
+            return match own {
+                Some(level) => self.push(&[level], Run(0, 0)),
+                None => Run(0, 0),
+            };
+        };
+        let above = match self.known.get(&parent) {
+            Some(&run) => run,
+            None => {
+                let grand = self.world.get::<Parent>(parent).map(|grand| grand.0);
+                let run = self.of(parent, grand, depth + 1);
+                self.known.insert(parent, run);
+                run
+            }
+        };
+        match own {
+            Some(level) => self.push(&[level], above),
+            None => above,
+        }
+    }
+
+    /// A run of `first` and then the run `then`.
+    fn push(&mut self, first: &[(usize, usize)], then: Run) -> Run {
+        let start = self.lists.len();
+        self.lists.extend_from_slice(first);
+        self.lists.extend_from_within(then.0 as usize..(then.0 + then.1) as usize);
+        Run(start as u32, (self.lists.len() - start) as u32)
+    }
+
+    fn list(&self, run: Run) -> &[(usize, usize)] {
+        &self.lists[run.0 as usize..(run.0 + run.1) as usize]
+    }
 }
 
 fn matrix(world: &World, entity: Entity) -> Mat4 {

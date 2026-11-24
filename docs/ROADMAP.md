@@ -3877,6 +3877,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     bake threads run at a lower priority than the game's. On a 24-thread machine Medium makes terrain on 12 threads
     where it used 4: the Realm's rings 1–2 come in 30 s where they took 60. Tests: shares on 1, 4 and 24 cores, the
     same distances on any; scripts reading the machine's numbers.
+  - ~~**Still Objs cost little:**~~ done. The Realm's slow frame away from its city was the city's 7,900 Objs
+    (2,700 colliders, 3,700 mesh renderers, 600 LOD Groups), all live though their ground is 9 km off. Transforms
+    are worked out in arrays by entity rather than two hash maps, and a `WorldTransform` is written only where it
+    changed; physics finds gone bodies and plants with a set rather than a search through every collider, walks an
+    Obj's parents once for its place and dimension, and takes apart only a matrix that changed; collider meshes are
+    checked without copying their asset's name; LOD Groups work out each parent's levels once for everything under
+    it; components are looked up by type, and physics' bodies by entity, without hashing them again. On the main
+    core at Medium, quiet machine: median 12.7 → 5.8 ms, 95th percentile 15.0 → 8.3 ms; back to back on a busy one,
+    12.5 → 8.2 ms and 19.8 → 10.7 ms. Physics 2.6 → 0.8 ms, transforms 2.4 → 0.6, the render's extract 2.5 → 1.8,
+    collider meshes 0.9 → 0.3. The GPU is unchanged (least of 60 frames 5–6.5 ms either way). Tests: still Objs not
+    written again, a parent moved carrying its children, an entity's index used again; a still collider following
+    its parent when it moves and is scaled. Not done: Objs that Stream With Ground stay live until they have stood
+    on made ground, so a scene's town far from the camera is never put away.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

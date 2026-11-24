@@ -2491,6 +2491,10 @@ fn give_collider_meshes(world: &mut World, content: &mut Content) {
     for (entity, mesh) in &wanted {
         let entity = *entity;
         let given = world.get::<ColliderMesh>(entity).map(|given| given.key);
+        // Most frames every collider has its triangles already.
+        if content.triangles_known(mesh.as_ref().copied()) == Some(given) {
+            continue;
+        }
         let triangles = match mesh {
             Ok(mesh) => content.triangles(*mesh),
             Err(reference) => content.triangles_of(reference),
@@ -2502,7 +2506,8 @@ fn give_collider_meshes(world: &mut World, content: &mut Content) {
         }
     }
     let stale = world.query_ref::<(Entity, &ColliderMesh)>().into_iter().map(|(entity, _)| entity);
-    let stale: Vec<Entity> = stale.filter(|entity| !wanted.iter().any(|(e, _)| e == entity)).collect();
+    let wanted: voxear_ecs::EntitySet = wanted.iter().map(|(entity, _)| *entity).collect();
+    let stale: Vec<Entity> = stale.filter(|entity| !wanted.contains(entity)).collect();
     for entity in stale {
         world.remove::<ColliderMesh>(entity);
     }

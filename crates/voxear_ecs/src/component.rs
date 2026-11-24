@@ -3,6 +3,7 @@ use std::{
     any::{TypeId, type_name},
     borrow::Cow,
     collections::HashMap,
+    hash::{BuildHasherDefault, Hasher},
 };
 
 /// Marks a Rust type as storable in chunks. Components are plain data; logic
@@ -64,10 +65,33 @@ unsafe fn drop_ptr<T>(ptr: *mut u8) {
     unsafe { ptr.cast::<T>().drop_in_place() }
 }
 
+/// Hashes a `TypeId` as what it already is, a hash: every `World::get` looks
+/// its component up by type, and hashing the id again cost more than the rest
+/// of the lookup.
+#[derive(Default)]
+struct TypeIdHasher(u64);
+
+impl Hasher for TypeIdHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        // Not how a `TypeId` hashes itself today, but right whatever it gives.
+        for &byte in bytes {
+            self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 ^= value;
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Default)]
 pub struct ComponentRegistry {
     infos: Vec<ComponentInfo>,
-    by_type: HashMap<TypeId, ComponentId>,
+    by_type: HashMap<TypeId, ComponentId, BuildHasherDefault<TypeIdHasher>>,
     by_name: HashMap<Cow<'static, str>, ComponentId>,
 }
 

@@ -20,7 +20,7 @@ mod world;
 pub use archetype::{Archetype, ArchetypeId, CHUNK_SIZE};
 pub use bundle::Bundle;
 pub use component::{Component, ComponentId, ComponentInfo, ComponentRegistry};
-pub use entity::Entity;
+pub use entity::{Entity, EntityHasher, EntityMap, EntitySet};
 pub use query::{Access, Query, QueryData, QueryIter, ReadOnlyQueryData};
 pub use schedule::{Schedule, System};
 pub use world::World;

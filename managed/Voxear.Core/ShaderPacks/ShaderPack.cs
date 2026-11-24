@@ -36,6 +36,12 @@ public readonly struct ShaderPack : IEquatable<ShaderPack>, IAsset<ShaderPack>
 	/// </summary>
 	public static readonly ShaderPack Radiant = new("builtin:radiant", "Radiant");
 
+	/// <summary>
+	/// Pixel art: the scene drawn in big square pixels, light stepped into a few flat bands that fall into a coloured
+	/// shade, and dark outlines round everything. Its options: pixel_size, bands, outline and shade (a colour).
+	/// </summary>
+	public static readonly ShaderPack Pixel = new("builtin:pixel", "Pixel");
+
 	private readonly string? reference;
 	private readonly string? name;
 	private readonly string? description;

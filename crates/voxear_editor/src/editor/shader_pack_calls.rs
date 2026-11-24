@@ -76,6 +76,14 @@ impl Editor {
                 (Json::Number(number), _) => number.as_f64().unwrap_or_default() as f32,
                 (Json::String(choice), OptionKind::Choice { .. }) => shader_packs::choice_value(option, choice)
                     .ok_or_else(|| bad(format!("`{choice}` is not one of `{key}`'s choices")))?,
+                (Json::String(color), OptionKind::Color { .. }) => shader_packs::color_text_value(option, color)
+                    .ok_or_else(|| bad(format!("`{color}` is not a colour: write `#rrggbb`, or `r,g,b` from 0 to 1")))?,
+                (Json::Array(channels), OptionKind::Color { .. }) => {
+                    let srgb: Option<Vec<f32>> = channels.iter().map(|c| c.as_f64().map(|c| c as f32)).collect();
+                    let srgb = srgb.and_then(|srgb| <[f32; 3]>::try_from(srgb).ok());
+                    let srgb = srgb.ok_or_else(|| bad(format!("`{key}` takes three numbers from 0 to 1")))?;
+                    voxear_render::shader_packs::color_value(srgb)
+                }
                 (other, _) => return Err(bad(format!("{other} is not a value for `{key}`"))),
             };
             shader_packs::set_option(world, key, value).map_err(|error| bad(format!("{error:#}")))?;

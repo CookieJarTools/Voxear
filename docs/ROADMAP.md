@@ -4317,6 +4317,18 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     each as a tool and `--describe` lists them. Tests: a call listed with its arguments and made with a default
     left out, and refused without one (engine); in the editor, listed, made through `game.call` and by its name,
     an Obj moved as one step to undo, a call for play refused while editing.
+- [x] **Orthographic cameras.** A Camera's Projection, perspective or orthographic, and its Size, half the height
+  it sees: every ray parallel, things the same size however far. Every pass draws it right (depth to distance, the
+  camera's rays, view vectors, fog, screen-space passes, light clusters, LODs by screen share, shadow cascades as
+  boxes) through a handful of lens functions in the shaders. Inspector, C# (`Camera.Projection`, `Camera.Size`,
+  `MakeOrthographic`), scene files, `field.set` and `vox mcp`; the Scene view's **Ortho** button and
+  `scene_view.projection`, Frame fitting its size. Tests: lens maths, cascades as boxes, two cubes the same size at
+  2 m and 12 m on the GPU.
+- [x] **Drawing in pixels.** `[post.pixels]`: the scene drawn at a whole pixel size (or about a number of rows) and
+  enlarged nearest, every pass at the small size, TAA off; snapping keeps an orthographic camera on its pixels' grid
+  and moves the picture by the rest in whole screen pixels, so nothing crawls as it glides. Lighting window,
+  C# (`post.Pixels.DrawAt`), `lighting.set`, and a shader pack's `[pixels]`. Tests: every 4×4 block one colour; a
+  snapped glide the same picture moved, an unsnapped one crawling.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 
@@ -4461,6 +4473,9 @@ Done:
   characters, in worlds with no block light too.
 - **Wind-bent models in a pack's program.** `MODEL_PLANT`, `bend` and a `through` shadow looked up towards the sun on
   `ModelSurface`; Radiant lights grass made of boxes through as it does foliage.
+- **Pixel**, a fourth built-in pack, and what it needed: the scene drawn in big square pixels (`[pixels]`, its size a
+  player's option), sun, sky and lamp light stepped into flat bands of their colour over a shade colour, the sky
+  stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)

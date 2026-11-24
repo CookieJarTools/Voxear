@@ -11,4 +11,7 @@ public enum ShaderPackOptionKind
 
 	/// <summary>One of its Choices: a dropdown.</summary>
 	Choice,
+
+	/// <summary>A colour: a swatch.</summary>
+	Color,
 }

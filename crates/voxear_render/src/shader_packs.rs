@@ -73,7 +73,7 @@ pub const MAX_OPTIONS: usize = 32;
 
 /// The engine's own packs: what each is named by after `builtin:`, what a
 /// menu calls it, and its files.
-pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 3] = [
+pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 4] = [
     (
         "evening",
         "Evening",
@@ -111,6 +111,19 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 3] = [
             ("sky.slang", include_str!("../shader_packs/radiant.shaderpack/sky.slang")),
             ("models.slang", include_str!("../shader_packs/radiant.shaderpack/models.slang")),
             ("window.slang", include_str!("../shader_packs/radiant.shaderpack/window.slang")),
+        ],
+    ),
+    (
+        "pixel",
+        "Pixel",
+        &[
+            ("pack.toml", include_str!("../shader_packs/pixel.shaderpack/pack.toml")),
+            ("bands.slang", include_str!("../shader_packs/pixel.shaderpack/bands.slang")),
+            ("faces.slang", include_str!("../shader_packs/pixel.shaderpack/faces.slang")),
+            ("models.slang", include_str!("../shader_packs/pixel.shaderpack/models.slang")),
+            ("sky.slang", include_str!("../shader_packs/pixel.shaderpack/sky.slang")),
+            ("grade.slang", include_str!("../shader_packs/pixel.shaderpack/grade.slang")),
+            ("outline.slang", include_str!("../shader_packs/pixel.shaderpack/outline.slang")),
         ],
     ),
 ];
@@ -360,6 +373,23 @@ pub enum OptionKind {
         choices: Vec<String>,
         default: usize,
     },
+    /// A colour, picked from its swatch: sRGB from 0 to 1.
+    Color {
+        default: [f32; 3],
+    },
+}
+
+/// A colour option's value as its one number holds it: its sRGB channels
+/// to 8 bits each, red highest, which a float holds exactly.
+pub fn color_value(srgb: [f32; 3]) -> f32 {
+    let [r, g, b] = srgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u32);
+    ((r << 16) | (g << 8) | b) as f32
+}
+
+/// The sRGB colour a colour option's value holds.
+pub fn value_color(value: f32) -> [f32; 3] {
+    let bits = value.round().clamp(0.0, 16_777_215.0) as u32;
+    [bits >> 16, bits >> 8, bits].map(|c| (c & 255) as f32 / 255.0)
 }
 
 impl PackOption {
@@ -369,6 +399,7 @@ impl PackOption {
             OptionKind::Number { default, .. } => *default,
             OptionKind::Toggle { default } => f32::from(u8::from(*default)),
             OptionKind::Choice { default, .. } => *default as f32,
+            OptionKind::Color { default } => color_value(*default),
         }
     }
 
@@ -378,6 +409,7 @@ impl PackOption {
             OptionKind::Number { low, high, .. } => value.clamp(*low, *high),
             OptionKind::Toggle { .. } => f32::from(u8::from(value >= 0.5)),
             OptionKind::Choice { choices, .. } => value.round().clamp(0.0, choices.len().saturating_sub(1) as f32),
+            OptionKind::Color { .. } => value.round().clamp(0.0, 16_777_215.0),
         }
     }
 }
@@ -570,6 +602,13 @@ enum OptionData {
     Choice {
         choices: Vec<String>,
         default: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default)]
+        about: String,
+    },
+    Color {
+        default: [f32; 3],
         #[serde(default)]
         label: String,
         #[serde(default)]
@@ -987,6 +1026,10 @@ fn option(key: String, data: OptionData) -> Result<PackOption> {
             ensure!(distinct, "the option `{key}` has two choices the programs would name alike");
             PackOption { label: named(label), about, kind: OptionKind::Choice { choices, default: chosen }, key }
         }
+        OptionData::Color { default, label, about } => {
+            ensure!(default.iter().all(|c| (0.0..=1.0).contains(c)), "the option `{key}`'s colour is sRGB from 0 to 1");
+            PackOption { label: named(label), about, kind: OptionKind::Color { default }, key }
+        }
     })
 }
 
@@ -1033,6 +1076,7 @@ fn options_code(manifest: &PackManifest) -> String {
             OptionKind::Number { .. } => "float",
             OptionKind::Toggle { .. } => "bool",
             OptionKind::Choice { .. } => "uint",
+            OptionKind::Color { .. } => "float3",
         };
         code.push_str(&format!("    {kind} {};\n", option.key));
     }
@@ -1057,6 +1101,8 @@ fn options_code(manifest: &PackManifest) -> String {
             OptionKind::Number { .. } => read,
             OptionKind::Toggle { .. } => format!("{read} >= 0.5"),
             OptionKind::Choice { .. } => format!("uint({read} + 0.5)"),
+            // Linear, from the sRGB its 24 bits hold.
+            OptionKind::Color { .. } => format!("packOptionColor({read})"),
         };
         code.push_str(&format!("    o.{} = {value};\n", option.key));
     }
@@ -2289,6 +2335,42 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         assert_eq!((strength.kept(5.0), strength.kept(-1.0), strength.kept(0.4)), (2.0, 0.0, 0.4));
         assert_eq!((rays.kept(0.2), rays.kept(0.9)), (0.0, 1.0));
         assert_eq!((quality.kept(7.0), quality.kept(0.3)), (1.0, 0.0));
+    }
+
+    #[test]
+    fn pixels_follow_a_number_option_or_a_number_and_one_leaves_the_settings_own() {
+        let text = "[options]\nsize = { kind = \"number\", range = [1.0, 8.0], default = 4.0 }\n[pixels]\nsize = \"size\"\n";
+        let manifest = PackManifest::parse(text).unwrap();
+        let pixels = manifest.pixels.unwrap();
+        assert_eq!(pixels, PackPixels { size: PackPixelSize::Option(0), snap: true });
+        assert_eq!(pixels.settings(&[6.0]).map(|p| (p.size, p.snap)), Some((6, true)));
+        assert_eq!(pixels.settings(&[1.0]), None, "a size of 1 leaves the settings' own");
+        let fixed = PackManifest::parse("[pixels]\nsize = 3\nsnap = false\n").unwrap().pixels.unwrap();
+        assert_eq!(fixed.settings(&[]).map(|p| (p.size, p.snap)), Some((3, false)));
+        for (bad, says) in [
+            ("[pixels]\nsize = \"none\"\n", "no option `none`"),
+            ("[pixels]\nsize = 40\n", "from 1 to 32"),
+            ("[options]\non = { kind = \"toggle\", default = true }\n[pixels]\nsize = \"on\"\n", "not a number"),
+        ] {
+            let error = format!("{:#}", PackManifest::parse(bad).expect_err(bad));
+            assert!(error.contains(says), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_colour_option_keeps_its_srgb_in_one_number_and_reads_as_linear() {
+        let text = "[options]\nshade = { kind = \"color\", default = [0.2, 0.4, 1.0] }\n[pixels]\nsize = 2\n";
+        let manifest = PackManifest::parse(text).unwrap();
+        let option = &manifest.options[0];
+        let value = option.default_value();
+        let back = value_color(value);
+        for (a, b) in back.iter().zip([0.2, 0.4, 1.0]) {
+            assert!((a - b).abs() <= 0.5 / 255.0, "{back:?}");
+        }
+        assert_eq!(value_color(color_value([1.0, 0.0, 0.5])), [1.0, 0.0, 128.0 / 255.0]);
+        assert_eq!(option.kept(2.0e7), 16_777_215.0, "kept to 24 bits");
+        assert!(options_code(&manifest).contains("float3 shade;"));
+        assert!(options_code(&manifest).contains("o.shade = packOptionColor(frame()->options[0].x);"));
     }
 
     #[test]

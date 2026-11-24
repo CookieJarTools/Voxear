@@ -1326,8 +1326,9 @@ fn set_pack_option(world: &mut voxear_ecs::World, setting: &str) -> Result<()> {
         _ => value.parse::<f32>().ok(),
     };
     let chosen = option.and_then(|option| shader_packs::choice_value(option, value));
-    let Some(number) = chosen.or(number) else {
-        anyhow::bail!("`{value}` is not a number, true or false, or one of `{key}`'s choices");
+    let color = option.and_then(|option| shader_packs::color_text_value(option, value));
+    let Some(number) = chosen.or(color).or(number) else {
+        anyhow::bail!("`{value}` is not a number, true or false, a colour (#rrggbb), or one of `{key}`'s choices");
     };
     let set = shader_packs::set_option(world, key, number)?;
     println!("  {key} = {set}");

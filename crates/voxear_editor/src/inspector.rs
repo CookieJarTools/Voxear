@@ -3170,6 +3170,11 @@ fn prefab_of(game: &Game, entity: Entity) -> Option<(String, bool)> {
 /// picker, then its red, green and blue. Returns the fields and the swatch.
 pub(crate) fn color_row(ui: &mut Ui, rows: NodeId, label: &str) -> ([NodeId; 3], NodeId) {
     let row = prop(ui, rows, label);
+    color_fields(ui, row)
+}
+
+/// A colour's swatch and its red, green and blue, in a row of its own.
+pub(crate) fn color_fields(ui: &mut Ui, row: NodeId) -> ([NodeId; 3], NodeId) {
     let vector = ui.panel(row, Style::default());
     ui.add_class(vector, "vector");
     ui.add_class(vector, "color");

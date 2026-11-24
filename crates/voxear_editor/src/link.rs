@@ -825,6 +825,13 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ on, camera, first_view: { frustum_culled, occlusion_culled, meshlets_occlusion_culled } }",
     },
     CallInfo {
+        name: "scene_view.projection",
+        about: "Whether the Scene view in use sees orthographic, every ray parallel, or in perspective, as its header's Ortho button says; sets it when `projection` is given. Turned orthographic it sees as much as it did 10 m ahead; its Size is the camera's own, which `field.set` on the camera also sets.",
+        args: &[maybe("projection", ArgKind::Choice(&["perspective", "orthographic"]), "How it sees.")],
+        changes: false,
+        returns: "{ projection, size }",
+    },
+    CallInfo {
         name: "world_layers.hide",
         about: "Hides world layers of a kind from every world's ground, to see the bare ground under them, or shows them again. A view setting: the scene is not changed.",
         args: &[maybe("fits", ArgKind::Toggle, "Whether Ground Fits are hidden.")],

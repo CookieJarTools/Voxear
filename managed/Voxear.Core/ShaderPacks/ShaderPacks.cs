@@ -88,6 +88,12 @@ public static class ShaderPacks
 		NativeShaderPacks.SetOption(name, on ? 1f : 0f, remember);
 	}
 
+	/// <summary>Sets a colour option of the pack worn, by its name.</summary>
+	public static void SetOption(string name, Color color, bool remember = true)
+	{
+		NativeShaderPacks.SetOption(name, ShaderPackOption.ValueOf(color), remember);
+	}
+
 	/// <summary>Picks a choice of a choice option of the pack worn, both by name. An unknown choice is reported.</summary>
 	public static void SetOption(string name, string choice, bool remember = true)
 	{
@@ -189,6 +195,18 @@ public static class ShaderPacks
 				var picked = Math.Max(choices.IndexOf(value.GetString() ?? string.Empty), 0);
 				var range = (0f, Math.Max(choices.Count - 1, 0));
 				return new ShaderPackOption(name, label, about, ShaderPackOptionKind.Choice, range, choices, picked);
+			case "color":
+				var srgb = new float[3];
+				var channel = 0;
+				foreach (var c in value.EnumerateArray())
+				{
+					if (channel < 3)
+					{
+						srgb[channel++] = c.GetSingle();
+					}
+				}
+				var packed = ShaderPackOption.ValueOf(new Color(srgb[0], srgb[1], srgb[2]));
+				return new ShaderPackOption(name, label, about, ShaderPackOptionKind.Color, (0f, 16777215f), [], packed);
 			default:
 				var (low, high) = (option.GetProperty("low").GetSingle(), option.GetProperty("high").GetSingle());
 				var number = value.GetSingle();

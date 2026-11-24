@@ -416,6 +416,16 @@ impl Editor {
                 let hidden = world.resource::<voxear_engine::ground_fit::HiddenLayers>().copied().unwrap_or_default();
                 done(json!({ "worlds": worlds, "hidden": { "fits": hidden.fits } }))
             }
+            "scene_view.projection" => {
+                let camera = self.scene.camera;
+                if let Some(name) = args.get("projection").and_then(Json::as_str) {
+                    let projection = voxear_render::Projection::named(name)
+                        .ok_or_else(|| bad(format!("`{name}` is not a projection: `orthographic` or `perspective`")))?;
+                    self.turn_scene_projection(camera, Some(projection));
+                }
+                let lens = self.game.engine.world.get::<voxear_render::Camera>(camera).copied().unwrap_or_default();
+                done(json!({ "projection": lens.projection.name(), "size": lens.size }))
+            }
             "scene_view.culling" => {
                 // As the Scene view's Gizmos ▸ Game Camera's Culling, which takes hold next frame.
                 if let Some(on) = opt_bool(args, "on") {

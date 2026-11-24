@@ -1809,6 +1809,27 @@ history on camera cuts.
 undo, `Post` in C#, HDR display output (an encode pass after the UI, see `display`), and the looks' sun canopy
 (`SunLook::canopy`, the `canopy` cookie) and near-only depth of field.
 
+**Lenses.** A Camera is perspective or orthographic (`lens::Projection`, its `size` half the height an orthographic
+one sees). `lens::Lens` makes either's projection, both reverse-Z: perspective infinite, depth `near / distance`;
+orthographic `ORTHO_DEPTH` (4096 m) past the near plane, depth falling evenly from 1 to 0, w 1, TAA's jitter in the
+last column. It also gives the frustum's planes (an orthographic box with a far plane), `lod_scale` (pixels a metre at
+a metre, or everywhere) and a grown lens for a margin. `GpuFrame::ortho`/`ortho_depth` and `GpuCull::ortho` (half
+heights, 0 for perspective) tell the shaders, which turn depth into distance, make the camera's rays and measure
+screen sizes through `common.slang`'s `viewDepthOf`, `depthOfView`, `eyeRay`, `towardsEye`, `eyeDistance`,
+`clipViewDepth`, `screenDistance` and `cullDistance`, never `near / depth` or `cameraPosition` directly; the
+screen-space passes rebuild view-space positions without dividing by depth. Cascades take a box's corners, LOD Groups
+and skinning a constant screen share. `PackFrame` carries the same two numbers (`isOrthographic`,
+`distanceOfDepth`, `viewRayStart` in `shader_pack.slang`).
+
+**Drawing in pixels.** `[post.pixels]` (or a worn pack's `[pixels]`, `PackPixels`) makes `extract` draw the view at
+`pixels::PixelGrid::drawn`: the shown size over a whole pixel size, rounded up, plus a margin of one each side when an
+orthographic camera snaps. The lens grows to cover what is drawn; TAA, FXAA and sharpening are off. Snapping moves
+the camera onto the grid of drawn pixels in its own plane, measured from the world's middle (`PixelGrid::snap`), and
+keeps the rest, ±½ a drawn pixel. Every pass, post-processing and a pack's included, then runs at the drawn size,
+the composite or finish writing a small image of the output's format, and the Enlarge pass (`post_passes::enlarge`,
+`enlargeFragment`) fills the view, each drawn pixel a block of screen pixels, read nearest from where the view's
+first pixel falls, the rest moving it in whole screen pixels. UI panels and debug draw go on at the view's size after.
+
 **Upscalers.** AMD FSR 3.1 is built in (`fsr3`): AMD's MIT shaders, vendored in `voxear_render/fsr3/amd`,
 compiled to SPIR-V by `build.rs` with slangc for the one set of options Voxear uses, their bindings read from
 slangc's reflection into a table, and run by a host of Voxear's in one frame-graph pass, FSR's images the view's

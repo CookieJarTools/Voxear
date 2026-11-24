@@ -60,6 +60,8 @@ pub(super) struct SceneView {
     pub(super) gizmos_button: NodeId,
     pub(super) gizmos_menu: NodeId,
     pub(super) maximize: NodeId,
+    /// The header's Ortho button: on while its camera is orthographic.
+    pub(super) projection: NodeId,
     /// The bar naming a prefab open on its own, with Back and Close Prefab.
     pub(super) prefab_bar: NodeId,
     pub(super) prefab_name: NodeId,
@@ -122,6 +124,7 @@ impl SceneView {
             gizmos_button: find(ui, "gizmos"),
             gizmos_menu: find(ui, "gizmos-menu"),
             maximize: find(ui, "scene-maximize"),
+            projection: find(ui, "projection"),
             prefab_bar: find(ui, "prefab-bar"),
             prefab_name: find(ui, "prefab-name"),
             prefab_back: find(ui, "prefab-back"),
@@ -365,8 +368,12 @@ impl Editor {
         let (ui, settings) = (&mut self.ui, &mut self.memory.settings);
         let mut changed = false;
         let mut maximize = None;
+        let mut turned = Vec::new();
         for view in std::iter::once(&mut self.scene).chain(&mut self.scene_views) {
             let first = view.panel == FIRST;
+            if ui.clicked(view.projection) {
+                turned.push(view.camera);
+            }
             if ui.changed(view.shading_menu) {
                 view.shading = ui.selected_option(view.shading_menu);
                 if first {
@@ -395,11 +402,35 @@ impl Editor {
         if let Some(panel) = maximize {
             self.toggle_maximized(&panel);
         }
+        for camera in turned {
+            self.turn_scene_projection(camera, None);
+        }
+        for view in std::iter::once(&self.scene).chain(&self.scene_views) {
+            let ortho = self.game.engine.world.get::<voxear_render::Camera>(view.camera);
+            let ortho = ortho.is_some_and(|camera| camera.projection == voxear_render::Projection::Orthographic);
+            self.ui.set_checked(view.projection, ortho);
+        }
         let maximized = self.maximized.is_some();
         for view in std::iter::once(&self.scene).chain(&self.scene_views) {
             self.ui.set_checked(view.maximize, maximized);
         }
         changed
+    }
+
+    /// Makes a Scene view's camera orthographic, or perspective again, or the
+    /// other of the two when `to` is none. Turned orthographic, it sees as
+    /// much at what it looks at as it did, a few metres ahead.
+    pub(super) fn turn_scene_projection(&mut self, camera: Entity, to: Option<voxear_render::Projection>) {
+        use voxear_render::Projection;
+        let Some(lens) = self.game.engine.world.get_mut::<voxear_render::Camera>(camera) else { return };
+        let next = to.unwrap_or(match lens.projection {
+            Projection::Perspective => Projection::Orthographic,
+            Projection::Orthographic => Projection::Perspective,
+        });
+        if next == Projection::Orthographic && lens.projection == Projection::Perspective {
+            lens.size = (lens.fov_y_degrees.to_radians() * 0.5).tan() * SEEN_AT;
+        }
+        lens.projection = next;
     }
 
     /// Puts the settings into every Scene view: the first one's shading and
@@ -591,6 +622,10 @@ fn gizmo_types(types: &ScriptTypes) -> Vec<(String, String)> {
 /// The Gizmos menu: lights, cameras, Audio Sources, the vehicles' debug
 /// view, the game camera's culling and each behaviour type with gizmos,
 /// ticked while they show.
+/// How far ahead of a Scene view's camera what it looks at is taken to be,
+/// as it turns orthographic, in metres.
+const SEEN_AT: f32 = 10.0;
+
 fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem> {
     let mut items = vec![
         MenuItem::new("Lights").checked(settings.light_gizmos),

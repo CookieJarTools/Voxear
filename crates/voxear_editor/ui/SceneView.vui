@@ -15,6 +15,8 @@
         <Dropdown name="dimension" class="dimension-menu">
             <Option>Level</Option>
         </Dropdown>
+        <!-- Whether its camera is orthographic, every ray parallel, or as an eye sees. -->
+        <Button name="projection" class="header-button">Ortho</Button>
         <Button name="gizmos" class="header-button">Gizmos</Button>
         <Button name="gizmos-menu" class="icon-button"><Icon icon="chevron-down" /></Button>
         <Button name="scene-maximize" class="icon-button"><Icon icon="maximize" /></Button>

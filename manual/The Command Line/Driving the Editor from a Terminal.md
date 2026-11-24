@@ -191,6 +191,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `towns.near` | Read the towns a Block World's generator lays out near a point, with each building's structure, floor, facing and door, none of their ground made (see [[Structures]]) |
 | `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`, `obj.move_to_dimension` | List the dimensions made, show one in the Scene view, make a `.dimension` file of a kind, open or let go of one, and move an Obj into another |
 | `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, how many Nav Obstacles there are and carve, and what every Nav Agent and Block Mob is doing |
+| `scene_view.projection` | Whether the Scene view in use sees orthographic or in perspective, and turn it either way, as its Ortho button does (see [[Cameras]]) |
 | `scene_view.culling` | Whether the Scene views draw only what the game's camera draws, which camera they cull from, and turn it on or off (see [[Playing Your Game]]) |
 | `ground_fit.land`, `world_layers.status`, `world_layers.hide` | Set an Obj with a Ground Fit down on the ground without its own cut, list each world's layers, and hide them to see the bare ground (see [[World Layers]]) |
 | `blocks.bake_far`, `blocks.bake_far_status`, `blocks.bake_far_stop` | Bake a streamed Block World's far view in the background, over the whole world or round where it is seen from, ask how far it has got, and stop it (see [[Block Worlds#Baking the far view]]) |

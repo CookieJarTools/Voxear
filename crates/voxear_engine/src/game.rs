@@ -164,6 +164,8 @@ impl Game {
         game.audio.headphones = game.project.file.audio.headphones;
         game.audio.reverb = game.project.file.audio.reverb;
         game.audio.reverb_mode = game.project.file.audio.reverb_mode;
+        game.audio.speed_of_sound = game.project.file.audio.speed_of_sound;
+        game.audio.voices = game.project.file.audio.voices;
         game.audio.tracer.project = game.project.file.audio.sound_tracing();
         game.load_input_actions();
         game.load_fonts();
@@ -227,6 +229,7 @@ impl Game {
                 None => tracing::warn!("[input] actions names {picked}, which is not the project's; the first is used"),
             }
         }
+        self.project.file.input.put();
         if let Some((path, guid)) = files.into_iter().next() {
             let read = self.content.asset_text(guid, AssetKind::InputActions);
             if let Err(error) = read.and_then(|(text, _)| self.input.load_actions(&text)) {

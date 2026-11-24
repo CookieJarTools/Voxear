@@ -153,10 +153,10 @@ impl Gpu {
             bail!("no GPU supports Vulkan 1.3 with the features Voxear needs; run `vox doctor` for details");
         };
 
-        let decompress =
-            info.memory_decompression && std::env::var("VOXEAR_GPU_DECOMPRESSION").map(|v| v != "0").unwrap_or(true);
-        let mesh_shaders = info.mesh_shaders && std::env::var("VOXEAR_MESH_SHADERS").map(|v| v != "0").unwrap_or(true);
-        let ray_tracing = info.ray_tracing && std::env::var("VOXEAR_RAY_TRACING").map(|v| v != "0").unwrap_or(true);
+        let chosen = gpu_choices();
+        let decompress = info.memory_decompression && wanted("VOXEAR_GPU_DECOMPRESSION", chosen.gpu_decompression);
+        let mesh_shaders = info.mesh_shaders && wanted("VOXEAR_MESH_SHADERS", chosen.mesh_shaders);
+        let ray_tracing = info.ray_tracing && wanted("VOXEAR_RAY_TRACING", chosen.ray_tracing);
         let hdr_metadata = color_spaces && info.hdr_metadata;
         let storage_without_format = info.storage_without_format;
         let optional = Optional { decompression: decompress, mesh_shaders, ray_tracing, hdr_metadata, storage_without_format };
@@ -734,4 +734,42 @@ fn create_device(
         .enabled_extension_names(&extensions)
         .push_next(&mut chain);
     unsafe { instance.create_device(physical, &info, None) }.context("creating the Vulkan device")
+}
+
+/// What a game asks of the GPU it starts on, as the project's `[graphics]`
+/// says, where the environment does not say otherwise
+/// (`VOXEAR_VSYNC=0`, `VOXEAR_MESH_SHADERS=0`, `VOXEAR_GPU_DECOMPRESSION=0`,
+/// `VOXEAR_RAY_TRACING=0`, or `1` for each). Each takes effect when a
+/// window's GPU is made, so a game sets them before it opens its window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GpuChoices {
+    pub vsync: bool,
+    pub mesh_shaders: bool,
+    pub gpu_decompression: bool,
+    pub ray_tracing: bool,
+}
+
+impl Default for GpuChoices {
+    fn default() -> Self {
+        Self { vsync: true, mesh_shaders: true, gpu_decompression: true, ray_tracing: true }
+    }
+}
+
+static CHOICES: Mutex<GpuChoices> =
+    Mutex::new(GpuChoices { vsync: true, mesh_shaders: true, gpu_decompression: true, ray_tracing: true });
+
+/// Sets what GPUs made from now on are asked for (see [`GpuChoices`]).
+pub fn choose_gpu(choices: GpuChoices) {
+    *CHOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = choices;
+}
+
+/// What GPUs made now are asked for (see [`GpuChoices`]).
+pub fn gpu_choices() -> GpuChoices {
+    *CHOICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether a feature is wanted: as the environment variable `name` says
+/// where it is set, `0` for no, or else `default`.
+pub fn wanted(name: &str, default: bool) -> bool {
+    std::env::var(name).map(|v| v != "0").unwrap_or(default)
 }

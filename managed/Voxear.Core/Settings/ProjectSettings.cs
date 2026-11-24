@@ -6,9 +6,9 @@ namespace Voxear;
 
 /// <summary>
 /// The project's settings the game runs by, as Project Settings has them. Each section is a copy. Portals, water
-/// trails and navigation costs can be changed while the game runs, as an options menu does, from the next frame,
-/// until the game starts again; the time steps, the floating origin, the quality budgets and the network are fixed once
-/// it has started, and read only.
+/// trails, navigation costs and the input's tuning can be changed while the game runs, as an options menu does, from
+/// the next frame, until the game starts again, and the time scale with Time.TimeScale; the time steps, the floating
+/// origin, the quality budgets, the graphics and the network are fixed once it has started, and read only.
 /// <code>
 /// // A slow machine: Portals show their far side from nearer, and the water keeps no trails.
 /// ProjectSettings.ChangePortals(portals =&gt; portals.ViewDistance = 48f);
@@ -27,6 +27,12 @@ public static class ProjectSettings
 
 	/// <summary>What the renderer keeps room for.</summary>
 	public static QualityBudgets Quality => QualityBudgets.Read(Section("quality"));
+
+	/// <summary>What the game asked of the GPU as it started.</summary>
+	public static GraphicsSettings Graphics => GraphicsSettings.Read(Section("graphics"));
+
+	/// <summary>How input actions read buttons and sticks. A copy: changing it changes nothing until it goes to ChangeInput.</summary>
+	public static InputTuning Input => InputTuning.Read(Section("input"));
 
 	/// <summary>How a networked game is played.</summary>
 	public static NetworkSettings Network => NetworkSettings.Read(Section("network"));
@@ -54,6 +60,20 @@ public static class ProjectSettings
 		var settings = WaterTrails;
 		change(settings);
 		Change("water_trails", settings.ToNode());
+	}
+
+	/// <summary>Changes how input actions read buttons and sticks, from the next frame.</summary>
+	public static void ChangeInput(Action<InputTuning> change)
+	{
+		var tuning = Input;
+		change(tuning);
+		Change("input", tuning.ToNode());
+	}
+
+	/// <summary>Sets how fast the game's time goes, from the next frame: see Time.TimeScale.</summary>
+	internal static void ChangeTimeScale(float scale)
+	{
+		Change("time", new JsonObject { ["time_scale"] = scale });
 	}
 
 	/// <summary>Changes what each area of ground costs, for ways searched from then on.</summary>

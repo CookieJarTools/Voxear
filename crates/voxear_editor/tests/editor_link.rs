@@ -353,7 +353,7 @@ fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_ke
     // Only a category's, or those a search finds.
     let time = done(&mut editor, &mut renderer, "project_settings.get", json!({ "category": "time" }));
     let keys: Vec<&str> = time["settings"].as_array().unwrap().iter().map(|s| s["key"].as_str().unwrap()).collect();
-    assert_eq!(keys, ["time.fixed_step", "time.max_step", "time.max_fixed_steps"]);
+    assert_eq!(keys, ["time.fixed_step", "time.max_step", "time.time_scale", "time.max_fixed_steps"]);
     let found = done(&mut editor, &mut renderer, "project_settings.get", json!({ "search": "gravity" }));
     assert_eq!(found["settings"].as_array().unwrap().len(), 2);
 
@@ -366,6 +366,13 @@ fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_ke
     assert_eq!(set(&mut editor, &mut renderer, "network.authority", json!("Shared")), "Shared");
     assert_eq!(set(&mut editor, &mut renderer, "time.fixed_step", json!(0.01)), json!(0.01));
     assert_eq!(set(&mut editor, &mut renderer, "world.quality", json!("Low")), "Low");
+    // What the engine had only in code or the environment: the time scale, vsync, HDR, the input's tuning, voices.
+    assert_eq!(set(&mut editor, &mut renderer, "time.time_scale", json!(0.5)), json!(0.5));
+    assert_eq!(set(&mut editor, &mut renderer, "graphics.vsync", json!(false)), json!(false));
+    assert_eq!(set(&mut editor, &mut renderer, "graphics.hdr", json!("scrgb")), "scRGB");
+    assert_eq!(set(&mut editor, &mut renderer, "input.stick_dead_zone", json!([0.2, 0.9])), json!([0.2, 0.9]));
+    assert_eq!(set(&mut editor, &mut renderer, "audio.voices", json!(64)), json!(64));
+    assert_eq!(voxear_input::input_defaults().1, (0.2, 0.9), "put into effect at once");
     assert_eq!(
         set(&mut editor, &mut renderer, "localization.languages", json!(["en", "French"])),
         json!(["English", "French"])
@@ -377,6 +384,8 @@ fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_ke
     assert_eq!((motion.wind, motion.interaction), (1.5, false));
     let file = Project::open(dir.path()).unwrap().file;
     assert_eq!((file.physics.gravity, file.time.fixed_step), ([0.0, -1.62, 0.0], 0.01));
+    assert_eq!((file.time.time_scale, file.graphics.vsync, file.audio.voices), (0.5, false, 64));
+    assert_eq!(file.graphics.hdr, voxear_engine::HdrName::ScRgb);
     assert_eq!((file.foliage.wind, file.foliage.bend), (1.5, 1.0));
     assert_eq!(file.localization.languages, ["en", "fr"], "kept by their codes");
     assert_eq!(file.network.authority, voxear_engine::net::NetAuthority::Shared);

@@ -243,6 +243,7 @@ impl Editor {
                 let audio = &mut self.game.audio;
                 (audio.headphones, audio.reverb) = (file.audio.headphones, file.audio.reverb);
                 audio.reverb_mode = file.audio.reverb_mode;
+                (audio.speed_of_sound, audio.voices) = (file.audio.speed_of_sound, file.audio.voices);
                 audio.tracer.project = file.audio.sound_tracing();
             }
             "input" => self.game.load_input_actions(),

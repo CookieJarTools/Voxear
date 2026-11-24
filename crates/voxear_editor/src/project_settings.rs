@@ -22,7 +22,7 @@ use crate::setting_info::{Category, Kind, SectionHelp, Setting, kept_word, shown
 pub const CATEGORIES: &[Category] = &[
     Category {
         name: "Audio",
-        about: "How 3D sound is heard: headphones, room reverb and ray-traced sound",
+        about: "How 3D sound is heard: headphones, room reverb, ray-traced sound and voices",
         manual: "Getting Started/Project Settings",
     },
     Category {
@@ -37,10 +37,14 @@ pub const CATEGORIES: &[Category] = &[
     },
     Category {
         name: "Graphics",
-        about: "What drawing through Portals and trails on water may spend",
+        about: "Vsync, HDR, the GPU's features, Portals and trails on water",
         manual: "Objs and Levels/Portals",
     },
-    Category { name: "Input", about: "The input actions the game plays with", manual: "Scripting/Reading Input" },
+    Category {
+        name: "Input",
+        about: "The input actions the game plays with, the press point and sticks' deadzone",
+        manual: "Scripting/Reading Input",
+    },
     Category {
         name: "Localization",
         about: "The languages the game is in, and their fonts",
@@ -86,7 +90,7 @@ pub const CATEGORIES: &[Category] = &[
     Category { name: "Tags and Layers", about: "The project's 32 layers", manual: "Getting Started/Project Settings" },
     Category {
         name: "Time",
-        about: "How long fixed steps and frames may be",
+        about: "How long fixed steps and frames may be, and how fast time goes",
         manual: "Getting Started/Project Settings",
     },
     Category {
@@ -167,6 +171,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("Chinese (Traditional)", "zh-Hant"),
 ];
 
+const HDR: &[(&str, &str)] = &[("Off", "off"), ("On", "on"), ("HDR10", "hdr10"), ("scRGB", "scrgb")];
 const REVERB: &[(&str, &str)] = &[("Parametric", "parametric"), ("Convolution", "convolution")];
 const RAY_QUALITY: &[(&str, &str)] = &[("Low", "low"), ("Medium", "medium"), ("High", "high")];
 const COMPRESSION: &[(&str, &str)] = &[("LZ4", "lz4"), ("Zstandard", "zstd"), ("None", "none")];
@@ -241,6 +246,21 @@ const FIXED: &[Setting] = &[
         Kind::Toggle,
         "Builds take the Steam Audio library with them, for occlusion, sound paths and room reverb, where the project has the Steam Audio module. Off makes builds smaller, and those go quiet.",
     ),
+    Setting::new(
+        ("Audio", "Voices"),
+        "audio.voices",
+        "Most voices",
+        whole(1.0, 256.0, ""),
+        "The most sounds that play at once. Past it, a new sound takes the place of the oldest effect that does not loop. Fewer costs less CPU in busy scenes. Taken up the next time the game plays.",
+    ),
+    Setting::new(
+        ("Audio", "Voices"),
+        "audio.speed_of_sound",
+        "Speed of sound",
+        number(1.0, 10000.0, "m/s"),
+        "How fast sound goes, which the Doppler effect works from: a passing car's pitch drops less the faster it is. 343 in air; lower for a stronger effect. Taken up the next time the game plays.",
+    )
+    .advanced(),
     // Content
     Setting::new(
         ("Content", "Bundles"),
@@ -318,6 +338,44 @@ const FIXED: &[Setting] = &[
     )
     .advanced(),
     // Graphics
+    Setting::new(
+        ("Graphics", "Display"),
+        "graphics.vsync",
+        "Vsync",
+        Kind::Toggle,
+        "Frames wait for the display, so a picture never tears, and the frame rate keeps to the display's. Off draws as fast as it can. Taken up when a build or vox run starts; VOXEAR_VSYNC still wins.",
+    ),
+    Setting::new(
+        ("Graphics", "Display"),
+        "graphics.hdr",
+        "HDR output",
+        Kind::Choice(HDR),
+        "HDR the game starts with on a display that has it: brighter highlights and deeper colours. On takes HDR10 first. A game's options change it (Screen.Hdr). Taken up when a build or vox run starts.",
+    ),
+    Setting::new(
+        ("Graphics", "GPU Features"),
+        "graphics.mesh_shaders",
+        "Mesh shaders",
+        Kind::Toggle,
+        "Draws with the GPU's mesh shaders where it has them: faster with many models. Off draws the older way everywhere, as GPUs without them do. Taken up when a build or vox run starts.",
+    )
+    .advanced(),
+    Setting::new(
+        ("Graphics", "GPU Features"),
+        "graphics.gpu_decompression",
+        "GPU decompression",
+        Kind::Toggle,
+        "Packed content is unpacked on the GPU where it can, so levels load sooner. Off unpacks it on the CPU. Taken up when a build or vox run starts.",
+    )
+    .advanced(),
+    Setting::new(
+        ("Graphics", "GPU Features"),
+        "graphics.ray_tracing",
+        "Ray tracing",
+        Kind::Toggle,
+        "Uses the GPU's ray tracing where it has it, for GI, reflections and ray-traced sound. Off leaves them to what works without it. Taken up when a build or vox run starts.",
+    )
+    .advanced(),
     Setting::new(
         ("Graphics", "Water Trails"),
         "water_trails.quality",
@@ -412,6 +470,20 @@ const FIXED: &[Setting] = &[
         "Actions and bindings",
         Kind::Button("Open Input Actions"),
         "Opens the Input Actions window, where actions, their bindings and their prompts are made.",
+    ),
+    Setting::new(
+        ("Input", "Buttons and Sticks"),
+        "input.press_point",
+        "Press point",
+        slider(0.01, 1.0, ""),
+        "How far a button or trigger goes before it counts as pressed. Lower makes triggers fire sooner. Scripts change it while the game runs (ProjectSettings.ChangeInput).",
+    ),
+    Setting::new(
+        ("Input", "Buttons and Sticks"),
+        "input.stick_dead_zone",
+        "Stick deadzone",
+        Kind::Vector { count: 2, unit: "" },
+        "A stick's travel read as nothing, against drift, then from where it reads as all the way, for bindings that give no deadzone of their own. A wider first number stops a worn stick drifting.",
     ),
     // Localization
     Setting::new(
@@ -655,6 +727,13 @@ const FIXED: &[Setting] = &[
         "Longest frame",
         number(0.01, 1.0, "s"),
         "A frame longer than this counts as this long, so a hitch or a breakpoint does not throw everything forward. Longer keeps the game's time to the clock on slow machines.",
+    ),
+    Setting::new(
+        ("Time", "Steps"),
+        "time.time_scale",
+        "Time scale",
+        number(0.0, 100.0, "×"),
+        "How fast the game's time goes as it starts: 1 as fast as real time, 0.5 slow motion, 0 stopped. Frames and fixed steps go by it. Scripts change it while the game runs (Time.TimeScale).",
     ),
     Setting::new(
         ("Time", "Steps"),

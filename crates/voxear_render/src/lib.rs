@@ -736,7 +736,7 @@ impl Renderer {
     pub unsafe fn new(window: WindowHandles, width: u32, height: u32, settings: &RendererSettings) -> Result<Self> {
         let renderdoc = attach_renderdoc(settings);
         let (gpu, surface) = unsafe { Gpu::new(window)? };
-        let vsync = std::env::var("VOXEAR_VSYNC").map(|v| v != "0").unwrap_or(true);
+        let vsync = voxear_rhi::wanted("VOXEAR_VSYNC", voxear_rhi::gpu_choices().vsync);
         let swapchain = Swapchain::new(&gpu, surface, width, height, vsync)?;
         Self::build(gpu, Target::Window(swapchain), renderdoc, settings)
     }

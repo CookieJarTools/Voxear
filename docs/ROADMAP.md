@@ -401,8 +401,8 @@ Next in M3:
     and `Changed` with each kind's own event
   - [x] list and tree views at runtime from C#, filled from code: `ListView<T>` and `TreeView<T>`, with `MakeRow`
     and `BindRow`, rows filled in the frame they show in, and the selection
-  - [ ] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
-    organised, so a game can be tuned for each platform and quality level without touching code:
+  - [x] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
+    organised, so a game can be tuned without touching code:
     - [x] Project Settings and Preferences in the side bar's drawer, laid out alike: the categories down the side,
       titled sections with rarely wanted settings folded under Advanced, a search across every category that matches
       names, sections and the words of tooltips, a tooltip on every setting with its default, values changed from
@@ -414,6 +414,15 @@ Next in M3:
       fixed step, the longest frame and fixed steps a frame (`[time]`), and which input actions the game plays
       with (`[input]`); Preferences gains the Console's rows, gizmos, networked Play's test players and network,
       and a list of every shortcut
+    - [x] Unity's sections set against the engine, and what the engine had only in code or the environment
+      brought in: the time scale (`[time]`, `Time.TimeScale` settable), vsync, HDR output and the GPU's mesh
+      shaders, decompression and ray tracing (`[graphics]`, the environment still winning), the press point and
+      the sticks' deadzone (`[input]`, `ProjectSettings.ChangeInput`), and the most voices and the speed of
+      sound (`[audio]`); each read from C# (`ProjectSettings.Graphics`, `.Input`), set by `project.set`, carried
+      into builds, and in Play mode `ProjectSettings` now reads as in a build; what the engine has no setting
+      for yet is listed on the manual's page, and below
+  - [ ] **Project Settings, the rest**: what Unity's Project Settings have that the engine has no setting for yet,
+    so a game can be tuned for each platform and quality level:
     - one `.toml` file per category in `ProjectSettings/`, written only where it differs from the default, so they
       read well in version control; build profiles change them key by key, as they do now
     - per-platform overrides (Linux and Windows now, more as platforms come), as Unity's platform tabs, and
@@ -425,20 +434,15 @@ Next in M3:
       and the frame cap
     - **Player**: company and product name, version, icon and splash, the window (resolution, full screen or
       windowed, resizable, running in the background), the cursor and the display scale
-    - **Graphics**: the default lighting look, HDR output, the default tonemapper, mesh shaders or their fallback,
-      GPU decompression, and shader variants kept or stripped
-    - **Physics and Physics 2D**: gravity, the fixed step, solver iterations, sleep, default friction and
-      bounciness, body limits, and the layers and collision matrix that exist already
-    - **Time**: the fixed step, the largest frame step, and the time scale
-    - **Audio**: sample rate, buffer size, the most voices at once, default bus volumes, Doppler and the speed of
-      sound, and Steam Audio's quality (HRTF, reflection rays, baking)
-    - **Input**: the default actions, stick dead zones, default sensitivities, and input while unfocused
+    - **Graphics**: the default lighting look, the default tonemapper, and shader variants kept or stripped
+    - **Physics and Physics 2D**: solver iterations, sleep, default friction and bounciness, and body limits
+    - **Audio**: sample rate, buffer size, default bus volumes, and Steam Audio's quality (HRTF, reflection rays,
+      baking)
+    - **Input**: default sensitivities, and input while unfocused
     - **Scripting and compilation**: the C# language version, nullable, warnings as errors, defines per platform,
       optimisation, trimming, and the script execution order
-    - **Content and loading**: compression, streaming and memory budgets, and default import settings per asset
-      kind
-    - **Localization**, **Saving**, **UI** (the default theme, font and scaling) and **Tags and Layers**, brought
-      in from where they are kept now
+    - **Content and loading**: streaming and memory budgets, and default import settings per asset kind
+    - **Saving** and **UI** (the default theme, font and scaling), brought in from where they are kept now
     - C#: every setting read as a typed value (`Physics.Gravity`, `Time.FixedDelta`, `Quality.Current`), the ones
       that may change while the game runs set from code, and quality levels picked by reference, never by name
     - a game's own settings: a class marked `[ProjectSettings]` gets its own category in the window, saved with

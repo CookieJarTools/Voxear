@@ -122,7 +122,7 @@ pub use content::{
     Content, ContentUsage, LoadedTerrain, MaterialData, MaterialMap, MaterialSource, MovedPart, PropertyValue, Reimported, Released,
     default_on_gpu, linear, srgb,
 };
-pub use engine::{EditBehaviours, EditMode, Engine, POSE, STAGES, editing};
+pub use engine::{EditBehaviours, EditMode, Engine, POSE, STAGES, TimeScale, editing};
 pub use fly_camera::FlyCamera;
 pub use game::{ActionNames, Display, Game};
 pub use levels::{
@@ -133,9 +133,9 @@ pub use obj_hierarchy::{ParentError, Reparented, family, set_parent};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{
-    ContentSettings, ENGINE_FILE, InputSettings, PROJECT_FILE, PhysicsSettings, PortalSettings, Project, ProjectFile,
-    QualitySettings, StartingGravity, TimeSettings, WaterTrailSettings, core_assembly, engine_root, engine_version, is_install,
-    manual_folder,
+    ContentSettings, ENGINE_FILE, GraphicsSettings, HdrName, InputSettings, PROJECT_FILE, PhysicsSettings,
+    PortalSettings, Project, ProjectFile, QualitySettings, StartingGravity, TimeSettings, WaterTrailSettings,
+    core_assembly, engine_root, engine_version, is_install, manual_folder,
 };
 pub use stats_overlay::StatsOverlay;
 pub use windowed::{Setup, WindowOptions, run_windowed};

@@ -57,6 +57,9 @@ pub struct ProjectFile {
     /// Which input actions the game plays with (see [`InputSettings`]).
     #[serde(default)]
     pub input: InputSettings,
+    /// What a game asks of the GPU as it starts (see [`GraphicsSettings`]).
+    #[serde(default)]
+    pub graphics: GraphicsSettings,
     /// What each kind of ground costs things finding their way (see
     /// `crate::navigation::NavigationSettings`).
     #[serde(default)]
@@ -91,6 +94,7 @@ impl ProjectFile {
             foliage: voxear_render::FoliageMotion::default(),
             time: TimeSettings::default(),
             input: InputSettings::default(),
+            graphics: GraphicsSettings::default(),
             navigation: crate::navigation::NavigationSettings::default(),
             crowds: crate::crowds::CrowdSettings::default(),
             modules: None,
@@ -105,12 +109,15 @@ impl ProjectFile {
 /// that long, so a hitch or a breakpoint does not throw everything forward,
 /// and no frame runs more than `max_fixed_steps` fixed steps, the rest
 /// dropped, so a slow machine does not fall further and further behind.
+/// `time_scale` is how fast the game's time goes as it starts, 1 as fast as
+/// real time, 0 stopped; scripts change it while it runs (`Time.TimeScale`).
 ///
 /// ```toml
 /// [time]
 /// fixed_step = 0.02       # 50 a second
 /// max_step = 0.25
 /// max_fixed_steps = 5
+/// time_scale = 1.0
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -118,19 +125,21 @@ pub struct TimeSettings {
     pub fixed_step: f32,
     pub max_step: f32,
     pub max_fixed_steps: u32,
+    pub time_scale: f32,
 }
 
 impl Default for TimeSettings {
     fn default() -> Self {
-        Self { fixed_step: 1.0 / 50.0, max_step: voxear_core::time::MAX_DELTA, max_fixed_steps: 5 }
+        Self { fixed_step: 1.0 / 50.0, max_step: voxear_core::time::MAX_DELTA, max_fixed_steps: 5, time_scale: 1.0 }
     }
 }
 
 impl TimeSettings {
-    /// Puts the steps into the engine, from its next frame.
+    /// Puts the steps and the time scale into the engine, from its next frame.
     pub fn put(&self, engine: &mut crate::Engine) {
         engine.set_fixed_delta(self.fixed_step);
         engine.set_frame_limits(self.max_step, self.max_fixed_steps);
+        engine.set_time_scale(self.time_scale);
     }
 }
 
@@ -138,15 +147,106 @@ impl TimeSettings {
 /// or path, or none for the project's first by path, or Voxear's own where
 /// it has none.
 ///
+/// `press_point` is how far a button or trigger goes before it counts as
+/// pressed, and `stick_dead_zone` the part of a stick's travel read as
+/// nothing, then as all the way, where a binding gives no deadzone of its
+/// own.
+///
 /// ```toml
 /// [input]
 /// actions = "Input/Player.inputactions"
+/// press_point = 0.5
+/// stick_dead_zone = [0.125, 0.925]
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct InputSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actions: Option<String>,
+    pub press_point: f32,
+    pub stick_dead_zone: [f32; 2],
+}
+
+impl Default for InputSettings {
+    fn default() -> Self {
+        let (low, high) = voxear_input::STICK_DEADZONE;
+        Self { actions: None, press_point: voxear_input::PRESS_POINT, stick_dead_zone: [low, high] }
+    }
+}
+
+impl InputSettings {
+    /// Puts the press point and the sticks' deadzone where every action reads them.
+    pub fn put(&self) {
+        voxear_input::set_input_defaults(self.press_point, (self.stick_dead_zone[0], self.stick_dead_zone[1]));
+    }
+}
+
+/// What a game asks of the GPU as it starts: whether frames wait for the
+/// display (`vsync`), HDR output on a display that has it, and whether the
+/// GPU's mesh shaders, decompression and ray tracing are used where it has
+/// them, each falling back where it is off. The environment still wins
+/// (`VOXEAR_VSYNC`, `VOXEAR_HDR`, `VOXEAR_MESH_SHADERS`,
+/// `VOXEAR_GPU_DECOMPRESSION`, `VOXEAR_RAY_TRACING`), and a game's options
+/// change HDR while it runs (`Screen.Hdr`).
+///
+/// ```toml
+/// [graphics]
+/// vsync = true
+/// hdr = "off"               # or "on", "hdr10", "scrgb"
+/// mesh_shaders = true
+/// gpu_decompression = true
+/// ray_tracing = true
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GraphicsSettings {
+    pub vsync: bool,
+    pub hdr: HdrName,
+    pub mesh_shaders: bool,
+    pub gpu_decompression: bool,
+    pub ray_tracing: bool,
+}
+
+impl Default for GraphicsSettings {
+    fn default() -> Self {
+        Self { vsync: true, hdr: HdrName::Off, mesh_shaders: true, gpu_decompression: true, ray_tracing: true }
+    }
+}
+
+impl GraphicsSettings {
+    /// Asks GPUs made from now on for what it says (see `voxear_rhi::GpuChoices`).
+    pub fn put(&self) {
+        voxear_rhi::choose_gpu(voxear_rhi::GpuChoices {
+            vsync: self.vsync,
+            mesh_shaders: self.mesh_shaders,
+            gpu_decompression: self.gpu_decompression,
+            ray_tracing: self.ray_tracing,
+        });
+    }
+}
+
+/// HDR output as `[graphics]` names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HdrName {
+    #[default]
+    Off,
+    On,
+    Hdr10,
+    #[serde(rename = "scrgb")]
+    ScRgb,
+}
+
+impl From<HdrName> for voxear_render::display::HdrChoice {
+    fn from(name: HdrName) -> Self {
+        use voxear_render::display::HdrChoice;
+        match name {
+            HdrName::Off => HdrChoice::Off,
+            HdrName::On => HdrChoice::On,
+            HdrName::Hdr10 => HdrChoice::Hdr10,
+            HdrName::ScRgb => HdrChoice::ScRgb,
+        }
+    }
 }
 
 /// How much the project lets the renderer spend. `particles` is the most
@@ -303,6 +403,8 @@ impl QualitySettings {
 /// ray_traced = true
 /// ray_quality = "high"
 /// ray_budget = 0.3
+/// speed_of_sound = 343.0    # metres a second, for the Doppler effect
+/// voices = 256              # at most 256
 /// ```
 ///
 /// With `ray_traced`, sound is heard through the scene the GPU traces for
@@ -319,6 +421,10 @@ pub struct AudioSettings {
     pub ray_traced: bool,
     pub ray_quality: crate::sound_tracing::RayQualityName,
     pub ray_budget: f32,
+    /// How fast sound goes, in metres a second, for the Doppler effect.
+    pub speed_of_sound: f32,
+    /// The most voices that play at once.
+    pub voices: u32,
 }
 
 impl Default for AudioSettings {
@@ -331,6 +437,8 @@ impl Default for AudioSettings {
             ray_traced: false,
             ray_quality: crate::sound_tracing::RayQualityName::Medium,
             ray_budget: crate::sound_tracing::DEFAULT_BUDGET,
+            speed_of_sound: voxear_audio::SPEED_OF_SOUND,
+            voices: voxear_audio::MAX_VOICES as u32,
         }
     }
 }

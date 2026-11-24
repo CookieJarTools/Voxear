@@ -539,6 +539,8 @@ impl Editor {
 
     /// Copies the level into a new engine with the scripts and swaps it in.
     fn start_run(&mut self, renderer: &mut Renderer) {
+        self.game.audio.speed_of_sound = self.game.project.file.audio.speed_of_sound;
+        self.game.audio.voices = self.game.project.file.audio.voices;
         self.game.audio.start_game();
         let mut engine = Engine::new();
         // The project's steps and gravity, and how its plants move, as a built game starts with them.
@@ -547,6 +549,10 @@ impl Editor {
         // And how trails on water are worked out.
         self.game.project.file.water_trails.put(&mut engine.world);
         engine.world.insert_resource(self.game.project.file.foliage.bounded());
+        // The project's settings as scripts read and change them, and the input's press point and deadzone.
+        let in_effect = voxear_engine::project_scripts::ProjectInEffect::of(&self.game.project.file);
+        engine.world.insert_resource(in_effect);
+        self.game.project.file.input.put();
         // The project's layers, as the copied level's Objs name theirs, and its text, in the language it is in.
         engine.world.insert_resource(self.game.project.layers());
         if let Some(localization) = self.game.engine.world.resource::<voxear_engine::localization::Localization>() {

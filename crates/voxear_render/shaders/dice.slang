@@ -430,8 +430,8 @@ VertexOut dicedPoint(uint vertexId, uint drawId)
     VertexOut o;
     o.position = transform(frame->viewProj, now);
     o.worldPosition = now.xyz;
-    o.cut = cutAt(push.frame, o.worldPosition);
-    o.clip = clipAt(push.frame, o.worldPosition);
+    o.cuts[0] = cutAt(push.frame, o.worldPosition);
+    o.cuts[1] = clipAt(push.frame, o.worldPosition);
     o.normal = instance.normal0.xyz * bent.x + instance.normal1.xyz * bent.y + instance.normal2.xyz * bent.z;
     o.tangent = float4(transform(instance.model, float4(tangent, 0.0)).xyz, here.tangent.w);
     o.uv = here.uv;

@@ -41,9 +41,9 @@ struct VertexOut
     float3 moved : MOVED;
     // How much of it is bound to hidden bones (skinning.slang): what is mostly hidden is left out.
     float hidden : HIDDEN;
-    // How far in front of the frame's cut it is (cutAt): a view through a Portal draws nothing behind the far one.
-    float cut : SV_ClipDistance0;
-    float clip : SV_ClipDistance1;
+    // How far in front of the frame's cut it is (cutAt), and of the camera's far limit (clipAt): a view through a Portal
+    // draws nothing behind the far one. One array, not two values: as two, a mesh shader keeps one for both.
+    float cuts[2] : SV_ClipDistance;
     // Its lightmap UVs, where its instance has baked light (lightmaps.slang).
     float2 lightmapUv : TEXCOORD1;
 };
@@ -100,8 +100,8 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     VertexOut o;
     o.position = transform(push.frame->viewProj, world);
     o.worldPosition = world.xyz;
-    o.cut = cutAt(push.frame, o.worldPosition);
-    o.clip = clipAt(push.frame, o.worldPosition);
+    o.cuts[0] = cutAt(push.frame, o.worldPosition);
+    o.cuts[1] = clipAt(push.frame, o.worldPosition);
     o.normal = instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z;
     o.tangent = float4(transform(instance.model, float4(v.tangent.xyz, 0.0)).xyz, v.tangent.w);
     o.uv = v.uv;
@@ -128,8 +128,8 @@ VertexOut impostorVertex(Instance instance, uint instanceIndex, float2 corner, u
     VertexOut o;
     o.position = transform(frame->viewProj, float4(c.world, 1.0));
     o.worldPosition = c.world;
-    o.cut = cutAt(push.frame, o.worldPosition);
-    o.clip = clipAt(push.frame, o.worldPosition);
+    o.cuts[0] = cutAt(push.frame, o.worldPosition);
+    o.cuts[1] = clipAt(push.frame, o.worldPosition);
     o.normal = c.facing;
     o.tangent = 0.0;
     o.uv = c.uv;

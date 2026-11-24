@@ -425,6 +425,38 @@ Not done in stage 1, as planned:
 - Stamps are added in the scene file; the Inspector shows how many there are.
 - No C# component yet: scripts get voxels with stage 4's editing.
 
+## Stage 2, built (2026-11-24): endless ground made on the GPU
+
+A Voxel Volume with **Endless** on has ground without end. It is made on the GPU round the camera as far as its
+**Reach** (`crates/voxear_render/src/voxel_volume/endless.rs`, `shaders/voxel_world.slang`).
+
+- **Its world is a window of sector columns round the camera.** Each column is 4 m a side at 16 voxels a metre and
+  as tall as the volume. It is kept in a slot of the window by where it is in the world, wrapping. Each slot has room
+  of its own for 384 bricks and 61 KB of materials, so a column made over one that left needs nothing freed.
+- **Making a column takes the generator's four passes:** heights and grass, the bricks that could hold anything,
+  the bricks' voxels, then each sector's bricks put in order. Up to 16 columns are made a frame, the nearest first,
+  in a pass before the views. `vox render` makes the whole window before its frames.
+- **The walk reads a slot's entry,** which names the sector it holds. A slot not yet made for the sector the ray is
+  in reads as empty, never as stale ground. Slots are found from whole numbers made positive first, so the GPU
+  wraps them as the CPU does; a remainder of a negative number did not.
+- **The ground is a Voxel Volume's own ground, to the voxel.** A test draws a 16 m volume made on the CPU and an
+  endless one made on the GPU from the same camera: they differ in under 0.5% of the pixels compared.
+- **Measured** (reach 64 m, 16 voxels a metre, 16 m tall, 1920×1080, the GPU shared at about 27%):
+  - about 100 MB on the GPU;
+  - the window made in 0.8 s before the frames;
+  - flying at 10 m/s, columns made on 69 of 540 frames, 0.8 ms each (median; 0.07 to 2.3 ms);
+  - a view full of meadow from 2 m over the grass takes 2.8–3.2 ms for depth and 5.4–5.7 ms to light.
+
+![Endless ground after flying 100 m](../images/small-voxels/endless-fly.webp)
+
+Not done in stage 2:
+
+- Generator graphs are not compiled to the GPU yet. The endless ground is the Voxel Volume's own (rolling hills,
+  grass and flowers).
+- There are no stamps, trees or structures in endless ground (stage 3), and no coarser rings past the reach
+  (stage 5).
+- Columns are not kept on the CPU for collision (stage 7).
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

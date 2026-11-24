@@ -4483,7 +4483,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stage 1 built)
+## Small voxels (in progress: stages 1 and 2 built)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4519,6 +4519,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Measured: an 80 × 120 m meadow at 1/16 m with sixty trees costs 2 ms depth and 3.8 ms lit at 1080p, and is made
     in 1.6 s.
   - Not yet: shadows onto meshes, turning with the Obj, stamps in the Inspector, C#.
+- **Stage 2 built (2026-11-24): endless ground made on the GPU.**
+  - A Voxel Volume with Endless on has ground without end. It is made on the GPU round the camera, as far as its
+    Reach, in a wrapping window of 4 m columns, 16 a frame, the nearest first.
+  - The ground is the Voxel Volume's own, to the voxel.
+  - Measured at reach 64 m: 100 MB, made in 0.8 s; flying at 10 m/s, 0.8 ms on one frame in eight.
+  - Not yet: generator graphs compiled to the GPU, stamps and trees in endless ground, coarser rings.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

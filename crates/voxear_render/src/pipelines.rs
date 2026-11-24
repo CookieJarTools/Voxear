@@ -232,6 +232,12 @@ pub struct Pipelines {
     pub voxel_coarse: vk::Pipeline,
     pub voxel_depth: vk::Pipeline,
     pub voxel_forward: vk::Pipeline,
+    /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
+    pub voxel_world_columns: vk::Pipeline,
+    pub voxel_world_candidates: vk::Pipeline,
+    pub voxel_world_arguments: vk::Pipeline,
+    pub voxel_world_bricks: vk::Pipeline,
+    pub voxel_world_sectors: vk::Pipeline,
     pub block_wireframe: vk::Pipeline,
     pub block_shadow: vk::Pipeline,
     /// As `block_shadow`, for faces that are never cut out: depth alone,
@@ -404,6 +410,7 @@ impl Pipelines {
             module("portal")?,
             module("probe_filter")?,
             module("voxels")?,
+            module("voxel_world")?,
         ];
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -508,6 +515,7 @@ impl Pipelines {
             portal,
             probe_filter,
             voxels,
+            voxel_world,
         ] = modules;
 
         let graphics = |desc: &GraphicsPipelineDesc| maker.graphics(desc);
@@ -1016,6 +1024,11 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
+            voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
+            voxel_world_candidates: maker.compute("Voxel world candidates", voxel_world, c"voxelWorldCandidates")?,
+            voxel_world_arguments: maker.compute("Voxel world arguments", voxel_world, c"voxelWorldArguments")?,
+            voxel_world_bricks: maker.compute("Voxel world bricks", voxel_world, c"voxelWorldBricks")?,
+            voxel_world_sectors: maker.compute("Voxel world sectors", voxel_world, c"voxelWorldSectors")?,
             voxel_depth: graphics(&GraphicsPipelineDesc {
                 color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -1413,6 +1426,11 @@ impl Pipelines {
             self.voxel_coarse,
             self.voxel_depth,
             self.voxel_forward,
+            self.voxel_world_columns,
+            self.voxel_world_candidates,
+            self.voxel_world_arguments,
+            self.voxel_world_bricks,
+            self.voxel_world_sectors,
             self.block_wireframe,
             self.block_shadow,
             self.block_shadow_solid,
@@ -1584,7 +1602,7 @@ fn mesh_pipelines(
 
 /// The shader modules [`Pipelines::make`] makes pipelines of: every GPU's,
 /// the mesh shaders' where it has them, and ray queries' where it can trace.
-type Modules<'a> = (&'a [ShaderModule; 31], &'a Option<[ShaderModule; 3]>, &'a Option<ShaderModule>);
+type Modules<'a> = (&'a [ShaderModule; 32], &'a Option<[ShaderModule; 3]>, &'a Option<ShaderModule>);
 
 /// What [`Pipelines::make`] asks for each pipeline: first noting each down,
 /// to make them all at once, then handing back what was made, in the order

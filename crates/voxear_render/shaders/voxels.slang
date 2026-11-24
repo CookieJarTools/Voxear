@@ -20,6 +20,7 @@
 #include "shading.slang"
 
 static const uint VOXEL_SECTOR_WORDS = 25;
+static const uint VOXEL_ENTRY_WORDS = 28;
 static const uint VOXEL_BRICK_WORDS = 20;
 static const uint VOXEL_EMPTY = 0xFFFFFFFFu;
 static const int VOXEL_MOST_STEPS = 1024;
@@ -47,7 +48,23 @@ bool voxelBit(uint* words, uint index)
 
 uint* voxelSector(VoxelVolume volume, int3 s)
 {
-    return volume.sectors + uint((s.y * volume.sectorCount.z + s.z) * volume.sectorCount.x + s.x) * VOXEL_SECTOR_WORDS;
+    if (volume.windowed == 0u)
+    {
+        return volume.sectors + uint((s.y * volume.sectorCount.z + s.z) * volume.sectorCount.x + s.x) * VOXEL_SECTOR_WORDS;
+    }
+    // An endless volume's sectors are kept by where they are in the world, wrapping round its window; each slot's
+    // entry says which sector it holds, then holds it as a volume's sector is held.
+    int3 world = volume.windowSector + s;
+    int w = volume.sectorCount.x;
+    // Wrapped as the CPU wraps it (rem_euclid), from whole numbers made positive first: a remainder of a negative
+    // number is not taken the same way everywhere.
+    uint2 slot = uint2(uint(world.x + w * 65536), uint(world.z + w * 65536)) % uint(w);
+    uint* entry = volume.sectors + ((uint(s.y) * uint(w) + slot.y) * uint(w) + slot.x) * VOXEL_ENTRY_WORDS;
+    if (int(entry[0]) != world.x || int(entry[1]) != world.y || int(entry[2]) != world.z)
+    {
+        return volume.emptySector;
+    }
+    return entry + 3;
 }
 
 // The brick at brick cell `b`: its number, -1 for none, -2 outside the volume.

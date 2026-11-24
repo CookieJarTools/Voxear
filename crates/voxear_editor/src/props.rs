@@ -651,6 +651,8 @@ pub enum Prop {
     VoxelSize,
     VoxelsPerMetre,
     VoxelRoughness,
+    VoxelEndless,
+    VoxelReach,
     VoxelGround,
     VoxelGroundHeight,
     VoxelHills,
@@ -1272,6 +1274,8 @@ impl Prop {
             Prop::VoxelSize
             | Prop::VoxelsPerMetre
             | Prop::VoxelRoughness
+            | Prop::VoxelEndless
+            | Prop::VoxelReach
             | Prop::VoxelGround
             | Prop::VoxelGroundHeight
             | Prop::VoxelHills
@@ -1701,6 +1705,8 @@ impl Prop {
             Prop::VoxelSize => "size",
             Prop::VoxelsPerMetre => "voxels_per_metre",
             Prop::VoxelRoughness => "roughness",
+            Prop::VoxelEndless => "endless",
+            Prop::VoxelReach => "reach",
             Prop::VoxelGround => "ground",
             Prop::VoxelGroundHeight => "ground_height",
             Prop::VoxelHills => "hills",
@@ -2370,8 +2376,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         ],
         Part::ForceField => vec![Prop::ForceKind, Prop::ForceStrength, Prop::ForceRadius],
         Part::VoxelVolume => {
-            let ground = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).is_some_and(|source| source.0.ground_on);
-            let mut props = vec![Prop::VoxelSize, Prop::VoxelsPerMetre, Prop::VoxelRoughness, Prop::VoxelGround];
+            let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity);
+            let ground = source.is_some_and(|source| source.0.ground_on);
+            let endless = source.is_some_and(|source| source.0.endless);
+            let mut props = vec![Prop::VoxelSize, Prop::VoxelsPerMetre, Prop::VoxelRoughness, Prop::VoxelEndless];
+            if endless {
+                props.push(Prop::VoxelReach);
+            }
+            props.push(Prop::VoxelGround);
             if ground {
                 props.extend([
                     Prop::VoxelGroundHeight,
@@ -2383,7 +2395,10 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                     Prop::VoxelSeed,
                 ]);
             }
-            props.push(Prop::VoxelStamps);
+            // An endless volume's ground has no stamps yet.
+            if !endless {
+                props.push(Prop::VoxelStamps);
+            }
             props
         }
         Part::Mist => vec![
@@ -3007,6 +3022,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelSize => "Size",
         Prop::VoxelsPerMetre => "Voxels a Metre",
         Prop::VoxelRoughness => "Roughness",
+        Prop::VoxelEndless => "Endless",
+        Prop::VoxelReach => "Reach",
         Prop::VoxelGround => "Ground",
         Prop::VoxelGroundHeight => "Ground Height",
         Prop::VoxelHills => "Hills",
@@ -4172,6 +4189,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::VoxelSize
         | Prop::VoxelsPerMetre
         | Prop::VoxelRoughness
+        | Prop::VoxelEndless
+        | Prop::VoxelReach
         | Prop::VoxelGround
         | Prop::VoxelGroundHeight
         | Prop::VoxelHills
@@ -6175,6 +6194,8 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
         Prop::VoxelSize => Value::Vector(data.size.to_vec()),
         Prop::VoxelsPerMetre => Value::Whole(i64::from(data.voxels_per_metre)),
         Prop::VoxelRoughness => Value::Number(data.roughness),
+        Prop::VoxelEndless => Value::Toggle(data.endless),
+        Prop::VoxelReach => Value::Number(data.reach),
         Prop::VoxelGround => Value::Toggle(data.ground_on),
         Prop::VoxelGroundHeight => Value::Number(ground.height),
         Prop::VoxelHills => Value::Number(ground.hills),
@@ -6206,6 +6227,8 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
             data.voxels_per_metre = n.clamp(1, i64::from(voxear_render::MOST_VOXELS_A_METRE)) as u32;
         }
         (Prop::VoxelRoughness, Value::Number(n)) => data.roughness = n.clamp(0.0, 1.0),
+        (Prop::VoxelEndless, Value::Toggle(on)) => data.endless = on,
+        (Prop::VoxelReach, Value::Number(n)) => data.reach = n.clamp(4.0, 512.0),
         (Prop::VoxelGround, Value::Toggle(on)) => data.ground_on = on,
         (Prop::VoxelGroundHeight, Value::Number(n)) => ground.height = n.clamp(-1024.0, 1024.0),
         (Prop::VoxelHills, Value::Number(n)) => ground.hills = n.clamp(0.0, 1024.0),
@@ -6222,6 +6245,8 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.voxels_per_metre = data.voxels_per_metre;
         volume.roughness = data.roughness;
         volume.ground = data.ground_on.then_some(data.ground);
+        volume.endless = data.endless;
+        volume.reach = data.reach;
     })
 }
 
@@ -7000,6 +7025,11 @@ mod tests {
         assert!(!props(&world, volume, &Part::VoxelVolume, &types).contains(&Prop::VoxelGrass));
         let source = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
         assert_eq!(voxel_value(source, &Prop::VoxelStamps), Some(Value::Fixed("0 box models".into())));
+        // An endless one shows how far it reaches, and has no stamps.
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelEndless, Value::Toggle(true)));
+        let shown = props(&world, volume, &Part::VoxelVolume, &types);
+        assert!(shown.contains(&Prop::VoxelReach) && !shown.contains(&Prop::VoxelStamps), "{shown:?}");
+        assert!(world.get::<voxear_render::VoxelVolume>(volume).unwrap().endless);
     }
 
     /// A Camera shows its projection, then its field of view while it is

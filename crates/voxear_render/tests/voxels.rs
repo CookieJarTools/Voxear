@@ -166,3 +166,74 @@ fn a_volume_changed_is_made_again_and_one_taken_away_is_drawn_no_more() {
     assert!(!(g > r + 20 && g > b + 20), "the volume is gone: {r} {g} {b}");
     assert_eq!(renderer.stats().voxels.volumes, 0);
 }
+
+/// Ground with grass and flowers seen straight down from 12 m over `(x, z)`,
+/// on a volume at the world's middle: endless, or 16 m square.
+fn ground_from_above(endless: bool, x: f32, z: f32) -> World {
+    let mut world = World::new();
+    let ground = VoxelGround { height: 2.0, hills: 1.0, grass: 0.6, flowers: 0.3, ..VoxelGround::default() };
+    let volume = VoxelVolume {
+        size: Vec3::new(16.0, 8.0, 16.0),
+        ground: Some(ground),
+        endless,
+        reach: 24.0,
+        ..VoxelVolume::default()
+    };
+    world.spawn((volume, Transform::default()));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(x, 14.0, z), down, Vec3::ONE)));
+    let towards_sun = Vec3::new(-35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.0);
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    world
+}
+
+#[test]
+fn an_endless_volumes_ground_made_on_the_gpu_is_the_ground_a_volume_makes_on_the_cpu() {
+    let Some(mut first) = renderer() else { return };
+    let made_here = render(&mut first, &ground_from_above(false, 8.0, 8.0), 3);
+    drop(first);
+    let Some(mut second) = renderer() else { return };
+    let endless = render(&mut second, &ground_from_above(true, 8.0, 8.0), 3);
+    keep_image("voxel ground on the cpu.png", &made_here);
+    keep_image("voxel ground on the gpu.png", &endless);
+    // Over the middle of the 16 m square, well inside it: the same ground, flowers and shadows.
+    let (mut far, mut count) = (0, 0);
+    for y in HEIGHT / 4..HEIGHT * 3 / 4 {
+        for x in WIDTH / 2 - HEIGHT / 4..WIDTH / 2 + HEIGHT / 4 {
+            let (a, b) = (rgb_at(&made_here, x, y), rgb_at(&endless, x, y));
+            far += usize::from((0..3).any(|i| (a[i] - b[i]).abs() > 24));
+            count += 1;
+        }
+    }
+    assert!(far * 200 < count, "{far} of {count} pixels differ by more than 24 levels");
+    let [r, g, b] = rgb_at(&endless, WIDTH / 2, HEIGHT / 2);
+    assert!(g > r && g > b, "grass under the camera: {r} {g} {b}");
+}
+
+#[test]
+fn an_endless_volume_makes_its_ground_round_the_camera_wherever_it_goes() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = ground_from_above(true, 8.0, 8.0);
+    render(&mut renderer, &world, 1);
+    let camera = world.query_ref::<(voxear_ecs::Entity, &Camera)>().into_iter().next().unwrap().0;
+    // Two hundred metres east and as far south of where it started, and below the world's middle.
+    world.get_mut::<Transform>(camera).unwrap().position = Vec3::new(208.0, 14.0, -192.0);
+    let pixels = render(&mut renderer, &world, 2);
+    keep_image("voxel ground moved.png", &pixels);
+    // The sky is a mid grey here; ground is green, flowers, or grass in its blades' shadow.
+    let sky = (0..HEIGHT)
+        .step_by(8)
+        .flat_map(|y| (0..WIDTH).step_by(8).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            (r - g).abs() < 10 && (g - b).abs() < 10 && (100..180).contains(&r)
+        })
+        .count();
+    let all = (HEIGHT / 8 * WIDTH / 8) as usize;
+    assert!(sky * 100 < all, "ground under all of the view: {sky} of {all} pixels are sky");
+    assert!(renderer.stats().voxels.bytes > 0);
+}

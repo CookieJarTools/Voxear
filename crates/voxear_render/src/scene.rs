@@ -1470,7 +1470,8 @@ mod tests {
 
     #[test]
     fn frustum_keeps_what_is_in_front_and_drops_the_rest() {
-        let planes = frustum_planes(Vec3::ZERO, Quat::IDENTITY, 60f32.to_radians(), 16.0 / 9.0, 0.1);
+        let lens = crate::Lens { fov_y: 60f32.to_radians(), aspect: 16.0 / 9.0, near: 0.1, ortho: None };
+        let planes = lens.planes(Vec3::ZERO, Quat::IDENTITY);
         assert!(inside(&planes, Vec3::new(0.0, 0.0, 10.0), 0.5));
         assert!(inside(&planes, Vec3::new(0.0, 0.0, 10_000.0), 0.5), "the far plane is at infinity");
         assert!(!inside(&planes, Vec3::new(0.0, 0.0, -10.0), 0.5), "behind the camera");
@@ -1482,7 +1483,8 @@ mod tests {
     #[test]
     fn camera_looks_along_positive_z() {
         let view = Mat4::from_rotation_translation(Quat::IDENTITY, Vec3::ZERO).inverse();
-        let clip = vulkan::perspective_infinite_reverse(1.0, 1.0, 0.1) * view * Vec4::new(0.0, 1.0, 5.0, 1.0);
+        let lens = crate::Lens { fov_y: 1.0, aspect: 1.0, near: 0.1, ortho: None };
+        let clip = lens.projection() * view * Vec4::new(0.0, 1.0, 5.0, 1.0);
         let ndc = clip.truncate() / clip.w;
         assert!(clip.w > 0.0, "points in front have positive w");
         assert!(ndc.y < 0.0, "up in the world is up on screen, which is -Y in Vulkan");

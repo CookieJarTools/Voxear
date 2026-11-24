@@ -179,7 +179,8 @@ fn snapping_moves_the_whole_picture_in_whole_screen_pixels_without_crawling() {
     // Not snapped, the camera's glide changes which of the world's points each drawn pixel shows, and the edges
     // crawl.
     let Some(crawling) = glide(false) else { return };
-    let crawled = (0..12).map(|frame| moved_difference(&crawling[0], &crawling[frame], (frame as f32 * 0.4).round() as u32));
+    let crawled =
+        (0..12).map(|frame| moved_difference(&crawling[0], &crawling[frame], (frame as f32 * 0.4).round() as u32));
     let most = crawled.max().unwrap();
     assert!(most > 150, "without snapping the picture is not the first moved: {most} pixels differ at most");
 }

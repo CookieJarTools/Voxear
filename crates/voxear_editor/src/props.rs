@@ -6826,6 +6826,24 @@ mod tests {
         assert!(on_bones(&Prop::GunRearSight) && !on_bones(&Prop::GunMass));
     }
 
+    /// A Camera shows its projection, then its field of view while it is
+    /// perspective and its size while it is orthographic, as `projection`
+    /// and `size` for tools.
+    #[test]
+    fn a_camera_shows_its_field_of_view_or_its_size_by_its_projection() {
+        let mut world = World::new();
+        let eye = world.spawn((voxear_scene::Transform::IDENTITY, Camera::default()));
+        let types = ScriptTypes::default();
+        let shown = props(&world, eye, &Part::Camera, &types);
+        assert_eq!(shown[..2], [Prop::Projection, Prop::FieldOfView]);
+        world.get_mut::<Camera>(eye).unwrap().projection = voxear_render::Projection::Orthographic;
+        let shown = props(&world, eye, &Part::Camera, &types);
+        assert_eq!(shown[..2], [Prop::Projection, Prop::OrthoSize]);
+        assert!(!shown.contains(&Prop::FieldOfView));
+        assert_eq!([Prop::Projection.lock_key(), Prop::OrthoSize.lock_key()], ["projection", "size"]);
+        assert_eq!([label(&Prop::Projection), label(&Prop::OrthoSize)], ["Projection", "Size"]);
+    }
+
     #[test]
     fn field_names_read_as_unity_shows_them() {
         assert_eq!(nice_name("degreesPerSecond"), "Degrees Per Second");

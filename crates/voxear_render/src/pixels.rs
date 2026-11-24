@@ -56,9 +56,8 @@ impl PixelGrid {
     /// Where the view's first screen pixel falls in the drawn picture, in
     /// its pixels: both share their middle, moved by the rest.
     pub fn start(&self, shown: (u32, u32)) -> [f32; 2] {
-        let start = |drawn: u32, shown: u32, rest: f32| {
-            drawn as f32 * 0.5 - shown as f32 / (2.0 * self.size as f32) + rest
-        };
+        let start =
+            |drawn: u32, shown: u32, rest: f32| drawn as f32 * 0.5 - shown as f32 / (2.0 * self.size as f32) + rest;
         [start(self.drawn.0, shown.0, self.rest[0]), start(self.drawn.1, shown.1, self.rest[1])]
     }
 

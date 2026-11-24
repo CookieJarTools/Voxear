@@ -1199,6 +1199,7 @@ fn group_help(group: &str) -> &'static str {
         "Baked" => "Baked lighting: lightmaps on the Objs with a Lightmap, light probes for the rest, traced once by Bake Lighting and saved beside the level.",
         "Lens" => "Camera effects: focus blur and motion blur.",
         "Quality" => "How edges are smoothed and sharpened, and the scale the scene is drawn at.",
+        "Pixels" => "The scene drawn in big square pixels and enlarged with hard edges, as pixel art is.",
         "Pack" => "What the pack says of itself. In the other tabs, an empty row is the level's own setting.",
         "Blocks" => "How every Block World's faces are drawn under the pack.",
         "Water" => "How water looks under the pack, wherever it is: the sea, Pools and the water of Block Worlds.",

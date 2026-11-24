@@ -77,6 +77,7 @@ impl Pool {
             let (queue, gate) = (queue.clone(), gate.clone());
             let thread = std::thread::Builder::new().name(format!("{name} {at}")).spawn(move || {
                 voxear_core::profiling::register_thread("Terrain");
+                lower_priority();
                 loop {
                     let (job, quick) = {
                         let mut jobs = queue.jobs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -123,6 +124,19 @@ impl Pool {
     /// How many of its threads may work at once.
     fn working_at_most(&self) -> usize {
         self.gate.limit.load(Ordering::Acquire).clamp(1, self.started.max(1))
+    }
+}
+
+/// Lets the thread it is called on give way to the game's own: a terrain
+/// thread runs a little behind the frame, the sound and the renderer's
+/// threads, so making terrain on most of a machine's cores never holds a
+/// frame back. Where the system cannot, it runs as it was.
+pub fn lower_priority() {
+    #[cfg(unix)]
+    // SAFETY: setpriority with this thread's own id only changes how its own thread is scheduled.
+    unsafe {
+        let thread = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        libc::setpriority(libc::PRIO_PROCESS, thread, 5);
     }
 }
 

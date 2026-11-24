@@ -3872,6 +3872,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     whole generator. On the Realm a near column went from 474 to 38 ms and a ring-1 tile's structures from 561 to 13
     ms; its near ground is drawn in 10 s and rings 1–2 in about a minute, where they took over two. Test: every
     column across a region's corner built one column at a time and from regions, the same block for block.
+  - ~~**Stage 6, threads by machine:**~~ done. A preset's terrain threads are a share of the cores (Low a quarter,
+    Medium half, High all but two, Ultra all but one, two at the least), columns at once following them; terrain and
+    bake threads run at a lower priority than the game's. On a 24-thread machine Medium makes terrain on 12 threads
+    where it used 4: the Realm's rings 1–2 come in 30 s where they took 60. Tests: shares on 1, 4 and 24 cores, the
+    same distances on any; scripts reading the machine's numbers.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

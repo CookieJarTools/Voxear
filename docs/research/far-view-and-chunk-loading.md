@@ -282,6 +282,24 @@ from a spot never visited, Medium:
 A region costs about 3 s once, on one thread. Ring 3's tiles, a region each, still take about 1.2 s; a bake (stage 2)
 covers them.
 
+**Stage 6 is done.** A preset's threads are a share of the machine's cores, not a fixed count: Low a quarter, Medium
+half, High all but two, Ultra all but one, two at the least; columns at once follow (as many on Low, twice on Medium,
+three times on High and Ultra). Terrain threads, and a bake's, run at a lower priority than the game's own (nice 5 on
+Linux). On this 24-thread machine Medium went from 4 threads and 8 columns to 12 and 24. The Realm from a spot never
+visited, at Medium:
+
+| | 4 threads (before) | 12 threads |
+|---|---|---|
+| Drawn-only blocks done | ~20 s | under 10 s |
+| Rings 1 and 2 done | ~60 s | ~30 s |
+| Ring 3 at 70 s | 79 of 484 | 300 of 484 |
+| Block triangles drawn at 60 s | 2.26 M | 3.36 M |
+| Main thread, median frame on its core | 18.9 ms | 21.9 ms |
+
+The frame grew with what was drawn (gathering what to draw and moving Objs' transforms), not from threads taking time
+from it. At this spot the frame is mostly physics (3.3 ms), Objs' transforms (3.7 ms) and gathering (3.9 ms), for the
+doors, boats and other Objs the Realm's structures bring; streaming is 0.7 ms.
+
 Suggested order: 0, 4, 1, 2, then 3 and 5. Stage 0 and 4 are each a day or less. Stage 2 is what answers the user's
 question.
 

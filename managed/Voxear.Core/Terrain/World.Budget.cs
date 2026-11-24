@@ -30,14 +30,20 @@ public static partial class World
 		set { NativeWorldBudget.Set(NativeWorldBudget.Quality, (int)value); }
 	}
 
-	/// <summary>How many threads make terrain at once, one at least. Low uses two.</summary>
+	/// <summary>
+	/// How many threads make terrain at once, one at least. Each preset takes a share of this machine's cores: Low a
+	/// quarter, Medium half, High all but two and Ultra all but one, two at the least.
+	/// </summary>
 	public static int Threads
 	{
 		get { return Whole(NativeWorldBudget.Threads); }
 		set { NativeWorldBudget.Set(NativeWorldBudget.Threads, value); }
 	}
 
-	/// <summary>How many chunk columns a world without end makes at once, the nearest first. Low makes two.</summary>
+	/// <summary>
+	/// How many chunk columns a world without end makes at once, the nearest first. A preset makes as many as its
+	/// threads on Low, twice as many on Medium and three times on High and Ultra.
+	/// </summary>
 	public static int ColumnsAtOnce
 	{
 		get { return Whole(NativeWorldBudget.Columns); }

@@ -19,3 +19,4 @@ lz4_flex.workspace = true
 serde.workspace = true
 toml.workspace = true
 zstd.workspace = true
+libc.workspace = true

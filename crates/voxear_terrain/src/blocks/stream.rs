@@ -329,6 +329,7 @@ pub fn bake(
         std::thread::scope(|scope| {
             for _ in 0..threads.max(1) {
                 scope.spawn(|| {
+                    crate::workers::lower_priority();
                     loop {
                         if baking.stop.load(Ordering::Relaxed) {
                             return;

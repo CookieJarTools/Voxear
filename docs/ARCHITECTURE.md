@@ -4243,7 +4243,10 @@ a column past those drawn, and each column's faces on the same background thread
 blocks, so none is meshed twice and the frame waits for none. How many columns are made at once, how many threads
 make terrain, how far it reaches and how much goes up a frame is the project's `WorldBudget` (`voxear_terrain::budget`),
 a resource the streamer and renderer read each frame and scripts set, so a change takes hold with nothing made
-again. From the third ring out (`stream::FAR_FROM`) a ring's columns come from the far view (`blocks::generate::far`):
+again. A preset's threads are a share of the machine's cores (`WorldQuality::budget_for`: Low a quarter, Medium half,
+High all but two, Ultra all but one, two at the least) and its columns at once a multiple of them, so how far a preset
+draws is the same everywhere and a machine of more cores makes it sooner; the terrain's threads and a bake's lower
+their own priority (`workers::lower_priority`, nice 5 on Unix) so the game's threads come first. From the third ring out (`stream::FAR_FROM`) a ring's columns come from the far view (`blocks::generate::far`):
 columns of runs made from the generator's heights, climate and sea, with no block's depth asked of its Volume, kept
 compressed under `.voxear/FarView/<world>/<hash>`, the hash of what makes its ground (`BlockMaking::far_tiles`: its
 file without its lighting, glow, voxels, relief or distances, its generator, `far::MADE_AS`), so changing how it looks

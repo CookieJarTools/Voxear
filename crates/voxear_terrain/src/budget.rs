@@ -44,18 +44,34 @@ impl WorldQuality {
         }
     }
 
-    /// The preset's numbers; none for Custom, which keeps whatever they are.
-    /// High draws a world as far as it says, out to 192 m of its own blocks
-    /// and 8 km of rings; Ultra half as far again near, twice as far off,
-    /// and its plants half as far again.
+    /// The preset's numbers on this machine; none for Custom, which keeps
+    /// whatever they are. High draws a world as far as it says, out to 192 m
+    /// of its own blocks and 8 km of rings; Ultra half as far again near,
+    /// twice as far off, and its plants half as far again.
     pub fn budget(self) -> Option<WorldBudget> {
-        let (threads, columns, upload, view_distance, far_distance, detail) = match self {
-            WorldQuality::Low => (2, 2, 4, 64.0, 1024.0, [0.5, 0.5, 0.5]),
-            WorldQuality::Medium => (4, 8, 8, 128.0, 4096.0, [0.75, 0.75, 0.75]),
-            WorldQuality::High => (8, 24, 16, 192.0, 8192.0, [1.0, 1.0, 1.0]),
-            WorldQuality::Ultra => (16, 48, 32, 512.0, 32_768.0, [1.5, 2.0, 1.5]),
+        self.budget_for(machine_cores())
+    }
+
+    /// The preset's numbers on a machine of `cores` cores: how far it draws
+    /// is the preset's alone, and how many threads make terrain is a share
+    /// of the cores, so a machine of many makes a world as quickly as it
+    /// can, however far the world is drawn. Low a quarter of them and
+    /// Medium half, High all but two and Ultra all but one, never fewer
+    /// than two nor more than one fewer than the cores; and as many columns
+    /// made at once as the threads, twice as many on Medium and three times
+    /// on High and Ultra, so a thread always has the next to hand.
+    pub fn budget_for(self, cores: usize) -> Option<WorldBudget> {
+        let cores = cores.max(1) as u32;
+        let most = cores.saturating_sub(1).max(1);
+        let share = |part: f32, least: u32| ((cores as f32 * part).round() as u32).max(least).min(most);
+        let (threads, per_thread, upload, view_distance, far_distance, detail) = match self {
+            WorldQuality::Low => (share(0.25, 2), 1, 4, 64.0, 1024.0, [0.5, 0.5, 0.5]),
+            WorldQuality::Medium => (share(0.5, 2), 2, 8, 128.0, 4096.0, [0.75, 0.75, 0.75]),
+            WorldQuality::High => (cores.saturating_sub(2).max(2).min(most), 3, 16, 192.0, 8192.0, [1.0, 1.0, 1.0]),
+            WorldQuality::Ultra => (most, 3, 32, 512.0, 32_768.0, [1.5, 2.0, 1.5]),
             WorldQuality::Custom => return None,
         };
+        let columns = (threads * per_thread).min(256);
         // The rings pushed out until their blocks show this many pixels at most, more on the cheaper presets; Low draws
         // them where the distances put them.
         let far_block_pixels = match self {
@@ -78,6 +94,11 @@ impl WorldQuality {
             far_block_pixels,
         })
     }
+}
+
+/// How many cores this machine has.
+fn machine_cores() -> usize {
+    std::thread::available_parallelism().map_or(4, usize::from)
 }
 
 /// What making worlds of blocks may spend (see the module's notes). A world
@@ -325,7 +346,7 @@ mod tests {
     #[test]
     fn a_preset_sets_every_number_and_a_number_changed_by_hand_is_custom_and_kept_within_bounds() {
         let low = WorldQuality::Low.budget().unwrap();
-        assert_eq!((low.threads, low.columns), (2, 2), "two columns at a time on two threads");
+        assert!(low.threads >= 2 && low.columns == low.threads, "a column at a time on each thread");
         // A preset's numbers are its own, whatever was written beside it.
         let written: WorldBudget = toml::from_str("quality = \"low\"\nthreads = 12").unwrap();
         assert_eq!(written.checked(), low);
@@ -341,6 +362,26 @@ mod tests {
         assert_eq!((older.near_detail, older.far_detail, older.plant_detail), (1.0, 1.0, 1.0));
         let wild = WorldBudget { quality: WorldQuality::Custom, near_detail: 9.0, plant_detail: f32::NAN, ..low };
         assert_eq!((wild.checked().near_detail, wild.checked().plant_detail), (4.0, 1.0), "a quarter to four times");
+    }
+
+    #[test]
+    fn a_presets_threads_are_a_share_of_the_machines_cores_whatever_it_draws() {
+        let threads = |cores: usize| {
+            [WorldQuality::Low, WorldQuality::Medium, WorldQuality::High, WorldQuality::Ultra]
+                .map(|quality| quality.budget_for(cores).unwrap())
+                .map(|budget| (budget.threads, budget.columns))
+        };
+        // Twenty-four cores: a quarter, half, all but two, all but one.
+        assert_eq!(threads(24), [(6, 6), (12, 24), (22, 66), (23, 69)]);
+        // Four: two at the least, and never every core.
+        assert_eq!(threads(4), [(2, 2), (2, 4), (2, 6), (3, 9)]);
+        // One core: one thread, which the pool keeps to.
+        assert!(threads(1).iter().all(|&(threads, _)| threads == 1));
+        // How far each draws is the preset's own, however many cores.
+        let far = |cores: usize| {
+            WorldQuality::Medium.budget_for(cores).map(|budget| (budget.view_distance, budget.far_distance))
+        };
+        assert_eq!(far(4), far(64));
     }
 
     #[test]

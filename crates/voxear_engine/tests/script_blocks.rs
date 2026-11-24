@@ -145,16 +145,18 @@ fn scripts_ask_about_blocks_change_them_and_put_them_back() {
     assert!(said("physics met the blast hole at 4.0"), "physics follows the blocks: {lines:?}");
     // How much making worlds may spend: as the project has it, then a preset, then a number set by hand.
     use voxear_terrain::{WorldBudget, WorldQuality};
-    assert!(said("quality High, columns 24"), "as the project has it: {lines:?}");
-    assert!(said("quality Low, threads 2, columns 2, upload 4"), "a preset sets every number: {lines:?}");
+    // A preset's threads and columns are a share of this machine's cores.
+    let (high, low) = (WorldQuality::High.budget().unwrap(), WorldQuality::Low.budget().unwrap());
+    assert!(said(&format!("quality High, columns {}", high.columns)), "as the project has it: {lines:?}");
+    let low_said = format!("quality Low, threads {}, columns {}, upload 4", low.threads, low.columns);
+    assert!(said(&low_said), "a preset sets every number: {lines:?}");
     assert!(said("quality Custom, view 80, far 1024"), "a number set by hand makes it Custom: {lines:?}");
     // Details too; and with nowhere to keep it, as here, nothing is kept for the machine.
     assert!(said("near 2, far 0.5, plants 0.6, saved False"), "{lines:?}");
-    let low = WorldQuality::Low.budget().unwrap();
     let custom =
         WorldBudget { quality: WorldQuality::Custom, view_distance: 80.0, near_detail: 2.0, plant_detail: 0.6, ..low };
     assert_eq!(WorldBudget::of(&game.engine.world), custom, "the streamer and the renderer read it");
-    assert_eq!(voxear_terrain::workers::threads(), 2, "two threads make terrain");
+    assert_eq!(voxear_terrain::workers::threads(), low.threads as usize, "Low's threads make terrain");
 }
 
 const QUALITY: &str = r#"using Voxear;

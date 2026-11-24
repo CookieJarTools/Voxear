@@ -4360,6 +4360,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "image",
+ "libc",
  "lz4_flex",
  "meshopt",
  "serde",

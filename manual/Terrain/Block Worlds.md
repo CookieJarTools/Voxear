@@ -242,8 +242,8 @@ How much making worlds without end may spend, and how far they are drawn, is set
 
 | | Low | Medium | High | Ultra |
 | --- | --- | --- | --- | --- |
-| Threads | 2 | 4 | 8 | 16 |
-| Columns at once | 2 | 8 | 24 | 48 |
+| Threads | a quarter of the cores | half | all but two | all but one |
+| Columns at once | as many as the threads | twice the threads | three times | three times |
 | Upload a frame | 4 MB | 8 MB | 16 MB | 32 MB |
 | View distance | 64 m | 128 m | 192 m | 512 m |
 | Far distance | 1 km | 4 km | 8 km | 32 km |
@@ -252,7 +252,7 @@ How much making worlds without end may spend, and how far they are drawn, is set
 | Plant detail | ×0.5 | ×0.75 | ×1 | ×1.5 |
 | Far block size | 0 | 6 px | 4 px | 3 px |
 
-A project starts on High, which draws a world as far as it says, up to 192 m of its own blocks and 8 km of rings. A world of 256 m and 16 km is drawn to 192 m and 8 km on High, to 384 m and 32 km on Ultra, and to 64 m and 1 km on Low. However far it is drawn, every ring is as many columns across as the world's own blocks, each twice as large as the one inside it, so a world drawn further has wider rings, or a ring more round them, never a gap or a seam. A machine never uses more threads than one fewer than its cores, whatever the setting says.
+A project starts on High, which draws a world as far as it says, up to 192 m of its own blocks and 8 km of rings. A world of 256 m and 16 km is drawn to 192 m and 8 km on High, to 384 m and 32 km on Ultra, and to 64 m and 1 km on Low. However far it is drawn, every ring is as many columns across as the world's own blocks, each twice as large as the one inside it, so a world drawn further has wider rings, or a ring more round them, never a gap or a seam. A machine never uses more threads than one fewer than its cores, whatever the setting says, and a preset never fewer than two. So a machine of 24 cores makes terrain on 6 threads on Low, 12 on Medium, 22 on High and 23 on Ultra, and one of 4 cores on 2, 2, 2 and 3: how far a preset draws is the same on both, and the faster machine makes it sooner. Terrain's threads run a little behind the game's own, so making terrain on most of the cores does not hold a frame back.
 
 What each preset costs on an RTX 3070 at 1280×720, looking over the GrownPlants sample's endless world (256 m and 16 km) from 220 m up, once every chunk round the camera is made: the GPU frame is the least of 60, and memory is the GPU's buffers for blocks and the engine's heap, most of it the world's blocks.
 

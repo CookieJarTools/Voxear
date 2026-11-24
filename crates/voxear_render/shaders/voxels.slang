@@ -267,6 +267,12 @@ float3 voxelRay(Frame* frame, float2 pixel)
     return normalize(farther.xyz / farther.w - nearPoint.xyz / nearPoint.w);
 }
 
+// Where the ray through `pixel` starts: the camera, or for an orthographic camera its point of the near plane.
+float3 voxelOrigin(Frame* frame, float2 pixel)
+{
+    return eyeRay(frame, pixel / float2(frame->viewport) * 2.0 - 1.0).origin;
+}
+
 VoxelVolumes* voxelVolumes()
 {
     return buffers()->voxelVolumes;
@@ -299,7 +305,7 @@ bool voxelPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
         // A brick and a half short, in the coarsest volume's bricks.
         start = max(nearest - 12.0 * volumes->volumes[0].voxel, 0.0);
     }
-    return voxelsTrace(volumes, frame->cameraPosition, d, start, 1e9, 0.0, footScale, hit);
+    return voxelsTrace(volumes, voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, hit);
 }
 
 // The coarse rays: each walks against whole bricks, as if each brick were solid, and keeps how far it went.
@@ -317,7 +323,7 @@ void voxelCoarse(uint3 id: SV_DispatchThreadID)
     float3 d = voxelRay(frame, pixel);
     VoxelHit hit;
     // A footprint of eight voxels or more stops each walk at the first brick with anything in it.
-    bool found = voxelsTrace(volumes, frame->cameraPosition, d, 0.0, 1e9, 1e6, 0.0, hit);
+    bool found = voxelsTrace(volumes, voxelOrigin(frame, pixel), d, 0.0, 1e9, 1e6, 0.0, hit);
     volumes->coarse[id.y * volumes->coarseSize.x + id.x] = found ? hit.metres : 1e10;
 }
 
@@ -371,7 +377,7 @@ VoxelDepthOut voxelDepth(VoxelVertex input)
     VoxelDepthOut o;
     o.surface = float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), 1.0);
     o.id = asfloat(packSurfaceId(PACK_SURFACE_MODEL, 0));
-    o.depth = voxelDepthOf(frame, frame->cameraPosition + d * hit.metres);
+    o.depth = voxelDepthOf(frame, voxelOrigin(frame, input.position.xy) + d * hit.metres);
     return o;
 }
 
@@ -413,7 +419,7 @@ VoxelOut voxelOpaque(VoxelVertex input)
         discard;
     }
     VoxelVolume volume = volumes->volumes[hit.volume];
-    float3 world = frame->cameraPosition + d * hit.metres;
+    float3 world = voxelOrigin(frame, pixel) + d * hit.metres;
     float3 normal = voxelNormal(hit, d);
     float3 albedo = voxelColour(volume, hit);
 

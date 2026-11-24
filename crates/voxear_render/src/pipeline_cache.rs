@@ -5,10 +5,15 @@
 //!
 //! Each build's pipelines are kept in a file of their own, named by its
 //! shaders, the GPU and its driver: an installed engine's in the user's
-//! cache folder, and a build from source's beside the build, so builds made
-//! while working on the engine never push out an installed one's.
+//! cache folder, and a build from source's in the checkout's `target`
+//! folder, shared by every build folder under it, so builds made while
+//! working on the engine never push out an installed one's.
 //! `VOXEAR_PIPELINE_CACHE=0` turns it off, and set to a folder keeps the
 //! files there.
+//!
+//! While no file holds a set of shaders yet, the first renderer to need it
+//! makes the pipelines and the others, in this program or another, wait for
+//! its file: tests starting together then compile them once, not each.
 
 use std::{
     path::{Path, PathBuf},
@@ -21,6 +26,9 @@ use crate::hot_reload::ShaderSet;
 
 /// How many files a folder keeps, the ones used last.
 const KEPT: usize = 4;
+/// How many the folder shared by builds from source keeps: each build
+/// folder may hold shaders of its own.
+const KEPT_FROM_SOURCE: usize = 12;
 /// A file not used for this long is let go.
 const UNUSED_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const EXTENSION: &str = "pipelines";
@@ -29,32 +37,38 @@ const EXTENSION: &str = "pipelines";
 pub(crate) struct PipelineCacheFile {
     path: PathBuf,
     held: usize,
+    kept: usize,
+    /// Held while this renderer makes the pipelines no file had yet, so
+    /// others wait to read them in place of making them too.
+    making: Option<std::fs::File>,
 }
 
 impl PipelineCacheFile {
     /// Fills `gpu`'s pipeline cache from the file kept for `shaders` on it,
     /// when there is one. `None` when caching is turned off.
     pub fn open(gpu: &mut Gpu, shaders: &ShaderSet) -> Option<Self> {
-        let folder = folder()?;
+        let (folder, kept) = folder()?;
         let header = gpu.pipeline_cache_header();
         let key = header.iter().chain(gpu.info.driver.as_bytes()).copied().chain(shaders.fingerprint().to_le_bytes());
         let path = folder.join(format!("{:016x}.{EXTENSION}", fnv(key)));
-        let held = match std::fs::read(&path) {
-            Ok(data) if gpu.load_pipeline_cache(&data) => {
-                // Marked used, so the folder keeps it over files not used lately.
-                let _ =
-                    std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(SystemTime::now()));
-                tracing::debug!("pipelines read from {}", path.display());
-                data.len()
+        let mut held = read(gpu, &path);
+        let mut making = None;
+        if held == 0 {
+            // Another renderer may be making them now: wait for it, then read what it kept.
+            making = lock(&path);
+            held = read(gpu, &path);
+            if held > 0 {
+                making = None;
             }
-            _ => 0,
-        };
-        Some(Self { path, held })
+        }
+        Some(Self { path, held, kept, making })
     }
 
     /// Writes what the cache holds now, when it holds more than the file:
     /// pipelines made since it was read.
     pub fn save(&mut self, gpu: &Gpu) {
+        // Others waiting read the file once this is let go, whether or not it was written.
+        let _making = self.making.take();
         let Ok(data) = gpu.pipeline_cache_data() else { return };
         if data.len() <= self.held {
             return;
@@ -63,7 +77,7 @@ impl PipelineCacheFile {
             Ok(()) => {
                 self.held = data.len();
                 if let Some(folder) = self.path.parent() {
-                    tidy(folder);
+                    tidy(folder, self.kept);
                 }
             }
             Err(error) => tracing::warn!("could not keep the pipelines in {}: {error}", self.path.display()),
@@ -71,26 +85,52 @@ impl PipelineCacheFile {
     }
 }
 
-/// Where the files are kept; `None` when caching is turned off.
-fn folder() -> Option<PathBuf> {
+/// Reads the file into `gpu`'s cache: how much it held, 0 when there was none.
+fn read(gpu: &mut Gpu, path: &Path) -> usize {
+    match std::fs::read(path) {
+        Ok(data) if gpu.load_pipeline_cache(&data) => {
+            // Marked used, so the folder keeps it over files not used lately.
+            let _ = std::fs::File::options().write(true).open(path).and_then(|f| f.set_modified(SystemTime::now()));
+            tracing::debug!("pipelines read from {}", path.display());
+            data.len()
+        }
+        _ => 0,
+    }
+}
+
+/// Waits until no other renderer is making the pipelines for `path`, and
+/// holds the lock beside it; `None` when there is no lock to be had.
+fn lock(path: &Path) -> Option<std::fs::File> {
+    let folder = path.parent()?;
+    std::fs::create_dir_all(folder).ok()?;
+    let file =
+        std::fs::File::options().create(true).truncate(false).write(true).open(path.with_extension("lock")).ok()?;
+    file.lock().ok()?;
+    Some(file)
+}
+
+/// Where the files are kept, and how many of them; `None` when caching is
+/// turned off.
+fn folder() -> Option<(PathBuf, usize)> {
     match std::env::var_os("VOXEAR_PIPELINE_CACHE") {
         Some(set) if set == "0" || set == "off" => return None,
-        Some(set) if !set.is_empty() => return Some(PathBuf::from(set)),
+        Some(set) if !set.is_empty() => return Some((PathBuf::from(set), KEPT)),
         _ => {}
     }
-    // A build from source keeps its own beside its build.
+    // A build from source keeps them in the `target` folder its build is in, shared by the build folders there.
     let build = Path::new(env!("OUT_DIR"));
     if build.is_dir() {
-        return Some(build.join("pipelines"));
+        let shared = build.ancestors().find(|folder| folder.file_name().is_some_and(|name| name == "target"));
+        return Some((shared.unwrap_or(build).join("pipelines"), KEPT_FROM_SOURCE));
     }
     if cfg!(windows) {
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
-        return Some(local.join("Voxear").join("Pipelines"));
+        return Some((local.join("Voxear").join("Pipelines"), KEPT));
     }
     let cache = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
-    Some(cache.join("voxear").join("pipelines"))
+    Some((cache.join("voxear").join("pipelines"), KEPT))
 }
 
 /// Writes `data` to `path` whole: to a file of its own first, then put in
@@ -104,9 +144,9 @@ fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&partial, path).inspect_err(|_| drop(std::fs::remove_file(&partial)))
 }
 
-/// Lets go of the files used longest ago past the [`KEPT`] most recent,
-/// any not used for [`UNUSED_FOR`], and any left half written a day ago.
-fn tidy(folder: &Path) {
+/// Lets go of the files used longest ago past the `kept` most recent, any
+/// not used for [`UNUSED_FOR`], and any left half written a day ago.
+fn tidy(folder: &Path, kept_files: usize) {
     let Ok(entries) = std::fs::read_dir(folder) else { return };
     let now = SystemTime::now();
     let mut kept: Vec<(SystemTime, PathBuf)> = Vec::new();
@@ -121,13 +161,15 @@ fn tidy(folder: &Path) {
                 true => drop(std::fs::remove_file(&path)),
                 false => kept.push((modified, path)),
             }
+        } else if path.extension().is_some_and(|extension| extension == "lock") && age > UNUSED_FOR {
+            let _ = std::fs::remove_file(&path);
         } else if name.contains(&format!(".{EXTENSION}.")) && age > Duration::from_secs(24 * 60 * 60) {
             // Part written by a program stopped while it wrote.
             let _ = std::fs::remove_file(&path);
         }
     }
     kept.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_, path) in kept.into_iter().skip(KEPT) {
+    for (_, path) in kept.into_iter().skip(kept_files) {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -158,7 +200,7 @@ mod tests {
         made(&format!("old.{EXTENSION}"), day * 40);
         made(&format!("a.{EXTENSION}.4242"), day * 2);
         made(&format!("b.{EXTENSION}.4243"), Duration::from_secs(60));
-        tidy(&folder);
+        tidy(&folder, KEPT);
         let mut left: Vec<String> =
             std::fs::read_dir(&folder).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         left.sort();

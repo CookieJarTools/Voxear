@@ -1134,10 +1134,14 @@ decompression, background loading, unloading)*.
     (`pipeline_cache`). It writes the file again when it holds more: once the pipelines are made, and when the
     renderer drops.
   - An installed engine keeps the files in the user's cache folder (`~/.cache/voxear/pipelines`,
-    `%LOCALAPPDATA%\Voxear\Pipelines`). A build from source keeps its own beside its build, so engine builds made
-    while working never push out an installed one's.
-  - A folder keeps the four files used last, and none unused for a month. `VOXEAR_PIPELINE_CACHE` turns it off
-    (`0`) or names the folder.
+    `%LOCALAPPDATA%\Voxear\Pipelines`). A build from source keeps them in `target/pipelines`, shared by every
+    build folder under the checkout's `target`, so engine builds made while working never push out an installed
+    one's, and a new build folder finds the pipelines another made with the same shaders.
+  - While no file holds a set of shaders yet, the first renderer to need it holds a lock beside the file while it
+    makes the pipelines; others, in the same program or another, wait and then read its file. Tests starting
+    together compile them once, not once each.
+  - A folder keeps the four files used last (twelve in `target/pipelines`), and none unused for a month.
+    `VOXEAR_PIPELINE_CACHE` turns it off (`0`) or names the folder.
   - The driver's own cache is shared with every program and build, which fill it and push out what it held. When
     it was all there was, every start of an engine whose pipelines had been pushed out compiled them all again,
     one at a time, for a minute and more.

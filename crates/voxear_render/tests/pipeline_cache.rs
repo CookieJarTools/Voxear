@@ -44,8 +44,13 @@ fn a_second_start_takes_the_pipelines_the_first_made() {
     unsafe { std::env::set_var("VOXEAR_PIPELINE_CACHE", &folder) };
     let Some((renderer, cold)) = started() else { return };
     drop(renderer);
-    let kept: Vec<_> =
-        std::fs::read_dir(&folder).map(|entries| entries.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    // The pipelines' files, not the lock a start holds while it makes them.
+    let kept: Vec<_> = std::fs::read_dir(&folder)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "pipelines"))
+        .collect();
     let (Some((renderer, warm)), sizes) = (started(), kept.iter().map(|path| path.metadata().map_or(0, |m| m.len())))
     else {
         return;

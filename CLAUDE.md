@@ -28,6 +28,9 @@ then, not for each change.
 - **Tests that open a GPU** (the renderer's, most of the editor's, some of the engine's) run with
   `-- --test-threads=8`, or `2` while an editor, a game or another test run is using the same GPU. More at once
   runs the GPU out of memory, which shows as tests failing at random. The helper adds the flag.
+- **Compiled GPU pipelines are kept in `target/pipelines`**, shared by every build folder. Leave it when you
+  delete your build folder: a new one finds them there, and the first GPU test after a shader change compiles
+  them once for all the others.
 - **Timing a pass on the GPU:** take the least of about sixty frames, not one frame.
 - **A picture is checked close up.** Crop and enlarge the part in question and compare it with the picture
   from before; a thumbnail hides what is wrong.

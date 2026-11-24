@@ -4318,6 +4318,7 @@ dependencies = [
  "bytemuck",
  "gpu-allocator",
  "libloading 0.9.0",
+ "png",
  "raw-window-handle",
  "tracing",
 ]

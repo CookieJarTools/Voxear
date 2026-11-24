@@ -16,3 +16,6 @@ anyhow.workspace = true
 tracing.workspace = true
 bytemuck.workspace = true
 libloading.workspace = true
+
+[dev-dependencies]
+png.workspace = true

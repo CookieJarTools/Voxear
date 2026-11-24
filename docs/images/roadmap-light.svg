@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="920" viewBox="0 0 880 920" role="img" aria-label="Voxear roadmap">
-<rect x="0.5" y="0.5" width="879" height="919" rx="12" fill="#ffffff" stroke="#d1d9e0"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="960" viewBox="0 0 880 960" role="img" aria-label="Voxear roadmap">
+<rect x="0.5" y="0.5" width="879" height="959" rx="12" fill="#ffffff" stroke="#d1d9e0"/>
 <text x="32" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#1f2328">Roadmap</text>
 <circle cx="760.2" cy="39" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
 <text x="774.2" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Planned</text>
@@ -9,7 +9,7 @@
 <text x="538.8000000000001" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Continuous</text>
 <circle cx="455.20000000000005" cy="39" r="8" fill="#1a7f37"/><path d="M451.70000000000005 39 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="469.20000000000005" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Done</text>
-<line x1="56" y1="112" x2="56" y2="872" stroke="#d1d9e0" stroke-width="2"/>
+<line x1="56" y1="112" x2="56" y2="912" stroke="#d1d9e0" stroke-width="2"/>
 <circle cx="56" cy="112" r="8" fill="#1a7f37"/><path d="M52.5 112 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="117" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M0</text>
 <text x="120" y="117" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Foundation</text>
@@ -94,7 +94,11 @@
 <text x="120" y="837" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Shader packs</text>
 <text x="380" y="837" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">A player&#x27;s own passes, lighting, tonemap, sky, shadows and menu</text>
 <circle cx="56" cy="872" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
-<text x="80" y="877" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M13</text>
-<text x="120" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Virtualised geometry</text>
-<text x="380" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Clusters of triangles, streamed and rasterised on the GPU</text>
+<text x="80" y="877" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e"></text>
+<text x="120" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Small voxels</text>
+<text x="380" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Worlds of voxels a few centimetres across, traced on the GPU over blocks</text>
+<circle cx="56" cy="912" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
+<text x="80" y="917" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M13</text>
+<text x="120" y="917" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Virtualised geometry</text>
+<text x="380" y="917" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Clusters of triangles, streamed and rasterised on the GPU</text>
 </svg>

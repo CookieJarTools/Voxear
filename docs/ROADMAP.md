@@ -4463,6 +4463,27 @@ Done:
   `ModelSurface`; Radiant lights grass made of boxes through as it does foliage.
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
+## Small voxels (planned: researched)
+
+Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
+horizon, editable a voxel at a time. Research, measurements and the plan:
+[research/small-voxels.md](research/small-voxels.md).
+
+- **Researched (2026-11-24).**
+  - **Meshing is out.** Meshing at 1/16 m would be 372M quads for a 256 m scene.
+  - **Tracing works.** A prototype traces sparse bricks of 1/16 m voxels in a compute pass
+    (`voxear_rhi` example `small_voxels`). A 256 m meadow and forest takes 3.0 ms at 1080p for the picture,
+    4.6 ms with traced shadows and occlusion, and 343 MB, and is made in 3.8 s on 24 cores.
+- **The plan keeps Block Worlds.** The one-metre grid stays the world. Each kind of block is drawn as a 16³ pattern
+  of small voxels, and only what is unique is kept as bricks. Stages:
+  1. a voxel pass and Voxel Volumes;
+  2. blocks drawn as patterns;
+  3. plants and trees of small voxels;
+  4. editing a voxel at a time, saved and sent over the network;
+  5. distance in rings, then the baked far view;
+  6. lighting at voxel scale;
+  7. physics, navigation and debris at voxel scale.
+
 ## M13 — Virtualised geometry (Nanite-style)
 
 M1 and M5 already lay the groundwork: meshlets, the visibility buffer and two-phase Hi-Z culling. This milestone

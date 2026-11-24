@@ -243,6 +243,7 @@ impl Editor {
                 let audio = &mut self.game.audio;
                 (audio.headphones, audio.reverb) = (file.audio.headphones, file.audio.reverb);
                 audio.reverb_mode = file.audio.reverb_mode;
+                (audio.speed_of_sound, audio.voices) = (file.audio.speed_of_sound, file.audio.voices);
                 audio.tracer.project = file.audio.sound_tracing();
             }
             "input" => self.game.load_input_actions(),
@@ -429,6 +430,49 @@ impl Editor {
             return false;
         }
         true
+    }
+
+    /// Opens a setting found by what it does where it is, by the key the
+    /// search finds it by (see `setting_search::Place::key`): Project
+    /// Settings or Preferences at it, the Lighting panel on its tab, an
+    /// Obj's component with the Obj selected, or the import settings of
+    /// the asset the Inspector shows; scrolled to and marked for a moment.
+    /// False for a key that names none.
+    pub fn show_found(&mut self, key: &str) -> bool {
+        if self.show_setting(key) {
+            return true;
+        }
+        if let Some(path) = key.strip_prefix("lighting:") {
+            let described = crate::lighting_panel::described().into_iter().find(|(at, ..)| at == path);
+            let Some((_, title, group, ..)) = described else { return false };
+            self.show_panel("lighting");
+            self.lighting_panel.reveal(&mut self.ui, group, title);
+            return true;
+        }
+        if let Some(found) = key.strip_prefix("component:") {
+            let mut parts = found.splitn(3, ':');
+            let (Some(bits), Some(component), Some(field)) = (parts.next(), parts.next(), parts.next()) else {
+                return false;
+            };
+            let Some(entity) = bits.parse().ok().map(voxear_ecs::Entity::from_bits) else { return false };
+            if !self.game.engine.world.is_alive(entity) {
+                return false;
+            }
+            self.select(Some(entity));
+            self.show_panel("inspector");
+            self.inspector.reveal(Some(component.to_string()), field.to_string());
+            return true;
+        }
+        if let Some(found) = key.strip_prefix("import:") {
+            let Some((kind, label)) = found.split_once(':') else { return false };
+            self.show_panel("inspector");
+            self.inspector.reveal(None, label.to_string());
+            if self.inspector.shown_asset().is_none() {
+                self.notify(&format!("Select a {} to see its {label}", kind.to_lowercase()));
+            }
+            return true;
+        }
+        false
     }
 
     /// Opens Project Settings on a category, as Add Layer… opens Tags and

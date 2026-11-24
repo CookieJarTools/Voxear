@@ -157,6 +157,26 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ obj, name, parent, active, persistent, position, rotation, scale, components: [{ component, title, enabled, fields: [{ field, label, type, value, … }] }] }",
     },
     CallInfo {
+        name: "inspector.mode",
+        about: "An Inspector's mode, as its ⋯ menu switches it: Normal, or Debug, which shows what is really there: every component as the scene file writes it, the engine's own state, every field of each C# behaviour, private ones too, and while playing, the live state behind the components.",
+        args: &[
+            maybe("inspector", ArgKind::Whole, "Which Inspector: 1 for the first, the default, 2 for the next…"),
+            maybe("mode", ArgKind::Text, "Normal or Debug; left out, only says which it is in."),
+        ],
+        changes: false,
+        returns: "{ inspector, mode }",
+    },
+    CallInfo {
+        name: "inspector.debug",
+        about: "What the Inspector's Debug mode shows of an Obj or an asset, row by row: each row's section, label, value, its path in the scene file where it has one, and a note (private, not saved, live…). An asset's are its GUID, kind, .meta, what it depends on and what uses it.",
+        args: &[
+            maybe("obj", ArgKind::Obj, "The Obj; left out, the one selected."),
+            maybe("asset", ArgKind::Asset, "An asset, in place of an Obj."),
+        ],
+        changes: false,
+        returns: "{ rows: [{ section, label, value, path, note }] }",
+    },
+    CallInfo {
         name: "components",
         about: "Every component Add Component can put on an Obj: the built-in ones and the scripts' behaviours and components, with the scripts' fields.",
         args: &[],
@@ -1349,8 +1369,18 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ value }",
     },
     CallInfo {
+        name: "settings.find",
+        about: "Finds a setting by what it does, anywhere the editor has one: Project Settings, Preferences, the Lighting panel, the components of the open level's Objs and import settings. Rough words match each setting's name, where it is and its tooltip, and words that mean the same (shimmer finds anti-aliasing), best first, with the words matched, the line of its tooltip that matched, and what turns on one hidden for now.",
+        args: &[
+            arg("query", ArgKind::Text, "What the setting does, in your own words."),
+            maybe("most", ArgKind::Whole, "How many to give back at most; 20 by default."),
+        ],
+        changes: false,
+        returns: "{ found: [{ key, label, where, line, matched, score, hidden }] }",
+    },
+    CallInfo {
         name: "settings.show",
-        about: "Opens Project Settings or Preferences at a setting, by its key from `project_settings.get` or `settings.get`, scrolled to it and marked.",
+        about: "Opens a setting where it is, scrolled to it and marked: Project Settings or Preferences by its key from `project_settings.get` or `settings.get`, or anything `settings.find` found by its key (the Lighting panel's, an Obj's component's, import settings').",
         args: &[arg("key", ArgKind::Text, "")],
         changes: false,
         returns: "{}",
@@ -1640,6 +1670,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::ForceField
             | Part::Smoke
             | Part::Mist
+            | Part::VoxelVolume
             | Part::UiPanel
             | Part::ScreenUi
             | Part::LocalizedText

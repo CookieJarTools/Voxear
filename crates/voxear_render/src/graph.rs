@@ -61,6 +61,9 @@ pub enum BufferAccess {
     TaskWrite,
     /// Read on the CPU after the frame's fence.
     HostRead,
+    /// Written by fragment shaders, as the voxels' depth pass keeps what
+    /// each pixel met.
+    FragmentWrite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +129,7 @@ impl BufferAccess {
             Self::MeshShaderRead => (S::TASK_SHADER_EXT | S::MESH_SHADER_EXT, A::SHADER_STORAGE_READ),
             Self::TaskWrite => (S::TASK_SHADER_EXT, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
             Self::HostRead => (S::HOST, A::HOST_READ),
+            Self::FragmentWrite => (S::FRAGMENT_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE),
         }
     }
 }

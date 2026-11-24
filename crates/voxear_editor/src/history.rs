@@ -59,6 +59,7 @@ pub struct ObjState {
     pub force_field: Option<ForceField>,
     pub smoke: Option<Box<voxear_render::Smoke>>,
     pub mist: Option<Box<voxear_render::Mist>>,
+    pub voxel_volume: Option<Box<(voxear_render::VoxelVolume, voxear_engine::voxel_volumes::VoxelVolumeSource)>>,
     pub ui_panel: Option<Box<voxear_render::UiPanel>>,
     pub screen_ui: Option<voxear_engine::screen_ui::ScreenUi>,
     pub localized_text: Option<Box<voxear_engine::localized_text::LocalizedText>>,
@@ -197,6 +198,11 @@ impl ObjState {
             force_field: world.get::<ForceField>(entity).copied(),
             smoke: world.get::<voxear_render::Smoke>(entity).copied().map(Box::new),
             mist: world.get::<voxear_render::Mist>(entity).copied().map(Box::new),
+            voxel_volume: world
+                .get::<voxear_render::VoxelVolume>(entity)
+                .cloned()
+                .zip(world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).cloned())
+                .map(Box::new),
             ui_panel: world.get::<voxear_render::UiPanel>(entity).copied().map(Box::new),
             screen_ui: world.get::<voxear_engine::screen_ui::ScreenUi>(entity).copied(),
             localized_text: world.get::<voxear_engine::localized_text::LocalizedText>(entity).cloned().map(Box::new),
@@ -319,6 +325,8 @@ impl ObjState {
         put(world, entity, self.force_field);
         put(world, entity, self.smoke.as_deref().copied());
         put(world, entity, self.mist.as_deref().copied());
+        put(world, entity, self.voxel_volume.as_deref().map(|parts| parts.0.clone()));
+        put(world, entity, self.voxel_volume.as_deref().map(|parts| parts.1.clone()));
         put(world, entity, self.ui_panel.as_deref().copied());
         put(world, entity, self.screen_ui);
         put(world, entity, self.localized_text.as_deref().cloned());

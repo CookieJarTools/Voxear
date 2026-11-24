@@ -1,9 +1,10 @@
 //! Project Settings as scripts reach them (`ProjectSettings` in
 //! Voxear.Core): each section the game started with, read as JSON laid out
 //! as `voxear.toml` writes it, through the `Post` call. A game's options
-//! change the portals', the water trails' and navigation's while it runs,
-//! from the next frame; the time steps, the floating origin, the quality
-//! budgets and the network are fixed once the game has started, and read
+//! change the portals', the water trails', navigation's, the input's press
+//! point and deadzone, and the time scale while it runs, from the next
+//! frame; the time steps, the floating origin, the quality budgets, the
+//! graphics and the network are fixed once the game has started, and read
 //! only.
 
 use anyhow::{Context, Result, bail};
@@ -11,8 +12,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use voxear_ecs::World;
 
 use crate::{
-    PortalSettings, ProjectFile, QualitySettings, TimeSettings, WaterTrailSettings, navigation::NavigationSettings,
-    net::NetworkSettings, origin::OriginSettings,
+    GraphicsSettings, InputSettings, PortalSettings, ProjectFile, QualitySettings, TimeSettings, WaterTrailSettings,
+    navigation::NavigationSettings, net::NetworkSettings, origin::OriginSettings,
 };
 
 /// The project's settings the game runs by, as a world resource, with what
@@ -26,6 +27,8 @@ pub struct ProjectInEffect {
     pub water_trails: WaterTrailSettings,
     pub network: NetworkSettings,
     pub navigation: NavigationSettings,
+    pub graphics: GraphicsSettings,
+    pub input: InputSettings,
 }
 
 impl ProjectInEffect {
@@ -38,6 +41,8 @@ impl ProjectInEffect {
             water_trails: file.water_trails,
             network: file.network.clone(),
             navigation: file.navigation.clone(),
+            graphics: file.graphics,
+            input: file.input.clone(),
         }
     }
 }
@@ -53,6 +58,8 @@ pub fn section(world: &World, name: &str) -> Result<String> {
         "water_trails" => serde_json::to_value(settings.water_trails)?,
         "network" => serde_json::to_value(&settings.network)?,
         "navigation" => serde_json::to_value(&settings.navigation)?,
+        "graphics" => serde_json::to_value(settings.graphics)?,
+        "input" => serde_json::to_value(&settings.input)?,
         other => bail!("no section `{other}` of Project Settings"),
     };
     Ok(value.to_string())
@@ -79,7 +86,23 @@ pub fn change(world: &mut World, json: &str) -> Result<()> {
             settings.navigation = laid_over(&settings.navigation, fields)?;
             settings.navigation.put(world);
         }
-        "time" | "floating_origin" | "quality" | "network" => {
+        "input" => {
+            let changed: InputSettings = laid_over(&settings.input, fields)?;
+            if changed.actions != settings.input.actions {
+                bail!("the input actions are fixed once the game has started")
+            }
+            settings.input = changed;
+            settings.input.put();
+        }
+        "time" => {
+            let changed: TimeSettings = laid_over(&settings.time, fields)?;
+            if (TimeSettings { time_scale: settings.time.time_scale, ..changed }) != settings.time {
+                bail!("Project Settings' time steps are fixed once the game has started; only the time scale changes")
+            }
+            settings.time.time_scale = crate::TimeScale::new(changed.time_scale).0;
+            world.insert_resource(crate::TimeScale(settings.time.time_scale));
+        }
+        "floating_origin" | "quality" | "network" | "graphics" => {
             bail!("Project Settings' {name} are fixed once the game has started")
         }
         other => bail!("no section `{other}` of Project Settings"),
@@ -124,5 +147,16 @@ mod tests {
         assert!(change(&mut world, r#"{"section":"time","fields":{"fixed_step":0.01}}"#).is_err(), "fixed");
         assert!(change(&mut world, r#"{"section":"portals","fields":{"glow":1}}"#).is_err(), "no such setting");
         assert_eq!(world.resource::<ProjectInEffect>().unwrap().portals.view_distance, 40.0, "kept");
+
+        // The time scale and the input's tuning change while the game runs; the graphics do not.
+        change(&mut world, r#"{"section":"time","fields":{"time_scale":0.5}}"#).unwrap();
+        assert_eq!(world.resource::<crate::TimeScale>().copied(), Some(crate::TimeScale(0.5)), "the engine takes it up");
+        change(&mut world, r#"{"section":"input","fields":{"press_point":0.3}}"#).unwrap();
+        assert_eq!(voxear_input::input_defaults().0, 0.3, "where every action reads it");
+        voxear_input::set_input_defaults(voxear_input::PRESS_POINT, voxear_input::STICK_DEADZONE);
+        assert!(change(&mut world, r#"{"section":"input","fields":{"actions":"Other.inputactions"}}"#).is_err());
+        assert!(change(&mut world, r#"{"section":"graphics","fields":{"vsync":false}}"#).is_err(), "fixed");
+        let graphics: serde_json::Value = serde_json::from_str(&section(&world, "graphics").unwrap()).unwrap();
+        assert_eq!(graphics["hdr"], "off", "{graphics}");
     }
 }

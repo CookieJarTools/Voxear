@@ -8210,7 +8210,10 @@ fn project_settings_lists_every_category_with_tooltips_and_finds_settings_by_the
         setting_categories(&editor.ui, "project-settings").into_iter().map(|label| editor.ui.text(label)).collect();
     let expected: Vec<&str> = voxear_editor::project_settings::CATEGORIES.iter().map(|c| c.name).collect();
     assert_eq!(names, expected);
-    assert!(names.starts_with(&["Audio".into(), "Content".into(), "Graphics".into()]), "in order, as a list of names");
+    assert!(
+        names.starts_with(&["Audio".into(), "Content".into(), "Foliage".into(), "Graphics".into()]),
+        "in order, as a list of names"
+    );
     // Every row of every category says what it does.
     for name in &expected {
         pick_category(&mut editor, &mut renderer, "project-settings", name);

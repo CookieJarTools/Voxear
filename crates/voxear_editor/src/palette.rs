@@ -36,6 +36,8 @@ const ROW: f32 = 28.0;
 const TALLEST: f32 = 336.0;
 /// How much more a recent result counts when typed for, against one match.
 const RECENT_BONUS: i32 = 30 * 64;
+/// How a setting found by what it does weighs against a title's score.
+const FOUND_WEIGHT: i32 = 100;
 /// The docked panels, by id, as the palette offers to show them.
 const PANELS: [(&str, &str); 18] = [
     ("Hierarchy", "hierarchy"),
@@ -98,6 +100,9 @@ pub enum PaletteAction {
     /// A setting, by its key: a toggle flips, a choice moves to the next,
     /// and a number opens the Settings panel to type it.
     Setting(&'static str),
+    /// A setting found by what it does, anywhere the editor has one, by
+    /// the key `setting_search` finds it again by: opened where it is.
+    FindSetting(String),
     /// A [`PaletteCommand`], by its id.
     Added(String),
     /// A scripts' `[Command]` method: its type and its name.
@@ -133,6 +138,9 @@ pub struct Sources<'a> {
     /// The VoxDocs pages, as titles and references.
     pub docs: Vec<(String, String)>,
     pub added: Vec<Added>,
+    /// The project's scripts, whose fields' tooltips the search over every
+    /// setting reads; none leaves the scripts' fields out.
+    pub types: Option<&'a voxear_engine::script_types::ScriptTypes>,
 }
 
 /// One result: what it says, what kind of thing it is or its shortcut, its
@@ -146,6 +154,8 @@ struct Entry {
     action: PaletteAction,
     key: String,
     command: bool,
+    /// The words of its title a search matched, to mark.
+    marks: Vec<String>,
 }
 
 pub struct Palette {
@@ -156,6 +166,8 @@ pub struct Palette {
     /// Everything there is and the keys run recently, gathered when the
     /// palette opens, and what the letters typed leave of it, best first.
     every: Vec<Entry>,
+    /// Every setting the editor has, for the search by what a setting does.
+    settings: Vec<crate::setting_search::Entry>,
     recent: Vec<String>,
     shown: Rc<RefCell<Vec<Entry>>>,
     current: usize,
@@ -170,7 +182,7 @@ impl Palette {
             make: |ui: &mut Ui, row: NodeId| {
                 let icon = ui.icon(row, "search");
                 ui.add_class(icon, "palette-icon");
-                let title = ui.add_label(row, "");
+                let title = ui.rich_label(row, &voxear_ui::RichText::new());
                 ui.add_class(title, "palette-title");
                 let detail = ui.add_label(row, "");
                 ui.add_class(detail, "palette-detail");
@@ -180,13 +192,14 @@ impl Palette {
                 let Some(entry) = shown.get(index) else { return };
                 let parts = ui.children(row);
                 ui.set_icon(parts[0], entry.icon);
-                ui.set_text(parts[1], &entry.title);
+                ui.set_rich_text(parts[1], &crate::setting_search::marked_text(&entry.title, &entry.marks));
                 ui.set_text(parts[2], &entry.detail);
             },
         };
         ui.bind_list(list, 0, items);
         ui.set_visible(panel, false);
-        Self { field, panel, list, empty, every: Vec::new(), recent: Vec::new(), shown, current: 0, open: false }
+        let every = Vec::new();
+        Self { field, panel, list, empty, every, settings: Vec::new(), recent: Vec::new(), shown, current: 0, open: false }
     }
 
     pub fn is_open(&self) -> bool {
@@ -206,6 +219,7 @@ impl Palette {
             let sources = sources();
             self.recent = sources.recent.to_vec();
             self.every = gather(&sources);
+            self.settings = sources.types.map_or_else(Vec::new, |types| crate::setting_search::everything(sources.game, types));
             self.open = true;
             self.filter(ui);
             ui.set_visible(self.panel, true);
@@ -292,8 +306,36 @@ impl Palette {
                 Some((score(query, &entry.title)? + bonus, i))
             })
             .collect();
+        // Settings found by what they do, wherever they are, beside those found by their names: one
+        // found by its name too keeps its place, its words marked; any other is listed after `every`.
+        let mut shown: Vec<Entry> = self.every.clone();
+        for hit in crate::setting_search::search(&self.settings, query).into_iter().take(MOST) {
+            let key = hit.entry.place.key();
+            let as_named = [format!("setting:{key}"), format!("project-setting:{key}")];
+            let score = hit.score * FOUND_WEIGHT;
+            if let Some(at) = ranked.iter().position(|&(_, i)| as_named.contains(&shown[i].key)) {
+                ranked[at].0 = ranked[at].0.max(score);
+                shown[ranked[at].1].marks = hit.words;
+                continue;
+            }
+            let detail = match &hit.entry.hidden {
+                Some(hidden) => format!("{} · {}", hit.entry.group, hidden),
+                None if hit.line.is_empty() => hit.entry.group.clone(),
+                None => format!("{} · {}", hit.line, hit.entry.group),
+            };
+            ranked.push((score, shown.len()));
+            shown.push(Entry {
+                title: hit.entry.label.clone(),
+                detail,
+                icon: "settings",
+                action: PaletteAction::FindSetting(key.clone()),
+                key: format!("find:{key}"),
+                command: false,
+                marks: hit.words,
+            });
+        }
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        ranked.into_iter().take(MOST).map(|(_, i)| self.every[i].clone()).collect()
+        ranked.into_iter().take(MOST).map(|(_, i)| shown[i].clone()).collect()
     }
 
     /// How recently a result was run: 0 for the last, or `None`.
@@ -358,6 +400,7 @@ fn gather(sources: &Sources) -> Vec<Entry> {
         action: added.action.clone(),
         key: added.key.clone(),
         command: true,
+        marks: Vec::new(),
     }));
     every.extend(PREFERENCES.iter().filter(|info| info.settable()).map(|info| Entry {
         title: info.label.to_string(),
@@ -366,6 +409,7 @@ fn gather(sources: &Sources) -> Vec<Entry> {
         action: PaletteAction::Setting(info.key),
         key: format!("setting:{}", info.key),
         command: false,
+        marks: Vec::new(),
     }));
     every.extend(crate::project_settings::settings().iter().filter(|info| info.settable()).map(|info| Entry {
         title: info.label.to_string(),
@@ -374,6 +418,7 @@ fn gather(sources: &Sources) -> Vec<Entry> {
         action: PaletteAction::Setting(info.key),
         key: format!("project-setting:{}", info.key),
         command: false,
+        marks: Vec::new(),
     }));
     every.extend(objs(sources.game));
     every.extend(assets(sources.game));
@@ -384,6 +429,7 @@ fn gather(sources: &Sources) -> Vec<Entry> {
         action: PaletteAction::OpenDoc(reference.clone()),
         key: format!("doc:{reference}"),
         command: false,
+        marks: Vec::new(),
     }));
     every
 }
@@ -419,6 +465,7 @@ fn objs(game: &Game) -> Vec<Entry> {
                 action: PaletteAction::Select(entity),
                 key,
                 command: false,
+                marks: Vec::new(),
             }
         })
         .collect();
@@ -477,7 +524,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 _ => (PaletteAction::Reveal(path.clone()), format!("asset:{path}")),
             };
             let title = path.rsplit('/').next().unwrap_or(&path).to_string();
-            Entry { title, detail: detail.into(), icon, action, key, command: false }
+            Entry { title, detail: detail.into(), icon, action, key, command: false, marks: Vec::new() }
         })
         .collect()
 }
@@ -491,6 +538,7 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         action,
         key,
         command: true,
+        marks: Vec::new(),
     };
     let mut commands = vec![
         command(if playing { "Stop" } else { "Play" }, "", "play", PaletteAction::Play, "play".into()),

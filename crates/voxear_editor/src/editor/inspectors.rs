@@ -9,12 +9,14 @@
 //! following the selection, with a layout that names it (see `windows`).
 
 use voxear_ecs::Entity;
+use voxear_engine::EditBehaviours;
 use voxear_render::{Camera, LodCamera, Renderer, ViewOptions};
-use voxear_scene::Transform;
+use voxear_scene::{BehaviourHandle, BehaviourSpec, Behaviours, Transform};
 use voxear_ui::{NodeId, Style};
 
 use super::Editor;
 use crate::{
+    debug_inspector::{self, DebugRow, LiveState, ScriptFields},
     history::{Edit, ObjState},
     inspector::{Field, Inspector},
     lod_inspector::{self, LodEdge, LodEye},
@@ -53,11 +55,15 @@ impl Editor {
         self.ui.add_class(actions, "panel-actions");
         let lock = self.ui.icon_button(actions, "lock");
         self.ui.add_class(lock, "inspector-lock");
+        let mode = self.ui.icon_button(actions, "more");
+        self.ui.add_class(mode, "inspector-mode");
+        self.ui.set_tooltip(mode, "Normal or Debug", None);
         let root = self.ui.panel(content, Style::column().scroll());
         self.ui.add_class(root, "fill");
         self.ui.add_class(root, "inspector");
         let mut inspector = Inspector::with_owner(root, number);
         inspector.set_lock_button(&mut self.ui, lock);
+        inspector.set_mode_button(mode);
         inspector.set_types(self.inspector.types().clone());
         inspector.set_prefab_mode(self.prefab.is_some());
         inspector.set_dark(self.theme.is_dark());
@@ -74,6 +80,56 @@ impl Editor {
         self.extra_inspectors.remove(index);
         self.ui.remove_dock_panel(self.nodes.dock, panel);
         true
+    }
+
+    /// Switches an Inspector, by its place, the first 0, into Debug mode or
+    /// back to Normal, and shows what it shows again that way, as its `⋯`
+    /// menu does.
+    pub fn set_inspector_debug(&mut self, index: usize, debug: bool) {
+        let playing = self.is_playing();
+        let selected = self.selected();
+        let inspector = match index {
+            0 => &mut self.inspector,
+            _ => match self.extra_inspectors.get_mut(index - 1) {
+                Some(extra) => &mut extra.inspector,
+                None => return,
+            },
+        };
+        if inspector.is_debug() == debug {
+            return;
+        }
+        let asset = inspector.shown_asset().cloned();
+        let debug_asset = inspector.debug_asset().and_then(|path| self.project.item(path));
+        let shown = inspector.shown().or(selected);
+        inspector.set_debug(debug);
+        match asset.or(debug_asset) {
+            Some(item) => inspector.show_asset(&mut self.ui, &self.game, &item),
+            None => inspector.show(&mut self.ui, &self.game, shown, playing),
+        }
+    }
+
+    /// The rows the first Inspector's Debug mode shows now.
+    pub fn debug_rows_shown(&mut self) -> Vec<DebugRow> {
+        self.inspector.debug_view().map_or_else(Vec::new, |view| view.rows().cloned().collect())
+    }
+
+    /// The row a search showed last in the first Inspector, and in the
+    /// Lighting panel, while each is marked.
+    pub fn found_rows(&self) -> (Option<NodeId>, Option<NodeId>) {
+        (self.inspector.found_row(), self.lighting_panel.found_row())
+    }
+
+    /// The first Inspector's `⋯` button, which switches it between Normal and Debug.
+    pub fn inspector_mode_button(&self) -> Option<NodeId> {
+        self.ui.find(self.ui.root(), "inspector-mode")
+    }
+
+    /// Whether an Inspector, by its place, the first 0, is in Debug mode.
+    pub fn inspector_is_debug(&self, index: usize) -> bool {
+        match index {
+            0 => self.inspector.is_debug(),
+            _ => self.extra_inspectors.get(index - 1).is_some_and(|extra| extra.inspector.is_debug()),
+        }
     }
 
     /// How many Inspectors there are, the first included.
@@ -120,6 +176,18 @@ impl Editor {
     /// what was typed or picked, runs the behaviour's code it asks for, and
     /// answers its menus.
     fn inspector_frame(&mut self, renderer: &mut Renderer, playing: bool) {
+        // Normal or Debug, from its menu: what it shows, shown again the other way.
+        let asset = self.inspector.shown_asset().cloned();
+        let debug_asset = self.inspector.debug_asset().and_then(|path| self.project.item(path));
+        if self.inspector.update_mode(&mut self.ui) {
+            match asset.or(debug_asset) {
+                Some(item) => self.inspector.show_asset(&mut self.ui, &self.game, &item),
+                None => {
+                    let shown = self.inspector.shown().or(self.selected());
+                    self.inspector.show(&mut self.ui, &self.game, shown, playing);
+                }
+            }
+        }
         let unlocked = self.inspector.update_lock(&mut self.ui) && !self.inspector.is_locked();
         let following = unlocked || !self.inspector.is_locked();
         // A model's part picked in the Hierarchy shows in place of its Obj.
@@ -132,6 +200,9 @@ impl Editor {
                 Some((owner, node)) => self.inspector.show_part(&mut self.ui, &self.game, owner, node, playing),
                 None => self.inspector.show(&mut self.ui, &self.game, selected, playing),
             }
+        }
+        if self.inspector.is_debug() {
+            return self.debug_inspector_frame(renderer, playing);
         }
         if let Some(action) = self.inspector.update_part(&mut self.ui) {
             self.part_action(action, renderer);
@@ -165,6 +236,74 @@ impl Editor {
         if let Some(action) = self.inspector.menus(&mut self.ui, &self.game, playing, can_keep, &kept) {
             self.row_action(action, renderer);
         }
+        self.inspector.update_reveal(&mut self.ui);
+    }
+
+    /// An Inspector's frame in Debug mode: its rows read again now and then,
+    /// four times a second while playing, and a row's value or path copied
+    /// from its menu.
+    fn debug_inspector_frame(&mut self, renderer: &Renderer, playing: bool) {
+        if let Some(copied) = self.inspector.debug_view().and_then(|view| view.update(&mut self.ui)) {
+            self.ui.copy_text(&copied);
+            self.notify(&format!("Copied {copied}"));
+        }
+        let asset = self.inspector.debug_asset().map(str::to_string);
+        // An asset's rows look through the project for what uses it, so they are read once.
+        let every = if asset.is_some() { f32::INFINITY } else if playing { 0.25 } else { 1.0 };
+        let Some(view) = self.inspector.debug_view() else { return };
+        if !view.due(every) && view.read_once() {
+            return;
+        }
+        let rows = match (asset, self.inspector.shown()) {
+            (Some(path), _) => debug_inspector::asset_rows(&self.game, &path),
+            (None, Some(entity)) => self.debug_rows(entity, renderer, playing),
+            (None, None) => return,
+        };
+        if let Some(view) = self.inspector.debug_view() {
+            view.show(&mut self.ui, rows);
+        }
+    }
+
+    /// The Debug mode's rows of an Obj: its behaviours' every field, from
+    /// the running instances while playing and from copies in edit mode, and
+    /// while playing, what the game knows of it beyond its components.
+    pub(crate) fn debug_rows(&mut self, entity: Entity, renderer: &Renderer, playing: bool) -> Vec<DebugRow> {
+        let world = &self.game.engine.world;
+        let specs: Vec<(BehaviourSpec, Option<BehaviourHandle>)> = match world.get::<Behaviours>(entity) {
+            Some(running) if playing => running.0.iter().map(|b| (b.spec.clone(), Some(b.handle))).collect(),
+            _ => world.get::<EditBehaviours>(entity).map_or_else(Vec::new, |kept| {
+                kept.0.iter().map(|spec| (spec.clone(), None)).collect()
+            }),
+        };
+        let mut scripts = Vec::new();
+        for (spec, handle) in specs {
+            let read = match handle {
+                Some(handle) => Some(self.game.engine.debug_fields(entity, &spec, Some(handle))),
+                None => self.with_edit_scripts(|scripts, game| {
+                    scripts.debug_fields(&mut game.engine.world, entity, &spec, None)
+                }),
+            };
+            let (running, fields) = match read {
+                Some(Ok((running, fields))) => (running, Ok(fields)),
+                Some(Err(error)) => (false, Err(format!("{error:#}"))),
+                None => (false, Err("the scripts have not started yet".to_string())),
+            };
+            scripts.push(ScriptFields { type_name: spec.type_name.clone(), running, fields });
+        }
+        let live = playing.then(|| {
+            let physics = self.game.engine.physics();
+            let body = physics.and_then(|physics| {
+                let body = physics.body(entity)?;
+                let (linear, angular) = physics.world().velocity(body);
+                Some((linear, angular, !physics.world().is_active(body)))
+            });
+            let eye = self.lod_eye();
+            let lod = eye.and_then(|eye| lod_inspector::drawn_lod(&self.game.engine.world, entity, renderer, eye));
+            let played = self.game.engine.world.get::<voxear_render::PlayedClip>(entity);
+            let clip = played.map(|played| (played.time, played.looping));
+            LiveState { body, voice: self.game.audio.source_voice(entity), lod, clip }
+        });
+        debug_inspector::obj_rows(&mut self.game, entity, &scripts, live)
     }
 
     /// Moves the Scene view in use to where the Obj the Inspector shows is

@@ -94,3 +94,20 @@ The **Layout** button at the top left, which shows the name of the layout in use
 | Ctrl+Shift+F | Move the selection to the Scene view's camera |
 
 Next: [[Playing Your Game]].
+
+## The Inspector's Debug mode
+
+The **⋯** button beside the Inspector's padlock switches it between **Normal** and **Debug**. Each Inspector keeps its own, so one can show an Obj as usual while another shows what is really there. In Debug mode the Inspector shows, read-only:
+
+- the Obj as the engine keeps it: its entity, scene path, parent, layer, world position, rotation and scale, its prefab and the place in it, and each script's handle while the game plays;
+- every component as the scene file writes it, a reference with the asset it holds beside it;
+- every field of each script, private ones and those marked `[NonSerialized]` or `[HideInInspector]` too, each with whether scenes save it; while playing, as the running script has them;
+- while playing, what is behind the components: a body's velocity and whether it sleeps, an Audio Source's voice and volume, and the LOD drawn;
+- for a file selected in the Project panel: its GUID, kind and size, its `.meta`, what it uses and what uses it.
+
+Right-click a row to copy its value, or its path in the scene file.
+
+## Finding a setting
+
+Type what a setting does into the command bar (**Ctrl+K**), in your own words: *jaggies*, *stick drift*, *echo in caves*. The palette looks through every setting the editor has, in [[Project Settings]], [[Preferences]], the Lighting page, the components of the open level's Objs and import settings, by its name, where it is and its tooltip, and by words that mean the same, so *jaggies* finds Anti-aliasing. The best match is first, the words it matched are marked, and the line of its tooltip that matched shows beside it. Pick one to open it where it is: its window or panel opens, the Obj it is on is selected, and its row is scrolled to and marked for a moment. A setting that shows only while another is on, or needs a module the project is without, is found all the same, saying what turns it on.
+

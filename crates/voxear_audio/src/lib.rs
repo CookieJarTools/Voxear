@@ -388,6 +388,17 @@ impl Audio {
         self.headphones
     }
 
+    /// How fast sound goes, in metres a second, which the Doppler effect
+    /// works from (343 in air), and the most voices that play at once, at
+    /// most [`MAX_VOICES`]: a new one past it takes the place of the oldest
+    /// effect that does not loop.
+    pub fn set_air(&mut self, speed_of_sound: f32, most_voices: usize) {
+        let speed_of_sound =
+            if speed_of_sound.is_finite() { speed_of_sound.clamp(1.0, 100_000.0) } else { SPEED_OF_SOUND };
+        let most_voices = most_voices.clamp(1, MAX_VOICES);
+        self.send(Command::Air { speed_of_sound, most_voices });
+    }
+
     /// How long, in seconds, the bus volumes, the master volume and the
     /// filters set after this take to slide to their new settings, as a
     /// snapshot's transition: 0, the default, changes them at once, as a

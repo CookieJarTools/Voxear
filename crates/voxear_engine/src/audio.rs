@@ -531,6 +531,10 @@ pub struct GameAudio {
     /// times instead.
     pub reverb_mode: ReverbMode,
     mode_now: ReverbMode,
+    /// How fast sound goes, and the most voices at once, from the
+    /// project's `[audio]` settings, each time the game starts.
+    pub speed_of_sound: f32,
+    pub voices: u32,
     fell_back: bool,
     /// How long the listener's room rings, as Steam Audio last said.
     room: ReverbTimes,
@@ -599,6 +603,8 @@ impl GameAudio {
             reverb_on: false,
             reverb_mode: ReverbMode::Parametric,
             mode_now: ReverbMode::Parametric,
+            speed_of_sound: voxear_audio::SPEED_OF_SOUND,
+            voices: voxear_audio::MAX_VOICES as u32,
             fell_back: false,
             room: ReverbTimes::NONE,
             walls: Walls::default(),
@@ -615,6 +621,7 @@ impl GameAudio {
     /// project's `[audio]` settings start them, whatever the last play left.
     pub fn start_game(&mut self) {
         self.audio.set_headphones(self.headphones);
+        self.audio.set_air(self.speed_of_sound, self.voices as usize);
         self.set_reverb_mode(self.reverb_mode);
         self.set_reverb(self.reverb);
     }
@@ -959,6 +966,20 @@ impl GameAudio {
         self.shots.retain(|voice, _| self.audio.exists(*voice));
         self.shots.insert(voice, sound_id);
         Ok(voice)
+    }
+
+    /// What an Obj's Audio Source is doing while the game runs, for the
+    /// Inspector's Debug mode: playing, paused or stopped, the volume its
+    /// voice was last given, and where its Obj was last frame.
+    pub fn source_voice(&self, entity: Entity) -> Option<(&'static str, f32, Option<Vec3>)> {
+        let playback = self.sources.get(&entity)?;
+        let state = match playback.state {
+            State::Playing if playback.held => "Paused",
+            State::Playing => "Playing",
+            State::Paused => "Paused",
+            State::Stopped => "Stopped",
+        };
+        Some((state, playback.applied.volume, playback.was))
     }
 
     /// Every voice the mixer is playing, named, while the Audio panel

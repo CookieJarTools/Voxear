@@ -226,6 +226,12 @@ pub struct Pipelines {
     pub block_forward: vk::Pipeline,
     pub block_depth: vk::Pipeline,
     pub block_forward_on_depth: vk::Pipeline,
+    /// Voxel Volumes (`shaders/voxels.slang`): the coarse rays, the depth
+    /// pass and the opaque one, each a triangle over the screen writing its
+    /// own depth.
+    pub voxel_coarse: vk::Pipeline,
+    pub voxel_depth: vk::Pipeline,
+    pub voxel_forward: vk::Pipeline,
     pub block_wireframe: vk::Pipeline,
     pub block_shadow: vk::Pipeline,
     /// As `block_shadow`, for faces that are never cut out: depth alone,
@@ -401,6 +407,7 @@ impl Pipelines {
             module("map")?,
             module("portal")?,
             module("probe_filter")?,
+            module("voxels")?,
         ];
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -504,6 +511,7 @@ impl Pipelines {
             map,
             portal,
             probe_filter,
+            voxels,
         ] = modules;
 
         let graphics = |desc: &GraphicsPipelineDesc| maker.graphics(desc);
@@ -1011,6 +1019,23 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
+            voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
+            voxel_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: surface_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Depth (voxels)", voxels, c"voxelVertex", c"voxelDepth")
+            })?,
+            voxel_forward: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Opaque (voxels)", voxels, c"voxelVertex", c"voxelOpaque")
+            })?,
             block_wireframe: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -1391,6 +1416,9 @@ impl Pipelines {
             self.block_forward,
             self.block_depth,
             self.block_forward_on_depth,
+            self.voxel_coarse,
+            self.voxel_depth,
+            self.voxel_forward,
             self.block_wireframe,
             self.block_shadow,
             self.block_shadow_solid,
@@ -1564,7 +1592,7 @@ fn mesh_pipelines(
 
 /// The shader modules [`Pipelines::make`] makes pipelines of: every GPU's,
 /// the mesh shaders' where it has them, and ray queries' where it can trace.
-type Modules<'a> = (&'a [ShaderModule; 30], &'a Option<[ShaderModule; 3]>, &'a Option<ShaderModule>);
+type Modules<'a> = (&'a [ShaderModule; 31], &'a Option<[ShaderModule; 3]>, &'a Option<ShaderModule>);
 
 /// What [`Pipelines::make`] asks for each pipeline: first noting each down,
 /// to make them all at once, then handing back what was made, in the order

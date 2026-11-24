@@ -122,6 +122,7 @@ impl Editor {
             recent: &self.memory.recent,
             docs: Vec::new(),
             added: self.added_commands(),
+            types: None,
         }
     }
 

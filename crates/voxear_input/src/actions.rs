@@ -73,16 +73,41 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, ensure};
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use crate::devices::{Device, Devices, Scheme};
 
 pub const ACTIONS_FORMAT: u32 = 1;
 
-/// How far a button's value goes before it counts as pressed.
-const PRESS_POINT: f32 = 0.5;
-/// A stick's deadzone, unless a binding says otherwise.
-const STICK_DEADZONE: (f32, f32) = (0.125, 0.925);
+/// How far a button's value goes before it counts as pressed, by default.
+pub const PRESS_POINT: f32 = 0.5;
+/// A stick's deadzone, unless a binding says otherwise, by default.
+pub const STICK_DEADZONE: (f32, f32) = (0.125, 0.925);
+
+/// The press point and a stick's deadzone the game uses, as the project's
+/// `[input]` sets them; each an `f32`'s bits.
+static PRESS_POINT_NOW: AtomicU32 = AtomicU32::new(0x3f00_0000);
+static DEADZONE_NOW: [AtomicU32; 2] = [AtomicU32::new(0x3e00_0000), AtomicU32::new(0x3f6c_cccd)];
+
+/// Sets how far a button's value goes before it counts as pressed, and a
+/// stick's deadzone where a binding gives none, for every action from
+/// then on, as the project's `[input]` does as the game starts.
+pub fn set_defaults(press_point: f32, stick_deadzone: (f32, f32)) {
+    let press = if press_point.is_finite() { press_point.clamp(0.01, 1.0) } else { PRESS_POINT };
+    let low = if stick_deadzone.0.is_finite() { stick_deadzone.0.clamp(0.0, 0.99) } else { STICK_DEADZONE.0 };
+    let high = if stick_deadzone.1.is_finite() { stick_deadzone.1.clamp(low + 0.01, 1.0) } else { STICK_DEADZONE.1 };
+    PRESS_POINT_NOW.store(press.to_bits(), Ordering::Relaxed);
+    DEADZONE_NOW[0].store(low.to_bits(), Ordering::Relaxed);
+    DEADZONE_NOW[1].store(high.to_bits(), Ordering::Relaxed);
+}
+
+/// The press point and a stick's deadzone in use (see [`set_defaults`]).
+pub fn defaults() -> (f32, (f32, f32)) {
+    let read = |bits: &AtomicU32| f32::from_bits(bits.load(Ordering::Relaxed));
+    (read(&PRESS_POINT_NOW), (read(&DEADZONE_NOW[0]), read(&DEADZONE_NOW[1])))
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -462,7 +487,10 @@ impl Processor {
         let (name, args) = call(text)?;
         let arg = |at: usize, default: f32| args.get(at).copied().unwrap_or(default);
         Ok(match name {
-            "deadzone" => Self::Deadzone(arg(0, STICK_DEADZONE.0), arg(1, STICK_DEADZONE.1)),
+            "deadzone" => {
+                let (low, high) = defaults().1;
+                Self::Deadzone(arg(0, low), arg(1, high))
+            }
             "invert" => Self::Invert(true, true),
             "invert_x" => Self::Invert(true, false),
             "invert_y" => Self::Invert(false, true),
@@ -552,7 +580,7 @@ impl Action {
             ActionKind::Value => [best[0], 0.0],
             ActionKind::Vector2 => best,
         };
-        let held = magnitude(value) >= PRESS_POINT || (self.data.kind != ActionKind::Button && magnitude(value) > 0.0);
+        let held = magnitude(value) >= defaults().0 || (self.data.kind != ActionKind::Button && magnitude(value) > 0.0);
         let was = self.state;
         let held_for = if held { was.held_for + dt } else { 0.0 };
         let (pressed, released) = (held && !was.held, !held && was.held);
@@ -581,7 +609,8 @@ fn read(binding: &Binding, devices: &Devices, only: Option<Device>) -> [f32; 2] 
         let value = devices.read_from(path, only).unwrap_or_default();
         // A stick gets its deadzone, unless the binding gives one.
         let stick = path.ends_with("Stick") && !full.processors.iter().any(|p| p.starts_with("deadzone"));
-        return if stick { Processor::Deadzone(STICK_DEADZONE.0, STICK_DEADZONE.1).apply(value) } else { value };
+        let (low, high) = defaults().1;
+        return if stick { Processor::Deadzone(low, high).apply(value) } else { value };
     }
     if full.up.is_some() || full.down.is_some() || full.left.is_some() || full.right.is_some() {
         let [x, y] = [one(&full.right) - one(&full.left), one(&full.up) - one(&full.down)];

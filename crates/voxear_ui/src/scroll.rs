@@ -51,6 +51,27 @@ impl Ui {
         false
     }
 
+    /// Scrolls the nearest element round `node` that scrolls so that `node`
+    /// shows, a third of the way down, where it does not show already, as a
+    /// setting found is shown. As of the last layout.
+    pub fn scroll_into_view(&mut self, node: NodeId) {
+        let mut at = self.parent(node);
+        while let Some(outer) = at {
+            let scrolls = self.element(outer).is_some_and(|e| e.computed.overflow == Overflow::Scroll);
+            if scrolls {
+                let [_, top, _, shown] = self.viewport(outer);
+                let [_, y, _, height] = self.rect(node);
+                let [x, scrolled] = self.scroll_offset(outer);
+                let place = y - top + scrolled;
+                if place < scrolled || place + height > scrolled + shown {
+                    self.set_scroll(outer, [x, (place - shown / 3.0).max(0.0)]);
+                }
+                return;
+            }
+            at = self.parent(outer);
+        }
+    }
+
     /// How far an element's children can scroll, in logical pixels, as of
     /// the last layout.
     pub fn scroll_max(&self, node: NodeId) -> [f32; 2] {

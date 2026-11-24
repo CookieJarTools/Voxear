@@ -139,6 +139,11 @@ pub(crate) enum Command {
     /// the listener and every 3D voice together, in one go.
     Shift(Vec3),
     Headphones(bool),
+    /// How fast sound goes, and the most voices that play at once.
+    Air {
+        speed_of_sound: f32,
+        most_voices: usize,
+    },
     PauseGame(bool),
     StopGame,
 }
@@ -206,6 +211,10 @@ pub struct Mixer {
     listener: Listener,
     game_paused: bool,
     headphones: bool,
+    /// How fast sound goes, in metres a second, for the Doppler effect, and
+    /// the most voices that play at once.
+    speed_of_sound: f32,
+    most_voices: usize,
     /// The HRTF at the output's rate, once made, and while it is being.
     hrtf: Option<Arc<Hrtf>>,
     making: Option<Receiver<Result<Arc<Hrtf>, String>>>,
@@ -244,6 +253,8 @@ impl Mixer {
             listener: Listener::default(),
             game_paused: false,
             headphones: false,
+            speed_of_sound: spatial::SPEED_OF_SOUND,
+            most_voices: MAX_VOICES,
             hrtf: None,
             making: None,
             commands,
@@ -440,6 +451,10 @@ impl Mixer {
                     }
                 }
                 Command::Headphones(on) => self.set_headphones(on),
+                Command::Air { speed_of_sound, most_voices } => {
+                    self.speed_of_sound = speed_of_sound;
+                    self.most_voices = most_voices;
+                }
                 Command::PauseGame(paused) => self.game_paused = paused,
                 Command::StopGame => {
                     for voice in self.voices.iter_mut().filter(|voice| voice.params.bus != Bus::Preview) {
@@ -534,7 +549,7 @@ impl Mixer {
     }
 
     fn start(&mut self, new: NewVoice) {
-        if self.voices.len() >= MAX_VOICES {
+        if self.voices.len() >= self.most_voices {
             let oldest = self.voices.iter().position(|v| !v.params.looping && v.params.bus == Bus::Effects);
             let Some(oldest) = oldest else {
                 let _ = self.finished.try_send(new.id);
@@ -592,7 +607,7 @@ impl Mixer {
     fn play(&mut self, index: usize, frames: usize) -> Played {
         let target = self.target(&self.voices[index]);
         let held = self.held(&self.voices[index]);
-        let (output_rate, listener) = (f64::from(self.sample_rate), self.listener);
+        let (output_rate, listener, speed) = (f64::from(self.sample_rate), self.listener, self.speed_of_sound);
         let voice = &mut self.voices[index];
         let from = voice.gains.unwrap_or(target);
         let silent = from == [0.0; 2] && target == [0.0; 2];
@@ -609,7 +624,7 @@ impl Mixer {
             return Played::Going;
         }
         let shift = match voice.params.spatial {
-            Some((at, _)) => spatial::doppler(&listener, at, voice.params.velocity, voice.params.doppler),
+            Some((at, _)) => spatial::doppler(&listener, at, voice.params.velocity, voice.params.doppler, speed),
             None => 1.0,
         };
         let pitch = (voice.params.pitch * shift).clamp(VoiceParams::MIN_PITCH, VoiceParams::MAX_PITCH);

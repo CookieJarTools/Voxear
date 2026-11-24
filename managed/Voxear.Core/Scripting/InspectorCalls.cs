@@ -19,7 +19,8 @@ namespace Voxear.Scripting;
 /// { "error" } when it could not be asked, which is logged. The Inspector's drawers are opened and drawn through
 /// here too, as InspectorDrawers says, the running game's behaviours read and changed while it plays, as
 /// LiveFields says, the data assets scripts loaded changed as the Inspector writes their files, or let go of as a run
-/// ends, as Definitions says, and behaviours' gizmos drawn, as SceneGizmos says.
+/// ends, as Definitions says, behaviours' gizmos drawn, as SceneGizmos says, and every field of a behaviour read
+/// for the Debug mode, as DebugFields says.
 /// </summary>
 internal static class InspectorCalls
 {
@@ -79,6 +80,11 @@ internal static class InspectorCalls
 		if (action == "window-close")
 		{
 			EditorWindows.Close(root);
+			return;
+		}
+		if (action == "debug-read")
+		{
+			DebugFields.Read(json, root);
 			return;
 		}
 		if (action is "live-read" or "live-write" or "live-call")

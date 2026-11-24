@@ -657,6 +657,9 @@ impl Editor {
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
         inspector.set_lock_button(&mut ui, nodes.inspector_lock);
+        let mode = find(&ui, "inspector-mode");
+        ui.set_tooltip(mode, "Normal or Debug", None);
+        inspector.set_mode_button(mode);
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let docs_panel = find(&ui, "docs");
@@ -1577,9 +1580,11 @@ impl Editor {
         let (docs, game, memory) = (&self.docs, &self.game, &self.memory);
         let added = self.added_commands();
         let playing = self.is_playing();
+        let types = self.inspector.types();
         let sources = || Sources {
             game,
             playing,
+            types: Some(types),
             settings: &memory.settings,
             recent: &memory.recent,
             // The project's own pages, the manual's and the packages': the Code Reference's would crowd out
@@ -1792,6 +1797,9 @@ impl Editor {
     fn run_palette(&mut self, action: PaletteAction, renderer: &mut Renderer) {
         match action {
             PaletteAction::Setting(key) => self.run_setting(key),
+            PaletteAction::FindSetting(key) => {
+                self.show_found(&key);
+            }
             PaletteAction::Added(id) => {
                 let run = self.added.iter().find(|c| c.id == id).map(|c| c.run.clone());
                 if let Some(run) = run {

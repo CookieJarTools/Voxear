@@ -25,6 +25,7 @@ use serde_json::{Value as Json, json};
 use voxear_assets::AssetKind;
 use voxear_ui::{Color, ItemFns, MenuItem, NodeId, Style, Ui};
 
+use crate::setting_search;
 use crate::setting_info::{self, Category, Kind, SectionHelp, Setting, number_text};
 
 /// How long a setting shown by the palette or a call stays marked.
@@ -75,6 +76,9 @@ struct Row {
     label: NodeId,
     control: Control,
     block: usize,
+    /// Under it while a search found it by its tooltip: the line that
+    /// matched, its words marked.
+    found_line: NodeId,
     tipped: bool,
     shown: Json,
     default: Json,
@@ -223,12 +227,16 @@ impl SettingsWindow {
             };
             let (row, label, control) = build_row(ui, parent, setting, blocks[block].heading);
             ui.set_name(row, &format!("setting-{}", setting.key));
+            let found_line = ui.rich_label(parent, &voxear_ui::RichText::new());
+            ui.add_class(found_line, "setting-found-line");
+            ui.set_visible(found_line, false);
             rows.push(Row {
                 setting,
                 row,
                 label,
                 control,
                 block,
+                found_line,
                 tipped: false,
                 shown: Json::Null,
                 default: Json::Null,
@@ -420,9 +428,24 @@ impl SettingsWindow {
         }
         let mut shown_blocks = vec![false; self.blocks.len()];
         let mut found_in: Vec<&'static str> = Vec::new();
+        // Found as the palette finds a setting: by any of its words, its tooltip's and words meaning the same.
+        let found = match searching {
+            true => {
+                let entries: Vec<_> = self.rows.iter().map(|row| setting_search::entry_of(row.setting)).collect();
+                setting_search::search(&entries, &self.query)
+            }
+            false => Vec::new(),
+        };
         for row in &self.rows {
-            let shown = if searching { row.setting.found(&self.query) } else { row.setting.category == self.category };
+            let hit = found.iter().find(|hit| hit.entry.place.key() == row.setting.key);
+            let shown = if searching { hit.is_some() } else { row.setting.category == self.category };
             ui.set_visible(row.row, shown);
+            // The tooltip's line that matched, under a setting not found by its name.
+            let line = hit.filter(|hit| !setting_search::found_by_label(hit));
+            ui.set_visible(row.found_line, line.is_some());
+            if let Some(hit) = line {
+                ui.set_rich_text(row.found_line, &setting_search::marked_text(&hit.line, &hit.words));
+            }
             shown_blocks[row.block] |= shown;
             if shown && searching {
                 if !found_in.contains(&row.setting.category) {

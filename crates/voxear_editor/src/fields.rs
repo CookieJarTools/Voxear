@@ -844,6 +844,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "ScreenUi" => |world, entity| world.has::<voxear_engine::screen_ui::ScreenUi>(entity),
         "LocalizedText" => |world, entity| world.has::<voxear_engine::localized_text::LocalizedText>(entity),
         "Smoke" => |world, entity| world.has::<voxear_render::Smoke>(entity),
+        "VoxelVolume" => |world, entity| world.has::<voxear_render::VoxelVolume>(entity),
         "UiPanel" => |world, entity| world.has::<voxear_render::UiPanel>(entity),
         "Vehicle" => |world, entity| world.has::<Vehicle>(entity),
         "Wheel" => |world, entity| world.has::<Wheel>(entity),

@@ -32,8 +32,9 @@ impl Default for Listener {
 /// How much faster a 3D voice at `at`, moving at `velocity`, plays from the
 /// Doppler effect: above 1 as it and the listener come together, below as
 /// they part, as a passing car's engine drops in pitch. `level` scales it,
-/// 0 turning it off, as Unity's Doppler Level does.
-pub fn doppler(listener: &Listener, at: Vec3, velocity: Vec3, level: f32) -> f32 {
+/// 0 turning it off, as Unity's Doppler Level does; `speed` is how fast
+/// sound goes, in metres a second ([`SPEED_OF_SOUND`] in air).
+pub fn doppler(listener: &Listener, at: Vec3, velocity: Vec3, level: f32, speed: f32) -> f32 {
     let offset = at - listener.position;
     let length = offset.length();
     if level <= 0.0 || length < 1e-4 {
@@ -43,7 +44,8 @@ pub fn doppler(listener: &Listener, at: Vec3, velocity: Vec3, level: f32) -> f32
     let toward = offset / length;
     let listener_closing = listener.velocity.dot(toward) * level;
     let voice_opening = velocity.dot(toward) * level;
-    let shift = (SPEED_OF_SOUND + listener_closing) / (SPEED_OF_SOUND + voice_opening).max(1.0);
+    let speed = speed.max(1.0);
+    let shift = (speed + listener_closing) / (speed + voice_opening).max(1.0);
     shift.clamp(DOPPLER_RANGE.0, DOPPLER_RANGE.1)
 }
 
@@ -159,10 +161,10 @@ mod tests {
         let listener = Listener::default();
         let ahead = Vec3::new(0.0, 0.0, 20.0);
         assert_eq!(doppler(&listener, ahead, Vec3::ZERO, 1.0), 1.0, "still");
-        let coming = doppler(&listener, ahead, Vec3::new(0.0, 0.0, -30.0), 1.0);
-        let going = doppler(&listener, ahead, Vec3::new(0.0, 0.0, 30.0), 1.0);
+        let coming = doppler(&listener, ahead, Vec3::new(0.0, 0.0, -30.0), 1.0, SPEED_OF_SOUND);
+        let going = doppler(&listener, ahead, Vec3::new(0.0, 0.0, 30.0), 1.0, SPEED_OF_SOUND);
         assert!(close(coming, 343.0 / 313.0) && close(going, 343.0 / 373.0), "{coming} {going}");
-        let passing = doppler(&listener, ahead, Vec3::new(30.0, 0.0, 0.0), 1.0);
+        let passing = doppler(&listener, ahead, Vec3::new(30.0, 0.0, 0.0), 1.0, SPEED_OF_SOUND);
         assert!(close(passing, 1.0), "across, neither nearer nor further: {passing}");
         let walking = Listener { velocity: Vec3::new(0.0, 0.0, 30.0), ..listener };
         assert!(doppler(&walking, ahead, Vec3::ZERO, 1.0) > 1.0, "the listener coming closer too");

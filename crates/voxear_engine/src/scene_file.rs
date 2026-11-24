@@ -446,6 +446,8 @@ pub struct ObjData {
     /// Smoke filling the space round the Obj.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smoke: Option<voxear_render::Smoke>,
+    /// A box of small voxels drawn on the Obj, and what is stamped into it.
+    pub voxel_volume: Option<crate::voxel_volumes::VoxelVolumeData>,
     /// A trail of mist left behind the Obj as it moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mist: Option<voxear_render::Mist>,
@@ -664,6 +666,7 @@ impl ObjData {
             particles: None,
             force_field: None,
             smoke: None,
+            voxel_volume: None,
             mist: None,
             net: None,
             animator: None,
@@ -2580,6 +2583,9 @@ fn capture_instance(
     if root.smoke.is_some() && root.smoke != prefab_root.smoke {
         instance.smoke = root.smoke;
     }
+    if root.voxel_volume.is_some() && root.voxel_volume != prefab_root.voxel_volume {
+        instance.voxel_volume = root.voxel_volume.clone();
+    }
     if root.mist.is_some() && root.mist != prefab_root.mist {
         instance.mist = root.mist;
     }
@@ -2891,6 +2897,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(smoke) = actual.smoke.filter(|s| Some(*s) != expected.smoke) {
         put("smoke", whole(&smoke, &voxear_render::Smoke::default())?);
+    }
+    if let Some(volume) = actual.voxel_volume.as_ref().filter(|v| Some(*v) != expected.voxel_volume.as_ref()) {
+        put("voxel_volume", toml::Value::try_from(volume)?);
     }
     if let Some(mist) = actual.mist.filter(|m| Some(*m) != expected.mist) {
         put("mist", whole(&mist, &voxear_render::Mist::default())?);
@@ -3288,6 +3297,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.force_field = world.get::<ForceField>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
+    obj.voxel_volume = world.get::<crate::voxel_volumes::VoxelVolumeSource>(entity).map(|source| source.0.clone());
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
     obj.net = world.get::<crate::net::NetObject>(entity).copied();
     obj.animator = world.get::<crate::animation::Animator>(entity).cloned();

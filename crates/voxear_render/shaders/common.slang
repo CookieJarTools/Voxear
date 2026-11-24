@@ -2142,6 +2142,41 @@ struct SkinJob
     uint2 pad;
 };
 
+// A view's Voxel Volumes, as voxels.slang walks them (src/voxel_volume.rs).
+static const uint MAX_VOXEL_VOLUMES = 64;
+
+struct VoxelVolume
+{
+    uint* sectors;
+    uint* bricks;
+    uint* materials;
+    uint* palette;
+    int3 sectorCount;
+    float voxel;
+    // Its least corner, in the world.
+    float3 corner;
+    // How rough its voxels are.
+    float roughness;
+};
+
+struct VoxelVolumes
+{
+    uint count;
+    // One coarse ray every `coarseStep` pixels, `coarseSize` of them, each the metres it went before meeting a brick.
+    uint coarseStep;
+    uint2 coarseSize;
+    float* coarse;
+    float lodScale;
+    // Whether the depth pass keeps what each pixel's ray met in `seen`, `seenWidth` pixels a row, for the opaque pass
+    // to shade without walking it again: the cell's x and y, its z with its level, side and volume, how far in
+    // metres, and the frame's number and one.
+    uint seenOn;
+    uint4* seen;
+    uint seenWidth;
+    uint pad;
+    VoxelVolume volumes[MAX_VOXEL_VOLUMES];
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -2265,6 +2300,8 @@ struct Buffers
     uint* skinGroups;
     // Every baked clip's matrices, laid out as skinMatrices (src/baked_clips.rs).
     float4* bakedMatrices;
+    // This view's Voxel Volumes (voxels.slang).
+    VoxelVolumes* voxelVolumes;
 };
 
 static const uint INSTANCE_BONES_WEIGHED = 1;

@@ -675,6 +675,19 @@ fn remove_stale(output: &Path, catalog: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// The assets an asset names, as a build finds them: those that load with
+/// it, those its behaviours' fields name and the pictures it draws with,
+/// each once, for the Inspector's Debug mode.
+pub fn asset_needs(db: &AssetDb, guid: AssetGuid) -> Result<Vec<AssetGuid>> {
+    let entry = db.get(guid).context("no such asset")?;
+    let needs = find_needs(db, guid, entry.kind, &entry.path)?;
+    let mut named: BTreeSet<AssetGuid> = needs.direct;
+    named.extend(needs.named);
+    named.extend(needs.pictures.into_iter().map(|(picture, _)| picture));
+    named.remove(&guid);
+    Ok(named.into_iter().collect())
+}
+
 fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Result<Needs> {
     let mut needs = Needs::default();
     match kind {

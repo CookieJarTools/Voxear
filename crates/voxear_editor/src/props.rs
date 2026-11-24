@@ -121,6 +121,8 @@ pub enum Part {
     ForceField,
     Smoke,
     Mist,
+    /// A Voxel Volume: a box of small voxels drawn with no meshes.
+    VoxelVolume,
     /// A UI Panel: a UI document shown on a rectangle in the world.
     UiPanel,
     /// A Screen UI: a UI document shown over the game's view.
@@ -239,6 +241,7 @@ impl Part {
             Part::ForceField => "force_field".into(),
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
+            Part::VoxelVolume => "voxel_volume".into(),
             Part::UiPanel => "ui_panel".into(),
             Part::ScreenUi => "screen_ui".into(),
             Part::LocalizedText => "localized_text".into(),
@@ -337,6 +340,7 @@ impl Part {
             Part::ForceField => "Force Field",
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
+            Part::VoxelVolume => "Voxel Volume",
             Part::UiPanel => "UI Panel",
             Part::ScreenUi => "Screen UI",
             Part::LocalizedText => "Localized Text",
@@ -451,6 +455,7 @@ impl Part {
             Part::ForceField => "move",
             Part::Smoke => "particles",
             Part::Mist => "particles",
+            Part::VoxelVolume => "cube",
             Part::UiPanel | Part::ScreenUi => "panels",
             Part::LocalizedText => "globe",
             Part::Map => "globe",
@@ -641,6 +646,20 @@ pub enum Prop {
     SmokeFade,
     SmokeSeed,
     SmokePlayOnStart,
+    /// A Voxel Volume's size and voxels, its own ground, and what is stamped
+    /// into it.
+    VoxelSize,
+    VoxelsPerMetre,
+    VoxelRoughness,
+    VoxelGround,
+    VoxelGroundHeight,
+    VoxelHills,
+    VoxelHillSpacing,
+    VoxelGrass,
+    VoxelGrassHeight,
+    VoxelFlowers,
+    VoxelSeed,
+    VoxelStamps,
     /// A Mist's trail: whether it is left now, how wide and thick it is, its
     /// colour, how long it lingers, and which swirls.
     /// When a Reflection Probe is captured: once, or live.
@@ -1259,6 +1278,18 @@ impl Prop {
             | Prop::SmokeFade
             | Prop::SmokeSeed
             | Prop::SmokePlayOnStart => Part::Smoke,
+            Prop::VoxelSize
+            | Prop::VoxelsPerMetre
+            | Prop::VoxelRoughness
+            | Prop::VoxelGround
+            | Prop::VoxelGroundHeight
+            | Prop::VoxelHills
+            | Prop::VoxelHillSpacing
+            | Prop::VoxelGrass
+            | Prop::VoxelGrassHeight
+            | Prop::VoxelFlowers
+            | Prop::VoxelSeed
+            | Prop::VoxelStamps => Part::VoxelVolume,
             Prop::MistEmitting
             | Prop::MistWidth
             | Prop::MistDensity
@@ -1676,6 +1707,18 @@ impl Prop {
             Prop::SmokeFade => "fade",
             Prop::SmokeSeed => "seed",
             Prop::SmokePlayOnStart => "play_on_start",
+            Prop::VoxelSize => "size",
+            Prop::VoxelsPerMetre => "voxels_per_metre",
+            Prop::VoxelRoughness => "roughness",
+            Prop::VoxelGround => "ground",
+            Prop::VoxelGroundHeight => "ground_height",
+            Prop::VoxelHills => "hills",
+            Prop::VoxelHillSpacing => "hill_spacing",
+            Prop::VoxelGrass => "grass",
+            Prop::VoxelGrassHeight => "grass_height",
+            Prop::VoxelFlowers => "flowers",
+            Prop::VoxelSeed => "seed",
+            Prop::VoxelStamps => "stamps",
             Prop::MistEmitting => "emitting",
             Prop::NetPriority => "priority",
             Prop::NetRange => "range",
@@ -2051,6 +2094,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::Smoke>(entity) {
         parts.push(Part::Smoke);
     }
+    if world.has::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity) {
+        parts.push(Part::VoxelVolume);
+    }
     if world.has::<voxear_render::Mist>(entity) {
         parts.push(Part::Mist);
     }
@@ -2337,6 +2383,23 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::SmokePlayOnStart,
         ],
         Part::ForceField => vec![Prop::ForceKind, Prop::ForceStrength, Prop::ForceRadius],
+        Part::VoxelVolume => {
+            let ground = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).is_some_and(|source| source.0.ground_on);
+            let mut props = vec![Prop::VoxelSize, Prop::VoxelsPerMetre, Prop::VoxelRoughness, Prop::VoxelGround];
+            if ground {
+                props.extend([
+                    Prop::VoxelGroundHeight,
+                    Prop::VoxelHills,
+                    Prop::VoxelHillSpacing,
+                    Prop::VoxelGrass,
+                    Prop::VoxelGrassHeight,
+                    Prop::VoxelFlowers,
+                    Prop::VoxelSeed,
+                ]);
+            }
+            props.push(Prop::VoxelStamps);
+            props
+        }
         Part::Mist => vec![
             Prop::MistEmitting,
             Prop::MistWidth,
@@ -2955,6 +3018,18 @@ pub fn label(prop: &Prop) -> String {
         Prop::SmokeFade => "Disperse Time",
         Prop::SmokeSeed => "Seed",
         Prop::SmokePlayOnStart => "Play On Start",
+        Prop::VoxelSize => "Size",
+        Prop::VoxelsPerMetre => "Voxels a Metre",
+        Prop::VoxelRoughness => "Roughness",
+        Prop::VoxelGround => "Ground",
+        Prop::VoxelGroundHeight => "Ground Height",
+        Prop::VoxelHills => "Hills",
+        Prop::VoxelHillSpacing => "Hill Spacing",
+        Prop::VoxelGrass => "Grass",
+        Prop::VoxelGrassHeight => "Grass Height",
+        Prop::VoxelFlowers => "Flowers",
+        Prop::VoxelSeed => "Seed",
+        Prop::VoxelStamps => "Stamps",
         Prop::MistEmitting => "Emitting",
         Prop::NetPriority => "Priority",
         Prop::NetRange => "Range",
@@ -3441,6 +3516,12 @@ pub fn add(
         Part::Smoke => {
             world.insert(entity, voxear_render::Smoke::default());
         }
+        Part::VoxelVolume => {
+            // A volume added here has its own ground and nothing stamped, so it needs nothing read from the project.
+            let data = voxear_engine::voxel_volumes::VoxelVolumeData::default();
+            world.insert(entity, voxear_render::VoxelVolume::default());
+            world.insert(entity, voxear_engine::voxel_volumes::VoxelVolumeSource(data));
+        }
         Part::ForceField => {
             world.insert(entity, ForceField::default());
         }
@@ -3604,6 +3685,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
             world.remove::<voxear_render::SmokeCue>(entity);
         }
         Part::ForceField => drop(world.remove::<ForceField>(entity)),
+        Part::VoxelVolume => voxear_engine::voxel_volumes::remove(world, entity),
         Part::Mist => {
             world.remove::<voxear_render::Mist>(entity);
             world.remove::<voxear_render::MistTrail>(entity);
@@ -4106,6 +4188,20 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::SmokeFade
         | Prop::SmokeSeed
         | Prop::SmokePlayOnStart => smoke_value(world.get::<voxear_render::Smoke>(entity)?, prop)?,
+        Prop::VoxelSize
+        | Prop::VoxelsPerMetre
+        | Prop::VoxelRoughness
+        | Prop::VoxelGround
+        | Prop::VoxelGroundHeight
+        | Prop::VoxelHills
+        | Prop::VoxelHillSpacing
+        | Prop::VoxelGrass
+        | Prop::VoxelGrassHeight
+        | Prop::VoxelFlowers
+        | Prop::VoxelSeed
+        | Prop::VoxelStamps => {
+            voxel_value(&world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?.0, prop)?
+        }
         Prop::MistEmitting
         | Prop::MistWidth
         | Prop::MistDensity
@@ -5727,6 +5823,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (prop, value) if prop.part() == Part::Smoke => {
             with(world, entity, |smoke: &mut voxear_render::Smoke| set_smoke(smoke, prop, value))
         }
+        (prop, value) if prop.part() == Part::VoxelVolume => set_voxel_volume(world, entity, prop, value),
         (Prop::AnimatorSpeed, Value::Number(n)) => {
             with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.speed = n.clamp(-10.0, 10.0))
         }
@@ -6114,6 +6211,63 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
 }
 
 /// Changes a component, if the Obj has it.
+/// A Voxel Volume's field as the Inspector shows it.
+fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop) -> Option<Value> {
+    let ground = &data.ground;
+    Some(match prop {
+        Prop::VoxelSize => Value::Vector(data.size.to_vec()),
+        Prop::VoxelsPerMetre => Value::Whole(i64::from(data.voxels_per_metre)),
+        Prop::VoxelRoughness => Value::Number(data.roughness),
+        Prop::VoxelGround => Value::Toggle(data.ground_on),
+        Prop::VoxelGroundHeight => Value::Number(ground.height),
+        Prop::VoxelHills => Value::Number(ground.hills),
+        Prop::VoxelHillSpacing => Value::Number(ground.hill_spacing),
+        Prop::VoxelGrass => Value::Number(ground.grass),
+        Prop::VoxelGrassHeight => Value::Number(ground.grass_height),
+        Prop::VoxelFlowers => Value::Number(ground.flowers),
+        Prop::VoxelSeed => Value::Whole(i64::from(ground.seed)),
+        Prop::VoxelStamps => Value::Fixed(match data.stamps.len() {
+            1 => "1 box model".to_string(),
+            stamps => format!("{stamps} box models"),
+        }),
+        _ => return None,
+    })
+}
+
+/// Sets a Voxel Volume's field from the Inspector, kept within what it can
+/// be, in how its scene writes it and in what is drawn, whose stamps stay.
+fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value) -> bool {
+    use voxear_engine::voxel_volumes::VoxelVolumeSource;
+    let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) else { return false };
+    let data = &mut source.0;
+    let ground = &mut data.ground;
+    match (prop, value) {
+        (Prop::VoxelSize, Value::Vector(v)) if v.len() == 3 => {
+            data.size = [v[0], v[1], v[2]].map(|metres| metres.clamp(0.25, 1024.0));
+        }
+        (Prop::VoxelsPerMetre, Value::Whole(n)) => {
+            data.voxels_per_metre = n.clamp(1, i64::from(voxear_render::MOST_VOXELS_A_METRE)) as u32;
+        }
+        (Prop::VoxelRoughness, Value::Number(n)) => data.roughness = n.clamp(0.0, 1.0),
+        (Prop::VoxelGround, Value::Toggle(on)) => data.ground_on = on,
+        (Prop::VoxelGroundHeight, Value::Number(n)) => ground.height = n.clamp(-1024.0, 1024.0),
+        (Prop::VoxelHills, Value::Number(n)) => ground.hills = n.clamp(0.0, 1024.0),
+        (Prop::VoxelHillSpacing, Value::Number(n)) => ground.hill_spacing = n.clamp(0.5, 4096.0),
+        (Prop::VoxelGrass, Value::Number(n)) => ground.grass = n.clamp(0.0, 1.0),
+        (Prop::VoxelGrassHeight, Value::Number(n)) => ground.grass_height = n.clamp(0.0, 8.0),
+        (Prop::VoxelFlowers, Value::Number(n)) => ground.flowers = n.clamp(0.0, 1.0),
+        (Prop::VoxelSeed, Value::Whole(n)) => ground.seed = n.clamp(0, i64::from(u32::MAX)) as u32,
+        _ => return false,
+    }
+    let data = data.clone();
+    with(world, entity, |volume: &mut voxear_render::VoxelVolume| {
+        volume.size = data.size.into();
+        volume.voxels_per_metre = data.voxels_per_metre;
+        volume.roughness = data.roughness;
+        volume.ground = data.ground_on.then_some(data.ground);
+    })
+}
+
 /// A Smoke's field as the Inspector shows it, its colour in sRGB.
 fn smoke_value(smoke: &voxear_render::Smoke, prop: &Prop) -> Option<Value> {
     Some(match prop {
@@ -6867,6 +7021,28 @@ mod tests {
         assert_eq!(model_bones(&world, gun), ["Root", "bolt"]);
         assert_eq!(bone_place(&world, gun, 1), Some([0.0, 0.045, 0.04]));
         assert!(on_bones(&Prop::GunRearSight) && !on_bones(&Prop::GunMass));
+    }
+
+    /// A Voxel Volume's ground settings show only while it has ground, and a
+    /// change in the Inspector reaches what is drawn as well as what is saved.
+    #[test]
+    fn a_voxel_volumes_ground_shows_only_while_on_and_a_change_reaches_what_is_drawn() {
+        use voxear_engine::voxel_volumes::{VoxelVolumeData, VoxelVolumeSource};
+        let mut world = World::new();
+        let volume = world.spawn_empty();
+        world.insert(volume, voxear_render::VoxelVolume::default());
+        world.insert(volume, VoxelVolumeSource(VoxelVolumeData::default()));
+        let types = ScriptTypes::default();
+        assert!(parts(&world, volume).contains(&Part::VoxelVolume));
+        assert!(props(&world, volume, &Part::VoxelVolume, &types).contains(&Prop::VoxelGrass));
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelsPerMetre, Value::Whole(500)));
+        assert_eq!(world.get::<voxear_render::VoxelVolume>(volume).unwrap().voxels_per_metre, 64);
+        assert_eq!(world.get::<VoxelVolumeSource>(volume).unwrap().0.voxels_per_metre, 64);
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelGround, Value::Toggle(false)));
+        assert!(world.get::<voxear_render::VoxelVolume>(volume).unwrap().ground.is_none());
+        assert!(!props(&world, volume, &Part::VoxelVolume, &types).contains(&Prop::VoxelGrass));
+        let source = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
+        assert_eq!(voxel_value(source, &Prop::VoxelStamps), Some(Value::Fixed("0 box models".into())));
     }
 
     /// A Camera shows its projection, then its field of view while it is

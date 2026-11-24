@@ -243,6 +243,8 @@ pub struct Frame {
     /// The grass this view scatters round its camera and draws after the
     /// terrain (see `grass`).
     pub grass: Option<crate::grass::ViewGrass>,
+    /// The Voxel Volumes this view draws (see `voxel_volume`).
+    pub voxels: Option<crate::voxel_volume::ViewVoxels>,
     /// Reflections trace the scene's triangles by the GPU's ray queries,
     /// with or without the GI, rather than the screen.
     pub traced_reflections: bool,
@@ -767,6 +769,10 @@ pub fn record(
     if let (Some(atlas), Some(blocks)) = (targets.shadows, &frame.blocks) {
         crate::blocks::record_shadows(fg, (pipelines, push), blocks, (atlas, targets.cascade_size));
     }
+    // The voxels' coarse rays, which their passes start from.
+    if let Some(voxels) = &frame.voxels {
+        crate::voxel_volume::record_coarse(fg, (pipelines, push), voxels);
+    }
     // The grass round the camera, scattered afresh before anything draws it.
     if let Some(grass) = &frame.grass {
         crate::grass::record_scatter(fg, (pipelines, push), grass);
@@ -798,6 +804,9 @@ pub fn record(
             if let Some(grass) = &frame.grass {
                 crate::grass::record_depth(fg, (pipelines, push), grass, depth_targets, &pushes);
             }
+            if let Some(voxels) = &frame.voxels {
+                crate::voxel_volume::record_depth(fg, (pipelines, push), voxels, depth_targets);
+            }
         }
         false => {
             fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
@@ -824,6 +833,11 @@ pub fn record(
                 let targets = (hdr, velocity, depth);
                 let pipeline = [pipelines.grass_forward, pipelines.cover_forward];
                 crate::grass::record_opaque(fg, shading_push, pipeline, grass, images, targets, &shading_buffers);
+            }
+            if let Some(voxels) = &frame.voxels {
+                let images = shading(ImageAccess::ColorAttachment);
+                let targets = (hdr, velocity, depth);
+                crate::voxel_volume::record_opaque(fg, (pipelines, shading_push), voxels, images, targets, &shading_buffers);
             }
         }
     }
@@ -955,6 +969,11 @@ pub fn record(
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::grass::record_opaque(fg, shading_push, pipeline, grass, images, targets, &shading_buffers);
+            }
+            if let Some(voxels) = &frame.voxels {
+                let images = shading(ImageAccess::ColorAttachment);
+                let targets = (hdr, velocity, depth);
+                crate::voxel_volume::record_opaque(fg, (pipelines, shading_push), voxels, images, targets, &shading_buffers);
             }
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {

@@ -381,13 +381,49 @@ blocks that exist.
   physics up to the same scale.
 - **Stage 1 stands alone.** Voxel props, ruins and statues in any scene, today's block worlds included, are worth
   having without the rest.
-- **Next measurement before stage 1:** starting rays from last frame's distance, and coarse rays walked as cones,
+- **Next measurement:** starting rays from last frame's distance, and coarse rays walked as cones,
   so the first pass is exact.
 - **Risks.**
   - Fitting the traced depth and surfaces into TAA and the existing passes without seams where meshes meet
     voxels.
   - Shimmer in far crowns, which needs the levels of detail plus TAA.
   - The cost of rays that skim the grass, which the coarse first pass does not remove.
+
+## Stage 1, built (2026-11-24)
+
+A **Voxel Volume** is a component: a box of small voxels on an Obj, its least corner at the Obj's place, filled from
+its own ground (rolling ground, grass blades, flowers) and from box models stamped into it. It is made on a thread
+of its own whenever it changes and kept on the GPU as the prototype's sectors and bricks
+(`crates/voxear_render/src/voxel_volume.rs`, `shaders/voxels.slang`).
+
+- **Drawn as the frame's other surfaces are.**
+  - **Voxel coarse rays**: one ray every 4×4 pixels walked against whole bricks.
+  - **Depth (voxels)**: a triangle over the screen whose pixels walk their rays from where the coarse rays allow.
+    It writes depth, the normal and roughness that ambient occlusion and reflections read, and keeps what each
+    pixel met.
+  - **Opaque (voxels)**: lights what the depth pass kept, without walking it again. Lighting comes from the sun with
+    the shadow maps of everything else, contact shadows, lamps, the GI's ambient light, ambient occlusion,
+    reflections, block light, the atmosphere's haze and clouds. The voxels' own shadow is traced through them
+    towards the sun, and depth is written so meshes and blocks meet it.
+- **Kept with scenes as `[obj.voxel_volume]`**, its stamps as box model references. Prefabs carry it, and stamped
+  models are read once and kept. In the editor it is under **Add Component ▸ Rendering** and **+ ▸ Voxel Volume**,
+  with Inspector fields for its size, voxels a metre, roughness and ground, all reachable by `vox editor call`.
+  `vox render` waits for volumes to be made, as it waits for streamed ground.
+- **Measured**: a meadow 80 × 120 m at 16 voxels a metre with sixty stamped trees, seen from 2 m over the grass at
+  1920×1080, least of the last frames: coarse rays 0.08 ms, depth 2.0 ms, opaque 3.8 ms, whole frame 7.3 ms. It
+  was made in 1.6 s. Keeping each pixel's hit took the opaque pass from 5.8 to 3.8 ms; most of what is left is
+  lighting, the traced shadow included.
+
+![A Voxel Volume in the engine](../images/small-voxels/engine-meadow.webp)
+
+![Close up](../images/small-voxels/engine-meadow-near.webp)
+
+Not done in stage 1, as planned:
+
+- The voxels cast no shadow onto meshes, blocks or terrain.
+- A volume is not turned or scaled with its Obj, and is drawn whole however far.
+- Stamps are added in the scene file; the Inspector shows how many there are.
+- No C# component yet: scripts get voxels with stage 4's editing.
 
 ## Kept elsewhere
 

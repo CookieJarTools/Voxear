@@ -1633,6 +1633,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::ForceField
             | Part::Smoke
             | Part::Mist
+            | Part::VoxelVolume
             | Part::UiPanel
             | Part::ScreenUi
             | Part::LocalizedText

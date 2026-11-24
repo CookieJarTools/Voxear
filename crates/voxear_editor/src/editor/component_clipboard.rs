@@ -44,6 +44,7 @@ pub(super) enum Copied {
     ForceField(ForceField),
     Smoke(voxear_render::Smoke),
     Mist(voxear_render::Mist),
+    VoxelVolume(Box<(voxear_render::VoxelVolume, voxear_engine::voxel_volumes::VoxelVolumeSource)>),
     UiPanel(voxear_render::UiPanel),
     ScreenUi(voxear_engine::screen_ui::ScreenUi),
     LocalizedText(voxear_engine::localized_text::LocalizedText),
@@ -128,6 +129,10 @@ impl Copied {
             Part::ForceField => Self::ForceField(*world.get::<ForceField>(entity)?),
             Part::Smoke => Self::Smoke(*world.get::<voxear_render::Smoke>(entity)?),
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
+            Part::VoxelVolume => Self::VoxelVolume(Box::new((
+                world.get::<voxear_render::VoxelVolume>(entity)?.clone(),
+                world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?.clone(),
+            ))),
             Part::UiPanel => Self::UiPanel(*world.get::<voxear_render::UiPanel>(entity)?),
             Part::ScreenUi => Self::ScreenUi(*world.get::<voxear_engine::screen_ui::ScreenUi>(entity)?),
             Part::LocalizedText => {
@@ -215,6 +220,10 @@ impl Copied {
             Self::ForceField(field) => drop(world.insert(entity, *field)),
             Self::Smoke(smoke) => drop(world.insert(entity, *smoke)),
             Self::Mist(mist) => drop(world.insert(entity, *mist)),
+            Self::VoxelVolume(parts) => {
+                world.insert(entity, parts.0.clone());
+                world.insert(entity, parts.1.clone());
+            }
             Self::UiPanel(panel) => drop(world.insert(entity, *panel)),
             Self::ScreenUi(screen) => drop(world.insert(entity, *screen)),
             Self::LocalizedText(text) => drop(world.insert(entity, text.clone())),

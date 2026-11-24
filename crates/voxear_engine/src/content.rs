@@ -553,6 +553,8 @@ pub struct Content {
     /// Box models' looks drawn with another picture for their sheet, by the
     /// model and the picture.
     box_sheets: HashMap<(AssetGuid, AssetGuid), MaterialHandle>,
+    /// Box models read for stamping into Voxel Volumes, kept while unchanged.
+    box_models: HashMap<AssetGuid, crate::voxel_volumes::SharedModel>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
     /// The project's custom shaders, read when the assets are scanned.
@@ -746,6 +748,7 @@ impl Content {
             picture_sizes: HashMap::new(),
             ui_pictures: HashMap::new(),
             box_sheets: HashMap::new(),
+            box_models: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
@@ -923,6 +926,7 @@ impl Content {
         let Some(guid) = self.db.guid_of(path) else { return };
         self.texts.remove(&guid);
         self.box_sheets.retain(|&(model, picture), _| model != guid && picture != guid);
+        self.box_models.remove(&guid);
         self.prefabs.files.remove(&guid);
         if let Some(&id) = self.prefabs.ids.get(&guid)
             && let Some(template) = self.prefabs.templates.get_mut(id.0 as usize)
@@ -2280,6 +2284,27 @@ impl Content {
         let texture = renderer.add_texture(&TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb: true })?;
         self.ui_pictures.insert(guid, (texture, [width, height]));
         Ok((texture, [width, height]))
+    }
+
+    /// A box model as its file has it, read once and kept until it
+    /// changes: for stamping into Voxel Volumes.
+    pub fn box_model(&mut self, guid: AssetGuid) -> Result<crate::voxel_volumes::SharedModel> {
+        if let Some(found) = self.box_models.get(&guid) {
+            return Ok(found.clone());
+        }
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        let path = entry.path.clone();
+        ensure!(voxear_render::is_box_model(&path), "{path} is not a box model");
+        let text = match self.cooked.contains(&guid) {
+            true => {
+                let cooked = CookedModel::from_bytes(&path, &self.read(&path)?)?;
+                cooked.box_source().with_context(|| format!("{path} was built without its box model"))?.to_string()
+            }
+            false => self.read_text(&path)?,
+        };
+        let model = std::sync::Arc::new(voxear_render::BoxModel::parse(&text).with_context(|| format!("reading {path}"))?);
+        self.box_models.insert(guid, model.clone());
+        Ok(model)
     }
 
     /// A box model's material drawn with another picture for its sheet,

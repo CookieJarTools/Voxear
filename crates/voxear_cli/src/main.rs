@@ -1103,6 +1103,13 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         } else if seconds() >= 0.1 {
             tracing::info!("made the ground round the camera in {:.1} s", seconds());
         }
+        // Voxel Volumes too: theirs are made on threads of their own.
+        let making = std::time::Instant::now();
+        if !renderer.make_voxel_volumes(&game.engine.world, wait)? {
+            tracing::warn!("the Voxel Volumes were not all made in {:.0} s; the frames go on", wait.as_secs_f32());
+        } else if making.elapsed().as_secs_f32() >= 0.1 {
+            tracing::info!("made the Voxel Volumes in {:.1} s", making.elapsed().as_secs_f32());
+        }
     }
     if let Some(cpu) = &mut cpu {
         cpu.load_ms = loading.elapsed().as_secs_f32() * 1000.0;

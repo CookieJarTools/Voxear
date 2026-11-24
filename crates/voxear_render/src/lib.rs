@@ -64,6 +64,7 @@ mod skinning;
 mod smoke;
 mod grass;
 mod blocks;
+mod voxel_volume;
 mod terrain;
 mod dug;
 mod erosion;
@@ -165,6 +166,10 @@ pub use lightmapper::{BakeProgress, BakeStage, LightBake};
 pub use lightmaps::{
     BAND_SHARES, BakedAtlas, BakedLighting, BakedProbes, LightBakeState, LightMode, LightProbeGroup, Lightmap, LightmapBake,
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
+};
+pub use voxel_volume::{
+    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelGround, VoxelStamp,
+    VoxelVolume,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
@@ -271,6 +276,8 @@ pub struct RenderStats {
     /// What the main view drew of its worlds of blocks this frame: its
     /// draws and triangles, and those of the sun's cascades.
     pub blocks: BlockCounts,
+    /// The Voxel Volumes drawn, and their bricks and bytes on the GPU.
+    pub voxels: VoxelCounts,
     /// The simulated particles: how many are alive, and what their systems
     /// hold of the project's budget.
     pub particles: ParticleCounts,
@@ -343,6 +350,7 @@ impl RenderStats {
             exposure_ev: exposure[0],
             average_luminance: exposure[2],
             blocks: BlockCounts::default(),
+            voxels: VoxelCounts::default(),
             particles: ParticleCounts::default(),
             virtual_shadow_pages: 0,
             virtual_shadow_drawn: 0,
@@ -491,6 +499,12 @@ struct FrameBuffers {
     /// Their lists' runs as indirect draws, made the first time a view
     /// draws blocks (see `blocks::ViewBlocks::write_draws`).
     block_draws: Option<Buffer>,
+    /// This view's Voxel Volumes and its coarse rays through them, made the
+    /// first time a view draws a volume (see `voxel_volume`).
+    voxels: Option<[Buffer; 2]>,
+    /// What the voxels' depth pass met in each pixel, made for the size the
+    /// view draws at.
+    voxels_seen: Option<Buffer>,
     /// The openings of the Portals this view sees (see `portals`).
     portal_quads: Buffer,
     /// The weather's grids round the viewer (see `weather_maps`).
@@ -579,6 +593,38 @@ impl FrameBuffers {
             self.lamp_vsm = Some(VsmBuffers::new(gpu, &format!("{}lamp vsm", self.prefix), slot, words)?);
         }
         Ok(self.lamp_vsm.as_mut().expect("made above"))
+    }
+
+    /// Makes the view's Voxel Volumes' buffers, the first time it draws one.
+    fn fit_voxels(&mut self, gpu: &Gpu, slot: usize) -> Result<&[Buffer; 2]> {
+        if self.voxels.is_none() {
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+            let list =
+                gpu.create_buffer(&format!("{}voxel volumes {slot}", self.prefix), voxel_volume::FRAME_SIZE, usage, MemoryLocation::CpuToGpu)?;
+            let coarse = gpu.create_buffer(
+                &format!("{}voxel coarse rays {slot}", self.prefix),
+                voxel_volume::COARSE_ROOM * 4,
+                usage,
+                MemoryLocation::GpuOnly,
+            )?;
+            self.voxels = Some([list, coarse]);
+        }
+        Ok(self.voxels.as_ref().expect("made above"))
+    }
+
+    /// Makes the buffer the voxels' depth pass keeps what it met in, with
+    /// room for a picture `size` pixels.
+    fn fit_voxels_seen(&mut self, gpu: &Gpu, slot: usize, size: [u32; 2]) -> Result<&Buffer> {
+        let needed = voxel_volume::seen_bytes(size);
+        if self.voxels_seen.as_ref().is_none_or(|seen| seen.size < needed) {
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+            let name = format!("{}voxels seen {slot}", self.prefix);
+            // This slot's last frame is done with it.
+            if let Some(old) = self.voxels_seen.replace(gpu.create_buffer(&name, needed, usage, MemoryLocation::GpuOnly)?) {
+                gpu.destroy_buffer(old);
+            }
+        }
+        Ok(self.voxels_seen.as_ref().expect("made above"))
     }
 
     /// Makes the buffer a shader pack's frame is written to, the first time
@@ -700,6 +746,7 @@ pub struct Renderer {
     /// Every terrain's heights on the GPU (see `terrain`).
     terrains: terrain::Terrains,
     blocks: blocks::BlockWorlds,
+    voxels: voxel_volume::VoxelVolumes,
     gpu_decompression: bool,
     /// Meshlet culling draws with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
@@ -852,6 +899,7 @@ impl Renderer {
             particle_sim: particle_sim::ParticleSim::new(FRAMES_IN_FLIGHT),
             terrains: terrain::Terrains::default(),
             blocks: blocks::BlockWorlds::default(),
+            voxels: voxel_volume::VoxelVolumes::default(),
             gpu_decompression: true,
             mesh_shaders: true,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -991,6 +1039,29 @@ impl Renderer {
     /// The strikes particles of systems that report them made since this was
     /// last asked, the oldest first: read back from the GPU a few frames
     /// after they happened.
+    /// Whether a Voxel Volume's voxels are still being made, on a thread of
+    /// their own; the last made of it is drawn until they are.
+    pub fn voxel_volumes_making(&self) -> bool {
+        self.voxels.making()
+    }
+
+    /// Makes every Voxel Volume in `world` and brings it up, waiting at most
+    /// `limit`, as a game's loading waits for its ground: whether they were
+    /// all made in time.
+    pub fn make_voxel_volumes(&mut self, world: &World, limit: std::time::Duration) -> Result<bool> {
+        let started = std::time::Instant::now();
+        loop {
+            self.voxels.prepare(&self.gpu, &mut self.frames, world)?;
+            if !self.voxels.making() {
+                return Ok(true);
+            }
+            if started.elapsed() >= limit {
+                return Ok(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     pub fn take_particle_hits(&mut self) -> Vec<ParticleHit> {
         self.particle_sim.take_hits()
     }
@@ -1000,6 +1071,7 @@ impl Renderer {
         let [lamp_shadow_pages, lamp_shadow_drawn] = self.views[0].lamp_counts;
         RenderStats {
             blocks: self.views[0].block_counts,
+            voxels: self.voxels.counts(),
             virtual_shadow_pages,
             virtual_shadow_drawn,
             virtual_shadow_moving,
@@ -1915,6 +1987,8 @@ impl Renderer {
         // Block worlds make their chunks' meshes for rays nearest the first view's camera first, as it was last frame.
         let camera = self.views.first().and_then(|view| view.prev_camera).map(|(at, _)| at);
         self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, (frame_index, camera))?;
+        // Voxel Volumes made again where they changed, on threads of their own, and brought up once made.
+        self.voxels.prepare(&self.gpu, &mut self.frames, world)?;
         // Every simulated particle's step, for all the views.
         let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
@@ -1940,6 +2014,7 @@ impl Renderer {
             particle_sim,
             terrains,
             blocks,
+            voxels,
             frames,
             frame_debugger,
             captures,
@@ -1967,6 +2042,7 @@ impl Renderer {
         let particle_step = particle_sim.step(&mut fg, frame.slot);
         let terrain_draws = terrains.record(&mut fg, frames);
         let block_draws = blocks.record(&mut fg, frames);
+        let voxel_draws = voxels.drawn();
         let ui = &ui_buffers[frame.slot];
         // The UI's shaded backgrounds read the time from `output`.
         let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
@@ -2087,6 +2163,7 @@ impl Renderer {
                 panels: panel_textures.clone(),
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
+                voxels: voxel_draws.clone(),
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
                 sound: sound.filter(|_| !sound_done),
                 baked: baked_frame.clone(),
@@ -2408,6 +2485,7 @@ impl Drop for Renderer {
         self.particle_sim.destroy(gpu);
         self.terrains.destroy(gpu);
         self.blocks.destroy(gpu);
+        self.voxels.destroy(gpu);
         for view in std::mem::take(&mut self.views) {
             view.retire(&mut self.frames);
         }
@@ -2652,6 +2730,8 @@ struct ViewSetup {
     terrains: std::sync::Arc<[terrain::Drawn]>,
     /// This frame's worlds of blocks, as every view draws them.
     blocks: std::sync::Arc<[blocks::DrawnBlocks]>,
+    /// The Voxel Volumes drawn this frame, and their corners.
+    voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3)]>,
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
@@ -2831,9 +2911,11 @@ impl View {
                 lamp_vsm,
                 block_draws,
                 pack_frame,
+                voxels,
+                voxels_seen,
                 ..
             } = buffers;
-            for buffer in block_draws.into_iter().chain(pack_frame) {
+            for buffer in block_draws.into_iter().chain(pack_frame).chain(voxels.into_iter().flatten()).chain(voxels_seen) {
                 frames.retire(Retired::Buffer(buffer));
             }
             for buffer in vsm.into_iter().chain(lamp_vsm).flat_map(|vsm| [vsm.table, vsm.gpu_table, vsm.requests, vsm.readback]) {
@@ -3536,6 +3618,28 @@ impl View {
         // The grass this view scatters round its camera on the terrains.
         let gathered =
             grass::gather(terrains, (&seen_blocks[..], offset), &extracted.frame, extracted.origin, &buffers.grass);
+        // The Voxel Volumes this view draws, and the coarse rays its voxel passes start from.
+        let view_voxels = match setup.voxels.is_empty() {
+            true => None,
+            false => {
+                let size = [extent.width, extent.height];
+                // The depth pass keeps what each pixel met, so the opaque pass need not walk it again; where no depth
+                // pass is drawn, the opaque pass finds nothing kept for this frame and walks it.
+                self.buffers[slot].fit_voxels_seen(gpu, slot, size)?;
+                self.buffers[slot].fit_voxels(gpu, slot)?;
+                let buffers = &self.buffers[slot];
+                let [list, coarse] = buffers.voxels.as_ref().expect("made above");
+                let seen = buffers.voxels_seen.as_ref().expect("made above");
+                voxel_volume::gather(&setup.voxels, (list, coarse, Some(seen)), size, offset).map(|view| {
+                    voxel_volume::ViewVoxels {
+                        coarse: Some(fg.import_buffer(coarse)),
+                        seen: Some(fg.import_buffer(seen)),
+                        ..view
+                    }
+                })
+            }
+        };
+        let buffers = &self.buffers[slot];
         let view_grass = gathered.map(|(jobs, dispatches)| grass::ViewGrass {
             jobs: dispatches,
             draws: jobs.iter().map(|job| job.lod_count).sum(),
@@ -4074,6 +4178,7 @@ impl View {
                 skin_jobs: 0,
                 skin_groups: 0,
                 baked_matrices: setup.baked_matrices,
+                voxel_volumes: buffers.voxels.as_ref().map_or(0, |[list, _]| list.address),
                 ui_panels: buffers.ui_panels.address,
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],
@@ -4444,6 +4549,7 @@ impl View {
             probes,
             terrain: view_terrains,
             blocks: view_blocks,
+            voxels: view_voxels,
             grass: view_grass,
             traced_reflections,
             portal_openings: openings.len() as u32,
@@ -5015,6 +5121,8 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         vsm: None,
         lamp_vsm: None,
         pack_frame: None,
+        voxels: None,
+        voxels_seen: None,
         block_draws: None,
         prefix: prefix.to_string(),
     })

@@ -4463,7 +4463,7 @@ Done:
   `ModelSurface`; Radiant lights grass made of boxes through as it does foliage.
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (planned: researched)
+## Small voxels (in progress: stage 1 built)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4489,6 +4489,16 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   7. physics, navigation and debris at voxel scale.
 
   Drawing today's Block Worlds as small-voxel patterns stays an option.
+- **Stage 1 built (2026-11-24): Voxel Volumes.**
+  - What it is: a component holding a box of small voxels with its own ground (grass, flowers) and box models
+    stamped in, made on a thread of its own.
+  - How it is drawn: by three passes, coarse rays, depth and opaque. It is lit as the frame's other surfaces are,
+    and its voxels' own shadow is traced.
+  - Where it lives: kept with scenes, in the Inspector and the create menu, reachable by `vox editor call`. The
+    manual page is Terrain ▸ Voxel Volumes.
+  - Measured: an 80 × 120 m meadow at 1/16 m with sixty trees costs 2 ms depth and 3.8 ms lit at 1080p, and is made
+    in 1.6 s.
+  - Not yet: shadows onto meshes, turning with the Obj, stamps in the Inspector, C#.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

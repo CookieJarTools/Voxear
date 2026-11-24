@@ -596,6 +596,8 @@ pub struct TemplateObj {
     pub terrain: Option<Box<TerrainParts>>,
     /// A Block World, which fewer have.
     pub block_world: Option<Box<BlockWorldParts>>,
+    /// A Voxel Volume, its stamps' models read, and how it was written.
+    pub voxel_volume: Option<Box<(voxear_render::VoxelVolume, crate::voxel_volumes::VoxelVolumeSource)>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
     /// it was written.
     pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
@@ -927,6 +929,10 @@ impl Template {
                     world.insert(entity, asset.clone());
                 }
                 world.insert(entity, parts.source.clone());
+            }
+            if let Some(parts) = &obj.voxel_volume {
+                world.insert(entity, parts.0.clone());
+                world.insert(entity, parts.1.clone());
             }
             if let Some(parts) = &obj.block_world {
                 world.insert(entity, parts.blocks.clone());
@@ -1421,6 +1427,10 @@ pub(crate) fn resolve_obj(
         Some(written) => Some(Box::new(block_world(content, gpu.as_deref_mut(), written)?)),
         None => None,
     };
+    let voxel_volume = data.voxel_volume.as_ref().map(|written| {
+        let made = crate::voxel_volumes::made(content, written);
+        Box::new((made, crate::voxel_volumes::VoxelVolumeSource(written.clone())))
+    });
     // A mesh Dry Area's mesh needs a renderer to load it, and its box for scripts' questions; without one it keeps
     // to the Obj's own.
     let dry_area = match &data.dry_area {
@@ -1452,6 +1462,7 @@ pub(crate) fn resolve_obj(
         foliage,
         terrain,
         block_world,
+        voxel_volume,
         model,
         parent,
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },

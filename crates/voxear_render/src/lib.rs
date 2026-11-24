@@ -36,6 +36,7 @@ mod ies;
 pub mod lightmap_uvs;
 pub mod lightmapper;
 mod lightmaps;
+mod camera;
 mod lens;
 mod lod;
 mod looks;
@@ -196,6 +197,10 @@ pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone, plants_wind};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
+pub use camera::{
+    Background, CameraFinish, CameraOver, CameraScreen, CameraTarget, CameraView, EVERY_LAYER, FovAxis, GateFit,
+    PhysicalLens, camera_views, far_plane, sees_layer, viewport_rect,
+};
 pub use lens::{Lens, ORTHO_DEPTH, Projection};
 pub use scene::{
     Camera, CloudKind, Clouds, DimensionLook, DimensionLooks, Light, LightKind, MAX_TRANSITIONS, MeshRenderer,
@@ -423,6 +428,10 @@ struct Output {
     /// For a window after the first, signalled when its image may be drawn
     /// into, one for each frame in flight. The first uses the frame's own.
     ready: Vec<vk::Semaphore>,
+    /// For a camera's picture (see `camera::CameraTarget::Picture`), the
+    /// texture materials and UI show it by: it has no UI of its own, and
+    /// ends each frame ready to be sampled.
+    picture: Option<TextureId>,
 }
 
 impl Output {
@@ -444,6 +453,9 @@ impl Output {
     /// The caller makes sure the GPU is idle.
     fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
         self.ui.destroy(gpu, bindless);
+        if let Some(texture) = self.picture.take() {
+            bindless.remove_texture(texture);
+        }
         for semaphore in self.ready.drain(..) {
             unsafe { gpu.device.destroy_semaphore(semaphore, None) };
         }
@@ -649,6 +661,12 @@ pub struct Renderer {
     /// What it draws into, the one it was made with first.
     outputs: Vec<Output>,
     next_output: u32,
+    /// Each camera's picture, by its Obj: the output it draws into, the
+    /// texture it is shown by, and its size (see `look_through_cameras`).
+    pictures: HashMap<voxear_ecs::Entity, (OutputId, TextureId, (u32, u32))>,
+    /// The output each display number after the first draws into, where the
+    /// game has a window for it.
+    displays: Vec<Option<OutputId>>,
     frames: Frames,
     bindless: Bindless,
     graph: RenderGraph,
@@ -817,7 +835,14 @@ impl Renderer {
         let first = View::new(&gpu, 0)?;
         let ui_buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_ui_buffers(&gpu, slot)).collect::<Result<_>>()?;
         let main =
-            Output { id: OutputId::MAIN, target, pending_size: None, ui: ui_pass::UiGpu::default(), ready: Vec::new() };
+            Output {
+            id: OutputId::MAIN,
+            target,
+            pending_size: None,
+            ui: ui_pass::UiGpu::default(),
+            ready: Vec::new(),
+            picture: None,
+        };
         Ok(Self {
             software_rays,
             renderdoc,
@@ -825,6 +850,8 @@ impl Renderer {
             gpu,
             outputs: vec![main],
             next_output: 1,
+            pictures: HashMap::new(),
+            displays: Vec::new(),
             frames,
             bindless,
             graph,
@@ -1018,6 +1045,92 @@ impl Renderer {
         self.views[0].options = options;
     }
 
+    /// Looks through the level's cameras as they are set (see
+    /// `camera::camera_views`): each switched on draws in its viewport of
+    /// its display or into a picture of its own, by priority, the cameras
+    /// stacked over one right after it, every view with `base`'s other
+    /// options. With one plain camera this is the view
+    /// [`set_view_options`](Self::set_view_options) makes. A camera whose
+    /// display has no window is not drawn.
+    pub fn look_through_cameras(&mut self, world: &voxear_ecs::World, base: ViewOptions) -> Result<()> {
+        let size = self.output_size(OutputId::MAIN).unwrap_or((1, 1));
+        let list = self.camera_view_list(world, (OutputId::MAIN, [0, 0, size.0, size.1]), base)?;
+        let Some((&(output, rect, options), more)) = list.split_first() else {
+            // No camera: the first view draws as without one.
+            (self.views[0].output, self.views[0].rect, self.views[0].options) = (OutputId::MAIN, None, base);
+            return self.set_more_views_in(&[]);
+        };
+        let full = self.output_size(output).is_some_and(|(width, height)| rect == [0, 0, width, height]);
+        (self.views[0].output, self.views[0].rect, self.views[0].options) = (output, (!full).then_some(rect), options);
+        self.set_more_views_in(more)
+    }
+
+    /// The views the level's cameras draw, as `look_through_cameras` draws
+    /// them, those on the first display in `area`, a part of an output, as
+    /// the editor's Game view is; the pictures each camera draws into made
+    /// or let go to match.
+    pub fn camera_view_list(
+        &mut self,
+        world: &voxear_ecs::World,
+        (area_output, area): (OutputId, [u32; 4]),
+        base: ViewOptions,
+    ) -> Result<Vec<(OutputId, [u32; 4], ViewOptions)>> {
+        let views = crate::camera_views(world, (area[2], area[3]));
+        // A picture for each camera that draws into one, made again when its size changes; those no longer
+        // wanted let go.
+        let wanted: HashMap<voxear_ecs::Entity, (u32, u32)> = views
+            .iter()
+            .filter_map(|view| match view.target {
+                crate::CameraTarget::Picture { width, height } => Some((view.camera, (width.max(1), height.max(1)))),
+                crate::CameraTarget::Display { .. } => None,
+            })
+            .collect();
+        let stale: Vec<_> = (self.pictures.iter())
+            .filter(|(camera, (.., size))| wanted.get(camera) != Some(size))
+            .map(|(camera, _)| *camera)
+            .collect();
+        for camera in stale {
+            if let Some((output, ..)) = self.pictures.remove(&camera) {
+                self.remove_output(output);
+            }
+        }
+        for (camera, (width, height)) in wanted {
+            if !self.pictures.contains_key(&camera) {
+                let (output, texture) = self.add_picture_output(width, height)?;
+                self.pictures.insert(camera, (output, texture, (width, height)));
+            }
+        }
+        let mut list = Vec::new();
+        for view in &views {
+            let [x, y, width, height] = view.rect;
+            let (output, rect) = match view.target {
+                crate::CameraTarget::Display { display: 0 } => (Some(area_output), [area[0] + x, area[1] + y, width, height]),
+                crate::CameraTarget::Display { display } => {
+                    (self.displays.get(usize::from(display)).copied().flatten(), view.rect)
+                }
+                crate::CameraTarget::Picture { .. } => (self.pictures.get(&view.camera).map(|(output, ..)| *output), view.rect),
+            };
+            let options = ViewOptions { camera: Some(view.camera), over: view.over, ..base };
+            list.extend(output.map(|output| (output, rect, options)));
+        }
+        Ok(list)
+    }
+
+    /// The texture a camera's picture is shown by, once it has one.
+    pub fn camera_picture(&self, camera: voxear_ecs::Entity) -> Option<TextureId> {
+        self.pictures.get(&camera).map(|(_, texture, _)| *texture)
+    }
+
+    /// Gives display `display`, after the first, the output its cameras draw
+    /// into: a window the game opened on it; or none.
+    pub fn set_display_output(&mut self, display: u8, output: Option<OutputId>) {
+        let at = usize::from(display);
+        if self.displays.len() <= at {
+            self.displays.resize(at + 1, None);
+        }
+        self.displays[at] = output;
+    }
+
     /// The 3D views to draw after the first, each frame, until set again:
     /// each into its rectangle of the output, through its camera, as the
     /// editor's Game view beside its Scene view. Each keeps its own culling,
@@ -1164,8 +1277,26 @@ impl Renderer {
     fn push_output(&mut self, target: Target, ready: Vec<vk::Semaphore>) -> OutputId {
         let id = OutputId(self.next_output);
         self.next_output += 1;
-        self.outputs.push(Output { id, target, pending_size: None, ui: ui_pass::UiGpu::default(), ready });
+        self.outputs.push(Output { id, target, pending_size: None, ui: ui_pass::UiGpu::default(), ready, picture: None });
         id
+    }
+
+    /// Adds a picture of `width` by `height` for a camera to draw into, as
+    /// [`add_offscreen_output`](Self::add_offscreen_output) adds an image,
+    /// and the texture a material or the UI shows it by. Views drawn into
+    /// it each frame are shown that same frame by the views after them.
+    pub fn add_picture_output(&mut self, width: u32, height: u32) -> Result<(OutputId, TextureId)> {
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
+        let desc = ImageDesc::new(width.max(1), height.max(1), self.window_format, usage);
+        let image = self.gpu.create_image("camera picture", desc)?;
+        let texture = self.bindless.add_texture(&self.gpu, image.view);
+        let encoding = display::Encoding::Sdr;
+        let target = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined, encoding };
+        let id = self.push_output(target, Vec::new());
+        if let Some(output) = self.outputs.iter_mut().find(|output| output.id == id) {
+            output.picture = Some(texture);
+        }
+        Ok((id, texture))
     }
 
     /// Stops drawing into an output added since the renderer was made, and
@@ -2099,6 +2230,10 @@ impl Renderer {
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
+            // A camera's picture is ready to be shown by the views after it, this frame.
+            if outputs[at].picture.is_some() && windows[at].is_some_and(|(window, _)| window == output) {
+                fg.transition(output, ImageAccess::Sampled);
+            }
             if keeps_backdrop {
                 backdrops[at] = recorded.backdrop;
             }
@@ -2158,7 +2293,7 @@ impl Renderer {
         ui_panels.end_frame();
         let mut first = (panel_quads, panel_values);
         for ((output, image), backdrop) in outputs.iter().zip(&images).zip(backdrops) {
-            let Some((image, desc)) = *image else { continue };
+            let Some((image, desc)) = image.filter(|_| output.picture.is_none()) else { continue };
             let target = (image, desc.extent());
             let buffers = (&ui.quads, &ui.values);
             let (quads, values) =
@@ -2194,8 +2329,9 @@ impl Renderer {
             fg.add_pass("Encode", &passes, &[], move |ctx| post_passes::draw(ctx, encode, &push, target, false));
         }
         let images = windows;
-        for (image, acquired) in images.iter().zip(&acquired) {
+        for ((image, acquired), output) in images.iter().zip(&acquired).zip(outputs.iter()) {
             match (image, acquired) {
+                (Some((image, _)), None) if output.picture.is_some() => fg.transition(*image, ImageAccess::Sampled),
                 (Some((output, _)), Some(_)) => fg.transition(*output, ImageAccess::Present),
                 // An offscreen output ends each frame ready to draw into, as the next frame expects, even after a
                 // capture copied it once the UI was drawn.
@@ -2229,7 +2365,7 @@ impl Renderer {
         }
         for (output, drawn) in self.outputs.iter_mut().zip(drawn) {
             if let (Target::Offscreen { last, .. }, true) = (&mut output.target, drawn) {
-                *last = ImageAccess::ColorAttachment;
+                *last = if output.picture.is_some() { ImageAccess::Sampled } else { ImageAccess::ColorAttachment };
             }
         }
         if self.show_capture
@@ -2379,6 +2515,7 @@ impl Renderer {
         self.gpu.wait_idle();
         let layout = match *last {
             ImageAccess::TransferSrc => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            ImageAccess::Sampled => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             _ => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         };
         let pixels = self.gpu.read_image(image.handle, image.desc, layout)?;
@@ -3996,6 +4133,8 @@ impl View {
             (true, None) => (None, pyramid_desc),
             (false, _) => (Some(pyramid), pyramid_desc),
         };
+        // A camera with occlusion culling off culls by its frustum, draw distances and LODs alone.
+        let hiz = hiz.filter(|_| extracted.occlusion_culling);
         frame_data.hiz_texture = hiz.map_or(NO_TEXTURE, |image| fg.texture(image).0);
         frame_data.hiz_size = [hiz_desc.width, hiz_desc.height];
         frame_data.hiz_mips = hiz_desc.mip_levels;
@@ -4503,14 +4642,16 @@ impl View {
                 pyramid: None,
             });
         }
-        // Drawn in pixels, the finished picture is the drawn size, enlarged into the view after.
-        let small = match pixel_grid {
-            Some(_) => {
+        // Drawn in pixels, the finished picture is the drawn size, enlarged into the view after; laid over what is
+        // there, it is the view's size, laid where the view drew something.
+        let over = self.options.over && portal.is_none();
+        let small = match pixel_grid.is_some() || over {
+            true => {
                 let format = fg.image_desc(output).format;
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
                 Some(fg.create_image(gpu, bindless, "pixels", ImageDesc::new(extent.width, extent.height, format, usage))?)
             }
-            None => None,
+            false => None,
         };
         let post = post_passes::PostInput {
             pipelines: *pipelines,
@@ -4523,6 +4664,8 @@ impl View {
             depth: seen_depth.unwrap_or(depth),
             output: small.unwrap_or(output),
             output_rect: (view.extent != setup.full && small.is_none()).then_some(view),
+            background: extracted.background,
+            cut_at_white: extracted.cut_at_white,
             clear: setup.clear,
             clear_outside: setup.first,
             exposure: fg.import_buffer(&self.exposure),
@@ -4547,10 +4690,13 @@ impl View {
             }),
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;
-        if let (Some(grid), Some(small)) = (pixel_grid, small) {
+        if let Some(small) = small {
             let rect = (view.extent != setup.full).then_some(view);
             let shown = (view.extent.width, view.extent.height);
-            post_passes::enlarge(fg, (*pipelines, push), (small, output), (rect, setup.first.then_some(setup.clear)), grid.size, grid.start(shown));
+            let (size, start) = pixel_grid.map_or((1, [0.0; 2]), |grid| (grid.size, grid.start(shown)));
+            let clear = (setup.first && !over).then_some(setup.clear);
+            let covered = over.then(|| seen_depth.unwrap_or(depth));
+            post_passes::enlarge(fg, (*pipelines, push), (small, output), (rect, clear), size, start, covered);
         }
         let backdrop = match finished.filter(|_| post.keep_ldr) {
             Some(view_image) => {

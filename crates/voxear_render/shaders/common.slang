@@ -1227,6 +1227,8 @@ struct Frame
     LampShadows lampVsm;
     Trails trails;
     CullCamera cull;
+    // A second plane as `cut`: the camera's far limit, where it has one (src/camera.rs far_plane).
+    float4 clip;
 };
 
 // How much of a gradient sky's colours is its light from all round.
@@ -1395,6 +1397,12 @@ float3 cullLook(CullCamera cull, float3 world)
 float cutAt(Frame* frame, float3 world)
 {
     return dot(frame->cut.xyz, world) + frame->cut.w;
+}
+
+// As cutAt, for the frame's second plane, the camera's far limit.
+float clipAt(Frame* frame, float3 world)
+{
+    return dot(frame->clip.xyz, world) + frame->clip.w;
 }
 
 float weatherShare(Frame* frame, uint index, float2 xz)

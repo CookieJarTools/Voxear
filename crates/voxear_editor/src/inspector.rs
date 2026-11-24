@@ -1330,6 +1330,9 @@ impl Inspector {
                 if let Prop::NavLink(field) = value {
                     meta.tooltip = Some(crate::nav_props::link_tooltip(*field).to_string());
                 }
+                if let Prop::Camera(field) = value {
+                    meta.tooltip = Some(crate::camera_props::tooltip(*field).to_string());
+                }
                 if let Prop::NavObstacle(field) = value {
                     meta.tooltip = Some(crate::nav_props::obstacle_tooltip(*field).to_string());
                 }

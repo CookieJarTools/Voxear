@@ -971,6 +971,10 @@ pub enum Prop {
     FieldOfView,
     /// An orthographic Camera's size: half the height it sees.
     OrthoSize,
+    /// A Camera's value past its first rows (see `camera_props`).
+    Camera(crate::camera_props::CameraField),
+    /// Whether a Camera sees a layer's Objs, by its number and its name.
+    CameraSees(u8, String),
     Near,
     Exposure,
     Sound,
@@ -1158,9 +1162,14 @@ impl Prop {
             }
             Prop::LightmapScale | Prop::LightmapCast | Prop::LightmapReceive => Part::Lightmap,
             Prop::ProbeGroupFill | Prop::ProbeGroupSpacing | Prop::ProbeGroupCount => Part::LightProbeGroup,
-            Prop::Projection | Prop::FieldOfView | Prop::OrthoSize | Prop::Near | Prop::Exposure | Prop::CameraFollows => {
-                Part::Camera
-            }
+            Prop::Projection
+            | Prop::FieldOfView
+            | Prop::OrthoSize
+            | Prop::Near
+            | Prop::Exposure
+            | Prop::CameraFollows
+            | Prop::Camera(_)
+            | Prop::CameraSees(..) => Part::Camera,
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
             Prop::ProbeUpdate
             | Prop::ProbeInterval
@@ -1920,6 +1929,8 @@ impl Prop {
             Prop::PortalOpen => "open",
             Prop::PortalMist => "mist",
             Prop::PortalPass(_, name) => return format!("passes.{name}"),
+            Prop::CameraSees(_, name) => return format!("sees.{name}"),
+            Prop::Camera(field) => crate::camera_props::key(*field),
             Prop::PortalViewFrom | Prop::PortalViewDistance => "view_distance",
             Prop::CameraFollows => "camera_follows",
             Prop::Shape2D => "shape",
@@ -2271,7 +2282,10 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             // A perspective camera's field of view, or an orthographic one's size.
             let ortho = world.get::<Camera>(entity).is_some_and(|c| c.projection == voxear_render::Projection::Orthographic);
             let shape = if ortho { Prop::OrthoSize } else { Prop::FieldOfView };
-            vec![Prop::Projection, shape, Prop::Near, Prop::Exposure, Prop::CameraFollows]
+            let mut props = vec![Prop::Projection, shape, Prop::Near, Prop::Exposure];
+            props.extend(crate::camera_props::props(world, entity));
+            props.push(Prop::CameraFollows);
+            props
         }
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::ReverbProbe => vec![Prop::ReverbSize, Prop::ReverbSpacing],
@@ -3203,6 +3217,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::PortalOpen => "Open",
         Prop::PortalMist => "Mist",
         Prop::PortalPass(_, name) => return format!("Passes {name}"),
+        Prop::CameraSees(_, name) => return format!("Sees {name}"),
+        Prop::Camera(field) => return crate::camera_props::label(*field),
         Prop::PortalViewFrom => "View Distance",
         Prop::PortalViewDistance => "Distance",
         Prop::CameraFollows => "Follows",
@@ -3289,6 +3305,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
             _,
         ) => Some("m"),
         (Prop::NavObstacle(crate::nav_props::NavObstacleField::StillTime), _) => Some("s"),
+        (Prop::Camera(field), _) => crate::camera_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -3858,6 +3875,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::PortalSize => Value::Vector(world.get::<Portal>(entity)?.size.to_array().to_vec()),
         Prop::PortalOpen => Value::Toggle(world.get::<Portal>(entity)?.open),
         Prop::PortalPass(layer, _) => Value::Toggle(world.get::<Portal>(entity)?.passes & (1 << layer) != 0),
+        Prop::CameraSees(layer, _) => Value::Toggle(voxear_render::sees_layer(camera()?.layers, *layer)),
+        Prop::Camera(field) => return crate::camera_props::get(game, entity, *field),
         Prop::PortalMist => Value::Color(srgb(world.get::<Portal>(entity)?.mist.to_array()).map(round3)),
         Prop::PortalViewFrom => {
             let own = world.get::<Portal>(entity)?.view_distance.is_some();
@@ -4504,6 +4523,14 @@ pub fn set(
     }
     let mut renderer = renderer;
     let changed = match (prop, value) {
+        (Prop::Camera(field), Value::Obj(label)) if crate::camera_props::picks_obj(*field) => {
+            let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| pick(game, renderer.as_deref_mut(), types, entity, prop, &choice))
+        }
+        (Prop::Camera(field), value) => crate::camera_props::set(game, entity, *field, value),
+        (Prop::CameraSees(layer, _), Value::Toggle(on)) => with(&mut game.engine.world, entity, |camera: &mut Camera| {
+            camera.layers = if on { camera.layers | 1 << layer } else { camera.layers & !(1 << layer) };
+        }),
         // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
         (
             Prop::Mesh
@@ -4928,6 +4955,9 @@ pub fn pick(
             world.insert(entity, voxear_engine::portals::PortalInto(link));
             with(world, entity, |portal: &mut Portal| portal.to = None)
         }
+        (Prop::Camera(field), Pick::Obj(obj)) => {
+            crate::camera_props::pick_obj(&mut game.engine.world, entity, *field, *obj)
+        }
         (Prop::CameraFollows, Pick::Obj(obj)) => {
             let world = &mut game.engine.world;
             match obj.filter(|&obj| obj != entity) {
@@ -4969,6 +4999,7 @@ pub fn obj_target(world: &World, entity: Entity, prop: &Prop) -> Option<Entity> 
         Prop::JointConnected => world.get::<Joint>(entity)?.connected,
         Prop::PortalTo => world.get::<Portal>(entity)?.to,
         Prop::CameraFollows => world.get::<voxear_render::CameraFollows>(entity).map(|follows| follows.0),
+        Prop::Camera(field) => crate::camera_props::picked(world, entity, *field),
         _ => None,
     }
 }
@@ -5201,6 +5232,16 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         // level saying which, as picking it moves it here.
         // A Portal leads to another: every other Obj with one. A camera follows any Obj.
         // A Portal leads to another of its own dimension, or into a Portal of a dimension's file.
+        Prop::Camera(field) if crate::camera_props::picks_obj(*field) => {
+            let world = &game.engine.world;
+            let mut found: Vec<(String, Pick)> = crate::camera_props::obj_choices(world, entity, *field)
+                .into_iter()
+                .filter_map(|obj| Some((world.get::<Name>(obj)?.0.clone(), Pick::Obj(Some(obj)))))
+                .collect();
+            found.sort_by(|a, b| a.0.cmp(&b.0));
+            found.insert(0, ("None".to_string(), Pick::Obj(None)));
+            return found;
+        }
         Prop::PortalTo | Prop::CameraFollows => {
             let world = &game.engine.world;
             let mut found = vec![("None".to_string(), Pick::Obj(None))];
@@ -5336,6 +5377,8 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::JointConnected => "Rigidbody".into(),
         Prop::PortalTo => "Portal".into(),
         Prop::CameraFollows => "Obj".into(),
+        Prop::Camera(crate::camera_props::CameraField::Over) => "Camera".into(),
+        Prop::Camera(_) => "Obj".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
         Prop::BlockWorld(field) if crate::block_props::is_picked(*field) => {
             crate::block_props::takes_name(*field).into()

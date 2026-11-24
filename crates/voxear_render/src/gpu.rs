@@ -493,6 +493,9 @@ pub struct GpuFrame {
     /// The camera culling and LODs are judged from: the view's own, or
     /// another view's it borrows (see [`GpuCull`]).
     pub cull: GpuCull,
+    /// A second plane nothing behind is drawn, as `cut`: the camera's far
+    /// limit, where it has one (see `camera::far_plane`).
+    pub clip: [f32; 4],
 }
 
 /// The camera a view culls and picks LODs from. Its own, as
@@ -1797,6 +1800,7 @@ mod tests {
                 + lamp_vsm
                 + trails
                 + 192
+                + 16
         );
         assert_eq!(size_of::<GpuCull>(), 192);
         assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);

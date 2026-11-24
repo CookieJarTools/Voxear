@@ -21,7 +21,7 @@ public sealed class PixelsSettings
 	public int Height;
 
 	/// <summary>Keeps an orthographic camera on the grid of its pixels, so they do not crawl or shimmer as it glides.</summary>
-	public bool Snap = true;
+	public bool Snap;
 
 	/// <summary>Turns drawing in pixels on, each drawn pixel <paramref name="size"/> screen pixels across.</summary>
 	public void DrawAt(int size)

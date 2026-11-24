@@ -4329,6 +4329,17 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
   and moves the picture by the rest in whole screen pixels, so nothing crawls as it glides. Lighting window,
   C# (`post.Pixels.DrawAt`), `lighting.set`, and a shader pack's `[pixels]`. Tests: every 4×4 block one colour; a
   snapped glide the same picture moved, an unsnapped one crawling.
+- [x] **A camera's full settings.** Field of view measured up and down or across; a physical camera (focal
+  length, sensor, gate fit, lens shift); a far limit (culling and a second clip plane); a viewport and a priority, so
+  cameras split the screen and draw in order; the layers it sees; a display or a picture of its own, shown on a mesh
+  by a Camera Screen; a background of sky, one colour or nothing; its own post-processing on or off, anti-aliasing,
+  HDR (light cut at white without) and occlusion culling; cameras stacked over another (a hands camera over the
+  world, laid where it drew); an oblique clip plane and a custom projection. The game, `vox render` and the editor's
+  Game view draw every camera (`Renderer::look_through_cameras`). Inspector rows, C# (`DrawOver`, `ShowOn`,
+  `FocalLength` and the full properties), scene files, `field.set` and `vox mcp`. Tests: split screen, stacking,
+  background, layers and far, clip plane, HDR off and a screen showing a camera on the GPU; lens and viewport maths,
+  draw order, scene files, C# and the Inspector's rows. Not yet: opening a window on another display (a camera there
+  draws where the game gives that display an output), and C# reading a picture as a texture.
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

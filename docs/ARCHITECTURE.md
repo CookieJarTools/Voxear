@@ -1821,6 +1821,18 @@ screen-space passes rebuild view-space positions without dividing by depth. Casc
 and skinning a constant screen share. `PackFrame` carries the same two numbers (`isOrthographic`,
 `distanceOfDepth`, `viewRayStart` in `shader_pack.slang`).
 
+**A camera's settings** (`voxear_render::camera`) live on the Camera component, each as a plain camera has it by
+default. The lens reads `fov_y_for` (axis, physical lens and gate fit); a lens shift moves the projection with
+`Lens::shifted`, and a shifted or custom projection's frustum is read from the matrix (`lens::planes_of`). The far
+limit is the frustum's sixth plane and `GpuFrame::clip`, a second plane beside `cut` that `clipAt` writes as
+`SV_ClipDistance1`; an oblique clip plane takes `cut` where no Portal does. Layers filter Objs in `extract`'s
+`shown`. A background colour and HDR off are post passes (`backgroundFragment`, `clampFragment` with a min blend).
+`camera_views` lists the views by target and priority, cameras stacked over one (`CameraOver`) right after it;
+`Renderer::look_through_cameras` and `camera_view_list` give each its output and rectangle, a picture camera an
+output of its own (`add_picture_output`, registered in bindless and left sampled after its view, drawn first each
+frame), and `ViewOptions::over` has a view's picture laid where its depth shows it drew (`post_passes::enlarge` with
+`covered_by`). `voxear_engine::cameras::look_through` also gives Camera Screens a glowing material of the picture.
+
 **Drawing in pixels.** `[post.pixels]` (or a worn pack's `[pixels]`, `PackPixels`) makes `extract` draw the view at
 `pixels::PixelGrid::drawn`: the shown size over a whole pixel size, rounded up, plus a margin of one each side when an
 orthographic camera snaps. The lens grows to cover what is drawn; TAA, FXAA and sharpening are off. Snapping moves

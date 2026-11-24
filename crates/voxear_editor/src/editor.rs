@@ -977,16 +977,29 @@ impl Editor {
             };
             renderer.set_view_output(output);
             renderer.set_view_rect(Some(rect));
-            // Each view after the first, as the Game view beside the Scene view, through its own camera.
-            let more: Vec<(OutputId, [u32; 4], ViewOptions)> = views
-                .iter()
-                .skip(1)
-                .filter_map(|&(viewport, camera)| {
-                    let (output, output_size) = self.output_of(viewport, size)?;
-                    Some((output, self.viewport_rect(Some(viewport), output_size), self.view_options(viewport, camera)))
-                })
-                .collect();
-            renderer.set_more_views_in(&more)?;
+            // Each view, as the Game view beside the Scene view, through its own camera; the Game view through every
+            // camera the game draws with, each in its viewport, by priority, those stacked over another after it.
+            let mut all: Vec<(OutputId, [u32; 4], ViewOptions)> = Vec::new();
+            for &(viewport, camera) in &views {
+                let Some((output, output_size)) = self.output_of(viewport, size) else { continue };
+                let (rect, options) = (self.viewport_rect(Some(viewport), output_size), self.view_options(viewport, camera));
+                let cameras = match viewport == self.nodes.game_viewport {
+                    true => renderer.camera_view_list(&self.game.engine.world, (output, rect), options)?,
+                    false => Vec::new(),
+                };
+                match cameras.is_empty() {
+                    true => all.push((output, rect, options)),
+                    false => all.extend(cameras),
+                }
+            }
+            if let Some(&(output, rect, options)) = all.first().filter(|_| views.first().is_some_and(|&(viewport, _)| viewport == self.nodes.game_viewport)) {
+                renderer.set_view_output(output);
+                renderer.set_view_rect(Some(rect));
+                renderer.set_view_options(options);
+            }
+            let more = all.get(1..).unwrap_or_default();
+            renderer.set_more_views_in(more)?;
+            voxear_engine::cameras::show_screens(&mut self.game.engine.world, renderer)?;
             {
                 profile_scope!("UI Upload");
                 renderer.set_ui(&frame)?;

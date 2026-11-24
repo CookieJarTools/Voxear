@@ -59,7 +59,7 @@ impl Lens {
     /// The lens of `camera`, for a picture of `aspect`.
     pub fn of(camera: &crate::Camera, aspect: f32) -> Self {
         Self {
-            fov_y: camera.fov_y_degrees.clamp(0.01, 179.0).to_radians(),
+            fov_y: camera.fov_y_for(aspect),
             aspect: aspect.max(1e-6),
             near: camera.near.max(1e-4),
             ortho: (camera.projection == Projection::Orthographic).then_some(camera.size.max(1e-3)),
@@ -115,6 +115,14 @@ impl Lens {
         height as f32 / (2.0 * self.half_height(1.0))
     }
 
+    /// The lens shift of a physical camera, as the share of the picture
+    /// it moves across and up, laid on `projection`: what is seen moves the
+    /// other way.
+    pub fn shifted(&self, projection: Mat4, [across, up]: [f32; 2]) -> Mat4 {
+        let flip = projection.y_axis.y.signum();
+        self.moved(projection, [-2.0 * across, -2.0 * up * flip])
+    }
+
     /// The inward planes of what it sees, from `position` turned by
     /// `rotation`, `dot(n, p) + d >= 0` inside: four sides and the near
     /// plane, and an orthographic camera's far plane, or one that takes in
@@ -152,6 +160,27 @@ impl Lens {
             [far.x, far.y, far.z, forward.dot(position) + self.near + ORTHO_DEPTH],
         ]
     }
+}
+
+/// The inward planes of what `view_projection` sees, as [`Lens::planes`]
+/// gives them, read from the matrix itself: for a lens shifted off its
+/// middle or a projection of a camera's own. Reverse depth: the near plane
+/// where depth is 1, and the far one where it is 0, which for a perspective
+/// without end takes in everything.
+pub fn planes_of(view_projection: Mat4) -> [[f32; 4]; 6] {
+    let row = |i: usize| view_projection.row(i);
+    let plane = |p: Vec4| {
+        let length = p.truncate().length();
+        if length < 1e-12 { [0.0, 0.0, 0.0, 1.0] } else { (p / length).to_array() }
+    };
+    [
+        plane(row(3) + row(0)),
+        plane(row(3) - row(0)),
+        plane(row(3) + row(1)),
+        plane(row(3) - row(1)),
+        plane(row(3) - row(2)),
+        plane(row(2)),
+    ]
 }
 
 #[cfg(test)]
@@ -222,6 +251,33 @@ mod tests {
         assert!((grown.aspect * grown.half_height(1.0) / (lens.aspect * lens.half_height(1.0)) - 1.1).abs() < 1e-5);
         let grown = ortho(3.0).grown([1.0, 2.0]);
         assert_eq!(grown.ortho, Some(6.0));
+    }
+
+    #[test]
+    fn planes_read_from_the_matrix_match_the_lens_own() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let turned = Quat::from_rotation_y(0.4) * Quat::from_rotation_x(0.2);
+        let view = Mat4::from_rotation_translation(turned, at).inverse();
+        for lens in [ortho(2.0), Lens { ortho: None, ..ortho(2.0) }] {
+            let own = lens.planes(at, turned);
+            let read = planes_of(lens.projection() * view);
+            for point in [Vec3::new(1.0, 2.0, 8.0), Vec3::new(9.0, 2.0, 5.0), Vec3::new(1.0, 2.0, 2.0), Vec3::new(-3.0, 5.0, 40.0)] {
+                let p = turned * (point - at) + at;
+                assert_eq!(inside(&own, p), inside(&read, p), "{point} for {:?}", lens.ortho);
+            }
+        }
+    }
+
+    #[test]
+    fn a_shifted_lens_sees_more_to_the_side_it_is_shifted() {
+        let lens = Lens { fov_y: 1.0, aspect: 1.0, near: 0.1, ortho: None };
+        let shifted = lens.shifted(lens.projection(), [0.25, 0.0]);
+        let planes = planes_of(shifted);
+        // Straight ahead at 10 m the picture is about 5.5 m each side: shifted a quarter right, it sees to 8 m right.
+        assert!(inside(&planes, Vec3::new(7.5, 0.0, 10.0)) && !inside(&lens.planes(Vec3::ZERO, Quat::IDENTITY), Vec3::new(7.5, 0.0, 10.0)));
+        assert!(!inside(&planes, Vec3::new(-4.0, 0.0, 10.0)), "and less to the left");
+        let up = lens.shifted(lens.projection(), [0.0, 0.25]);
+        assert!(inside(&planes_of(up), Vec3::new(0.0, 7.5, 10.0)), "shifted up, it sees higher");
     }
 
     #[test]

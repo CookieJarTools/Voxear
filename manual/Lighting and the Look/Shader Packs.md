@@ -166,7 +166,7 @@ An option is a `number` on a slider, a `toggle`, a `choice` from a dropdown, or 
 ```toml
 [pixels]
 size = "pixel_size"   # a number option of the pack's, so a player picks it; or a whole number, 4
-snap = true           # keep an orthographic camera on the grid of its pixels
+snap = true           # keep an orthographic camera on the grid of its pixels; off unless set
 ```
 
 A size of 1 leaves the level's own setting, so a player can turn the pixels off by setting the option to 1.

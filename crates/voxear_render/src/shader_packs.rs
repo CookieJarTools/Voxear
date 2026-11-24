@@ -562,12 +562,8 @@ struct ManifestFile {
 #[serde(deny_unknown_fields)]
 struct PixelsData {
     size: PixelSizeData,
-    #[serde(default = "yes")]
+    #[serde(default)]
     snap: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 #[derive(Deserialize)]
@@ -2342,8 +2338,8 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         let text = "[options]\nsize = { kind = \"number\", range = [1.0, 8.0], default = 4.0 }\n[pixels]\nsize = \"size\"\n";
         let manifest = PackManifest::parse(text).unwrap();
         let pixels = manifest.pixels.unwrap();
-        assert_eq!(pixels, PackPixels { size: PackPixelSize::Option(0), snap: true });
-        assert_eq!(pixels.settings(&[6.0]).map(|p| (p.size, p.snap)), Some((6, true)));
+        assert_eq!(pixels, PackPixels { size: PackPixelSize::Option(0), snap: false });
+        assert_eq!(pixels.settings(&[6.0]).map(|p| (p.size, p.snap)), Some((6, false)));
         assert_eq!(pixels.settings(&[1.0]), None, "a size of 1 leaves the settings' own");
         let fixed = PackManifest::parse("[pixels]\nsize = 3\nsnap = false\n").unwrap().pixels.unwrap();
         assert_eq!(fixed.settings(&[]).map(|p| (p.size, p.snap)), Some((3, false)));

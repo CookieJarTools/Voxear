@@ -119,6 +119,7 @@ VertexOut terrainVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instan
     o.position = transform(frame->viewProj, world);
     o.worldPosition = p.world;
     o.cut = cutAt(push.frame, o.worldPosition);
+    o.clip = clipAt(push.frame, o.worldPosition);
     o.normal = p.normal;
     // Along +x over the ground, as the pictures' u runs; v runs along -z, as a plane's does.
     o.tangent = float4(normalizeOr(float3(p.normal.y, -p.normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);

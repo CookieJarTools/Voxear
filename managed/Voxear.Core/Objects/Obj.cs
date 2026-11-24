@@ -363,6 +363,19 @@ public readonly partial struct Obj : IEquatable<Obj>
 		return new Camera(this);
 	}
 
+	/// <summary>
+	/// Shows <paramref name="camera"/>'s picture on this Obj's mesh, glowing as a screen does, <paramref name="brightness"/>
+	/// times as bright; Camera.None takes it off. The camera draws into a picture of its own (Camera.PictureSize).
+	/// </summary>
+	public void ShowCameraPicture(Camera camera, float brightness = 1f)
+	{
+		NativeComponent.Set(NativeComponent.Camera, this, 32, NativeComponent.ValueOf(camera.Obj));
+		if (camera.Obj.IsValid)
+		{
+			NativeComponent.Set(NativeComponent.Camera, this, 33, new Vector4(brightness, 0f, 0f, 0f));
+		}
+	}
+
 	/// <summary>The Obj's Model Renderer, which draws a model whole and tints it. Not valid when it has none.</summary>
 	public ModelRenderer Model => new ModelRenderer(this);
 

@@ -30,12 +30,56 @@ pub struct Camera {
     pub projection: crate::Projection,
     /// With an orthographic projection, half the height it sees, in metres.
     pub size: f32,
+    /// Which way `fov_y_degrees` is measured: up and down, or across.
+    pub fov_axis: crate::FovAxis,
+    /// A physical camera's lens and sensor, which then make its field of
+    /// view, and its lens shift (see `camera`).
+    pub physical: Option<crate::PhysicalLens>,
+    /// How far it sees, in metres; none for as far as there is anything.
+    pub far: Option<f32>,
+    /// Where on the screen it draws: left, bottom, width and height, as
+    /// shares of the screen from 0 to 1.
+    pub viewport: [f32; 4],
+    /// Which camera draws first: the lowest first, the highest on top.
+    pub priority: i32,
+    /// The layers whose Objs it sees, a bit each: layer 0 the lowest.
+    pub layers: u32,
+    /// The display it draws to, or a picture of its own.
+    pub target: crate::CameraTarget,
+    /// What fills where it sees nothing.
+    pub background: crate::Background,
+    /// Its own post-processing, anti-aliasing, HDR and occlusion culling.
+    pub finish: crate::CameraFinish,
+    /// A projection of its own in place of the one its settings make, for
+    /// effects that need one; reverse depth, as `lens` makes them.
+    pub custom_projection: Option<Mat4>,
+    /// A plane in the world, `dot(n, p) + d >= 0` kept, nearer than which
+    /// nothing is drawn: an oblique near plane, as a mirror's or water's
+    /// reflection needs.
+    pub clip_plane: Option<[f32; 4]>,
 }
 impl Component for Camera {}
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { fov_y_degrees: 60.0, near: 0.1, exposure: 1.0, projection: crate::Projection::Perspective, size: 5.0 }
+        Self {
+            fov_y_degrees: 60.0,
+            near: 0.1,
+            exposure: 1.0,
+            projection: crate::Projection::Perspective,
+            size: 5.0,
+            fov_axis: crate::FovAxis::Vertical,
+            physical: None,
+            far: None,
+            viewport: [0.0, 0.0, 1.0, 1.0],
+            priority: 0,
+            layers: crate::camera::EVERY_LAYER,
+            target: crate::CameraTarget::Display { display: 0 },
+            background: crate::Background::Sky,
+            finish: crate::CameraFinish::default(),
+            custom_projection: None,
+            clip_plane: None,
+        }
     }
 }
 
@@ -284,6 +328,13 @@ pub struct ExtractedFrame {
     /// How the view is drawn in pixels and enlarged, when it is (see
     /// `pixels`).
     pub pixels: Option<crate::pixels::PixelGrid>,
+    /// The camera's background of one colour, linear, where it sees nothing
+    /// (see `camera::Background`).
+    pub background: Option<[f32; 3]>,
+    /// The camera's light cut at white: a camera without HDR.
+    pub cut_at_white: bool,
+    /// Whether what is hidden behind nearer things is culled.
+    pub occlusion_culling: bool,
     pub instances: Vec<GpuInstance>,
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
@@ -413,6 +464,10 @@ pub struct ViewOptions {
     /// frame, its depth, is left out here too. The editor's Scene view in
     /// play takes the game's camera, to show what the game draws.
     pub cull_camera: Option<voxear_ecs::Entity>,
+    /// Laid over what is drawn in its place before it, which shows wherever
+    /// it draws nothing: a camera stacked over another, or one whose
+    /// background is nothing (see `camera::camera_views`).
+    pub over: bool,
 }
 
 impl Default for ViewOptions {
@@ -431,6 +486,7 @@ impl Default for ViewOptions {
             sun_shadows: None,
             lamp_shadows: None,
             cull_camera: None,
+            over: false,
         }
     }
 }
@@ -777,7 +833,18 @@ pub fn extract(
     let output_size = (width, height);
     // A shader pack may ask for the scene drawn in pixels, in place of the settings' own.
     let pixels = worn_pack_pixels(world).unwrap_or(post.pixels);
-    let mut lens = crate::Lens::of(&camera, aspect);
+    // The camera's own finish: no post-processing at all, as a debug view has it, its own anti-aliasing.
+    let post = match camera.finish.post || options.debug_view != DEBUG_VIEW_NONE {
+        true => post,
+        false => PostProcess { anti_aliasing: post.anti_aliasing, ..PostProcess::debug_view() },
+    };
+    let post = match camera.finish.anti_aliasing {
+        Some(mode) => PostProcess { anti_aliasing: crate::post::AntiAliasing { mode, ..post.anti_aliasing }, ..post },
+        None => post,
+    };
+    // A projection of the camera's own is read for what the passes need of it; its lens's shape is the matrix's.
+    let custom = camera.custom_projection.map(|matrix| (matrix, crate::camera::lens_of(&matrix)));
+    let mut lens = custom.map_or_else(|| crate::Lens::of(&camera, aspect), |(_, (lens, _))| lens);
     // Drawn in pixels, the scene is drawn small and enlarged nearest, with nothing to smooth it: no TAA, FXAA or
     // sharpening. A view through a Portal is drawn at the size it is given.
     let mut grid = match (options.debug_view, through) {
@@ -809,7 +876,23 @@ pub fn extract(
         None => position,
     };
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
-    let projection = lens.projection();
+    // A physical camera's lens shift moves the picture off the lens's middle.
+    let shift = camera.physical.map_or([0.0; 2], |physical| physical.shift);
+    let projection = match custom {
+        Some((matrix, _)) => matrix,
+        None if shift != [0.0; 2] => lens.shifted(lens.projection(), shift),
+        None => lens.projection(),
+    };
+    let ortho_depth = custom.map_or(crate::ORTHO_DEPTH, |(_, (_, depth))| depth);
+    // A shifted or custom projection's frustum is read from it; the far limit, where there is one, is its sixth side.
+    let forward = rotation * Vec3::Z;
+    let mut planes = match custom.is_some() || shift != [0.0; 2] {
+        true => crate::lens::planes_of(projection * view),
+        false => lens.planes(position, rotation),
+    };
+    if let Some(far) = camera.far {
+        planes[5] = crate::far_plane(position, forward, Some(far));
+    }
     // The lights' depth slices start from a usual near distance even for a camera seeing from very close.
     let cluster_near = camera.near.max(0.1);
     let unjittered = projection * view;
@@ -836,14 +919,19 @@ pub fn extract(
     let pictured = sky.picture_texture.filter(|_| sky.mode == SkyMode::Gradient).and(sky.picture_light);
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
-        planes: through.map_or_else(|| lens.planes(position, rotation), |t| t.planes),
-        cut: through.map_or(crate::gpu::NO_CUT, |through| through.cut),
+        planes: through.map_or(planes, |t| t.planes),
+        // The camera's oblique near plane and far limit, but through a Portal the far Portal's plane.
+        cut: through.map_or(camera.clip_plane.unwrap_or(crate::gpu::NO_CUT), |through| through.cut),
+        clip: match through {
+            Some(_) => crate::gpu::NO_CUT,
+            None => crate::far_plane(position, forward, camera.far),
+        },
         camera_position: vec3(position),
         camera_forward: vec3(rotation * Vec3::Z),
         near: camera.near,
         lod_scale: crate::Lens::of(&camera, aspect).pixels_a_metre(output_height),
         ortho: lens.ortho.unwrap_or(0.0),
-        ortho_depth: crate::ORTHO_DEPTH,
+        ortho_depth,
         lod_threshold: options.lod_threshold,
         debug_view: options.debug_view,
         hiz_texture: NO_TEXTURE,
@@ -1159,7 +1247,14 @@ pub fn extract(
 
     let mut entities = Vec::new();
     let any_hidden = world.query_ref::<&Hidden>().into_iter().next().is_some();
-    let shown = |entity: Entity| !lods.hidden.contains(&entity) && !(any_hidden && hidden(world, entity));
+    // A camera that sees only some layers leaves the rest's Objs out; one that sees them all asks nothing.
+    let layered = camera.layers != crate::camera::EVERY_LAYER;
+    let on_layer = |entity: Entity| {
+        !layered || crate::sees_layer(camera.layers, world.get::<voxear_scene::Layer>(entity).map_or(0, |layer| layer.0))
+    };
+    let shown = |entity: Entity| {
+        !lods.hidden.contains(&entity) && !(any_hidden && hidden(world, entity)) && on_layer(entity)
+    };
     let instances: Vec<GpuInstance> = world
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
@@ -1261,6 +1356,12 @@ pub fn extract(
         light_key,
         fov_y: lens.fov_y,
         pixels: grid,
+        background: match (camera.background, through) {
+            (crate::Background::Color { color }, None) => Some(color.map(crate::texture_codec::srgb_to_linear)),
+            _ => None,
+        },
+        cut_at_white: !camera.finish.hdr,
+        occlusion_culling: camera.finish.occlusion_culling,
         block_voxels: worn.and_then(|worn| worn.voxels),
         block_water: water_look.block_water(),
         frame,

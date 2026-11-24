@@ -657,6 +657,9 @@ impl Editor {
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
         inspector.set_lock_button(&mut ui, nodes.inspector_lock);
+        let mode = find(&ui, "inspector-mode");
+        ui.set_tooltip(mode, "Normal or Debug", None);
+        inspector.set_mode_button(mode);
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let docs_panel = find(&ui, "docs");

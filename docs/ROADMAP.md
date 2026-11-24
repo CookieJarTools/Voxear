@@ -482,15 +482,15 @@ Next in M3:
       the first frames are caught; with "wait for the editor" the build holds at startup until it is connected
     - a connection chip in each panel's bar saying what it is looking at (the editor, Play mode or a build), to
       switch between them, and a build that closes or drops leaving its last capture readable
-  - [ ] **The Inspector's Debug mode**, as Unity's, switched from the Inspector's menu, each Inspector its own:
-    - every value of a script, private and `[NonSerialized]` ones too, read-only where the Inspector would not
-      write them, with the attributes that group, hide or draw them set aside, so what is really there shows
+  - [x] **The Inspector's Debug mode**, as Unity's, switched from the Inspector's `⋯` menu, each Inspector its own,
+    and from `vox editor call` (`inspector.mode`, `inspector.debug`); its rows read-only:
+    - every value of a script, private and `[NonSerialized]` ones too, each saying whether scenes save it, with the
+      attributes that group, hide or draw them set aside, so what is really there shows
     - every component on the Obj, the engine's own as well (its entity, Name, Parent, World Transform, prefab
       links and behaviour handles), and a C# component's raw fields
-    - references shown as what they hold (an asset's GUID and path, an Obj's entity and scene path) beside the
-      usual picker
+    - references shown as what they hold (an asset's GUID and path, an Obj's entity and scene path)
     - while playing, the live state behind the components: a body's velocity and whether it sleeps, a voice's
-      position and volume, the LOD shown, and an animation's time once there are animations
+      position and volume, the LOD shown, and a played clip's time
     - for an asset, its GUID, its `.meta` and import data, and what it depends on and what uses it
     - copy a value, or its path in the scene file, from a row's menu
   - [ ] **Finding a setting by what it does**, for when its name is not known: one search over every setting the

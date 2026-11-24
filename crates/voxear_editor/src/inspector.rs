@@ -316,6 +316,14 @@ pub struct Inspector {
     /// rather than following the selection.
     lock: Option<NodeId>,
     locked: bool,
+    /// Its `⋯` button, whose menu switches it between Normal and Debug, and
+    /// whether it is in Debug mode, showing what is really there (see
+    /// `debug_inspector`), with the rows it shows and the asset's path it
+    /// shows them of, when it shows an asset's.
+    mode_button: Option<NodeId>,
+    debug: bool,
+    debug_view: Option<crate::debug_inspector::DebugView>,
+    debug_asset: Option<String>,
     shown: Option<Entity>,
     fields: Option<Fields>,
     /// The Transform's menu button, and each section's header with its
@@ -455,6 +463,10 @@ impl Inspector {
             root,
             lock: None,
             locked: false,
+            mode_button: None,
+            debug: false,
+            debug_view: None,
+            debug_asset: None,
             shown: None,
             fields: None,
             transform_menu: None,
@@ -535,6 +547,65 @@ impl Inspector {
     /// Whether it keeps showing what it shows, rather than the selection.
     pub fn is_locked(&self) -> bool {
         self.locked
+    }
+
+    /// The `⋯` button whose menu switches it between Normal and Debug.
+    pub fn set_mode_button(&mut self, button: NodeId) {
+        self.mode_button = Some(button);
+    }
+
+    /// Opens its mode menu when its `⋯` button was clicked, and takes what
+    /// was picked from it. Returns whether it switched.
+    pub fn update_mode(&mut self, ui: &mut Ui) -> bool {
+        let Some(button) = self.mode_button else { return false };
+        if ui.clicked(button) {
+            let [x, y, _, h] = ui.rect(button);
+            let items = [MenuItem::new("Normal").checked(!self.debug), MenuItem::new("Debug").checked(self.debug)];
+            ui.open_menu(button, (x, y + h), &items);
+        }
+        match ui.menu_choice(button) {
+            Some(picked) if (picked == 1) != self.debug => {
+                self.set_debug(picked == 1);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Switches it into Debug mode, or back to Normal, to be shown again.
+    pub fn set_debug(&mut self, on: bool) {
+        self.debug = on;
+        self.built.0.clear();
+        self.debug_view = None;
+    }
+
+    /// Whether it is in Debug mode.
+    pub fn is_debug(&self) -> bool {
+        self.debug
+    }
+
+    /// The Debug mode's rows, while it shows them.
+    pub fn debug_view(&mut self) -> Option<&mut crate::debug_inspector::DebugView> {
+        self.debug_view.as_mut()
+    }
+
+    /// The asset whose rows the Debug mode shows, by its path, while it shows an asset's.
+    pub fn debug_asset(&self) -> Option<&str> {
+        self.debug_asset.as_deref()
+    }
+
+    /// Clears what it shows for Debug mode's rows to be built in, of an Obj
+    /// or of an asset at `asset`.
+    fn show_debug(&mut self, ui: &mut Ui, asset: Option<String>) {
+        for child in ui.children(self.root) {
+            ui.remove(child);
+        }
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
+        (self.asset, self.node, self.box_part, self.part) = (None, None, None, None);
+        self.debug_asset = asset;
+        self.debug_view = Some(crate::debug_inspector::DebugView::new(self.root));
     }
 
     /// Draws the drawers and inspectors again, and asks the scripts again
@@ -925,6 +996,9 @@ impl Inspector {
     pub fn show_asset(&mut self, ui: &mut Ui, game: &Game, item: &ProjectItem) {
         self.shown = None;
         (self.part, self.data) = (None, None);
+        if self.debug {
+            return self.show_debug(ui, Some(item.path.clone()));
+        }
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -1053,6 +1127,10 @@ impl Inspector {
     /// without a Transform, Add Component, or a menu to move or remove the
     /// section.
     pub fn show_data(&mut self, ui: &mut Ui, game: &Game, item: &ProjectItem, holder: Entity, playing: bool) {
+        if self.debug {
+            (self.shown, self.data) = (None, None);
+            return self.show_debug(ui, Some(item.path.clone()));
+        }
         self.data = Some((item.clone(), holder));
         self.also.clear();
         self.show(ui, game, Some(holder), playing);
@@ -1074,6 +1152,8 @@ impl Inspector {
 
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
         self.asset = None;
+        self.debug_asset = None;
+        self.debug_view = None;
         self.node = None;
         self.box_part = None;
         self.part = None;
@@ -1123,6 +1203,9 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
+        if self.debug {
+            return self.show_debug(ui, None);
+        }
         let data = self.data.as_ref().map(|(item, _)| item.clone());
         match &data {
             Some(item) => data_header(ui, self.root, item, world, entity),
@@ -3214,7 +3297,7 @@ fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
 /// What a section's header has at its right: the Transform's menu button,
 /// a tick, on or off, or nothing, for a component Unity gives no tick and
 /// a C# component.
-enum HeaderEnd {
+pub(crate) enum HeaderEnd {
     Menu,
     Switch(bool),
     Nothing,
@@ -3223,7 +3306,13 @@ enum HeaderEnd {
 /// A component's section: a line above it, then a foldout headed by its
 /// icon and title, and at the right what `end` says. Returns its header,
 /// where its rows go, and the menu button or the tick.
-fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, end: HeaderEnd) -> (NodeId, NodeId, Option<NodeId>) {
+pub(crate) fn section(
+    ui: &mut Ui,
+    root: NodeId,
+    title: &str,
+    icon: &str,
+    end: HeaderEnd,
+) -> (NodeId, NodeId, Option<NodeId>) {
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let foldout = ui.foldout(root, title, true);

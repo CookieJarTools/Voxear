@@ -968,6 +968,20 @@ impl GameAudio {
         Ok(voice)
     }
 
+    /// What an Obj's Audio Source is doing while the game runs, for the
+    /// Inspector's Debug mode: playing, paused or stopped, the volume its
+    /// voice was last given, and where its Obj was last frame.
+    pub fn source_voice(&self, entity: Entity) -> Option<(&'static str, f32, Option<Vec3>)> {
+        let playback = self.sources.get(&entity)?;
+        let state = match playback.state {
+            State::Playing if playback.held => "Paused",
+            State::Playing => "Playing",
+            State::Paused => "Paused",
+            State::Stopped => "Stopped",
+        };
+        Some((state, playback.applied.volume, playback.was))
+    }
+
     /// Every voice the mixer is playing, named, while the Audio panel
     /// watches (see `Audio::watch_voices`): sources' first, by name.
     pub fn heard_voices(&self, world: &World, content: &Content) -> Vec<HeardVoice> {

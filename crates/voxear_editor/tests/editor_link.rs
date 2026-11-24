@@ -427,6 +427,35 @@ fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_ke
 }
 
 #[test]
+fn a_tool_switches_an_inspector_to_debug_and_reads_what_it_shows() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let mode = done(&mut editor, &mut renderer, "inspector.mode", json!({ "mode": "debug" }));
+    assert_eq!(mode, json!({ "inspector": 1, "mode": "Debug" }));
+    assert!(ask(&mut editor, &mut renderer, "inspector.mode", json!({ "inspector": 5 })).is_err(), "only one");
+    let objs = done(&mut editor, &mut renderer, "objs.list", json!({}));
+    let spinner = objs["objs"].as_array().unwrap().iter().find(|o| o["name"] == "Spinner A").unwrap()["obj"].clone();
+    let rows = done(&mut editor, &mut renderer, "inspector.debug", json!({ "obj": spinner }))["rows"].clone();
+    let rows = rows.as_array().unwrap();
+    let find = |section: &str, label: &str| rows.iter().find(|r| r["section"] == section && r["label"] == label);
+    assert!(find("Obj", "Entity").is_some() && find("World Transform", "Scale").is_some(), "{rows:?}");
+    let mesh = rows.iter().find(|r| r["path"] == "renderer.mesh").expect("the renderer as its scene file writes it");
+    assert_eq!(mesh["value"], "\"builtin:cube\"");
+    // An asset's: its GUID, its .meta, what it depends on and what uses it.
+    let day = done(&mut editor, &mut renderer, "inspector.debug", json!({ "asset": "Scenes/Day.scene" }))["rows"].clone();
+    let day = day.as_array().unwrap();
+    assert!(day.iter().any(|r| r["section"] == "Asset" && r["label"] == "GUID"), "{day:?}");
+    assert!(day.iter().any(|r| r["section"] == "Used By" && r["label"].as_str().unwrap().contains("Day.level")), "{day:?}");
+    // Shown in the Inspector, a row's menu copies its value.
+    editor.select(None);
+    assert!(editor.inspect_path("Scenes/Day.scene"));
+    frames(&mut editor, &mut renderer, 3);
+    let shown = editor.debug_rows_shown();
+    assert!(shown.iter().any(|r| r.label == "GUID"), "{shown:?}");
+    assert_eq!(done(&mut editor, &mut renderer, "inspector.mode", json!({ "mode": "normal" }))["mode"], "Normal");
+}
+
+#[test]
 fn the_code_editor_is_whisk_unless_a_tool_picks_another() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

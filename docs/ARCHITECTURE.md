@@ -3223,6 +3223,30 @@ as the Inspector's own control goes only in a markup's `next` element; its eleme
   as part of the frame's one step to undo. The behaviour's usual rows are built in a panel after the inspector,
   which moves into its markup's `next` element (`Ui::move_into`), or out of sight without one.
 
+### The Inspector's Debug mode *(implemented)*
+
+Each Inspector's `⋯` button, beside its padlock, switches it between Normal and Debug, as Unity's Inspector menu
+does; each Inspector keeps its own (`Inspector::debug`). In Debug mode `Inspector::show` builds nothing of its
+own: it leaves a `debug_inspector::DebugView` in its root, and the editor fills it each second, four times a
+second while playing, from rows `debug_inspector::obj_rows` and `asset_rows` make:
+
+- **The engine's own state**: the entity, Name, scene path, Parent, children, layer, the world transform from
+  `world_matrix`, `PrefabInstance` and `FromPrefab`, and each behaviour's handle while it runs.
+- **Every component as the scene file writes it**: `scene_file::capture` of the Obj alone, as TOML, a section for
+  each table, inner tables as dotted keys; a string that reads as a GUID shows the asset's path beside it.
+- **Every field of each C# behaviour**: `ScriptRuntime::debug_fields` asks Voxear.Core's `DebugFields` (through
+  `InspectorCalls`, `debug-read`), which reflects every instance field from the behaviour's class down to
+  `object`, public or not, saved by scenes or not, a backing field by its property's name, with its value in words.
+  Playing, it reads the running instance by its handle; editing, a copy made from the scene's values, as `[Button]`s
+  are run. No attribute groups, hides or draws them.
+- **Live state while playing**: a body's velocity, spin and sleep from the `PhysicsScene`, an Audio Source's voice
+  from `GameAudio::source_voice`, and the LOD drawn for the Game or Scene view's camera (`lod_inspector::drawn_lod`).
+- **An asset's**: its GUID, kind, mount and size, its `.meta` flattened, what it names
+  (`content_build::asset_needs`, as a build finds them) and what of the project names it, read once.
+
+Rows are read-only; a row's menu copies its value or its path in the scene file (`Ui::copy_text`). Tools reach it
+with `inspector.mode` and `inspector.debug`. C# has no API to the editor's panels, so neither is reached from it.
+
 ### The design
 
 The editor's visual specification, which the default theme and the editor's sheet implement. It began as the

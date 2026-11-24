@@ -33,7 +33,57 @@ pub enum InspectorAnswer {
     Options(Vec<(String, toml::Value)>),
 }
 
+/// A field of a behaviour as the Inspector's Debug mode shows it: its name,
+/// its C# type, the class that declares it, `public` or `private` and so
+/// on, whether scenes save it, and its value in words.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DebugField {
+    pub name: String,
+    pub type_name: String,
+    pub declared: String,
+    pub access: String,
+    pub saved: bool,
+    pub value: String,
+}
+
 impl ScriptRuntime {
+    /// Every field of the behaviour `spec` describes on `entity`, private
+    /// and unsaved ones too: the running instance's, with `handle`, or else
+    /// a copy's made with the scene's values. Also whether it was the
+    /// running one.
+    pub fn debug_fields(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        spec: &BehaviourSpec,
+        handle: Option<voxear_scene::BehaviourHandle>,
+    ) -> Result<(bool, Vec<DebugField>)> {
+        let request = serde_json::json!({
+            "action": "debug-read",
+            "behaviour": spec.type_name,
+            "entity": entity.to_bits(),
+            "fields": serde_json::to_value(&*spec.fields)?,
+            "handle": handle.map(|handle| handle.0),
+        });
+        let answer: serde_json::Value = serde_json::from_str(&self.inspector_call(world, &request.to_string())?)
+            .context("Voxear.Core's answer is not JSON")?;
+        if let Some(error) = answer.get("error").and_then(|e| e.as_str()) {
+            bail!("reading {}: {error}", spec.type_name);
+        }
+        let running = answer.get("running").and_then(|r| r.as_bool()).unwrap_or(false);
+        let text = |field: &serde_json::Value, key: &str| field.get(key).and_then(|t| t.as_str()).unwrap_or("").to_owned();
+        let listed = answer.get("fields").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+        let fields = listed.iter().map(|field| DebugField {
+            name: text(field, "name"),
+            type_name: text(field, "type"),
+            declared: text(field, "declared"),
+            access: text(field, "access"),
+            saved: field.get("saved").and_then(|s| s.as_bool()).unwrap_or(false),
+            value: text(field, "value"),
+        });
+        Ok((running, fields.collect()))
+    }
+
     /// Asks the behaviour `spec` describes, on `entity`, as the Inspector
     /// does in edit mode. What it throws is logged, and is the error.
     pub fn inspector(

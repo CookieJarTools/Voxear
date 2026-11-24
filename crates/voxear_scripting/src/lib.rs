@@ -63,7 +63,7 @@ pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};
 pub use hostfxr::{DotnetInstall, find_dotnet};
-pub use inspector::{InspectorAnswer, InspectorAsk};
+pub use inspector::{DebugField, InspectorAnswer, InspectorAsk};
 pub use runtime::{
     ConsoleName, CreatedBehaviour, ManagedMemory, PACKAGE_ASSEMBLIES, Reloaded, ScriptHost, ScriptRuntime,
     dotnet_started, package_assemblies,

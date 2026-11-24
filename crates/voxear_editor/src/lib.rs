@@ -60,6 +60,7 @@ mod columns;
 mod curve_fields;
 mod console;
 mod data_assets;
+pub mod debug_inspector;
 mod dimension_inspector;
 mod dimension_views;
 mod editor;

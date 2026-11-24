@@ -258,6 +258,33 @@ impl MeshLods {
     }
 }
 
+/// The LOD of an Obj's mesh drawn for `eye`, and how many it has, as the
+/// LOD bar marks it.
+pub fn drawn_lod(world: &World, entity: Entity, renderer: &Renderer, eye: LodEye) -> Option<(usize, usize)> {
+    let settings = world.get::<MeshRenderer>(entity).copied()?;
+    let lods = renderer.mesh_lods(settings.mesh).unwrap_or_default();
+    let count = lods.len();
+    if count == 0 {
+        return None;
+    }
+    let (sphere, model) = (renderer.mesh_sphere(settings.mesh), model(world, entity));
+    let scale = max_scale(model);
+    let (center, radius) = sphere.map_or((Vec3::ZERO, 0.0), |(c, r)| (model.transform_point3(c), r * scale));
+    let eye = eye.biased(settings.lod_bias);
+    let drawn = match (settings.forced_lod, settings.lod_transitions) {
+        (Some(forced), _) => usize::from(forced).min(count - 1),
+        (None, Some(ends)) => {
+            let share = screen_share(radius, center.distance(eye.camera.position), eye.camera.tan_half_fov);
+            lod_at_share(&ends[..(count - 1).min(MAX_TRANSITIONS)], count, share)
+        }
+        (None, None) => {
+            let away = center.distance(eye.camera.position) - radius;
+            lod_at(&lods, away, scale, eye.pixels_per_metre, eye.threshold)
+        }
+    };
+    Some((drawn, count))
+}
+
 /// Where a camera goes to see LOD `level` of an Obj's mesh drawn, and how
 /// it turns to look at it: on the line from the mesh to where the camera is
 /// now, inside the distances that LOD is drawn at.

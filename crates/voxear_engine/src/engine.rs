@@ -232,6 +232,19 @@ impl Engine {
         scripts.live_fields(&mut self.world, handles)
     }
 
+    /// Every field of a behaviour on `entity`, private and unsaved ones too,
+    /// for the Inspector's Debug mode: the running instance's while the game
+    /// plays (see [`ScriptRuntime::debug_fields`]).
+    pub fn debug_fields(
+        &mut self,
+        entity: Entity,
+        spec: &voxear_scene::BehaviourSpec,
+        handle: Option<BehaviourHandle>,
+    ) -> anyhow::Result<(bool, Vec<voxear_scripting::DebugField>)> {
+        let scripts = self.scripts.as_mut().ok_or_else(|| anyhow::anyhow!("the scripts are not running"))?;
+        scripts.debug_fields(&mut self.world, entity, spec, handle)
+    }
+
     /// Sets a running behaviour's field, as the Inspector edits it while the
     /// game plays.
     pub fn set_live_field(&mut self, handle: BehaviourHandle, field: &str, value: &toml::Value) -> anyhow::Result<()> {

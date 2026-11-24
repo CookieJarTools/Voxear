@@ -4797,3 +4797,23 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     position: absolute;
     pointer-events: none;
 }
+
+/* The Inspector's Debug mode: what is really there, row by row, read-only. */
+.debug-banner {
+    color: var(--vx-accent);
+    font-weight: 600;
+    padding: 4px 10px;
+}
+
+.prop.debug-row {
+    grid-template-columns: minmax(0px, 1fr) minmax(0px, 1.4fr) auto;
+}
+
+.debug-value {
+    color: var(--vx-text);
+}
+
+.debug-note {
+    color: var(--vx-muted);
+    font-size: 11px;
+}

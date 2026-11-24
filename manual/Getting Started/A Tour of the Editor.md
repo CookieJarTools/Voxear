@@ -94,3 +94,15 @@ The **Layout** button at the top left, which shows the name of the layout in use
 | Ctrl+Shift+F | Move the selection to the Scene view's camera |
 
 Next: [[Playing Your Game]].
+
+## The Inspector's Debug mode
+
+The **⋯** button beside the Inspector's padlock switches it between **Normal** and **Debug**. Each Inspector keeps its own, so one can show an Obj as usual while another shows what is really there. In Debug mode the Inspector shows, read-only:
+
+- the Obj as the engine keeps it: its entity, scene path, parent, layer, world position, rotation and scale, its prefab and the place in it, and each script's handle while the game plays;
+- every component as the scene file writes it, a reference with the asset it holds beside it;
+- every field of each script, private ones and those marked `[NonSerialized]` or `[HideInInspector]` too, each with whether scenes save it; while playing, as the running script has them;
+- while playing, what is behind the components: a body's velocity and whether it sleeps, an Audio Source's voice and volume, and the LOD drawn;
+- for a file selected in the Project panel: its GUID, kind and size, its `.meta`, what it uses and what uses it.
+
+Right-click a row to copy its value, or its path in the scene file.

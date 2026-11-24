@@ -253,6 +253,8 @@ impl Editor {
             "editor.state" => done(self.state_json()),
             "objs.list" => self.objs_list(args),
             "obj.get" => self.obj_get(args),
+            "inspector.mode" => self.inspector_mode(args),
+            "inspector.debug" => self.inspector_debug(args, renderer),
             "components" => done(self.components_json()),
             "kinds" => done(kinds_json(&self.game.project.modules())),
             "obj.create" => self.obj_create(args, renderer),
@@ -927,6 +929,41 @@ impl Editor {
         self.refresh_hierarchies();
         let selected = self.selection.filter(|&e| self.game.engine.world.is_alive(e));
         self.show_selection(selected);
+    }
+
+    /// An Inspector's mode, set where `mode` is given (see `inspector.mode`).
+    fn inspector_mode(&mut self, args: &Json) -> Called {
+        let number = args.get("inspector").and_then(Json::as_u64).unwrap_or(1);
+        let count = self.inspector_count();
+        let index = usize::try_from(number).ok().filter(|&n| (1..=count).contains(&n)).ok_or_else(|| {
+            bad(format!("there are {count} Inspectors; `inspector` is one of 1 to {count}"))
+        })?;
+        if let Some(mode) = opt_text(args, "mode") {
+            let debug = match mode.to_ascii_lowercase().as_str() {
+                "debug" => true,
+                "normal" => false,
+                _ => return Err(bad(format!("`{mode}` is not a mode: Normal or Debug"))),
+            };
+            self.set_inspector_debug(index - 1, debug);
+        }
+        let debug = self.inspector_is_debug(index - 1);
+        done(json!({ "inspector": index, "mode": if debug { "Debug" } else { "Normal" } }))
+    }
+
+    /// What Debug mode shows of an Obj or an asset (see `inspector.debug`).
+    fn inspector_debug(&mut self, args: &Json, renderer: &Renderer) -> Called {
+        let rows = match args.get("asset") {
+            Some(asset) => crate::debug_inspector::asset_rows(&self.game, &link::resolve_asset(&self.game, asset)?),
+            None => {
+                let entity = match args.get("obj") {
+                    Some(obj) => link::resolve_obj(&self.game, obj)?,
+                    None => self.selected().ok_or_else(|| bad("nothing is selected; give `obj` or `asset`"))?,
+                };
+                let playing = self.is_playing();
+                self.debug_rows(entity, renderer, playing)
+            }
+        };
+        done(json!({ "rows": rows.iter().map(crate::debug_inspector::DebugRow::json).collect::<Vec<_>>() }))
     }
 
     fn obj_arg(&self, args: &Json) -> Result<Entity, LinkError> {

@@ -228,6 +228,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
 | `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |
+| `inspector.mode`, `inspector.debug` | Switch an Inspector between Normal and Debug, and read what Debug mode shows of an Obj or an asset, row by row |
 | `project.get` | The project's `voxear.toml`, as JSON |
 | `world_quality.get`, `world_quality.set` | What making block worlds spends: its preset or each number, and whether this machine keeps its own |
 | `docs.search`, `docs.read` | Find and read pages of this manual and your own |

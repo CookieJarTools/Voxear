@@ -674,7 +674,7 @@ bool blockCubes(
     float3 grid = spot.place / cube;
     // The layer of small cubes just under the face.
     int layer = int(round(grid[axis])) - (normal[axis] > 0.0 ? 1 : 0);
-    float3 ray = normalize(at - push.frame->cameraPosition);
+    float3 ray = -towardsEye(push.frame, at);
     float2 across = float2(ray[u], ray[v]);
     // How fast the ray goes down into the face: never so slowly that it runs along it for ever.
     float down = max(-dot(ray, normal), 0.05);

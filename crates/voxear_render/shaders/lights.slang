@@ -583,7 +583,7 @@ float lampTexelMetres(Frame* frame, uint slot, float distance, uint mip)
 // coarser than the atlas's (markLampsMain).
 uint lampMipFor(Frame* frame, uint slot, float3 position, float distance)
 {
-    float pixel = max(length(position - frame->cameraPosition), frame->near) / frame->lodScale;
+    float pixel = screenDistance(frame, max(length(position - frame->cameraPosition), frame->near)) / frame->lodScale;
     float texel = max(lampTexelMetres(frame, slot, distance, 0), 1e-6);
     float mip = floor(log2(max(pixel / texel, 1.0)) + frame->lampVsm.bias);
     return uint(clamp(mip, 0.0, float(LAMP_VSM_ASKED)));

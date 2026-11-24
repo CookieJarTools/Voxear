@@ -291,7 +291,7 @@ void grassReset(uint3 id : SV_DispatchThreadID)
     uint pick = 0;
     for (uint each = 1; each < mesh.lodCount; each++)
     {
-        if (mesh.lods[each].error * size * frame->cull.lodScale > frame->lodThreshold * coarser * max(near, 1e-3))
+        if (mesh.lods[each].error * size * frame->cull.lodScale > frame->lodThreshold * coarser * cullDistance(frame->cull, max(near, 1e-3)))
         {
             break;
         }

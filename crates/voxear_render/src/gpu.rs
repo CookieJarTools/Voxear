@@ -456,7 +456,13 @@ pub struct GpuFrame {
     pub glass_shadow: [u32; 2],
     /// As `meshlet_capacity`, for the two-sided shadow lists.
     pub meshlet_two_sided_capacity: u32,
-    pub _meshlet_pad: [u32; 3],
+    /// For an orthographic camera, half the height it sees, in metres; 0
+    /// for a perspective one (see `lens`).
+    pub ortho: f32,
+    /// For an orthographic camera, how far past its near plane it sees: its
+    /// depth falls from 1 at the near plane to 0 there, evenly.
+    pub ortho_depth: f32,
+    pub _meshlet_pad: u32,
     pub lighting: GpuLighting,
     pub ddgi: GpuDdgi,
     pub reflection_probes: GpuReflectionProbes,
@@ -505,7 +511,10 @@ pub struct GpuCull {
     pub tan_half: f32,
     /// 1 while the camera is another view's.
     pub borrowed: u32,
-    pub _pad: u32,
+    /// For an orthographic camera, half the height it sees, in metres; 0
+    /// for a perspective one. Then `lod_scale` is the screen's pixels a
+    /// metre and `tan_half` that half height, at every distance.
+    pub ortho: f32,
 }
 
 impl GpuCull {
@@ -517,9 +526,12 @@ impl GpuCull {
             position: frame.camera_position,
             lod_scale: frame.lod_scale,
             near: frame.near,
-            tan_half: frame.viewport[1] as f32 / (2.0 * frame.lod_scale.max(1e-6)),
+            tan_half: match frame.ortho > 0.0 {
+                true => frame.ortho,
+                false => frame.viewport[1] as f32 / (2.0 * frame.lod_scale.max(1e-6)),
+            },
             borrowed: 0,
-            _pad: 0,
+            ortho: frame.ortho,
         }
     }
 }

@@ -128,12 +128,12 @@ ParticleOut trailPlace(Frame* frame, ParticleSystem system, float3 here, float3 
     plain.flags &= ~PARTICLES_SIX_WAY;
     uint h = point.h;
     ParticleOut output = particlePlaceGoing(frame, plain, here, 0.0, point.age, point.aged, float2(side, 0.0), h, 1.0);
-    float3 across = normalizeOr(cross(way, frame->cameraPosition - here), 0.0);
+    float3 across = normalizeOr(cross(way, isOrthographic(frame) ? -frame->cameraForward : frame->cameraPosition - here), 0.0);
     float4 middle = transform(frame->viewProj, float4(here, 1.0));
     float4 clip = transform(frame->viewProj, float4(here + across * (side * wide * 0.5), 1.0));
     // Where a metre out on that side is on screen: which way its edge lies, and how many pixels a metre is there.
     float4 metreOut = transform(frame->viewProj, float4(here + across * side, 1.0));
-    if (middle.w > frame->near && metreOut.w > frame->near && dot(across, across) > 0.0)
+    if (clipViewDepth(frame, middle) > frame->near && clipViewDepth(frame, metreOut) > frame->near && dot(across, across) > 0.0)
     {
         float2 metre = (metreOut.xy / metreOut.w - middle.xy / middle.w) * 0.5 * float2(frame->viewport);
         float pixels = length(metre);
@@ -147,7 +147,7 @@ ParticleOut trailPlace(Frame* frame, ParticleSystem system, float3 here, float3 
         }
     }
     output.position = clip;
-    output.depth = clip.w;
+    output.depth = clipViewDepth(frame, clip);
     output.fade = output.color.a * fade;
     output.color.a = 1.0;
     return output;
@@ -370,7 +370,7 @@ FragmentOut particleMeshFragment(MeshParticleOut input)
     }
     Surface s;
     s.normal = normalizeOr(input.normal, float3(0.0, 1.0, 0.0));
-    s.view = normalizeOr(frame->cameraPosition - input.world, float3(0.0, 1.0, 0.0));
+    s.view = towardsEyeOr(frame, input.world, float3(0.0, 1.0, 0.0));
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
     float metallic = saturate(material.metallic * metalRough.b);
     s.diffuse = albedo * (1.0 - metallic);
@@ -406,7 +406,7 @@ ParticleScreenOut particleScreenVertex(uint vertexId : SV_VertexID)
 float particleSceneDepth(Frame* frame, int2 pixel)
 {
     float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
-    return depth > 0.0 ? frame->near / depth : 1e4;
+    return viewDepthOr(frame, depth, 1e4);
 }
 
 // The particles drawn at half size (push.texture, push.size across) laid over the scene: each pixel from the four

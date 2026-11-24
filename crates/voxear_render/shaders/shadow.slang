@@ -159,7 +159,7 @@ void markLampsMain(uint3 id : SV_DispatchThreadID)
     float2 ndc = (float2(pixel) + 0.5) / float2(push.size) * 2.0 - 1.0;
     float4 world = transform(frame->invViewProj, float4(ndc, depth, 1.0));
     float3 position = world.xyz / world.w;
-    float pixelMetres = max(length(position - frame->cameraPosition), frame->near) / frame->lodScale;
+    float pixelMetres = screenDistance(frame, max(length(position - frame->cameraPosition), frame->near)) / frame->lodScale;
     for (uint slot = 0; slot < frame->localShadows.count; slot++)
     {
         float4 caster = frame->localShadows.casters[slot];

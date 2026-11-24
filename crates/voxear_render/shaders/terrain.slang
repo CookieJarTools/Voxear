@@ -196,7 +196,7 @@ float terrainGive(Terrain terrain, uint4 ids, float4 shares, float age)
 float3 terrainTrackFloor(Frame* frame, float3 world, float3 normal, float give)
 {
     float sunk = trackAt(frame, world.xz).x * give;
-    float3 ray = normalize(world - frame->cameraPosition);
+    float3 ray = -towardsEye(frame, world);
     float down = -dot(ray, normal);
     if (sunk <= 1e-4 || down < 0.05)
     {
@@ -398,7 +398,7 @@ float3 terrainGlitter(Frame* frame, float3 world, float3 normal)
     }
     float3 facing = normalize(normal + float3(random.x * 2.0 - 1.0, 0.0, random.y * 2.0 - 1.0) * 0.35);
     float3 light = -frame->sunDirection;
-    float3 halfway = normalize(normalize(frame->cameraPosition - world) + light);
+    float3 halfway = normalize(towardsEye(frame, world) + light);
     float spark = pow(saturate(dot(facing, halfway)), 900.0) * saturate(dot(normal, light));
     if (spark < 1e-4)
     {

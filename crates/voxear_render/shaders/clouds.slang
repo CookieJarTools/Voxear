@@ -311,23 +311,23 @@ bool cloudSpan(Frame* frame, float camera, float climb, out float from, out floa
     return to > from;
 }
 
-// How far out along `direction` from the camera the clouds it meets are, near enough for where they move on screen:
+// How far out along `direction` from `eye` the clouds it meets are, near enough for where they move on screen:
 // the middle of the stretch of their layer the Clouds pass marches, or 0 where the ray misses the layer.
-float cloudsAlong(Frame* frame, float3 direction)
+float cloudsAlong(Frame* frame, float3 eye, float3 direction)
 {
-    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    float camera = max(levelHeight(frame, eye), 1.0);
     float from, to;
     return cloudSpan(frame, camera, direction.y, from, to) ? (from + to) * 0.5 : 0.0;
 }
 
-// Where the cloud `along` metres out along `direction` from the camera was on screen last frame, in `uv` from 0 to
+// Where the cloud `along` metres out along `direction` from `eye` was on screen last frame, in `uv` from 0 to
 // 1 as the view without TAA's jitter had it; false where it was behind the camera. The camera has turned and moved
 // since, which moves the clouds against the sky as far off as they are, and the wind has carried them `step`
 // metres. With `along` 0, the sky's own place, which only the turning moves.
-bool cloudsWere(Frame* frame, float3 direction, float along, out float2 uv)
+bool cloudsWere(Frame* frame, float3 eye, float3 direction, float along, out float2 uv)
 {
     float2 step = frame->lighting.clouds.step;
-    float4 there = along > 0.0 ? float4(frame->cameraPosition + direction * along - float3(step.x, 0.0, step.y), 1.0)
+    float4 there = along > 0.0 ? float4(eye + direction * along - float3(step.x, 0.0, step.y), 1.0)
         : float4(direction, 0.0);
     float4 before = transform(frame->prevViewProj, there);
     uv = before.xy / max(abs(before.w), 1e-9) * 0.5 + 0.5;
@@ -352,9 +352,10 @@ float3 cloudsBefore(Frame* frame, float2 screenUv, float3 world, float3 color)
     {
         return color;
     }
-    float3 offset = world - frame->cameraPosition;
+    float3 eye = eyeFor(frame, world);
+    float3 offset = world - eye;
     float distance = length(offset);
-    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    float camera = max(levelHeight(frame, eye), 1.0);
     // Nearer than the layer is above or below the camera, it is in front of them all: most of what is drawn.
     float clear = max(clouds.base - camera, camera - clouds.base - clouds.thickness);
     if (distance <= clear)

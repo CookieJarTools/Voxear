@@ -296,6 +296,28 @@ pub fn record(
     Ok(finish.then_some(finished))
 }
 
+/// The picture drawn in pixels, `small`, enlarged into `output`, or into
+/// part of it with what lies outside cleared to a colour: each drawn pixel
+/// a block of `size` screen pixels, the view's first falling at `start` in
+/// the small picture's pixels (see `pixels::PixelGrid::start`).
+pub fn enlarge(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    (small, output): (ImageId, ImageId),
+    (rect, clear_outside): (Option<vk::Rect2D>, Option<[f32; 4]>),
+    size: u32,
+    start: [f32; 2],
+) {
+    if let (Some(_), Some(color)) = (rect, clear_outside) {
+        fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| clear(ctx, output, color));
+    }
+    let origin = rect.map_or([0, 0], |r| [r.offset.x as u32, r.offset.y as u32]);
+    let textures = [fg.texture(small).0, (size as f32).to_bits(), start[0].to_bits(), start[1].to_bits()];
+    let push = Push { textures, size: origin, ..push };
+    let images = [(small, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
+    fg.add_pass("Enlarge", &images, &[], move |ctx| draw_into(ctx, pipelines.enlarge, &push, output, rect));
+}
+
 /// AMD FSR 3.1 in TAA's place: the frame's exposure as FSR reads it, then
 /// FSR's passes, from the scene as drawn to the output's size; and the result
 /// copied into TAA's history, which reflections read next frame. Returns the

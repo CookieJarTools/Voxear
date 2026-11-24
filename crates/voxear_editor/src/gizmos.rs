@@ -812,13 +812,24 @@ fn facing(shapes: &mut Vec<Shape>, camera: &ViewCamera, position: Vec3, forward:
 /// corners, and the far rectangle.
 fn frustum(shapes: &mut Vec<Shape>, camera: &ViewCamera, lens: &Camera, position: Vec3, rotation: Quat) {
     let color = Color::hex(REACH);
-    let half_height = (lens.fov_y_degrees.to_radians() * 0.5).tan() * FRUSTUM_DEPTH;
-    let half_width = half_height * FRUSTUM_ASPECT;
-    let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-        .map(|(x, y)| position + rotation * Vec3::new(x * half_width, y * half_height, FRUSTUM_DEPTH));
+    let shape = voxear_render::Lens::of(lens, FRUSTUM_ASPECT);
+    let corner = |(x, y): (f32, f32), depth: f32| {
+        let half_height = shape.half_height(depth);
+        position + rotation * Vec3::new(x * half_height * FRUSTUM_ASPECT, y * half_height, depth)
+    };
+    let ways = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+    let corners = ways.map(|way| corner(way, FRUSTUM_DEPTH));
+    // An orthographic camera's is a box, from its near plane's rectangle.
+    let starts = match shape.ortho {
+        Some(_) => ways.map(|way| corner(way, lens.near)),
+        None => [position; 4],
+    };
     for i in 0..4 {
-        line(shapes, camera, position, corners[i], color);
+        line(shapes, camera, starts[i], corners[i], color);
         line(shapes, camera, corners[i], corners[(i + 1) % 4], color);
+        if shape.ortho.is_some() {
+            line(shapes, camera, starts[i], starts[(i + 1) % 4], color);
+        }
     }
 }
 
@@ -832,10 +843,10 @@ pub fn culling_frustum(world: &World, camera: &ViewCamera, culler: Entity, aspec
     };
     let (position, rotation) = placement(transform, world.get::<WorldTransform>(culler));
     let color = Color::hex(CULLING);
-    let half_height = (lens.fov_y_degrees.to_radians() * 0.5).tan();
-    let half_width = half_height * aspect;
+    let shape = voxear_render::Lens::of(lens, aspect);
     let corner = |(x, y): (f32, f32), depth: f32| {
-        position + rotation * (Vec3::new(x * half_width, y * half_height, 1.0) * depth)
+        let half_height = shape.half_height(depth);
+        position + rotation * Vec3::new(x * half_height * aspect, y * half_height, depth)
     };
     let ways = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
     let (near, far) = (ways.map(|way| corner(way, lens.near.max(0.05))), ways.map(|way| corner(way, CULLING_DEPTH)));

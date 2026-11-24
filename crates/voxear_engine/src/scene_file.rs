@@ -756,6 +756,36 @@ pub struct CameraData {
     /// How near the camera sees, in metres.
     #[serde(default = "default_near", skip_serializing_if = "is_default_near")]
     pub near: f32,
+    /// `perspective`, or `orthographic`, every ray parallel.
+    #[serde(default, skip_serializing_if = "is_perspective")]
+    pub projection: voxear_render::Projection,
+    /// With an orthographic projection, half the height it sees, in metres.
+    #[serde(default = "default_ortho_size", skip_serializing_if = "is_default_ortho_size")]
+    pub size: f32,
+}
+
+impl CameraData {
+    pub fn of(camera: &Camera) -> Self {
+        let Camera { fov_y_degrees: fov, exposure, near, projection, size } = *camera;
+        Self { fov, exposure, near, projection, size }
+    }
+
+    pub fn camera(&self) -> Camera {
+        let Self { fov, exposure, near, projection, size } = *self;
+        Camera { fov_y_degrees: fov, exposure, near, projection, size }
+    }
+}
+
+fn is_perspective(projection: &voxear_render::Projection) -> bool {
+    *projection == voxear_render::Projection::Perspective
+}
+
+fn default_ortho_size() -> f32 {
+    Camera::default().size
+}
+
+fn is_default_ortho_size(size: &f32) -> bool {
+    *size == default_ortho_size()
 }
 
 /// A post volume as a scene writes it:
@@ -3069,8 +3099,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
         .filter(|spec| !spec.fields.is_empty())
         .map(|spec| (spec.type_name.clone(), unbind_refs(world, ids, &spec.fields)))
         .collect();
-    obj.camera =
-        world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure, near: c.near });
+    obj.camera = world.get::<Camera>(entity).map(CameraData::of);
     obj.light = world.get::<Light>(entity).map(|light| light_data(content, light));
     obj.post_volume = world.get::<PostVolume>(entity).map(PostVolumeData::of);
     obj.reflection_probe = world.get::<ReflectionProbe>(entity).map(ReflectionProbeData::of);

@@ -95,6 +95,7 @@ const CONTACT: When = &[(&["post", "contact_shadows", "enabled"], "true")];
 const REFLECT: When = &[(&["post", "reflections", "enabled"], "true")];
 const TAA: When = &[(&["post", "anti_aliasing", "mode"], "taa")];
 const BLUR: When = &[(&["post", "motion_blur", "enabled"], "true")];
+const PIXELS: When = &[(&["post", "pixels", "enabled"], "true")];
 
 const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
@@ -377,6 +378,14 @@ const SETTINGS: &[Info] = &[
         help: "How much of the last frame TAA keeps: higher is smoother and steadier, lower reacts faster to what moves." },
     Info { path: &["post", "anti_aliasing", "taa_jitter"], title: "TAA jitter", group: "Quality", kind: number(0.0, 2.0, "px"), when: TAA,
         help: "How far, in pixels, the camera is shifted from frame to frame for TAA to gather detail from. 1 is right for nearly every scene." },
+    Info { path: &["post", "pixels", "enabled"], title: "Pixels", group: "Pixels", kind: Kind::Toggle, when: ALWAYS,
+        help: "Draws the scene at a few pixels to the screen's many and enlarges it with hard edges, as pixel art is. Anti-aliasing and sharpening are off while it is on." },
+    Info { path: &["post", "pixels", "size"], title: "Pixel size", group: "Pixels", kind: Kind::Whole { max: 32 }, when: PIXELS,
+        help: "How many screen pixels each drawn pixel covers, across and down." },
+    Info { path: &["post", "pixels", "height"], title: "Rows", group: "Pixels", kind: Kind::Whole { max: 2160 }, when: PIXELS,
+        help: "About how many rows of pixels to draw, in place of the pixel size: the whole pixel size nearest to giving them. 0 leaves it to the pixel size." },
+    Info { path: &["post", "pixels", "snap"], title: "Snap", group: "Pixels", kind: Kind::Toggle, when: PIXELS,
+        help: "Keeps an orthographic camera on the grid of its pixels, so they do not crawl or shimmer as it glides." },
 ];
 
 /// What a look pack has that lighting settings have not: a line saying

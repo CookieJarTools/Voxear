@@ -26,7 +26,7 @@ float vsmDepth(Frame* frame, float3 position)
 // The level, fractional, whose texels are as wide as a pixel of the view is at `position`, with the bias.
 float vsmLevelAt(Frame* frame, float3 position)
 {
-    float pixel = max(distance(position, frame->cameraPosition), frame->near) / frame->lodScale;
+    float pixel = screenDistance(frame, max(distance(position, frame->cameraPosition), frame->near)) / frame->lodScale;
     return log2(max(pixel / frame->vsm.finestTexel, 1.0)) + frame->vsm.bias;
 }
 

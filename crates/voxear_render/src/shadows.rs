@@ -149,6 +149,9 @@ pub struct View {
     pub fov_y: f32,
     pub aspect: f32,
     pub near: f32,
+    /// For an orthographic camera, half the height it sees, in metres: its
+    /// slices are boxes, as wide near as far.
+    pub ortho: Option<f32>,
     /// Where the world's middle is from the level's (see
     /// `voxear_scene::WorldOrigin`): the sun's cascades snap to texels
     /// measured from the level's middle, repeating every `ORIGIN_WRAP`
@@ -247,7 +250,13 @@ pub fn cascades_in(
         let far = split_at(start, (i + 1, count), distance, split);
         let corners = [near, far].into_iter().flat_map(|d| {
             [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-                .map(|(sx, sy)| view.position + forward * d + right * (sx * d * tan_h) + up * (sy * d * tan_v))
+                .map(|(sx, sy)| {
+                    let (across, height) = match view.ortho {
+                        Some(half) => (half * view.aspect, half),
+                        None => (d * tan_h, d * tan_v),
+                    };
+                    view.position + forward * d + right * (sx * across) + up * (sy * height)
+                })
         });
         let corners: Vec<Vec3> = corners.collect();
         let mut center = corners.iter().sum::<Vec3>() / corners.len() as f32;
@@ -327,12 +336,28 @@ mod tests {
             fov_y: 1.0,
             aspect: 16.0 / 9.0,
             near: 0.1,
+            ortho: None,
             origin: I64Vec3::ZERO,
         }
     }
 
     fn inside(planes: &[[f32; 4]; 6], p: Vec3) -> bool {
         planes.iter().all(|pl| Vec3::new(pl[0], pl[1], pl[2]).dot(p) + pl[3] >= 0.0)
+    }
+
+    #[test]
+    fn an_orthographic_cameras_cascades_take_in_its_whole_width_near_by() {
+        // Seen from straight above, 10 m half height: the first cascade holds the corners of the view near the camera,
+        // where a perspective camera's narrow first slice would not.
+        let ortho = View { ortho: Some(10.0), rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), ..view() };
+        let cascades = cascades(&ortho, Vec3::new(0.2, -1.0, 0.3), 60.0, 0.5);
+        let below = ortho.rotation * Vec3::Z;
+        let (right, up) = (ortho.rotation * Vec3::X, ortho.rotation * Vec3::Y);
+        let corner = ortho.position + below * 3.0 + right * (10.0 * ortho.aspect - 0.5) + up * 9.5;
+        assert!(inside(&cascades[0].planes, corner), "the first cascade takes in the corner 3 m below");
+        let perspective = cascades_in(&view(), Vec3::new(0.2, -1.0, 0.3), (60.0, 0.5), CASCADES);
+        let wide = view().position + Vec3::Z * 3.0 + Vec3::X * 17.0;
+        assert!(!inside(&perspective[0].planes, wide), "a perspective one's first slice is narrow so near");
     }
 
     #[test]

@@ -269,6 +269,9 @@ pub struct Pipelines {
     /// Writes the output directly, when nothing follows.
     pub composite: vk::Pipeline,
     pub finish: vk::Pipeline,
+    /// A picture drawn at a few pixels to the screen's many, enlarged to the
+    /// view nearest, each drawn pixel a block of screen pixels (see `pixels`).
+    pub enlarge: vk::Pipeline,
     /// The frame debugger's view of an image.
     pub frame_debug: vk::Pipeline,
     /// A display image fitted to a window (see `display`), one for each
@@ -1119,6 +1122,7 @@ impl Pipelines {
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
+            enlarge: fullscreen("Enlarge", c"enlargeFragment", output, Blend::Opaque)?,
             frame_debug: fullscreen("Frame debugger view", c"frameDebugFragment", hdr, Blend::Opaque)?,
             // Made on a thread of their own while the rest are made (see `new_showing`).
             fsr3: None,
@@ -1407,6 +1411,7 @@ impl Pipelines {
             self.composite_ldr,
             self.composite,
             self.finish,
+            self.enlarge,
             self.frame_debug,
             self.ui,
             self.ui_panel,

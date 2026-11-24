@@ -122,7 +122,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
 VertexOut impostorVertex(Instance instance, uint instanceIndex, float2 corner, uint cluster)
 {
     Frame* frame = push.frame;
-    ImpostorCorner c = impostorCorner(instance, frame->cameraPosition, corner);
+    ImpostorCorner c = impostorCorner(instance, eyeFor(frame, instance.model.c3.xyz), corner);
     VertexOut o;
     o.position = transform(frame->viewProj, float4(c.world, 1.0));
     o.worldPosition = c.world;
@@ -220,7 +220,7 @@ float smoothedRoughness(Frame* frame, float3 normal, float roughness)
 float3 surfaceNormal(VertexOut input, Material material)
 {
     // Facing the camera where a mesh's own normal is missing, as where two opposite normals meet across a face.
-    float3 n = normalizeOr(input.normal, normalize(push.frame->cameraPosition - input.worldPosition));
+    float3 n = normalizeOr(input.normal, towardsEye(push.frame, input.worldPosition));
     if ((material.flags & MATERIAL_IMPOSTOR) != 0)
     {
         return impostorNormal(buffers()->instances[input.instance], material, input.uv, n);
@@ -956,7 +956,7 @@ bool inDryMesh(Frame* frame, float3 world)
         return false;
     }
     float4 clip = transform(frame->viewProj, float4(world, 1.0));
-    float2 uv = clip.w > frame->near ? clip.xy / clip.w * 0.5 + 0.5 : 0.5;
+    float2 uv = clipViewDepth(frame, clip) > frame->near ? clip.xy / clip.w * 0.5 + 0.5 : 0.5;
     if (any(uv < 0.0) || any(uv > 1.0))
     {
         return false;
@@ -966,9 +966,9 @@ bool inDryMesh(Frame* frame, float3 world)
     {
         return false;
     }
-    float along = max(clip.w, frame->near);
-    float front = mask.x > 0.0 ? frame->near / mask.x : 0.0;
-    float back = frame->near / max(1.0 - mask.y, 1e-7);
+    float along = max(clipViewDepth(frame, clip), frame->near);
+    float front = mask.x > 0.0 ? viewDepthOf(frame, mask.x) : 0.0;
+    float back = viewDepthOf(frame, 1.0 - mask.y);
     return along > front + 0.05 && along < back + 0.05;
 }
 
@@ -1388,7 +1388,7 @@ float3 underwaterSunUnder(Frame* frame, float3 world, WaterOver over, out float3
 // sees through it, or SOLID_THICKNESS.
 SurfaceOutput customSurfaceAt(Frame* frame, VertexOut input, SurfaceOutput surface, float3 origin, float thickness, bool glass)
 {
-    float3 view = normalize(frame->cameraPosition - input.worldPosition);
+    float3 view = towardsEye(frame, input.worldPosition);
     float3 level = levelPosition(frame, input.worldPosition, 4096.0);
     SurfaceInput at = { input.uv, input.worldPosition, normalize(input.normal), view, origin, frame->time, thickness, glass, level };
     customSurface(input.material, at, surface);
@@ -1408,7 +1408,7 @@ FragmentOut unlitOutput(Frame* frame, VertexOut input, float3 color)
     if (frame->lighting.sky == SKY_ATMOSPHERE)
     {
         float2 screenUv = input.position.xy / float2(frame->viewport);
-        float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, screenUv, eyeDistance(frame, input.worldPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     // The clouds in front of it: far ground beyond their layer, or near ground with the camera in them.
@@ -1514,7 +1514,7 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
 
     Surface s;
     s.normal = normal;
-    s.view = normalize(frame->cameraPosition - input.worldPosition);
+    s.view = towardsEye(frame, input.worldPosition);
     s.roughness = clamp(smoothedRoughness(frame, s.normal, roughness), 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(surface.reflectance), base.rgb, metallic);
@@ -1759,7 +1759,7 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     if (atmosphere)
     {
         float2 screenUv = input.position.xy / float2(frame->viewport);
-        float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, screenUv, eyeDistance(frame, input.worldPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     // The clouds in front of it: far ground beyond their layer, or near ground with the camera in them.

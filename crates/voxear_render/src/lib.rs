@@ -36,6 +36,7 @@ mod ies;
 pub mod lightmap_uvs;
 pub mod lightmapper;
 mod lightmaps;
+mod lens;
 mod lod;
 mod looks;
 mod map;
@@ -56,6 +57,7 @@ mod particle_meshes;
 mod particle_sim;
 mod particles;
 mod passes;
+pub mod pixels;
 mod dice;
 mod mist;
 mod skeleton;
@@ -145,7 +147,7 @@ pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Sk
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     GiSource, GlobalIllumination, Reflections,
-    Grading, MotionBlur, PostProcess, ScriptPost, Tonemap, Tonemapper, UpscaleQuality, Upscaler, Vignette,
+    Grading, MotionBlur, Pixels, PostProcess, ScriptPost, Tonemap, Tonemapper, UpscaleQuality, Upscaler, Vignette,
 };
 pub use previews::{
     MAX_PREVIEW_SIZE, MAX_VIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewCamera, PreviewId, PreviewImage, PreviewOptions,
@@ -194,6 +196,7 @@ pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone, plants_wind};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
+pub use lens::{Lens, ORTHO_DEPTH, Projection};
 pub use scene::{
     Camera, CloudKind, Clouds, DimensionLook, DimensionLooks, Light, LightKind, MAX_TRANSITIONS, MeshRenderer,
     RenderFeatures, Sky, SkyBody, SkyMode, ViewOptions,
@@ -3240,6 +3243,9 @@ impl View {
         let output_extent = extent;
         let panel_projection = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.unjittered_view_proj);
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
+        // Drawn in pixels, everything after the scene works at the drawn size too, and the Enlarge pass shows it.
+        let pixel_grid = extracted.pixels.filter(|_| portal.is_none());
+        let output_extent = if pixel_grid.is_some() { extent } else { output_extent };
         // Every Foliage's plants within their draw distance, as instances of their own.
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
         // Under the sea the air's fog is left out: the water's own takes its place (see `water`).
@@ -4497,6 +4503,15 @@ impl View {
                 pyramid: None,
             });
         }
+        // Drawn in pixels, the finished picture is the drawn size, enlarged into the view after.
+        let small = match pixel_grid {
+            Some(_) => {
+                let format = fg.image_desc(output).format;
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                Some(fg.create_image(gpu, bindless, "pixels", ImageDesc::new(extent.width, extent.height, format, usage))?)
+            }
+            None => None,
+        };
         let post = post_passes::PostInput {
             pipelines: *pipelines,
             push,
@@ -4506,8 +4521,8 @@ impl View {
             hdr,
             velocity,
             depth: seen_depth.unwrap_or(depth),
-            output,
-            output_rect: (view.extent != setup.full).then_some(view),
+            output: small.unwrap_or(output),
+            output_rect: (view.extent != setup.full && small.is_none()).then_some(view),
             clear: setup.clear,
             clear_outside: setup.first,
             exposure: fg.import_buffer(&self.exposure),
@@ -4532,6 +4547,11 @@ impl View {
             }),
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;
+        if let (Some(grid), Some(small)) = (pixel_grid, small) {
+            let rect = (view.extent != setup.full).then_some(view);
+            let shown = (view.extent.width, view.extent.height);
+            post_passes::enlarge(fg, (*pipelines, push), (small, output), (rect, setup.first.then_some(setup.clear)), grid.size, grid.start(shown));
+        }
         let backdrop = match finished.filter(|_| post.keep_ldr) {
             Some(view_image) => {
                 let (blurred, size) =

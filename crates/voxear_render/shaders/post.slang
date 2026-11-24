@@ -69,12 +69,13 @@ float4 fogFragment(PostOut input) : SV_Target
         discard;
     }
     float4 point = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, depth, 1.0));
-    float3 ray = point.xyz / point.w - frame->cameraPosition;
+    float3 eye = eyeRay(frame, input.uv * 2.0 - 1.0).origin;
+    float3 ray = point.xyz / point.w - eye;
     float distance = length(ray);
     float3 direction = ray / distance;
 
     float falloff = max(frame->post.fogHeightFalloff, 1e-4);
-    float density = frame->post.fogDensity * exp(-falloff * (frame->cameraPosition.y - frame->post.fogBaseHeight));
+    float density = frame->post.fogDensity * exp(-falloff * (eye.y - frame->post.fogBaseHeight));
     float amount = 1.0 - heightFogThrough(density, falloff, ray);
 
     float glow = pow(saturate(dot(direction, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
@@ -114,7 +115,7 @@ float4 volumetricFogFragment(PostOut input) : SV_Target
         float4 sky = volumeAt(push.textures.y, input.uv, far, far);
         return float4(sky.rgb, 1.0 - sky.a);
     }
-    float viewDepth = frame->near / depth;
+    float viewDepth = viewDepthOf(frame, depth);
     float4 fog = volumeAt(push.textures.y, input.uv, min(viewDepth, far), far);
     if (viewDepth <= far)
     {
@@ -124,11 +125,14 @@ float4 volumetricFogFragment(PostOut input) : SV_Target
     // The height fog from the volume's far side on: its share over the whole
     // ray, less its share over the part the volume covers.
     float4 point = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, depth, 1.0));
-    float3 ray = point.xyz / point.w - frame->cameraPosition;
+    float3 eye = eyeRay(frame, input.uv * 2.0 - 1.0).origin;
+    float3 ray = point.xyz / point.w - eye;
     float falloff = max(frame->post.fogHeightFalloff, 1e-4);
-    float density = frame->post.fogDensity * exp(-falloff * (frame->cameraPosition.y - frame->post.fogBaseHeight));
+    float density = frame->post.fogDensity * exp(-falloff * (eye.y - frame->post.fogBaseHeight));
+    // An orthographic camera's rays start at the near plane, a perspective camera's at the camera.
+    float start = isOrthographic(frame) ? frame->near : 0.0;
     float throughAll = heightFogThrough(density, falloff, ray);
-    float throughNear = heightFogThrough(density, falloff, ray * (far / viewDepth));
+    float throughNear = heightFogThrough(density, falloff, ray * ((far - start) / (viewDepth - start)));
     float beyond = 1.0 - throughAll / max(throughNear, 1e-6);
     float glow = pow(saturate(dot(normalize(ray), -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
     float3 beyondColor = (fogColourToward(frame, normalize(ray)) + frame->sunColor * glow * 0.15) * beyond;
@@ -372,8 +376,7 @@ float4 taaUpscaleFragment(PostOut input) : SV_Target
 
 float linearDepth(float depth)
 {
-    // Infinite reverse-Z: depth = near / distance.
-    return push.frame->near / max(depth, 1e-7);
+    return viewDepthOf(push.frame, depth);
 }
 
 // Blur radius in pixels, scaled from 1080p to the current resolution.
@@ -831,6 +834,21 @@ float4 finishFragment(PostOut input) : SV_Target
         return float4(color, 1.0);
     }
     return float4(dither(color, input.position.xy, frame->frameIndex), 1.0);
+}
+
+// ---------------------------------------------------------------- Enlarge
+
+// The picture drawn at a few pixels to the screen's many (src/pixels.rs), enlarged to the view with each drawn
+// pixel a square block of whole screen pixels, nearest, never blurred. push.textures: the small picture, then the
+// size of a drawn pixel in screen pixels, and where the view's first pixel falls in the small picture, in its pixels,
+// as float bits: the snapped camera's remainder moves it by part of a drawn pixel.
+[shader("fragment")]
+float4 enlargeFragment(PostOut input) : SV_Target
+{
+    float size = asfloat(push.textures.y);
+    float2 start = float2(asfloat(push.textures.z), asfloat(push.textures.w));
+    float2 at = (float2(viewPixel(input)) + 0.5) / size + start;
+    return float4(load(push.textures.x, int2(floor(at))).rgb, 1.0);
 }
 
 // ---------------------------------------------------------------- FSR

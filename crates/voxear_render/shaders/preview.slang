@@ -63,7 +63,7 @@ float4 previewFragment(PreviewOut input) : SV_Target
     float metallic = material.metallic * metalRough.b;
     float roughness = material.roughness * metalRough.g;
     float3 emission = material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
-    float3 view = normalize(frame->cameraPosition - input.world);
+    float3 view = towardsEye(frame, input.world);
     // Seen from behind, as a plane can be, a face is lit as its front.
     float3 normal = normalize(input.normal);
     normal = dot(normal, view) < 0.0 ? -normal : normal;

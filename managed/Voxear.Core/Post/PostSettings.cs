@@ -57,6 +57,9 @@ public sealed class PostSettings
 	/// <summary>Splits colours towards the screen's edges, as a cheap lens does. 0 is off.</summary>
 	public float ChromaticAberration;
 
+	/// <summary>The scene drawn at a few pixels to the screen's many and enlarged with hard edges, as pixel art is.</summary>
+	public readonly PixelsSettings Pixels = new();
+
 	/// <summary>These settings as JSON, laid out as a scene's [post] writes them, as a game's options file might keep them.</summary>
 	public string ToJson()
 	{
@@ -90,6 +93,7 @@ public sealed class PostSettings
 		DepthOfField.Read(PostJson.Section(from, "depth_of_field"));
 		MotionBlur.Read(PostJson.Section(from, "motion_blur"));
 		PostJson.Read(from, "chromatic_aberration", ref ChromaticAberration);
+		Pixels.Read(PostJson.Section(from, "pixels"));
 	}
 
 	internal JsonObject ToNode()
@@ -109,6 +113,7 @@ public sealed class PostSettings
 		to["depth_of_field"] = PostJson.Node(DepthOfField.Write);
 		to["motion_blur"] = PostJson.Node(MotionBlur.Write);
 		to["chromatic_aberration"] = ChromaticAberration;
+		to["pixels"] = PostJson.Node(Pixels.Write);
 		return to;
 	}
 }

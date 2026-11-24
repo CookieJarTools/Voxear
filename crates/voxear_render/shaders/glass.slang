@@ -124,7 +124,7 @@ float4 glassFragment(VertexOut input) : SV_Target0
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
 
     Surface s;
-    s.view = normalize(frame->cameraPosition - input.worldPosition);
+    s.view = towardsEye(frame, input.worldPosition);
     float3 emission = material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
     float ior = max(material.ior, 1.0);
     float r0 = (ior - 1.0) / (ior + 1.0);
@@ -136,10 +136,10 @@ float4 glassFragment(VertexOut input) : SV_Target0
     bool unlit = false;
     if (custom)
     {
-        // How far the view goes through the pane to what lies behind: the depths are infinite reverse-Z, so a view
-        // depth is near / depth, and along the view it is that over how squarely the view meets the forward axis.
-        float paneDepth = frame->near / max(input.position.z, 1e-7);
-        float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : SOLID_THICKNESS;
+        // How far the view goes through the pane to what lies behind: the difference of their view depths, over how
+        // squarely the view meets the forward axis.
+        float paneDepth = viewDepthOf(frame, input.position.z);
+        float sceneDepth = viewDepthOr(frame, behindDepth, SOLID_THICKNESS);
         float along = max(dot(-s.view, frame->cameraForward), 0.05);
         float thickness = min(max(sceneDepth - paneDepth, 0.0) / along, SOLID_THICKNESS);
         float3 origin = buffers()->instances[input.instance].model.c3.xyz;
@@ -207,7 +207,7 @@ float4 glassFragment(VertexOut input) : SV_Target0
     if (atmosphere)
     {
         // What lies behind is hazed already; the pane's own light is hazed as far as the pane.
-        float4 haze = aerialPerspectiveAt(frame, input.position.xy / float2(frame->viewport), length(input.worldPosition - frame->cameraPosition));
+        float4 haze = aerialPerspectiveAt(frame, input.position.xy / float2(frame->viewport), eyeDistance(frame, input.worldPosition));
         lit *= haze.a;
     }
     float3 color = through + lit;

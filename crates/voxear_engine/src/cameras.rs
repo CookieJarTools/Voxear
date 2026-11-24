@@ -1,5 +1,6 @@
-//! Cameras for scripts: a Camera's field of view, near plane and exposure,
-//! as `Camera` in Voxear.Core reads and writes them.
+//! Cameras for scripts: a Camera's field of view, near plane, exposure,
+//! projection and orthographic size, as `Camera` in Voxear.Core reads and
+//! writes them.
 
 use voxear_ecs::{Entity, World};
 use voxear_render::Camera;
@@ -13,6 +14,8 @@ const FIELD_OF_VIEW: i32 = 3;
 const NEAR: i32 = 4;
 const EXPOSURE: i32 = 5;
 const FOLLOWS: i32 = 6;
+const PROJECTION: i32 = 7;
+const SIZE: i32 = 8;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::Camera, values);
@@ -54,6 +57,19 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (FIELD_OF_VIEW, None) => Some(number(camera.fov_y_degrees)),
         (NEAR, None) => Some(number(camera.near)),
         (EXPOSURE, None) => Some(number(camera.exposure)),
+        (PROJECTION, None) => Some(number(f32::from(camera.projection == voxear_render::Projection::Orthographic))),
+        (SIZE, None) => Some(number(camera.size)),
+        (PROJECTION, Some([x, ..])) => {
+            camera.projection = match x >= 0.5 {
+                true => voxear_render::Projection::Orthographic,
+                false => voxear_render::Projection::Perspective,
+            };
+            Some([0.0; 4])
+        }
+        (SIZE, Some([x, ..])) => {
+            camera.size = x.max(1e-3);
+            Some([0.0; 4])
+        }
         (FIELD_OF_VIEW, Some([x, ..])) => {
             camera.fov_y_degrees = x.clamp(1.0, 170.0);
             Some([0.0; 4])

@@ -88,16 +88,23 @@ int2 fullPixel(int2 pixel)
     return clamp(full, int2(0), int2(push.frame->viewport) - 1);
 }
 
-// Where a pixel's centre lies in view space at its depth. Depth is infinite
-// reverse-Z, so view depth is near / depth; TAA's jitter is taken out, so
-// neighbours line up as the surface does.
+// Where a pixel's centre lies in view space at its depth, z ahead of the camera. For a perspective camera x and y
+// grow with z; for an orthographic one they do not. TAA's jitter is taken out, so neighbours line up as the surface
+// does.
 float3 viewPosition(float2 pixel, float depth)
 {
     Frame* frame = push.frame;
     float2 size = float2(frame->viewport);
     float2 ndc = pixel / size * 2.0 - 1.0 - frame->jitter * 2.0 / size;
-    float z = frame->near / max(depth, 1e-7);
-    return float3(ndc * frame->post.aoUnproject * z, z);
+    float z = viewDepthOf(frame, depth);
+    return float3(ndc * frame->post.aoUnproject * screenDistance(frame, z), z);
+}
+
+// The way the eye looks at `centre`, a point in view space, not unit length: from the camera to it for a perspective
+// camera, straight ahead for an orthographic one.
+float3 viewLook(Frame* frame, float3 centre)
+{
+    return isOrthographic(frame) ? float3(0.0, 0.0, centre.z) : centre;
 }
 
 float3 viewPositionAt(uint depthTexture, int2 pixel)
@@ -118,7 +125,7 @@ float3 viewNormal(uint depthTexture, int2 pixel, float3 centre)
     float3 along = abs(centre.z - up.z) < abs(down.z - centre.z) ? centre - up : down - centre;
     float3 normal = normalize(cross(across, along));
     // Facing the camera, whichever way round the cross product came out.
-    return dot(normal, centre) > 0.0 ? -normal : normal;
+    return dot(normal, viewLook(push.frame, centre)) > 0.0 ? -normal : normal;
 }
 
 float fastAcos(float x)
@@ -166,16 +173,16 @@ float4 gtaoFragment(AoOut input) : SV_Target
     if (surface.a < 0.5)
     {
         normal = normalize(transform(frame->view, float4(octDecode(surface.rg * 2.0 - 1.0), 0.0)).xyz);
-        normal = dot(normal, centre) > 0.0 ? -normal : normal;
-        centre += normal * (LOD_FADE_GAP * frame->lodThreshold * centre.z / frame->lodScale);
+        normal = dot(normal, viewLook(frame, centre)) > 0.0 ? -normal : normal;
+        centre += normal * (LOD_FADE_GAP * frame->lodThreshold * screenDistance(frame, centre.z) / frame->lodScale);
     }
-    float3 toView = normalize(-centre);
+    float3 toView = normalize(-viewLook(frame, centre));
 
     float radius = max(frame->post.aoRadius, 1e-3);
     float2 size = float2(frame->viewport);
-    // View-space units a pixel spans at depth 1, along x and y.
+    // View-space units a pixel spans at depth 1, along x and y (at every depth for an orthographic camera).
     float2 pixelSpan = frame->post.aoUnproject * 2.0 / size;
-    float screenRadius = min(radius / (abs(pixelSpan.y) * centre.z), MAX_SCREEN_RADIUS * size.y / 1080.0);
+    float screenRadius = min(radius / (abs(pixelSpan.y) * screenDistance(frame, centre.z)), MAX_SCREEN_RADIUS * size.y / 1080.0);
     if (screenRadius < MIN_SAMPLE_PIXELS)
     {
         return 1.0;
@@ -394,7 +401,7 @@ float4 contactShadowFragment(AoOut input) : SV_Target
     {
         return 1.0;
     }
-    float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / float(frame->viewport.y) * centre.z;
+    float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / float(frame->viewport.y) * screenDistance(frame, centre.z);
     float3 start = centre + normal * (2.0 * pixelSpan);
     uint steps = max(frame->post.contactSteps, 1);
     float stepLength = frame->post.contactLength / float(steps);
@@ -404,14 +411,14 @@ float4 contactShadowFragment(AoOut input) : SV_Target
     {
         float3 along = start + toSun * stepLength * (float(i) + jitter);
         // Back onto the screen, as viewPosition came off it.
-        float2 ndc = along.xy / (along.z * frame->post.aoUnproject) + frame->jitter * 2.0 / size;
+        float2 ndc = along.xy / (screenDistance(frame, along.z) * frame->post.aoUnproject) + frame->jitter * 2.0 / size;
         float2 at = (ndc * 0.5 + 0.5) * size;
         if (along.z <= frame->near || any(at < 0.0) || any(at >= size))
         {
             break;
         }
         float scene = loadDepth(depthTexture, int2(at));
-        float sceneZ = frame->near / max(scene, 1e-7);
+        float sceneZ = viewDepthOf(frame, scene);
         float behind = along.z - sceneZ;
         if (behind > 0.0 && behind < frame->post.contactThickness)
         {
@@ -427,7 +434,7 @@ float4 contactShadowFragment(AoOut input) : SV_Target
 // viewPosition came off it.
 float2 reflectionPixel(Frame* frame, float3 point, float2 size)
 {
-    float2 ndc = point.xy / (point.z * frame->post.aoUnproject) + frame->jitter * 2.0 / size;
+    float2 ndc = point.xy / (screenDistance(frame, point.z) * frame->post.aoUnproject) + frame->jitter * 2.0 / size;
     return (ndc * 0.5 + 0.5) * size;
 }
 
@@ -484,13 +491,14 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     // its reflection broke into speckles.
     float3 worldNormal = octDecode(surface.rg * 2.0 - 1.0);
     float3 normal = normalize(transform(frame->view, float4(worldNormal, 0.0)).xyz);
-    float facing = dot(normal, centre) > 0.0 ? -1.0 : 1.0;
+    float facing = dot(normal, viewLook(frame, centre)) > 0.0 ? -1.0 : 1.0;
     normal *= facing;
     worldNormal *= facing;
-    float3 ray = reflect(normalize(centre), normal);
+    float3 ray = reflect(normalize(viewLook(frame, centre)), normal);
     // The same in the world, for what the ray finds when it finds nothing on screen.
     float3 position = worldAtPixel(frame, float2(pixel) + 0.5, depth);
-    float3 worldRay = reflect(normalizeOr(position - frame->cameraPosition, frame->cameraForward), worldNormal);
+    float3 look = isOrthographic(frame) ? frame->cameraForward : normalizeOr(position - frame->cameraPosition, frame->cameraForward);
+    float3 worldRay = reflect(look, worldNormal);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 outside = position + worldNormal * ddgiSpacing(frame, 0);
 
@@ -498,7 +506,7 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     // at once, a chrome ball's lower half showed a sharp ring where they gave way to the sky's ground colour.
     float towards = smoothstep(-0.2, 0.0, ray.z);
     float2 size = float2(frame->viewport);
-    float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / size.y * centre.z;
+    float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / size.y * screenDistance(frame, centre.z);
     float3 start = centre + normal * (2.0 * pixelSpan);
     float reach = frame->post.reflectionDistance;
     // Stopped short of the near plane, so its depth stays finite.
@@ -506,10 +514,16 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     {
         reach = (frame->near * 1.5 - start.z) / ray.z;
     }
+    // And for an orthographic camera short of the far end of its depth, past which every depth is the sky's.
+    float farthest = frame->near + frame->orthoDepth * 0.999;
+    if (isOrthographic(frame) && start.z + ray.z * reach > farthest)
+    {
+        reach = (farthest - start.z) / ray.z;
+    }
     float3 finish = start + ray * max(reach, 0.0);
     // The ray on screen: pixels across and down, and depth, each changing evenly along it.
-    float3 from = float3(reflectionPixel(frame, start, size), frame->near / start.z);
-    float3 to = float3(reflectionPixel(frame, finish, size), frame->near / finish.z);
+    float3 from = float3(reflectionPixel(frame, start, size), depthOfView(frame, start.z));
+    float3 to = float3(reflectionPixel(frame, finish, size), depthOfView(frame, finish.z));
     float3 span = to - from;
     // Cut where it leaves the screen.
     float2 leave = select(span.xy > 0.0, (size - 0.5 - from.xy) / span.xy, (0.5 - from.xy) / span.xy);
@@ -565,8 +579,8 @@ float4 reflectionsFragment(AoOut input) : SV_Target
         }
         // At or behind the depth of this pixel: met, if not too far behind it; else it passes behind something,
         // and goes on beyond it.
-        float sceneZ = frame->near / max(nearest, 1e-7);
-        float rayZ = frame->near / max(at.z, 1e-7);
+        float sceneZ = viewDepthOf(frame, nearest);
+        float rayZ = viewDepthOf(frame, at.z);
         float thickness = frame->post.reflectionThickness * (1.0 + 0.02 * sceneZ);
         if (rayZ - sceneZ < thickness)
         {
@@ -603,10 +617,10 @@ float4 reflectionsFragment(AoOut input) : SV_Target
                 front = behind ? front : middle;
             }
             float3 crossing = from + span * back;
-            float sceneZ = frame->near / max(loadDepth(depthTexture, int2(crossing.xy)), 1e-7);
-            float rayZ = frame->near / max(crossing.z, 1e-7);
+            float sceneZ = viewDepthOf(frame, loadDepth(depthTexture, int2(crossing.xy)));
+            float rayZ = viewDepthOf(frame, crossing.z);
             // Looser than a pixel's walk, by how far a long step goes.
-            float thickness = frame->post.reflectionThickness * (1.0 + 0.02 * sceneZ) + 0.1 * stride * length(span.xy) * abs(frame->post.aoUnproject.y) * 2.0 / size.y * sceneZ;
+            float thickness = frame->post.reflectionThickness * (1.0 + 0.02 * sceneZ) + 0.1 * stride * length(span.xy) * abs(frame->post.aoUnproject.y) * 2.0 / size.y * screenDistance(frame, sceneZ);
             if (abs(rayZ - sceneZ) < thickness)
             {
                 found = true;

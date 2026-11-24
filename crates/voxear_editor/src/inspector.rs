@@ -3047,6 +3047,8 @@ fn value_path(field: &Field) -> ValuePath {
         Prop::SpotInner => "inner_angle".to_string(),
         Prop::SpotOuter => "outer_angle".to_string(),
         Prop::FieldOfView => "fov".to_string(),
+        Prop::Projection => "projection".to_string(),
+        Prop::OrthoSize => "size".to_string(),
         Prop::Exposure => "exposure".to_string(),
         Prop::Near => "near".to_string(),
         // A season's look is a table of its own in the Seasons'.

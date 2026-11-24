@@ -37,18 +37,18 @@ void volumeCell(float2 position, out int2 cell, out int slice)
     cell = int2(texel.x % int(VOLUME_WIDTH), texel.y);
 }
 
-// The direction from the camera through a point on the screen.
+// The direction the eye looks through a point on the screen.
 float3 screenDirection(Frame* frame, float2 uv)
 {
-    float4 far = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, 1.0, 1.0));
-    return normalize(far.xyz / far.w - frame->cameraPosition);
+    return eyeRay(frame, uv * 2.0 - 1.0).direction;
 }
 
-// The point a screen position shows at a view depth.
+// The point a screen position shows at a view depth. An orthographic camera's ray starts at the near plane.
 float3 atViewDepth(Frame* frame, float2 uv, float depth)
 {
-    float3 direction = screenDirection(frame, uv);
-    return frame->cameraPosition + direction * depth / max(dot(direction, frame->cameraForward), 1e-3);
+    EyeRay ray = eyeRay(frame, uv * 2.0 - 1.0);
+    float from = isOrthographic(frame) ? frame->near : 0.0;
+    return ray.origin + ray.direction * (depth - from) / max(dot(ray.direction, frame->cameraForward), 1e-3);
 }
 
 float fogDensityAt(Frame* frame, float height)
@@ -100,7 +100,7 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     float jitter = frac(noise + float(frame->frameIndex % 1024) * 0.618033989);
     float depth = max(volumeSliceDepth(float(slice) + jitter, far), frame->near);
     float3 position = atViewDepth(frame, uv, depth);
-    float3 toCamera = normalize(frame->cameraPosition - position);
+    float3 toCamera = towardsEye(frame, position);
     float density = fogDensityAt(frame, position.y);
     float g = frame->post.fogAnisotropy;
 
@@ -152,7 +152,7 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     {
         return current;
     }
-    float4 previous = volumeSample(push.textures.x, previousUv, volumeSliceAt(clip.w, far) - 0.5);
+    float4 previous = volumeSample(push.textures.x, previousUv, volumeSliceAt(clipViewDepth(frame, clip), far) - 0.5);
     return lerp(current, previous, VOLUME_HISTORY);
 }
 
@@ -180,7 +180,9 @@ void volumeIntegrateMain(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < int(VOLUME_SLICES); i++)
     {
         float4 froxel = volumeLoad(push.textures.x, cell, i);
-        float span = (volumeSliceDepth(float(i + 1), far) - volumeSliceDepth(float(i), far)) * alongRay;
+        // An orthographic camera sees nothing nearer than its near plane, where its rays start.
+        float front = isOrthographic(frame) ? max(volumeSliceDepth(float(i), far), frame->near) : volumeSliceDepth(float(i), far);
+        float span = max(volumeSliceDepth(float(i + 1), far) - front, 0.0) * alongRay;
         float extinction = max(froxel.a, 1e-6);
         float through = exp(-extinction * span);
         // The light scattered over the step, as it dims along it.

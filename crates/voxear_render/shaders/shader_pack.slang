@@ -161,11 +161,46 @@ float2 toPicture(float3 world, out bool inFront)
     return clip.xy / max(abs(clip.w), 1e-5) * 0.5 + 0.5;
 }
 
-// The way from the camera through the picture at `uv`.
+// Whether the camera is orthographic: every ray runs along cameraForward, from its own point of the near plane.
+bool isOrthographic()
+{
+    return frame()->orthoHalfHeight > 0.0;
+}
+
+// The way from the camera through the picture at `uv`: cameraForward everywhere for an orthographic camera.
 float3 viewRay(float2 uv)
 {
+    if (isOrthographic())
+    {
+        return frame()->cameraForward;
+    }
     float4 far = packTransform(frame()->inverseViewProjection, float4(uv * 2.0 - 1.0, 1e-6, 1.0));
     return normalize(far.xyz / far.w - frame()->cameraPosition);
+}
+
+// Where the camera's ray through `uv` starts: the camera, or for an orthographic camera its point of the near plane.
+float3 viewRayStart(float2 uv)
+{
+    if (!isOrthographic())
+    {
+        return frame()->cameraPosition;
+    }
+    float4 near = packTransform(frame()->inverseViewProjection, float4(uv * 2.0 - 1.0, 1.0, 1.0));
+    return near.xyz / near.w;
+}
+
+// How far in front of the camera, along cameraForward, something drawn at `depth` lies; very far for the sky.
+float distanceOfDepth(float depth)
+{
+    if (depth <= 0.0)
+    {
+        return 1e7;
+    }
+    if (isOrthographic())
+    {
+        return frame()->near + (1.0 - saturate(depth)) * frame()->orthoDepth;
+    }
+    return frame()->near / depth;
 }
 
 // The sun's light where the camera is, through the air, and the sky's light from all round.
@@ -215,8 +250,7 @@ bool isSky(float2 uv)
 // How far in front of the camera what `uv` shows is, in metres; very far for the sky.
 float sceneDistance(float2 uv)
 {
-    float depth = sceneDepth(uv);
-    return depth > 0.0 ? frame()->near / depth : 1e7;
+    return distanceOfDepth(sceneDepth(uv));
 }
 
 // Where what `uv` shows is, in the world.
@@ -510,7 +544,7 @@ PackShadowPage packShadowPage(PackSunShadows* maps, float2 across, uint level)
 uint packShadowLevel(PackSunShadows* maps, float3 position, float reach)
 {
     PackFrame* f = frame();
-    float pixel = max(distance(position, f->cameraPosition), f->near) / maps->lodScale;
+    float pixel = (isOrthographic() ? 1.0 : max(distance(position, f->cameraPosition), f->near)) / maps->lodScale;
     float level = log2(max(max(pixel, reach) / maps->finestTexel, 1.0)) + maps->bias;
     return uint(clamp(floor(level), 0.0, float(PACK_VSM_LEVELS - 1)));
 }

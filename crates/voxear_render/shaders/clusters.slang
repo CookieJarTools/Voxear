@@ -25,15 +25,16 @@ void clusterMain(uint3 id : SV_DispatchThreadID)
         farDepth = 1e9;
     }
 
-    // View-space box of the tile between the two depths. Vulkan NDC points Y down.
+    // View-space box of the tile between the two depths. Vulkan NDC points Y down. For an orthographic camera tanV
+    // and tanH are its half height and width in metres, at every depth.
     float tanV = float(frame->viewport.y) / (2.0 * frame->lodScale);
     float tanH = tanV * float(frame->viewport.x) / float(frame->viewport.y);
     float2 ndcLow = float2(cell.xy) / float2(grid.xy) * 2.0 - 1.0;
     float2 ndcHigh = float2(cell.xy + 1) / float2(grid.xy) * 2.0 - 1.0;
     float2 slopeLow = float2(ndcLow.x * tanH, -ndcHigh.y * tanV);
     float2 slopeHigh = float2(ndcHigh.x * tanH, -ndcLow.y * tanV);
-    float2 low = min(slopeLow * nearDepth, slopeLow * farDepth);
-    float2 high = max(slopeHigh * nearDepth, slopeHigh * farDepth);
+    float2 low = min(slopeLow * screenDistance(frame, nearDepth), slopeLow * screenDistance(frame, farDepth));
+    float2 high = max(slopeHigh * screenDistance(frame, nearDepth), slopeHigh * screenDistance(frame, farDepth));
     float3 boxLow = float3(low, nearDepth);
     float3 boxHigh = float3(high, farDepth);
 

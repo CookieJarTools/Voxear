@@ -262,6 +262,26 @@ columns being made: through the usual queue, two at a time, they took 70 s, as e
 generator work. Rings 1–2 are still made by the generator (stage 3), so the middle distance shows the far rings'
 8 m blocks for a minute at Medium's four threads.
 
+**Stage 3 became structure sites by region.** Measured first, the ground of a ring column cost 18 ms and building
+its structures 561 ms; a near column's structures took 455 of its 474 ms, 322 of them asking whether the ground fits
+about 234,000 candidate sites to build 15. So the rings were not made from runs; instead each structure's kept sites
+are worked out once for a region of 8×8 columns and every column there builds from that list, and the key the site
+checks are kept by no longer writes out the whole generator and every painted pixel (165 ms a call). On the Realm,
+from a spot never visited, Medium:
+
+| | Before | After |
+|---|---|---|
+| Near column | 474 ms | 38 ms |
+| Its structures | 455 ms | 5 ms |
+| Drawn-only column | 511 ms | 37 ms |
+| Ring 1 tile's structures | 561 ms | 13 ms |
+| Near ground all drawn | 30–40 s | 10 s |
+| Drawn-only blocks | 80 s | 20 s |
+| Rings 1 and 2 | over 2 minutes | about 60 s |
+
+A region costs about 3 s once, on one thread. Ring 3's tiles, a region each, still take about 1.2 s; a bake (stage 2)
+covers them.
+
 Suggested order: 0, 4, 1, 2, then 3 and 5. Stage 0 and 4 are each a day or less. Stage 2 is what answers the user's
 question.
 

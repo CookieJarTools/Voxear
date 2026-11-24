@@ -4713,7 +4713,18 @@ as a minimap on the HUD or a map opened over the game.
   sites only as far as they can matter there: its own reach, and for each structure listed after it, as far as
   that one is looked for and then as near as the two may stand. Trees, listed last, are looked for a crown's
   width off rather than as far as a dungeon reaches under the ground, which is most of what a column with
-  structures costs to make.
+  structures costs to make. The sites are worked out a region of 8×8 chunk columns at a time (`REGION`,
+  `region_sites`, `sites_within`) over the region grown by those distances, as a column inside it would have, and
+  kept (`REGIONS`, each worked out by one thread while others asking wait, all let go past `REGIONS_KEPT`) by every
+  structure's key, how far each looks, the world's layers and where the region is; a column, a far tile's area or a
+  map tile then builds only the kept sites reaching it (`build_in_regions`, `build_site`), each once though it lies
+  in two regions' lists. Before, each column asked whether the ground fits about every site in its own window: a
+  quarter of a million sites a column in a world of 64 structures, to build fifteen, 455 ms of a 474 ms column.
+  Now a region takes about 3 s once, and a column 2–20 ms. The key the fits are kept by hashes a world's biomes by
+  their definitions and blocks, the regions by their id and the painted maps by id and version (`biomes_key`): it
+  wrote them out whole, the generator and every painted pixel with them, a sixth of a second a column. A test
+  builds every column across a region's corner both ways, one column at a time and from regions, and finds them
+  the same block for block.
 - **Drawing** (`voxear_render::map`, `shaders/map.slang`): a map keeps a window of columns, a power of two cells a
   side, each at its place modulo the side, in a buffer on the GPU alone, written through a staging buffer as tiles
   come (`write_map_tile`); beside them, the highest block of each 8 by 8 cells and of each tile. The fragment shader

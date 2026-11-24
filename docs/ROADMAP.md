@@ -3866,6 +3866,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     blocks after a minute. Tests: a bake whole, again finding all, stopped; streaming the coarsest first; the editor's
     calls baking, finding all and stopping; a quick job not waiting behind long ones. Not done: shipping a bake with
     a game build, rings 1–2 baked.
+  - ~~**Stage 3, structure sites by region:**~~ done (measured first: rings from runs would have saved nothing, as
+    the time went to structures). Each structure's kept sites are worked out once for 8×8 chunk columns and kept;
+    every column, far tile and map tile builds only those reaching it; the site checks' key no longer writes out the
+    whole generator. On the Realm a near column went from 474 to 38 ms and a ring-1 tile's structures from 561 to 13
+    ms; its near ground is drawn in 10 s and rings 1–2 in about a minute, where they took over two. Test: every
+    column across a region's corner built one column at a time and from regions, the same block for block.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

@@ -578,6 +578,7 @@ fn unit_of(hash: u32) -> f32 {
 
 /// A building of a town as laid out: where its middle stands, in blocks,
 /// its blocks turned to face the town's middle, and how the ground meets it.
+#[derive(Clone)]
 struct Part {
     at: [i32; 2],
     pieces: Vec<Piece>,
@@ -1101,6 +1102,19 @@ impl Ground<'_> {
     }
 }
 
+/// A number for what a world's biomes are, as the sites they let stand
+/// tell them apart: each biome and its blocks, the regions they keep to by
+/// their own number, and the painted maps by theirs and their version. The
+/// regions and the maps are not written out whole, as they hold the whole
+/// generator and every painted pixel: that took a sixth of a second for
+/// every chunk column.
+fn biomes_key(biomes: &WorldBiomes) -> u64 {
+    let regions = biomes.regions.as_ref().map_or(0, |regions| regions.id());
+    let painted = biomes.painted.as_ref().map_or(0, |painted| painted.id ^ painted.maps().version.rotate_left(29));
+    let text = format!("{:?}{:?}{regions}{painted}", biomes.biomes, biomes.blocks);
+    crate::layers::stable_hash(text.as_bytes())
+}
+
 /// Whether sites fit their structures' placements on a world's ground: each
 /// worked out once, a whole structure's sites in a batch, and kept for every
 /// thread. A site is asked about by every chunk column and every ring of the
@@ -1125,7 +1139,7 @@ const FITS_KEPT: usize = 1 << 17;
 impl<'a> SiteFits<'a> {
     fn new(ground: Ground<'a>, structures: &WorldStructures) -> Self {
         let (world, size) = (ground.world, ground.size);
-        let lie = ground.biomes.map_or(0, |biomes| crate::layers::stable_hash(format!("{biomes:?}").as_bytes()));
+        let lie = ground.biomes.map_or(0, biomes_key);
         let laid = format!("{:?}{}{}", ground.position, ground.halved, world.volume_at_corner());
         let keys = structures
             .list
@@ -1511,42 +1525,86 @@ fn looks(structures: &WorldStructures, size: f32) -> Vec<f32> {
     far.into_iter().map(|blocks| blocks * size).collect()
 }
 
-/// [`build_over`], each structure's sites looked for `looks` metres past
-/// the columns, by its place in the list, each standing where `feet` says
-/// (see [`build_over_standing`]).
+/// How many chunk columns along x and along z the structures' sites are
+/// worked out over at once (see [`region_sites`]): a chunk column, or a far
+/// tile, builds the sites of the regions it lies in.
+const REGION: i32 = 8;
+
+/// One structure's part of what a region keeps, in the order of the
+/// structures' list: a town's roads crossing it, then each site kept whose
+/// blocks may reach it.
+enum RegionEntry {
+    Roads { which: usize, cells: Arc<Vec<[i32; 2]>> },
+    Site { which: usize, site: Site, block: [i32; 2], layout: Option<Arc<(Vec<Part>, Vec<[i32; 2]>)>> },
+}
+
+/// What a region of chunk columns keeps of the structures' sites (see
+/// [`region_sites`]).
+struct RegionSites(Vec<RegionEntry>);
+
+/// Regions worked out lately, by what they were worked out from and where
+/// they are, each worked out by one thread while any other asking waits.
+type Regions = std::sync::Mutex<std::collections::HashMap<u64, Arc<std::sync::OnceLock<Arc<RegionSites>>>>>;
+static REGIONS: std::sync::LazyLock<Regions> = std::sync::LazyLock::new(Default::default);
+
+/// How many regions are kept at once: past it, all are let go and worked
+/// out again as they are asked for.
+const REGIONS_KEPT: usize = 4096;
+
+/// The sites region `region` (in regions of `size` chunk columns) keeps:
+/// each structure's sites looked for as far round it as [`looks`] says, as
+/// any chunk column inside it would look for them, each left out where its
+/// ground does not fit, an earlier structure's kept site or a town's roads
+/// stand in its way, a world layer keeps it out or its World Areas do not
+/// let it in. Worked out once and kept, as each site is asked about by
+/// every column and far tile it may reach: a column of a world with many
+/// structures asked about a quarter of a million sites, to build fifteen.
 #[allow(clippy::too_many_arguments)]
-fn build_looking(
-    set: &mut dyn FnMut([i32; 3], BlockId),
+fn region_sites(
     structures: &WorldStructures,
-    world: &WorldGen,
-    biomes: Option<&WorldBiomes>,
-    (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
-    (first, end): ([i32; 2], [i32; 2]),
-    under: BlockId,
-    (looks, feet, layers): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>, Option<&WorldLayers>),
-) {
-    let side = CHUNK as i32;
-    let ground = Ground { world, size, position, biomes, halved, flat: None };
-    // Nothing is built below the world's lowest block.
-    let mut set = |at: [i32; 3], block: BlockId| {
-        if at[1] >= bottom {
-            set(at, block);
+    ground: &Ground,
+    checks: &SiteFits,
+    looks: &[f32],
+    layers: Option<&WorldLayers>,
+    (region, size): ([i32; 2], i32),
+    key: u64,
+) -> Arc<RegionSites> {
+    let at = [key, region[0] as u32 as u64, region[1] as u32 as u64, size as u64];
+    let at = crate::layers::stable_hash(&at.map(u64::to_le_bytes).concat());
+    let cell = {
+        let mut regions = REGIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if regions.len() >= REGIONS_KEPT {
+            regions.clear();
         }
+        regions.entry(at).or_default().clone()
     };
+    cell.get_or_init(|| {
+        let first = region.map(|v| v * size);
+        Arc::new(sites_within(structures, ground, checks, looks, layers, (first, first.map(|v| v + size))))
+    })
+    .clone()
+}
+
+/// The sites kept whose blocks may reach the chunk columns from `first` up
+/// to `end`, and the roads crossing them (see [`region_sites`]).
+fn sites_within(
+    structures: &WorldStructures,
+    ground: &Ground,
+    checks: &SiteFits,
+    looks: &[f32],
+    layers: Option<&WorldLayers>,
+    (first, end): ([i32; 2], [i32; 2]),
+) -> RegionSites {
+    let side = CHUNK as i32;
+    let (world, size, position) = (ground.world, ground.size, ground.position);
     // The columns' own blocks, in metres in the generator's world.
     let low = [position[0] + (first[0] * side) as f32 * size, position[1] + (first[1] * side) as f32 * size];
     let high = [position[0] + (end[0] * side) as f32 * size, position[1] + (end[1] * side) as f32 * size];
     // Every site kept, with its place in blocks and the blocks it takes up along the ground, to leave out a later
     // structure's where an earlier one's stands.
     let mut kept = KeptSites::default();
-    // Whether the ground at a site fits a structure's placement: worked out for all of a structure's sites at once,
-    // and kept for every thread (see `SiteFits`).
-    let checks = SiteFits::new(ground, structures);
     let fits = |structure: &PlacedStructure, site: &Site| checks.fits(structure, std::slice::from_ref(site))[0];
-    let within = |x: i32, z: i32| {
-        let (cx, cz) = (x.div_euclid(side), z.div_euclid(side));
-        cx >= first[0] && cx < end[0] && cz >= first[1] && cz < end[1]
-    };
+    let mut entries = Vec::new();
     for (which, structure) in structures.list.iter().enumerate() {
         let (reach, footprint) = (structure.reach(), structure.footprint());
         let apart = structure.placement.apart.max(0.0) / size;
@@ -1555,37 +1613,16 @@ fn build_looking(
             && town.roads
             && town.road != AIR
         {
-            let roads = roads_near(structure, town, world.seed(), (low, high), &ground, &fits);
+            let roads = roads_near(structure, town, world.seed(), (low, high), ground, &fits);
             let (mut cells, mut laid) = (Vec::new(), crate::coord_hash::CoordSet::default());
             for road in &roads {
                 for &point in road.iter() {
                     lay(&mut cells, &mut laid, point, town.road_width.max(1) as f32);
                 }
             }
-            let sea_top = (world.sea_level() / size - 0.5).ceil() as i32 - 1;
-            for &[x, z] in cells.iter().filter(|&&[x, z]| within(x, z)) {
-                let mut put = |y: i32, block: BlockId| set([x, y, z], block);
-                let top = ground.top(x, z);
-                if ground.under_sea(x, z) && town.bridge != AIR {
-                    // A deck a block over the water, posts down to the bed every few blocks.
-                    let deck = sea_top + 1;
-                    put(deck, town.bridge);
-                    for y in deck + 1..deck + 4 {
-                        put(y, AIR);
-                    }
-                    if x.rem_euclid(4) == 0 && z.rem_euclid(4) == 0 {
-                        for y in top + 1..deck {
-                            put(y, town.bridge);
-                        }
-                    }
-                } else {
-                    put(top, town.road);
-                    for y in top + 1..top + 4 {
-                        put(y, AIR);
-                    }
-                }
-            }
-            kept.push(Taken { which, site: None, round: None, buildings: Vec::new(), streets: cells });
+            let cells = Arc::new(cells);
+            entries.push(RegionEntry::Roads { which, cells: cells.clone() });
+            kept.push(Taken { which, site: None, round: None, buildings: Vec::new(), streets: (*cells).clone() });
         }
         // Sites are looked for as far out as any that is built here, or that may stand in the way of one of a
         // later structure's that is, can lie (see `looks`): so a later one finds every earlier site that may
@@ -1633,87 +1670,225 @@ fn build_looking(
             }
             // A town's layout, worked out once: what it takes up is its streets and buildings.
             let layout = match &structure.blocks {
-                StructureBlocks::Town(town) => Some(town.layout(site.seed, block, &ground)),
+                StructureBlocks::Town(town) => Some(town.layout(site.seed, block, ground)),
                 _ => None,
             };
             let (buildings, streets) = match &layout {
                 Some((parts, paths)) => (parts.iter().map(|part| (part.at, part.half())).collect(), paths.clone()),
                 None => (Vec::new(), Vec::new()),
             };
-            let taken_site = Some((block, apart));
             kept.push(Taken {
                 which,
-                site: taken_site,
+                site: Some((block, apart)),
                 round: layout.is_none().then_some((block, footprint)),
                 buildings,
                 streets,
             });
-            // Only its blocks within these columns are built here.
-            let past = reach.ceil() as i32 + 1;
-            if block[0] < first[0] * side - past
-                || block[0] > end[0] * side + past
-                || block[1] < first[1] * side - past
-                || block[1] > end[1] * side + past
-            {
-                continue;
-            }
-            let mut put = |x: i32, y: i32, z: i32, block: BlockId| {
-                if within(x, z) {
-                    set([x, y, z], block);
-                }
-            };
-            if let StructureBlocks::Dungeon(dungeon) = &structure.blocks {
-                let key = super::dungeon::layout_key(dungeon, &ground, block, bottom);
-                let layout = super::dungeon::cached_layout(key, || {
-                    super::dungeon::plan(dungeon, &ground, block, site.seed, bottom)
-                });
-                if let Some(layout) = layout {
-                    let turn = |placed: BlockId, turns: u8| structures.turned_block(placed, turns, false);
-                    let columns = ([first[0] * side, first[1] * side], [end[0] * side - 1, end[1] * side - 1]);
-                    super::dungeon::build(dungeon, &layout, &ground, under, columns, &turn, &mut |at, placed| {
-                        set(at, placed)
-                    });
-                }
-                continue;
-            }
-            let parts = match (&structure.blocks, layout) {
-                (StructureBlocks::Town(town), Some((parts, paths))) => {
-                    // Paths first, along the ground, the air over them cleared a few blocks up.
-                    for [x, z] in paths {
-                        if !within(x, z) {
-                            continue;
-                        }
-                        let top = ground.top(x, z);
-                        put(x, top, z, town.path);
-                        for y in top + 1..top + 4 {
-                            put(x, y, z, AIR);
-                        }
-                    }
-                    parts
-                }
-                _ => {
-                    let mut pieces = structure.pieces(&site);
-                    // A plant's vines hang in the open air: none where the ground rises into them.
-                    if let StructureBlocks::Plant { vine, .. } = &structure.blocks {
-                        let base = ground.top(block[0], block[1]) + 1 - structure.sink;
-                        let buried = |at: &[i32; 3]| base + at[1] <= ground.top(block[0] + at[0], block[1] + at[2]);
-                        pieces.retain(|(at, piece)| *vine == AIR || piece != vine || !buried(at));
-                    }
-                    let (turns, mirrored) = (site.turns, site.mirrored);
-                    let (ground, sink) = (structure.ground, structure.sink);
-                    vec![Part { at: block, pieces, ground, sink, turns, mirrored, house: None }]
-                }
-            };
-            for mut part in parts {
-                let foot = feet(part.at).unwrap_or_else(|| ground.top(part.at[0], part.at[1]));
-                if !structures.turns.is_empty() && (part.turns % 4 != 0 || part.mirrored) {
-                    for (_, block) in &mut part.pieces {
-                        *block = structures.turned_block(*block, part.turns, part.mirrored);
-                    }
-                }
-                build_part(&mut put, &ground, &part, foot, under);
+            // Kept for building only where its blocks may reach these columns.
+            if reaches(block, reach, (first, end)) {
+                entries.push(RegionEntry::Site { which, site, block, layout: layout.map(Arc::new) });
             }
         }
+    }
+    RegionSites(entries)
+}
+
+/// Whether a structure whose site is block `block` and whose blocks reach
+/// `reach` blocks from it may build into the chunk columns from `first` up
+/// to `end`.
+fn reaches(block: [i32; 2], reach: f32, (first, end): ([i32; 2], [i32; 2])) -> bool {
+    let side = CHUNK as i32;
+    let past = reach.ceil() as i32 + 1;
+    (0..2).all(|axis| block[axis] >= first[axis] * side - past && block[axis] <= end[axis] * side + past)
+}
+
+/// [`build_over`], each structure's sites looked for `looks` metres past
+/// the columns, by its place in the list, each standing where `feet` says
+/// (see [`build_over_standing`]). The sites are worked out a region of
+/// columns at a time and kept (see [`region_sites`]); only those reaching
+/// these columns are built.
+#[allow(clippy::too_many_arguments)]
+fn build_looking(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    at: (f32, [f32; 2], i32, bool),
+    columns: ([i32; 2], [i32; 2]),
+    under: BlockId,
+    looking: (&[f32], &dyn Fn([i32; 2]) -> Option<i32>, Option<&WorldLayers>),
+) {
+    build_in_regions(set, structures, world, biomes, at, columns, under, looking, REGION);
+}
+
+/// [`build_looking`] with the sites worked out over regions `region` chunk
+/// columns a side: a region of one column works out each column's own, as
+/// columns did before regions.
+#[allow(clippy::too_many_arguments)]
+fn build_in_regions(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
+    (first, end): ([i32; 2], [i32; 2]),
+    under: BlockId,
+    (looks, feet, layers): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>, Option<&WorldLayers>),
+    region: i32,
+) {
+    let side = CHUNK as i32;
+    let ground = Ground { world, size, position, biomes, halved, flat: None };
+    // Nothing is built below the world's lowest block.
+    let mut set = |at: [i32; 3], block: BlockId| {
+        if at[1] >= bottom {
+            set(at, block);
+        }
+    };
+    // Whether the ground at a site fits a structure's placement: worked out for all of a structure's sites at once,
+    // and kept for every thread (see `SiteFits`).
+    let checks = SiteFits::new(ground, structures);
+    // What the regions' sites are worked out from: every structure's own key (its world, biomes, placement, where
+    // the world lies), how far each looks, and the world's layers.
+    let key = {
+        let mut bytes: Vec<u8> = checks.keys.iter().flat_map(|(_, key)| key.to_le_bytes()).collect();
+        bytes.extend(looks.iter().flat_map(|look| look.to_bits().to_le_bytes()));
+        bytes.extend(layers.map_or(0, WorldLayers::hash).to_le_bytes());
+        crate::layers::stable_hash(&bytes)
+    };
+    let within = |x: i32, z: i32| {
+        let (cx, cz) = (x.div_euclid(side), z.div_euclid(side));
+        cx >= first[0] && cx < end[0] && cz >= first[1] && cz < end[1]
+    };
+    let region = region.max(1);
+    let (low, high) = (first.map(|v| v.div_euclid(region)), end.map(|v| (v - 1).div_euclid(region)));
+    let lists: Vec<Arc<RegionSites>> = (low[1]..=high[1])
+        .flat_map(|z| (low[0]..=high[0]).map(move |x| [x, z]))
+        .map(|at| region_sites(structures, &ground, &checks, looks, layers, (at, region), key))
+        .collect();
+    for (which, structure) in structures.list.iter().enumerate() {
+        // A town's roads, laid before any of its buildings: each road crossing these columns, once.
+        let mut laid = crate::coord_hash::CoordSet::default();
+        let mut roads: Vec<[i32; 2]> = Vec::new();
+        for list in &lists {
+            for entry in &list.0 {
+                if let RegionEntry::Roads { which: of, cells } = entry
+                    && *of == which
+                {
+                    roads.extend(cells.iter().filter(|&&[x, z]| within(x, z) && laid.insert([x, z])));
+                }
+            }
+        }
+        if let StructureBlocks::Town(town) = &structure.blocks {
+            let sea_top = (world.sea_level() / size - 0.5).ceil() as i32 - 1;
+            for &[x, z] in &roads {
+                let mut put = |y: i32, block: BlockId| set([x, y, z], block);
+                let top = ground.top(x, z);
+                if ground.under_sea(x, z) && town.bridge != AIR {
+                    // A deck a block over the water, posts down to the bed every few blocks.
+                    let deck = sea_top + 1;
+                    put(deck, town.bridge);
+                    for y in deck + 1..deck + 4 {
+                        put(y, AIR);
+                    }
+                    if x.rem_euclid(4) == 0 && z.rem_euclid(4) == 0 {
+                        for y in top + 1..deck {
+                            put(y, town.bridge);
+                        }
+                    }
+                } else {
+                    put(top, town.road);
+                    for y in top + 1..top + 4 {
+                        put(y, AIR);
+                    }
+                }
+            }
+        }
+        // Its sites, each once though it lies in more than one region's list.
+        let mut built = crate::coord_hash::CoordSet::default();
+        for list in &lists {
+            for entry in &list.0 {
+                let RegionEntry::Site { which: of, site, block, layout } = entry else { continue };
+                if *of != which || !reaches(*block, structure.reach(), (first, end)) || !built.insert(site.cell) {
+                    continue;
+                }
+                let kept = (site, *block, layout.as_deref());
+                build_site(&mut set, structures, structure, &ground, kept, (first, end), (bottom, under), feet);
+            }
+        }
+    }
+}
+
+/// Builds one kept site of `structure` into the chunk columns from `first`
+/// up to `end`: a dungeon from its layout, a town's paths and buildings, or
+/// the structure's own pieces, each standing where `feet` says.
+#[allow(clippy::too_many_arguments)]
+fn build_site(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    structure: &PlacedStructure,
+    ground: &Ground,
+    (site, block, layout): (&Site, [i32; 2], Option<&(Vec<Part>, Vec<[i32; 2]>)>),
+    (first, end): ([i32; 2], [i32; 2]),
+    (bottom, under): (i32, BlockId),
+    feet: &dyn Fn([i32; 2]) -> Option<i32>,
+) {
+    let side = CHUNK as i32;
+    let within = |x: i32, z: i32| {
+        let (cx, cz) = (x.div_euclid(side), z.div_euclid(side));
+        cx >= first[0] && cx < end[0] && cz >= first[1] && cz < end[1]
+    };
+    let mut put = |x: i32, y: i32, z: i32, block: BlockId| {
+        if within(x, z) {
+            set([x, y, z], block);
+        }
+    };
+    if let StructureBlocks::Dungeon(dungeon) = &structure.blocks {
+        let key = super::dungeon::layout_key(dungeon, ground, block, bottom);
+        let plan = || super::dungeon::plan(dungeon, ground, block, site.seed, bottom);
+        let layout = super::dungeon::cached_layout(key, plan);
+        if let Some(layout) = layout {
+            let turn = |placed: BlockId, turns: u8| structures.turned_block(placed, turns, false);
+            let columns = ([first[0] * side, first[1] * side], [end[0] * side - 1, end[1] * side - 1]);
+            super::dungeon::build(dungeon, &layout, ground, under, columns, &turn, &mut |at, placed| set(at, placed));
+        }
+        return;
+    }
+    let parts = match (&structure.blocks, layout) {
+        (StructureBlocks::Town(town), Some((parts, paths))) => {
+            // Paths first, along the ground, the air over them cleared a few blocks up.
+            for &[x, z] in paths {
+                if !within(x, z) {
+                    continue;
+                }
+                let top = ground.top(x, z);
+                put(x, top, z, town.path);
+                for y in top + 1..top + 4 {
+                    put(x, y, z, AIR);
+                }
+            }
+            parts.clone()
+        }
+        _ => {
+            let mut pieces = structure.pieces(site);
+            // A plant's vines hang in the open air: none where the ground rises into them.
+            if let StructureBlocks::Plant { vine, .. } = &structure.blocks {
+                let base = ground.top(block[0], block[1]) + 1 - structure.sink;
+                let buried = |at: &[i32; 3]| base + at[1] <= ground.top(block[0] + at[0], block[1] + at[2]);
+                pieces.retain(|(at, piece)| *vine == AIR || piece != vine || !buried(at));
+            }
+            let (turns, mirrored) = (site.turns, site.mirrored);
+            let (ground, sink) = (structure.ground, structure.sink);
+            vec![Part { at: block, pieces, ground, sink, turns, mirrored, house: None }]
+        }
+    };
+    for mut part in parts {
+        let foot = feet(part.at).unwrap_or_else(|| ground.top(part.at[0], part.at[1]));
+        if !structures.turns.is_empty() && (part.turns % 4 != 0 || part.mirrored) {
+            for (_, block) in &mut part.pieces {
+                *block = structures.turned_block(*block, part.turns, part.mirrored);
+            }
+        }
+        build_part(&mut put, ground, &part, foot, under);
     }
 }
 
@@ -2695,6 +2870,78 @@ mod tests {
                 assert!(apart >= 69.0, "{first:?} and {second:?} only {apart} apart");
             }
         }
+    }
+
+    #[test]
+    fn sites_worked_out_a_region_at_a_time_build_every_column_as_each_column_alone_did() {
+        use std::collections::HashMap;
+        let world = Preset::RollingHills.world();
+        let place = |salt: u32, spacing: f32, apart: f32| Placement {
+            spacing,
+            separation: spacing * 0.4,
+            chance: 0.8,
+            slope: 80.0,
+            salt,
+            apart,
+            ..Placement::default()
+        };
+        let placed = |placement: Placement, blocks: StructureBlocks| PlacedStructure {
+            placement,
+            ground: GroundFit::Foundation,
+            sink: 0,
+            blocks,
+            biomes: Vec::new(),
+        };
+        // Towns joined by roads with bridges, a dungeon, and huts and trees thick about them, kept clear of them.
+        let town = Town { roads: true, road: 13, bridge: 14, ..village() };
+        let mut list = vec![
+            placed(place(1, 260.0, 0.0), StructureBlocks::Town(town)),
+            placed(place(2, 240.0, 60.0), StructureBlocks::Dungeon(crate::blocks::dungeon::tests::temple())),
+        ];
+        let mut thick = hut_and_trees().list;
+        thick[0].placement = place(3, 70.0, 20.0);
+        thick[1].placement = place(4, 11.0, 0.0);
+        list.extend(thick);
+        let structures = WorldStructures { list, ..WorldStructures::default() };
+        let at = (1.0, [300.0, -200.0], -64, false);
+        let near = looks(&structures, at.0);
+        let feet: &dyn Fn([i32; 2]) -> Option<i32> = &|_| None;
+        // Each column's blocks as built, the last set of a block the one kept.
+        let column = |cx: i32, cz: i32, region: i32| -> HashMap<[i32; 3], BlockId> {
+            let mut blocks = HashMap::new();
+            let area = ([cx, cz], [cx + 1, cz + 1]);
+            let mut set = |at: [i32; 3], block: BlockId| {
+                blocks.insert(at, block);
+            };
+            build_in_regions(&mut set, &structures, &world, None, at, area, 2, (&near, feet, None), region);
+            blocks
+        };
+        // Columns across the corner of four regions.
+        let (mut built, mut differ) = (0usize, Vec::new());
+        for cz in -5..5 {
+            for cx in -5..5 {
+                let alone = column(cx, cz, 1);
+                if column(cx, cz, REGION) != alone {
+                    differ.push([cx, cz]);
+                }
+                built += alone.len();
+            }
+        }
+        assert!(built > 5_000, "{built} blocks built: enough to tell");
+        assert!(differ.is_empty(), "columns built otherwise from regions: {differ:?}");
+        // A far tile's area of four columns builds what they build.
+        let area = ([-2, -2], [2, 2]);
+        let mut whole = HashMap::new();
+        let mut set = |at: [i32; 3], block: BlockId| drop(whole.insert(at, block));
+        build_in_regions(&mut set, &structures, &world, None, at, area, 2, (&near, feet, None), REGION);
+        let mut each = HashMap::new();
+        for cz in -2..2 {
+            for cx in -2..2 {
+                each.extend(column(cx, cz, 1));
+            }
+        }
+        assert_eq!(whole.len(), each.len());
+        assert!(whole == each, "an area of columns at once builds what its columns do alone");
     }
 
     #[test]

@@ -4817,3 +4817,9 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     color: var(--vx-muted);
     font-size: 11px;
 }
+
+/* A row a search found, flashed as it is shown. */
+.prop.found > .prop-label {
+    color: var(--vx-accent);
+    font-weight: 600;
+}

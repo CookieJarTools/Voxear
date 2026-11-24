@@ -3247,6 +3247,26 @@ second while playing, from rows `debug_inspector::obj_rows` and `asset_rows` mak
 Rows are read-only; a row's menu copies its value or its path in the scene file (`Ui::copy_text`). Tools reach it
 with `inspector.mode` and `inspector.debug`. C# has no API to the editor's panels, so neither is reached from it.
 
+### Finding a setting by what it does *(implemented)*
+
+`setting_search` holds one list of every setting the editor has (`everything`): Project Settings' and Preferences'
+`Setting`s, the Lighting panel's (`lighting_panel::described`, with what must be set for one to show), import
+settings (`import_fields::DESCRIBED`), and the fields of the components on the open level's Objs, each component's
+once, with the tooltip the Inspector shows (`inspector::field_tooltip`). `search` matches each word typed against a
+setting's label, where it is and its tooltip, a word's start or a word it starts (`shadows` and `shadow`), and the
+words of its group in `SAME` (shimmer, flicker, aliasing…); every word must match something. A label match counts
+most, then where it is, then the tooltip, and a word that means the same less than the word itself; a label that
+reads as the query letter by letter gets the palette's score on top. Each result carries the words it matched and
+the line of its tooltip that did.
+
+The palette gathers the list as it opens and ranks results beside its own, marking the matched words in the title
+(rich text) and showing the tooltip's line; a setting it already lists by name keeps its entry. Each settings
+window's search uses the same match, with the line that matched under a row found by its tooltip. A result is
+found again by `Place::key`: a Project Settings or Preferences key, or `lighting:`, `component:` and `import:` keys,
+which `Editor::show_found` opens: its window, the Lighting panel's tab, or the Obj selected in the Inspector, and once
+laid out, the row scrolled to (`Ui::scroll_into_view`) and marked for a moment (`setting_search::Flash`). Tools use
+`settings.find`, and `settings.show` takes any of these keys.
+
 ### The design
 
 The editor's visual specification, which the default theme and the editor's sheet implement. It began as the

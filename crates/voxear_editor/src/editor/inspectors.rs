@@ -113,6 +113,12 @@ impl Editor {
         self.inspector.debug_view().map_or_else(Vec::new, |view| view.rows().cloned().collect())
     }
 
+    /// The row a search showed last in the first Inspector, and in the
+    /// Lighting panel, while each is marked.
+    pub fn found_rows(&self) -> (Option<NodeId>, Option<NodeId>) {
+        (self.inspector.found_row(), self.lighting_panel.found_row())
+    }
+
     /// The first Inspector's `⋯` button, which switches it between Normal and Debug.
     pub fn inspector_mode_button(&self) -> Option<NodeId> {
         self.ui.find(self.ui.root(), "inspector-mode")
@@ -230,6 +236,7 @@ impl Editor {
         if let Some(action) = self.inspector.menus(&mut self.ui, &self.game, playing, can_keep, &kept) {
             self.row_action(action, renderer);
         }
+        self.inspector.update_reveal(&mut self.ui);
     }
 
     /// An Inspector's frame in Debug mode: its rows read again now and then,

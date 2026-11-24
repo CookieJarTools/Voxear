@@ -135,6 +135,7 @@ pub mod scene_tools;
 mod script_handles;
 mod settings;
 pub mod project_settings;
+pub mod setting_search;
 pub mod setting_info;
 pub mod settings_window;
 mod shader_fields;

@@ -427,6 +427,47 @@ fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_ke
 }
 
 #[test]
+fn a_setting_is_found_by_what_it_does_anywhere_and_opened_where_it_is() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let find = |editor: &mut Editor, renderer: &mut Renderer, query: &str| -> Vec<Value> {
+        done(editor, renderer, "settings.find", json!({ "query": query }))["found"].as_array().unwrap().clone()
+    };
+    // By a word that means the same: jaggies are anti-aliasing, in the Lighting panel.
+    let jaggies = find(&mut editor, &mut renderer, "jaggies");
+    assert_eq!(jaggies[0]["key"], "lighting:post.anti_aliasing.mode", "{jaggies:?}");
+    assert_eq!(jaggies[0]["where"], "Lighting · Quality");
+    // By the words of a tooltip, in Project Settings, the line that matched given and its words.
+    let drift = find(&mut editor, &mut renderer, "worn stick drifting");
+    assert_eq!(drift[0]["key"], "input.stick_dead_zone", "{drift:?}");
+    assert!(drift[0]["line"].as_str().unwrap().contains("worn stick"), "{drift:?}");
+    assert!(drift[0]["matched"].as_array().unwrap().contains(&json!("drifting")));
+    // Preferences and a component's field on an Obj of the level are found too.
+    let keys = |found: &[Value]| found.iter().map(|f| f["key"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert!(keys(&find(&mut editor, &mut renderer, "fly speed")).iter().any(|k| !k.contains(':')), "Preferences'");
+    let range = find(&mut editor, &mut renderer, "intensity");
+    let light = range.iter().find(|f| f["key"].as_str().unwrap().starts_with("component:")).expect("a light's field");
+    // One hidden for now says what turns it on.
+    let upscaler = find(&mut editor, &mut renderer, "upscaler");
+    let hidden = upscaler.iter().find(|f| f["key"] == "lighting:post.anti_aliasing.upscaler").unwrap();
+    assert!(hidden["hidden"].as_str().unwrap().starts_with("Shown with Anti-aliasing"), "{hidden}");
+
+    // Picking one opens it where it is, scrolled to and marked.
+    done(&mut editor, &mut renderer, "settings.show", json!({ "key": "lighting:post.anti_aliasing.mode" }));
+    frames(&mut editor, &mut renderer, 4);
+    let (_, lit) = editor.found_rows();
+    assert!(lit.is_some_and(|row| editor.ui.has_class(row, "found")), "the Lighting panel's row is marked");
+    let key = light["key"].as_str().unwrap().to_string();
+    done(&mut editor, &mut renderer, "settings.show", json!({ "key": key }));
+    frames(&mut editor, &mut renderer, 4);
+    let bits: u64 = key.split(':').nth(1).unwrap().parse().unwrap();
+    assert_eq!(editor.selected().map(voxear_ecs::Entity::to_bits), Some(bits), "what it belongs to is selected");
+    let (row, _) = editor.found_rows();
+    assert!(row.is_some_and(|row| editor.ui.has_class(row, "found")), "the Inspector's row is marked");
+    assert!(ask(&mut editor, &mut renderer, "settings.show", json!({ "key": "lighting:nonsense" })).is_err());
+}
+
+#[test]
 fn a_tool_switches_an_inspector_to_debug_and_reads_what_it_shows() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

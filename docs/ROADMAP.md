@@ -493,12 +493,13 @@ Next in M3:
       position and volume, the LOD shown, and a played clip's time
     - for an asset, its GUID, its `.meta` and import data, and what it depends on and what uses it
     - copy a value, or its path in the scene file, from a row's menu
-  - [ ] **Finding a setting by what it does**, for when its name is not known: one search over every setting the
-    editor has (Project Settings, the Lighting panel, the Settings drawer, Preferences, the Inspector's components
-    and import settings) that matches rough words against each setting's name, group, tooltip and description,
-    and words that mean the same (shimmer, sparkle, flicker), not only the name:
-    - in the palette (Ctrl+K) and in each settings window's own search, ranked by how well each matched, with the
-      words it matched marked and the line of the tooltip that matched shown under the name
+  - [x] **Finding a setting by what it does**, for when its name is not known: one search over every setting the
+    editor has (Project Settings, the Lighting panel, Preferences, the components of the open level's Objs and
+    import settings) that matches rough words against each setting's name, group and tooltip, and words that mean
+    the same (shimmer, sparkle, flicker), not only the name, and `vox editor call settings.find`:
+    - in the palette (Ctrl+K), ranked by how well each matched, with the words it matched marked and the line of
+      the tooltip that matched beside it; in each settings window's own search the same match, the line that
+      matched under the name, its words marked
     - picking one opens its page or panel, scrolls to it and flashes its row, and selects what it belongs to
       where it is on an Obj or asset
     - settings hidden for now, as those of a feature turned off, still found, saying what turns them on

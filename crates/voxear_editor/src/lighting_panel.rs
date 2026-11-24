@@ -522,6 +522,10 @@ pub struct LightingPanel {
     fields: LightingFields,
     /// The lighting shown, as the scene names it.
     shown: Option<String>,
+    /// A setting found by a search, by its title, to show once its tab is
+    /// laid out, and the row shown.
+    revealing: Option<&'static str>,
+    flash: crate::setting_search::Flash,
 }
 
 impl LightingPanel {
@@ -591,6 +595,8 @@ impl LightingPanel {
             bake_note,
             fields,
             shown: None,
+            revealing: None,
+            flash: crate::setting_search::Flash::default(),
         }
     }
 
@@ -752,7 +758,24 @@ impl LightingPanel {
     }
 
     /// What was changed on the page this frame.
+    /// Shows a setting a search found: its tab, then once laid out, its
+    /// row scrolled to and marked for a moment.
+    pub fn reveal(&mut self, ui: &mut Ui, group: &'static str, title: &'static str) {
+        self.fields.set_group(ui, group);
+        self.revealing = Some(title);
+    }
+
+    /// The row a search showed last, while it is marked.
+    pub fn found_row(&self) -> Option<NodeId> {
+        self.flash.marked()
+    }
+
     pub fn update(&mut self, ui: &mut Ui) -> Option<LightingAction> {
+        self.flash.update(ui);
+        if let Some(row) = self.revealing.and_then(|title| self.fields.row_of(title)).filter(|&r| ui.rect(r)[3] > 0.0) {
+            self.revealing = None;
+            self.flash.show(ui, row);
+        }
         if ui.changed(self.scene) {
             let chosen = self.choices.get(ui.selected_option(self.scene)).cloned().flatten();
             return Some(LightingAction::SetScene(chosen));
@@ -1127,6 +1150,22 @@ impl LightingFields {
             ui.set_visible(row.row, row.info.group == self.group && does);
         }
     }
+}
+
+/// Every setting of the page, for the search over every setting: its path
+/// as a `.lighting` file writes it, its title, its tab, what it does, and
+/// where it shows only while others are set so, what those are.
+pub fn described() -> Vec<(String, &'static str, &'static str, &'static str, Option<String>)> {
+    let title_of = |path: &[&str]| SETTINGS.iter().find(|info| info.path == path).map_or("", |info| info.title);
+    let when = |info: &Info| -> Option<String> {
+        let each = info.when.iter().map(|(path, value)| match *value {
+            "true" => format!("{} on", title_of(path)),
+            value => format!("{} {value}", title_of(path)),
+        });
+        let said: Vec<String> = each.collect();
+        (!said.is_empty()).then(|| format!("Shown with {}", said.join(" and ")))
+    };
+    SETTINGS.iter().map(|info| (info.path.join("."), info.title, info.group, info.help, when(info))).collect()
 }
 
 /// A setting by its path as a `.lighting` file writes it, `post.bloom.intensity`,

@@ -703,9 +703,10 @@ impl Editor {
             "display" => self.display(args),
             "settings.get" => done(self.settings_json(args)),
             "settings.set" => self.settings_set(args),
+            "settings.find" => done(self.settings_find(args)),
             "settings.show" => {
                 let key = need_text(args, "key")?;
-                if !self.show_setting(key) {
+                if !self.show_found(key) {
                     return Err(bad(format!(
                         "no setting has the key `{key}`; `settings.get` and `project_settings.get` list them"
                     )));
@@ -929,6 +930,27 @@ impl Editor {
         self.refresh_hierarchies();
         let selected = self.selection.filter(|&e| self.game.engine.world.is_alive(e));
         self.show_selection(selected);
+    }
+
+    /// Every setting the editor has that a search for `query` finds, by
+    /// what it does (see `setting_search`), best first.
+    fn settings_find(&self, args: &Json) -> Json {
+        let query = opt_text(args, "query").unwrap_or_default();
+        let most = args.get("most").and_then(Json::as_u64).unwrap_or(20) as usize;
+        let everything = crate::setting_search::everything(&self.game, self.inspector.types());
+        let found = crate::setting_search::search(&everything, query);
+        let listed = found.iter().take(most).map(|hit| {
+            json!({
+                "key": hit.entry.place.key(),
+                "label": hit.entry.label,
+                "where": hit.entry.group,
+                "line": hit.line,
+                "matched": hit.words,
+                "score": hit.score,
+                "hidden": hit.entry.hidden,
+            })
+        });
+        json!({ "found": listed.collect::<Vec<_>>() })
     }
 
     /// An Inspector's mode, set where `mode` is given (see `inspector.mode`).

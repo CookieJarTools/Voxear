@@ -1369,8 +1369,18 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ value }",
     },
     CallInfo {
+        name: "settings.find",
+        about: "Finds a setting by what it does, anywhere the editor has one: Project Settings, Preferences, the Lighting panel, the components of the open level's Objs and import settings. Rough words match each setting's name, where it is and its tooltip, and words that mean the same (shimmer finds anti-aliasing), best first, with the words matched, the line of its tooltip that matched, and what turns on one hidden for now.",
+        args: &[
+            arg("query", ArgKind::Text, "What the setting does, in your own words."),
+            maybe("most", ArgKind::Whole, "How many to give back at most; 20 by default."),
+        ],
+        changes: false,
+        returns: "{ found: [{ key, label, where, line, matched, score, hidden }] }",
+    },
+    CallInfo {
         name: "settings.show",
-        about: "Opens Project Settings or Preferences at a setting, by its key from `project_settings.get` or `settings.get`, scrolled to it and marked.",
+        about: "Opens a setting where it is, scrolled to it and marked: Project Settings or Preferences by its key from `project_settings.get` or `settings.get`, or anything `settings.find` found by its key (the Lighting panel's, an Obj's component's, import settings').",
         args: &[arg("key", ArgKind::Text, "")],
         changes: false,
         returns: "{}",

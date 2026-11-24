@@ -324,6 +324,11 @@ pub struct Inspector {
     debug: bool,
     debug_view: Option<crate::debug_inspector::DebugView>,
     debug_asset: Option<String>,
+    /// A field a search found, to show once it is laid out: the section it
+    /// is in, by its title (any where none), its label, and the frames left
+    /// to wait for it; and the row shown.
+    revealing: Option<(Option<String>, String, u32)>,
+    flash: crate::setting_search::Flash,
     shown: Option<Entity>,
     fields: Option<Fields>,
     /// The Transform's menu button, and each section's header with its
@@ -467,6 +472,8 @@ impl Inspector {
             debug: false,
             debug_view: None,
             debug_asset: None,
+            revealing: None,
+            flash: crate::setting_search::Flash::default(),
             shown: None,
             fields: None,
             transform_menu: None,
@@ -547,6 +554,38 @@ impl Inspector {
     /// Whether it keeps showing what it shows, rather than the selection.
     pub fn is_locked(&self) -> bool {
         self.locked
+    }
+
+    /// Shows a field a search found once it is laid out: scrolled to and
+    /// marked for a moment, in the section titled `section` (a component's
+    /// title), or anywhere with none, as an asset's import settings.
+    pub fn reveal(&mut self, section: Option<String>, label: String) {
+        self.revealing = Some((section, label, 120));
+    }
+
+    /// Shows the field a search found, once it is laid out, and takes the
+    /// mark off one shown long enough.
+    pub fn update_reveal(&mut self, ui: &mut Ui) {
+        self.flash.update(ui);
+        let Some((section, label, left)) = self.revealing.take() else { return };
+        let within = match &section {
+            Some(title) => {
+                let header = self.headers.iter().find(|(part, _)| part.as_ref().map_or("Transform", Part::title) == title);
+                header.and_then(|(_, header)| ui.parent(*header))
+            }
+            None => Some(self.root),
+        };
+        let row = within.and_then(|within| crate::setting_search::label_row(ui, within, &label));
+        match row.filter(|&row| ui.rect(row)[3] > 0.0) {
+            Some(row) => self.flash.show(ui, row),
+            None if left > 0 => self.revealing = Some((section, label, left - 1)),
+            None => {}
+        }
+    }
+
+    /// The row a search showed last, while it is marked.
+    pub fn found_row(&self) -> Option<NodeId> {
+        self.flash.marked()
     }
 
     /// The `⋯` button whose menu switches it between Normal and Debug.
@@ -3292,6 +3331,28 @@ fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
             field
         })
         .collect()
+}
+
+/// The tooltip a field's label shows in the Inspector: a script field's
+/// `[Tooltip]`, or the one written for a built-in component's field, for the
+/// search over every setting.
+pub(crate) fn field_tooltip(types: &ScriptTypes, prop: &Prop) -> Option<String> {
+    let written = match prop {
+        Prop::Road(field) => crate::road_props::road_tooltip(*field),
+        Prop::PrefabBrush(field) => crate::road_props::brush_tooltip(*field),
+        Prop::Placement(field) => crate::road_props::placement_tooltip(*field),
+        Prop::AreaFill(field) => crate::road_props::area_tooltip(*field),
+        Prop::World(field) => crate::world_props::tooltip(*field),
+        Prop::WhenUnloaded => crate::fit_props::STREAMS_TOOLTIP,
+        Prop::GroundFit(field) => crate::fit_props::tooltip(*field),
+        Prop::NavLink(field) => crate::nav_props::link_tooltip(*field),
+        Prop::NavObstacle(field) => crate::nav_props::obstacle_tooltip(*field),
+        Prop::CrowdMember(field) => crate::nav_props::crowd_tooltip(*field),
+        Prop::NavArea(field) => crate::nav_props::area_tooltip(*field),
+        Prop::Nav(field) => crate::nav_props::tooltip(*field),
+        _ => return attributes::of(types, prop).tooltip.clone(),
+    };
+    Some(written.to_string())
 }
 
 /// What a section's header has at its right: the Transform's menu button,

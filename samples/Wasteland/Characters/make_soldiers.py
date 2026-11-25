@@ -3,17 +3,17 @@
 
     python3 make_soldiers.py    # writes Rifleman.boxmodel and Scavenger.boxmodel beside this file
 
-Each soldier is a chibi figure about 64 cubes tall at 34 to a metre (1.9 m): a big head with large eyes under a helmet
-with goggles, a mask over the lower face, a short body packed with webbing and pouches, stubby arms and legs, knee
-pads and chunky boots. The bones are named as a humanoid rig names them (Hips, Spine, Chest, Neck, Head,
-LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and the right side's), so the engine finds its
-arms, legs and spine.
+Each soldier is a chibi figure 128 cubes and 1.9 m tall: a helmeted head nearly a third of that and as wide as the
+shoulders, large eyes over a mask, a short body in a rig packed with pouches and straps, chunky arms and legs, knee
+pads and big boots, each part built of plates and blocks of their own tones. The bones are named as a humanoid rig
+names them (Hips, Spine, Chest, Neck, Head, LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and
+the right side's), so the engine finds its arms, legs and spine.
 
-The hands are sculpted closed round the parts of the gun they hold, and every pose puts each hand exactly there:
-the arm reaches its wrist to the place and turning the grip asks for, the elbow bending out and the forearm
-twisting to spare the wrist. At rest the gun is held low across the body, so Mob Motion walks, runs and idles the
-body and legs while the hands stay on it. Aiming is a clip in each model ("Aim"), with "Fire" for the kick of a
-shot. Running this again makes the models afresh, losing changes made in the Model window.
+The hands have four fingers and a thumb closed round the parts of the gun they hold, and every pose puts each hand
+exactly there: the arm reaches its wrist to the place and turning the grip asks for, the elbow bending out and the
+forearm twisting to spare the wrist. At rest the gun is held across the body, so Mob Motion walks, runs and idles
+the body and legs while the hands stay on it. Aiming is a clip in each model ("Aim"), with "Fire" for the kick of
+a shot. Running this again makes the models afresh, losing changes made in the Model window.
 """
 
 import math
@@ -38,36 +38,36 @@ from voxkit import (  # noqa: E402
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIXELS = 34.0  # cubes to a metre: about 1.9 m tall
+PIXELS = 67.0  # cubes to a metre: 128 tall is 1.9 m
 
 # Where the bones stand, in cubes: the hips from the ground, each other from the one above.
-HIPS = 18
-SPINE = 5
-CHEST = 6
-NECK = 6
-HEAD = 1
-SHOULDER = (4.0, 4.8)
-UPPER_ARM = 6.5
-ELBOW = 10.0
-WRIST = 10.0
-THIGH = (4.3, -1.0)
-KNEE = 7.5
-ANKLE = 6.0
+HIPS = 50
+SPINE = 7
+CHEST = 10
+NECK = 20
+HEAD = 2
+SHOULDER = (9.0, 13.0)
+UPPER_ARM = 12.0
+ELBOW = 18.0
+WRIST = 17.0
+THIGH = (8.0, -3.0)
+KNEE = 19.0
+ANKLE = 17.0
 
 # A hand closed round a grip, in the hand's own space: the wrist at its pivot, the fingers reaching down -Y, the
 # palm facing -X (a right hand; the left is it turned over), the thumb and index finger to +Z. The grip it holds
 # runs along Z through `grip_at`.
-GRIP_RADIUS = 1.5
+GRIP_RADIUS = 2.2
 
 
 def grip_at(radius):
     """Where a hand's grip runs, for a grip `radius` thick: just off the palm, under the knuckles."""
-    return np.array((-1.2 - radius, -4.9, 0.0))
+    return np.array((-0.8 - radius, -9.0, 0.0))
 
 
 def palette(kind):
     p = Palette()
-    shades = (0.78, 0.9, 1.0, 1.1)
+    shades = (0.7, 0.85, 1.0, 1.15)
     p.add("skin", "f0c09a", warm=0.02)
     p.add("blush", "e8a088", shades=(1.0,))
     p.add("lash", "2a1a18", shades=(1.0,))
@@ -89,6 +89,7 @@ def palette(kind):
     p.add("rust", "8a4a2a", shades=shades, warm=0.05)
     p.add("glass", "3e5a66", shades=(0.8, 1.0))
     p.add("glint", "d6ece6", shades=(1.0,))
+    p.add("webbing", "2e2c2a", shades=shades)
     if kind == "rifleman":
         p.add("cloth", "6a6846", shades=shades, warm=0.03)
         p.add("cloth_dark", "4a4934", shades=shades, warm=0.03)
@@ -97,16 +98,16 @@ def palette(kind):
         p.add("mask", "3a3e38", shades=shades)
         p.add("patch", "7a3e32", shades=shades)
         p.add("scrim", "7d7a52", shades=shades)
-        p.add("glove", "5e3e28", shades=shades, warm=0.03)
+        p.add("glove", "3a2c22", shades=shades, warm=0.03)
     else:
         p.add("cloth", "4c5572", shades=shades, warm=-0.03)
         p.add("cloth_dark", "353b52", shades=shades, warm=-0.03)
         p.add("puttee", "5a6078", shades=shades)
         p.add("helmet", "4e5668", shades=shades, warm=-0.02)
         p.add("mask", "2e3348", shades=shades)
-        p.add("patch", "8a7550", shades=shades)
+        p.add("patch", "35405e", shades=shades)
         p.add("scrim", "6a6a5a", shades=shades)
-        p.add("glove", "3a3430", shades=shades, warm=0.03)
+        p.add("glove", "2a2624", shades=shades, warm=0.03)
     return p
 
 
@@ -119,19 +120,32 @@ def front_of(g, x, y):
     return max(zs) if zs else None
 
 
-def stitched(g, materials, seed, chance=0.08):
-    """Darker cubes here and there on the surface: seams, dirt and wear."""
-    for cell, (material, _) in list(g.cells.items()):
-        if material in materials and g.surface(cell) and hashed(*cell, seed) < chance:
-            g.put(cell, material, 0)
-
-
 def pouch(g, lo, hi, material="tan", flap="tan_dark", stud=True):
-    """A pouch: a box, its flap a darker row over the top, a stud in the middle."""
-    g.box(lo, hi, material, round_edges=0)
-    g.box((lo[0], hi[1] - 1.2, lo[2] - 0.01), (hi[0], hi[1], hi[2] + 0.6), flap)
+    """A pouch: a block, a flap over its top standing out a little, a stud on the flap, a seam down its side."""
+    g.box(lo, hi, material, round_edges=0.6)
+    g.box((lo[0] - 0.3, hi[1] - 2.2, lo[2]), (hi[0] + 0.3, hi[1] + 0.4, hi[2] + 0.8), flap, round_edges=0.5)
     if stud:
-        g.put((int(math.floor((lo[0] + hi[0]) / 2)), int(hi[1] - 2), int(math.ceil(hi[2]))), "brass", 2)
+        g.box(((lo[0] + hi[0]) / 2 - 0.6, hi[1] - 1.6, hi[2] + 0.6), ((lo[0] + hi[0]) / 2 + 0.6, hi[1] - 0.5,
+              hi[2] + 1.4), "brass", shade=2)
+    g.box((lo[0] + 0.6, lo[1] + 0.6, hi[2] - 0.2), (lo[0] + 1.4, hi[1] - 2.4, hi[2] + 0.2), flap, shade=0)
+
+
+def band(g, y0, y1, half_x, half_z, material, out=0.6):
+    """A strap round a limb or the body, between heights `y0` and `y1`, standing out a little."""
+    hx, hz = half_x + out, half_z + out
+    g.fill(lambda x, y, z: ((x / hx) ** 2 + (z / hz) ** 2 <= 1) & ((x / (hx - 1.6)) ** 2 + (z / (hz - 1.6)) ** 2 > 1),
+           ((-hx - 1, y0, -hz - 1), (hx + 1, y1, hz + 1)), material)
+
+
+def chevron(g, x0, y0, z, width, material, side=1, axis="z"):
+    """A V of two stripes, as a badge has: on a face looking along +Z, or along +X or -X with `axis` "x"."""
+    for i in range(int(width // 2) + 1):
+        for dy in (0, 1):
+            for dx in (i, width - 1 - i):
+                if axis == "z":
+                    g.put((x0 + dx, y0 + i + dy, z), material, 3)
+                else:
+                    g.put((z, y0 + i + dy, x0 + dx), material, 3)
 
 
 # The skeleton -----------------------------------------------------------------------------------------------------
@@ -153,6 +167,8 @@ def skeleton(model):
         model.bone(f"{name}Thigh", "Hips", (side * THIGH[0], THIGH[1], 0), role="leg")
         model.bone(f"{name}Shin", f"{name}Thigh", (0, -KNEE, 0), role="leg")
         model.bone(f"{name}Foot", f"{name}Shin", (0, -ANKLE, 0))
+    for bone in model.bones:
+        bone.grid.panels = True
 
 
 # The body both soldiers share -------------------------------------------------------------------------------------
@@ -160,111 +176,135 @@ def skeleton(model):
 
 def body(model, kind):
     hips, spine, chest = grid(model, "Hips"), grid(model, "Spine"), grid(model, "Chest")
-    hips.rounded((0, -1.5, 0), (8.6, 4.2, 5.6), "cloth", power=2.6)
-    spine.rounded((0, 3, 0), (8.4, 4.4, 5.8), "cloth", power=2.6)
-    chest.rounded((0, 3.2, 0.2), (9.2, 5.6, 6.2), "cloth", power=2.6)
-    chest.rounded((0, 4.4, 0), (11.0, 2.6, 5.4), "cloth", power=2.4)  # the shoulders
-    chest.rod((0, 7.5, -0.3), (0, 9.5, -0.3), 4.4, "cloth_dark", flat=True)  # a collar
-    grid(model, "Neck").rod((0, -1, 0), (0, 2.5, 0.3), 3.0, "skin")
-    # Arms: a padded shoulder, the sleeve, a cuff and the wrist.
+    hips.rounded((0, -1, 0), (15.0, 7.0, 10.5), "cloth", power=2.8)
+    spine.rounded((0, 4, 0), (14.5, 7.5, 10.5), "cloth", power=2.8)
+    chest.rounded((0, 8, 0), (18.0, 12.0, 11.5), "cloth", power=2.8)
+    chest.rounded((0, 15, 0), (21.0, 6.0, 10.0), "cloth", power=2.4)
+    chest.rod((0, 19, -0.5), (0, 23.5, -0.5), 7.6, "cloth_dark", flat=True)
+    chest.remove(lambda x, y, z: (x * x + (z + 0.5) ** 2 < 5.4 ** 2) & (y > 19), ((-9, 19, -9), (9, 24, 9)))
+    grid(model, "Neck").rod((0, -3, 0), (0, 4, 0.5), 6.0, "skin")
+    # Arms: a padded shoulder with a badge, the sleeve, a cuff, the glove's wrist.
     for side, name in ((-1, "Left"), (1, "Right")):
         upper = grid(model, f"{name}UpperArm")
-        upper.ball((0, -1, 0), (4.0, 3.8, 4.0), "cloth")
-        upper.rod((0, -1, 0), (0, -9.5, 0), 3.5, "cloth", radius2=3.2)
-        upper.box((side * 2.8, -5.0, -1.5), (side * 4.1, -2.0, 1.5), "patch")  # a sleeve badge
-        for dy in (0, 1.2):
-            upper.rod((side * 4.0, -4.6 + dy, -1.6), (side * 4.0, -3.8 + dy, 0), 0.5, "tan", square=True)
-            upper.rod((side * 4.0, -3.8 + dy, 0), (side * 4.0, -4.6 + dy, 1.6), 0.5, "tan", square=True)
+        upper.ball((0, -2, 0), (8.4, 7.6, 8.4), "cloth")
+        upper.rounded((0, -ELBOW / 2 - 0.5, 0), (7.2, ELBOW / 2, 7.2), "cloth", power=2.5)
+        badge = (side * 6.2, -10, -4), (side * 8.6, -2, 4)
+        upper.box(tuple(min(a, b) for a, b in zip(*badge)), tuple(max(a, b) for a, b in zip(*badge)), "patch",
+                  round_edges=0.5)
+        chevron(upper, -2, -8, int(side * 8.6) - (0 if side > 0 else 1), 5, "tan", axis="x")
+        band(upper, -ELBOW + 1, -ELBOW + 3, 6.9, 6.9, "cloth_dark", out=0.4)
         fore = grid(model, f"{name}Forearm")
-        fore.ball((0, 0, 0), (3.2, 3.2, 3.2), "cloth")
-        fore.rod((0, 0, 0), (0, -6.5, 0), 3.2, "cloth", radius2=3.0)
-        fore.rod((0, -5.6, 0), (0, -7.6, 0), 3.4, "cloth_dark", flat=True)
-        fore.rod((0, -7.6, 0), (0, -10.4, 0), 2.3, "glove", flat=True)
-    # Legs: trousers, a knee pad, puttees wound to the boot, and the chunky boot.
+        fore.ball((0, 0, 0), (6.8, 6.8, 6.8), "cloth")
+        fore.rounded((0, -(WRIST - 3) / 2, 0), (6.6, (WRIST - 1) / 2, 6.6), "cloth", power=2.5)
+        fore.rod((0, -WRIST + 6.5, 0), (0, -WRIST + 3.8, 0), 7.0, "cloth_dark", flat=True)
+        fore.rod((0, -WRIST + 4.0, 0), (0, -WRIST + 1.0, 0), 4.6, "glove", flat=True)
+    # Legs: the thigh with straps, a knee pad, puttees wound to the boot, and the boot itself.
     for side, name in ((-1, "Left"), (1, "Right")):
         thigh = grid(model, f"{name}Thigh")
-        thigh.rod((0, 1.5, 0), (0, -7.5, 0), 4.2, "cloth", radius2=3.9)
+        thigh.rounded((0, -8, 0), (8.8, 11.5, 9.0), "cloth", power=2.6)
+        band(thigh, -6, -4, 8.8, 9.0, "webbing")
         if side > 0:
-            pouch(thigh, (3.0, -6.5, -2.5), (5.6, -1.5, 2.5))
-            thigh.rod((0, -2, 0), (0, -3, 0), 4.5, "tan_dark", flat=True, only=None)
+            pouch(thigh, (8.2, -15, -4.5), (12.4, -6, 4.5))
+        else:
+            band(thigh, -14, -12, 8.4, 8.6, "webbing")
         shin = grid(model, f"{name}Shin")
-        shin.ball((0, 0, 0), (3.9, 3.9, 3.9), "cloth")
-        shin.rounded((0, -0.6, 3.0), (3.0, 3.0, 1.6), "leather", power=2.6)  # the knee pad
-        shin.rod((0, -1, 0), (0, -6, 0), 3.7, "puttee", radius2=3.4)
+        shin.rounded((0, -1, 0), (8.0, 5.0, 8.0), "cloth", power=2.6)
+        shin.rounded((0, -10, 0), (7.4, 8.0, 7.4), "puttee", power=2.4)
         for (x, y, z), (material, _) in list(shin.cells.items()):
-            if material == "puttee" and (y + round(math.atan2(z, x) / math.tau * 2)) % 2 == 0:
+            if material == "puttee" and (y + round(math.atan2(z, x) / math.tau * 3)) % 3 == 0:
                 shin.put((x, y, z), "puttee", 0)
+        shin.rounded((0, -2.5, 7.2), (6.4, 5.8, 2.6), "leather", power=2.6)
+        shin.box((-5.6, -4.5, 8.9), (5.6, -0.5, 10.2), "leather", shade=3)
+        band(shin, -3, -1, 7.8, 7.8, "webbing")
         foot = grid(model, f"{name}Foot")
-        foot.rod((0, -1.5, -0.3), (0, 2.5, -0.3), 3.9, "boot", flat=True)
-        foot.rounded((0, -1.6, 1.6), (4.1, 2.6, 6.0), "boot", power=2.6)
-        foot.box((-4.3, -3.5, -4.6), (4.3, -2.4, 7.8), "sole", round_edges=1)
-        foot.box((-4.2, -2.4, 4.5), (4.2, 0.2, 7.8), "boot", only=("boot",), shade=3)
-        for y in (-1, 0, 1, 2):
-            spot = front_of(foot, 0, y)
-            if spot is not None:
-                foot.put((0, y, spot), "leather", 1)
-                foot.put((-1, y, spot), "leather", 1)
-    for g in (hips, spine, chest):
-        stitched(g, ("cloth",), 3)
+        foot.rod((0, -2, -0.5), (0, 7, -0.5), 7.2, "boot", flat=True)
+        foot.rounded((0, -5.5, 3.5), (8.0, 5.5, 13.0), "boot", power=2.6)
+        foot.box((-8.4, -11, -9.8), (8.4, -8.6, 16.9), "sole", round_edges=1)
+        foot.box((-8.2, -8.6, 9), (8.2, -3.5, 16.6), "boot", only=("boot",), shade=3)
+        foot.box((-8.6, 3, -8), (8.6, 5, 7), "leather_dark", only=None)
+        for y in range(-5, 6, 2):
+            for x in (-2, -1, 0, 1):
+                spot = front_of(foot, x, y)
+                if spot is not None and spot > 5:
+                    foot.put((x, y, spot), "tan_dark" if x in (-2, 1) else "boot", 1)
 
 
-def webbing(model, kind):
-    """A belt with pouches, braces, and a rig of pouches over the chest, as packed as a plate carrier."""
+def rig(model, kind):
+    """The belt and its pouches, and a rig over the chest packed as a plate carrier is: a dark panel of straps and
+    two rows of pouches, a back panel with a badge, straps over the shoulders."""
     hips, spine, chest = grid(model, "Hips"), grid(model, "Spine"), grid(model, "Chest")
-    hips.fill(lambda x, y, z: ((x / 9.2) ** 2 + (z / 6.3) ** 2 <= 1) & (y > 0.2) & (y < 2.6),
-              ((-10, 0, -7), (10, 3, 7)), "leather")
-    hips.box((-1.5, 0, 5.6), (1.5, 3, 7), "brass")
-    hips.box((-0.5, 1, 6.5), (0.5, 2, 7), "leather_dark")
-    for x0 in (-8.5, 4.5):
-        pouch(hips, (x0, -3.5, 4.0), (x0 + 4, 2.5, 7.0), "leather", "leather_dark")
-    # A water bottle at the right hip and a bag at the left.
-    hips.rod((9.4, -4, -1), (9.4, 1.5, -1), 2.2, "tan_dark", flat=True)
-    hips.rod((9.4, 1.5, -1), (9.4, 2.6, -1), 0.9, "steel", flat=True)
-    pouch(hips, (-11.5, -5, -2.5), (-8.2, 1.5, 2.5), "tan", "tan_dark")
-    # The chest rig: a panel of six pouches in two rows, a strap over each shoulder.
-    chest.box((-8.2, -4, 5.6), (8.2, 6.8, 7.4), "cloth_dark", round_edges=0)
-    spine.box((-8.2, 1.5, 5.4), (8.2, 6, 7.2), "cloth_dark")
-    for row, y0 in enumerate((-4.5, 1.6)):
-        for x0 in (-7.6, -2.4, 2.8):
-            kind_of = ("tan", "tan_dark") if (row + int(x0 > 0)) % 2 == 0 else ("leather", "leather_dark")
-            pouch(chest, (x0 + 0.3, y0, 7.2), (x0 + 4.5, y0 + 4.4, 9.4), *kind_of)
+    hips.fill(lambda x, y, z: ((x / 16.4) ** 2 + (z / 12.0) ** 2 <= 1) & (np.abs(y - 4) < 2.3),
+              ((-17, 1, -13), (17, 7, 13)), "leather")
+    hips.box((-2.6, 1.4, 11), (2.6, 6.6, 13.2), "brass")
+    hips.box((-1.2, 2.6, 12.6), (1.2, 5.4, 13.4), "leather_dark")
+    for x0 in (-14.5, 8.5):
+        pouch(hips, (x0, -4, 8.6), (x0 + 6, 5, 13.6), "leather", "leather_dark")
+    pouch(hips, (-6, -5, -14.5), (6, 4, -10.5), "tan", "tan_dark")
+    hips.rod((16.5, -7, -2), (16.5, 2, -2), 3.6, "tan_dark", flat=True)
+    hips.rod((16.5, 2, -2), (16.5, 4, -2), 1.6, "steel", flat=True)
+    # The front panel, its webbing in rows, and two rows of three pouches.
+    chest.box((-15, -7, 9.4), (15, 17, 13.2), "webbing", round_edges=1)
+    spine.box((-14.5, 1, 8.8), (14.5, 11, 12.6), "webbing", round_edges=1)
+    for y in range(-5, 17, 3):
+        chest.box((-14.6, y, 13.0), (14.6, y + 1, 13.6), "webbing", shade=3)
+    for row, y0 in enumerate((4.0, -6.0)):
+        for col, x0 in enumerate((-14.0, -4.5, 5.0)):
+            tone = ("tan", "tan_dark") if (row + col) % 2 == 0 else ("leather", "leather_dark")
+            pouch(chest, (x0 + 0.3, y0, 13.2), (x0 + 9.0, y0 + 8.4, 17.4), *tone)
+    pouch(chest, (-3.5, 13, 13.0), (3.5, 17.5, 15.6), "tan_dark", "webbing", stud=False)
+    # Straps over the shoulders, and the back panel with a badge.
     for side in (-1, 1):
-        chest.path([(side * 5.5, 8.6, 5.5), (side * 6.0, 8.6, -5.6)], 1.0, "cloth_dark", square=True)
-        chest.path([(side * 6.0, 8.6, 5.8), (side * 6.6, 3, 7.4)], 1.0, "cloth_dark", square=True)
-    chest.box((-8.2, -4, -7.4), (8.2, 6.8, -5.6), "cloth_dark")
+        chest.box((side * 6 - 2.6, 17.5, -11), (side * 6 + 2.6, 20.8, 12.5), "webbing", round_edges=0.6)
+    chest.box((-14.5, -6, -14.5), (14.5, 17, -10.4), "webbing", round_edges=1)
+    chest.box((-4.5, 8, -15.4), (4.5, 14, -14.2), "patch", round_edges=0.4)
+    chevron(chest, -3, 9, -16, 7, "eye_light", axis="z")
 
 
 # Hands closed round a grip ----------------------------------------------------------------------------------------
 
 
 def hand(model, name, glove, fingertips=None, radius=GRIP_RADIUS):
-    """A gloved hand closed round a grip `radius` thick along its Z (see `grip_at`). The left hand is the right
-    turned over."""
+    """A gloved hand, four fingers and a thumb closed round a grip `radius` thick along its Z (see `grip_at`). The
+    left hand is the right turned over."""
     g = grid(model, f"{name}Hand")
     made = type(g)(g.seed, g.patch)
+    made.panels = True
     cx, cy, _ = grip_at(radius)
-    made.rounded((0.5, -2.6, 0), (1.9, 3.0, 2.6), glove, power=2.4)
-    made.rod((0.3, 0.6, 0), (0.3, -1.0, 0), 2.3, glove)
+    # The back of the hand and the palm, and the glove's cuff at the wrist.
+    made.rounded((1.4, -4.6, 0), (2.8, 5.4, 4.4), glove, power=2.4)
+    made.rod((1.0, 1.4, 0), (1.0, -1.6, 0), 4.4, glove, flat=True)
+    made.rod((1.0, 1.4, 0), (1.0, 0.2, 0), 4.7, "leather_dark", flat=True)
+    thick = 2.4
+    # Four fingers, each two cubes wide, wrapped from the palm under the grip and up its far side, the middle two
+    # reaching furthest; a knuckle ridge where they leave the palm.
+    for k in range(4):
+        z0 = -4 + 2 * k
+        reach = 118 if k in (1, 2) else 128
+        tone = 1 if k % 2 else 3
 
-    def arc(x, y):
-        dx, dy = x - cx, y - cy
-        return np.hypot(dx, dy), np.degrees(np.arctan2(dy, dx))
+        def finger(x, y, z, z0=z0, reach=reach):
+            dx, dy = x - cx, y - cy
+            rho = np.hypot(dx, dy)
+            angle = np.degrees(np.arctan2(dy, dx))
+            wrapped = (angle < -12) | (angle > reach)
+            return (rho >= radius) & (rho <= radius + thick) & wrapped & (z >= z0) & (z < z0 + 2) & (x < 0.5)
 
-    def fingers(x, y, z):
-        rho, angle = arc(x, y)
-        return (rho >= radius) & (rho <= radius + 1.7) & ((angle < -10) | (angle > 110)) & (np.abs(z) < 2.6)
-
-    made.fill(fingers, ((cx - 4, cy - 4, -3), (cx + 4, cy + 4, 3)), glove)
-    for (x, y, z), (material, _) in list(made.cells.items()):
-        rho, angle = arc(x + 0.5, y + 0.5)
-        if not (radius <= rho <= radius + 1.7 and (angle < -10 or angle > 110)) or x + 0.5 > -0.4:
-            continue
-        made.put((x, y, z), glove, 1 if (z + 3) % 2 else 3)
-        if fingertips and (angle > 110 or angle < -150):
-            made.put((x, y, z), fingertips)
-    made.path([(-0.5, -1.6, 2.0), (-2.2, -2.6, 2.4), (-3.9, -3.4, 2.0), (-4.4, -4.6, 1.4)], 0.9, glove)
+        made.fill(finger, ((cx - radius - thick - 1, cy - radius - thick - 1, z0), (1, cy + radius + thick + 1,
+                                                                                   z0 + 2)), glove, shade=tone)
+        if fingertips:
+            def tip(x, y, z, z0=z0, reach=reach):
+                dx, dy = x - cx, y - cy
+                angle = np.degrees(np.arctan2(dy, dx))
+                rho = np.hypot(dx, dy)
+                return ((angle > reach) & (angle < reach + 30)) & (rho >= radius) & (rho <= radius + thick) & \
+                    (z >= z0) & (z < z0 + 2)
+            made.paint(tip, ((cx - 6, cy - 6, z0), (cx + 6, cy + 6, z0 + 2)), fingertips)
+    made.box((-0.6, cy - 1.2, -4), (0.6, cy + 1.6, 4), glove, shade=0)
+    made.path([(0.2, -3.2, 4.0), (-2.4, -5.0, 4.9), (-5.0, -6.8, 4.4), (-6.6, -9.0, 3.0)], 1.5, glove)
+    if fingertips:
+        made.ball((-6.6, -9.0, 3.0), (1.6, 1.6, 1.6), fingertips)
     made.remove(lambda x, y, z: (x - cx) ** 2 + (y - cy) ** 2 < (radius - 0.2) ** 2,
-                ((cx - 3, cy - 3, -4), (cx + 3, cy + 3, 4)))
+                ((cx - 5, cy - 5, -6), (cx + 5, cy + 5, 6)))
     g.merge(made.mirrored() if name == "Left" else made)
 
 
@@ -289,131 +329,126 @@ def wrist_for(frame, grip_middle, left, radius):
 # Heads ------------------------------------------------------------------------------------------------------------
 
 
-# One eye as rows from the top, from the nose outwards: lash, iris (dark, then lighter low down), lights.
+# One eye as rows from the top, from the nose outwards: lashes, the iris dark above and lighter below, two lights.
 EYE = (
-    "LLLLL",
-    "IWII.",
-    "IIII.",
-    "JJJW.",
-    "JJJJ.",
+    "LLLLLLLL",
+    "LLLLLLL.",
+    "IWWIIII.",
+    "IWWIIII.",
+    "IIIIIII.",
+    "IIIIIWI.",
+    "JJJJJJJ.",
+    "JJJJJJ..",
 )
 EYE_COLOURS = {"L": "lash", "I": "iris", "J": "iris_light", "W": "eye_light"}
 
 
-def head_shape(g, material):
-    """A big head, a cube with its corners worn round, as chibi figures have."""
-    g.rounded((0, 10.8, 0.5), (11.0, 10.4, 9.8), material, power=3.0)
+def head_shape(g):
+    g.rounded((0, 16, 1), (17.5, 16.0, 15.0), "skin", power=3.0)
 
 
 def face(g, mask):
-    """Eyes, cheeks, the fringe, and `mask` over the lower face."""
+    """Eyes, cheeks, hair under the helmet, and `mask` over the lower face, flat across its front."""
     for side in (-1, 1):
         for row, line in enumerate(EYE):
-            y = 13 - row
+            y = 22 - row
             for at, mark in enumerate(line):
                 if mark == ".":
                     continue
-                x = 2 + at if side > 0 else -3 - at
+                x = 3 + at if side > 0 else -4 - at
                 spot = front_of(g, x, y)
                 if spot is not None:
                     g.put((x, y, spot), EYE_COLOURS[mark])
-        for x in ((6, 7) if side > 0 else (-7, -8)):
-            spot = front_of(g, x, 8)
+        for x in ((11, 12, 13) if side > 0 else (-12, -13, -14)):
+            spot = front_of(g, x, 14)
             if spot is not None:
-                g.put((x, 8, spot), "blush")
-    # Hair at the brow and over the ears, under the helmet.
-    g.paint(lambda x, y, z: (y > 14.5) | ((np.abs(x) > 8.5) & (y > 7) & (z < 5)) | ((z < 3) & (y > 2.5)),
-            ((-12, 0, -11), (12, 23, 11)), "hair")
-    # The mask: over the nose, mouth and jaw, up to under the eyes, flat across the front as cloth pulled tight is,
-    # and laid over the sides of the face.
-    for x in range(-11, 11):
-        for y in range(0, 8):
+                g.put((x, 14, spot), "blush")
+    g.paint(lambda x, y, z: (y > 24.5) | ((np.abs(x) > 13.5) & (y > 12) & (z < 9)) | ((z < 4) & (y > 5)),
+            ((-17, 0, -15), (17, 35, 17)), "hair")
+    for x in range(-16, 16):
+        for y in range(0, 14):
             spot = front_of(g, x, y)
             if spot is None:
                 continue
-            front = max(spot, 9 if abs(x) < 8 else spot)
+            front = max(spot, 17 if abs(x) < 12 else spot)
             for z in range(spot, front + 2):
-                g.put((x, y, z), mask)
-    g.paint(lambda x, y, z: y < 8, ((-12, -1, -11), (12, 8, 12)), mask, only=("skin",))
+                g.put((x, y, z), mask, 1 if (y // 3 + x // 6) % 2 else 2)
+    g.paint(lambda x, y, z: y < 14, ((-17, -1, -15), (17, 14, 19)), mask, only=("skin",))
 
 
-def goggles(g, y, z0):
-    """Goggles pushed up onto the helmet: two square lenses in steel frames on a strap."""
+def goggles(g, y, z0, width=10):
+    """Goggles up on the helmet: two lenses in steel frames on a strap, a bridge between them."""
     for side in (-1, 1):
-        x0 = 1 if side > 0 else -6
-        g.box((x0 - 0.5, y - 0.5, z0), (x0 + 5.5, y + 4.5, z0 + 2.4), "steel")
-        g.box((x0 + 0.5, y + 0.5, z0 + 1), (x0 + 4.5, y + 3.5, z0 + 2.8), "glass")
-        g.put((x0 + 1, y + 2, int(z0 + 2)), "glint")
-        g.put((x0 + 1, y + 3, int(z0 + 2)), "glint")
-    g.box((-1, y + 1, z0 + 0.6), (1, y + 3, z0 + 2.0), "leather_dark")
+        x0 = 1 if side > 0 else -1 - width
+        g.box((x0 - 0.6, y - 0.6, z0), (x0 + width + 0.6, y + 6.6, z0 + 3.2), "steel", round_edges=0.6)
+        g.box((x0 + 0.8, y + 0.8, z0 + 1.6), (x0 + width - 0.8, y + 5.2, z0 + 3.6), "glass")
+        g.box((x0 + 1.2, y + 3.4, z0 + 3.0), (x0 + 2.6, y + 4.8, z0 + 3.8), "glint")
+    g.box((-1.6, y + 1.5, z0 + 0.6), (1.6, y + 4.5, z0 + 2.6), "leather_dark")
 
 
 def rifleman_head(model):
     g = grid(model, "Head")
-    head_shape(g, "skin")
+    head_shape(g)
     face(g, "mask")
-    # A respirator: a round filter on the front of the mask, a steel ring round it, straps to the sides.
-    g.rod((0, 3.6, 9), (0, 3.6, 13.2), 2.8, "steel", flat=True)
-    g.rod((0, 3.6, 12), (0, 3.6, 13.6), 2.1, "blued", flat=True)
-    for x in (-1, 0, 1):
-        g.put((x, 3, 13), "steel", 3)
+    # A respirator: a round filter out from the mask, a steel ring and ribs round it, straps back to the sides.
+    g.rod((0, 7, 18), (0, 7, 23.6), 5.0, "steel", flat=True)
+    g.rod((0, 7, 22.6), (0, 7, 24.4), 3.6, "blued", flat=True)
+    for z in (19.5, 21.5):
+        g.rod((0, 7, z), (0, 7, z + 0.8), 5.4, "steel", shade=0, flat=True)
     for side in (-1, 1):
-        g.rod((side * 3, 5, 9), (side * 10, 7, 3), 0.6, "leather_dark", square=True)
-    # The dish helmet: a low crown and a wide brim, rusting, netting over it and rags tied in.
-    g.ball((0, 15.5, 0.6), (12.4, 8.4, 11.8), "helmet", keep=lambda x, y, z: y > 15)
-    for x in range(-17, 17):
-        for z in range(-16, 18):
-            # Squarer than a circle, so its edge, and the shadow it throws on the face, runs straight.
-            d = (abs(x + 0.5) / 16.2) ** 4 + (abs(z + 0.5 - 0.6) / 15.4) ** 4
+        g.path([(side * 5, 9, 18), (side * 12, 11, 12), (side * 15.5, 13, 4)], 0.8, "leather_dark", square=True)
+    # The dish helmet: a low crown of plates, a wide brim, netting, rags tied in, a band round it.
+    g.rounded((0, 27, 1), (17.4, 12.0, 16.4), "helmet", power=2.4, keep=lambda x, y, z: y > 26)
+    for x in range(-25, 25):
+        for z in range(-24, 26):
+            d = (abs(x + 0.5) / 24.5) ** 4 + (abs(z + 0.5 - 1) / 24.0) ** 4
             if d <= 1:
-                g.put((x, 15 if d < 0.6 else 14, z), "helmet")
+                g.put((x, 26 if d < 0.6 else 25, z), "helmet")
+                if d < 0.6:
+                    g.put((x, 27, z), "helmet")
+    band(g, 28, 31, 16.8, 15.8, "leather_dark", out=0.8)
     for (x, y, z), (material, _) in list(g.cells.items()):
-        if material == "helmet" and y > 16 and (x + y + z) % 4 == 0 and (x - y + z) % 4 == 0:
+        if material == "helmet" and y > 31 and (x + y + z) % 5 == 0 and (x - y + z) % 5 == 0:
             g.put((x, y, z), "scrim", 0)
-        elif material == "helmet" and hashed(x // 2, y, z // 2, 77) < 0.08:
+        elif material == "helmet" and hashed(x // 3, y // 2, z // 3, 77) < 0.08:
             g.put((x, y, z), "rust")
-    for i in range(16):
+    for i in range(14):
         a = hashed(i, 5) * math.tau
-        r = 6 + hashed(i, 6) * 7
+        r = 6 + hashed(i, 6) * 9
         x, z = int(math.cos(a) * r), int(math.sin(a) * r)
         top = max((y for (cx, y, cz) in g.cells if cx == x and cz == z), default=None)
         if top is not None:
-            g.put((x, top + 1, z), "scrim")
-    goggles(g, 17.5, 9.4)
-    g.box((-11.5, 17, -11), (11.5, 18.5, 11), "leather_dark", only=("helmet", "scrim", "rust"))
-    # The chin strap.
-    g.path([(-10.4, 14, 3), (-9.6, 4, 5), (-6, 0.6, 6)], 0.6, "leather")
-    g.path([(10.4, 14, 3), (9.6, 4, 5), (6, 0.6, 6)], 0.6, "leather")
+            g.box((x - 1, top, z - 1), (x + 2, top + 2, z + 2), "scrim")
+    goggles(g, 31, 15.4)
+    g.path([(-16.4, 25, 4), (-15.4, 8, 7), (-10, 1, 9)], 0.9, "leather")
+    g.path([(16.4, 25, 4), (15.4, 8, 7), (10, 1, 9)], 0.9, "leather")
 
 
 def scavenger_head(model):
     g = grid(model, "Head")
-    head_shape(g, "skin")
+    head_shape(g)
     face(g, "mask")
-    # A steel helmet, deep, its skirt flaring over the ears and the neck; a headset's ear cups over it.
-    def bowl(x, y, z):
-        return (y > 13.5) & ((x / 12.8) ** 2 + ((y - 13.5) / 9.6) ** 2 + ((z - 0.3) / 12.2) ** 2 <= 1)
-    g.fill(bowl, ((-14, 13, -13), (14, 24, 13)), "helmet")
-    for x in range(-15, 15):
-        for z in range(-15, 13):
-            r = math.hypot((x + 0.5) / 12.6, (z + 0.5 - 0.3) / 12.0)
-            if 0.86 < r <= 1.16 and (z < 6 or abs(x) > 8):
-                drop = 0 if z > 5 else 4 if z < -4 else 2
-                for y in range(14 - drop, 15):
-                    g.put((x, y, z), "helmet")
-    g.box((-9, 13.5, 9), (9, 14.5, 13), "helmet")  # the peak
-    for (x, y, z), (material, _) in list(g.cells.items()):
-        if material == "helmet" and hashed(x // 2, y // 2, z // 2, 41) < 0.08:
-            g.put((x, y, z), "rust")
+    # A steel helmet cut high over the ears, plates and rails on its sides, a headset's big ear cups over it.
+    def shell(x, y, z):
+        return (y > 22) & ((np.abs(x) / 19.6) ** 2.6 + (np.abs(y - 22) / 13.0) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6
+                           <= 1)
+    g.fill(shell, ((-21, 22, -18), (21, 36, 20)), "helmet")
+    g.fill(lambda x, y, z: (y > 15) & (y <= 22) & ((np.abs(x) / 19.6) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6 <= 1) &
+           ~((z > 4) & (np.abs(x) < 16.5)), ((-21, 15, -18), (21, 23, 20)), "helmet")
     for side in (-1, 1):
-        g.rounded((side * 12.8, 8.5, 1), (2.4, 3.6, 3.6), "steel", power=2.4)
-        g.rounded((side * 14.0, 8.5, 1), (1.4, 2.6, 2.6), "tan_dark", power=2.4)
-        g.path([(side * 12, 12, 1), (side * 12.8, 16, 1)], 0.7, "leather_dark", square=True)
-    # A microphone on a stalk round to the mouth.
-    g.path([(11.5, 7, 4), (10, 4.5, 8), (5, 3.5, 11)], 0.6, "blued")
-    g.ball((4.2, 3.5, 11.2), (1.2, 1.2, 1.2), "blued")
-    goggles(g, 17.0, 10.0)
-    g.box((-13, 16.6, -12.5), (13, 18.4, 12.5), "leather_dark", only=("helmet", "rust"))
+        g.box((side * 18.8 - 1.4, 22, -9), (side * 18.8 + 1.4, 25, 9), "steel", round_edges=0.5)
+        g.box((side * 15 - 3, 28, -6), (side * 15 + 3, 32, 2), "helmet", round_edges=0.6)
+        g.rounded((side * 19.6, 15, 1.5), (3.8, 7.4, 6.8), "steel", power=2.6)
+        g.rounded((side * 22.0, 15, 1.5), (1.8, 5.4, 5.0), "tan_dark", power=2.4)
+        g.rod((side * 19.4, 21, 1.5), (side * 18.4, 28, 1.5), 1.2, "leather_dark")
+    g.box((-15, 33, -8), (15, 34.6, 8), "helmet", shade=3)
+    g.path([(17, 11, 5), (14, 8, 12), (8, 6, 17.6)], 0.9, "blued")
+    g.ball((7.0, 6.0, 18.0), (1.8, 1.8, 1.8), "blued")
+    for (x, y, z), (material, _) in list(g.cells.items()):
+        if material == "helmet" and hashed(x // 3, y // 3, z // 3, 41) < 0.07:
+            g.put((x, y, z), "rust")
+    goggles(g, 26, 16.2)
+    band(g, 27, 29.5, 19.2, 17.4, "leather_dark", out=0.6)
 
 
 # Gear on the back ------------------------------------------------------------------------------------------------
@@ -421,35 +456,33 @@ def scavenger_head(model):
 
 def rifleman_gear(model):
     chest = grid(model, "Chest")
-    chest.box((-7.5, -3.5, -12), (7.5, 7, -6.5), "tan", round_edges=1)
-    chest.box((-7.5, 4, -12.5), (7.5, 7, -6.5), "tan_dark")
-    for x in (-4, 3):
-        chest.box((x, -2, -12.8), (x + 1.2, 6, -12), "leather")
-        chest.put((x, 1, -13), "brass", 1)
-    chest.rod((-9.5, 9, -9), (9.5, 9, -9), 2.6, "rag")
-    for x in (-6, 5):
-        chest.rod((x, 9, -9), (x + 1, 9, -9), 2.9, "leather_dark", flat=True)
-    chest.box((-3, -2.5, -13.5), (3, 1.5, -12), "steel")
+    chest.box((-12, -4, -21), (12, 14, -14), "tan", round_edges=1.2)
+    chest.box((-12, 9, -22), (12, 14, -14), "tan_dark", round_edges=0.8)
+    for x in (-7, 5):
+        chest.box((x, -2, -22.6), (x + 2, 12, -21), "leather")
+        chest.box((x, 3, -23), (x + 2, 5, -22.4), "brass", shade=1)
+    pouch(chest, (-6, -3, -24), (6, 5, -21))
+    chest.rod((-15, 17, -17), (15, 17, -17), 4.6, "rag")
+    for x in (-10, 8):
+        chest.rod((x, 17, -17), (x + 1.6, 17, -17), 5.0, "leather_dark", flat=True)
 
 
 def scavenger_gear(model):
     chest = grid(model, "Chest")
-    # A field radio on the back, its dials and two aerials standing up past the head.
-    chest.box((-7.5, -4, -13), (7.5, 8, -6.5), "tan_dark", round_edges=1)
-    chest.box((-6, -2, -13.6), (6, 6, -12.8), "steel")
-    for x in (-4, -1, 2):
-        chest.put((x, 3, -14), "brass", 3)
-    chest.box((-5, -1, -14), (5, 1, -13.6), "blued")
-    for x, height in ((-5.5, 26), (5.5, 20)):
-        chest.rod((x, 8, -10), (x, 8 + height, -10.5), 0.55, "blued", square=True)
-        chest.rod((x, 8, -10), (x, 10, -10), 1.1, "blued")
-    # A bandolier round from the right shoulder, rounds in it.
-    chest.path([(7.5, 8.6, 6.2), (-1, 2, 9.6), (-8.6, -3.4, 7.4)], 1.0, "leather", square=True)
-    for t in np.linspace(0.1, 0.9, 7):
-        x, y = 7.5 - 16 * t, 8.6 - 12 * t
+    chest.box((-12, -5, -22), (12, 15, -14), "tan_dark", round_edges=1.2)
+    chest.box((-10, -2, -23), (10, 11, -21.6), "steel")
+    for x in (-7, -2, 3):
+        chest.ball((x + 0.5, 7.5, -23.2), (1.2, 1.2, 1.0), "brass", shade=3)
+    chest.box((-8, 0, -23.6), (8, 3, -22.8), "blued")
+    for x, height in ((-9, 30), (9, 22)):
+        chest.box((x - 0.6, 15, -18.6), (x + 0.6, 15 + height, -17.4), "blued")
+        chest.rod((x, 15, -18), (x, 18, -18), 1.8, "blued")
+    chest.path([(13, 19, 11), (-2, 5, 18.5), (-15, -5, 13)], 1.6, "leather", square=True)
+    for t in np.linspace(0.08, 0.92, 10):
+        x, y = 13 - 28 * t, 19 - 24 * t
         spot = front_of(chest, int(x), int(y))
         if spot is not None:
-            chest.put((int(x), int(y), spot + 1), "brass", 2)
+            chest.box((int(x), int(y) - 1, spot + 1), (int(x) + 1, int(y) + 2, spot + 2), "brass", shade=2)
 
 
 # Guns -------------------------------------------------------------------------------------------------------------
@@ -457,75 +490,86 @@ def scavenger_gear(model):
 
 def rifle(g):
     """A bolt-action rifle along +Z, chunky as the style wants, the middle of its wrist at the origin. Gives where
-    each hand holds it: for each, the grip's axis, the way from the palm to it, and its middle."""
+    each hand holds it: for each, the grip's axis, the way from the palm to it, its middle and how thick it is."""
+    g.panels = True
     wrist_axis = np.array((0.0, 0.77, 0.64))
-    g.rod(-wrist_axis * 2.8, wrist_axis * 2.8, GRIP_RADIUS, "wood")
-    # A short stock, as the style wants, that ends at the shoulder when the hand is on the grip.
-    for z in range(-12, -1):
-        t = (z + 12) / 11
-        g.box((-1.5, -5.2 + t * 3.8, z), (1.5, 2.2 - t * 0.2, z + 1), "wood")
-    g.box((-1.6, -5.6, -13), (1.6, 2.4, -12), "brass", shade=1)
-    g.box((-1.6, 1.0, -1), (1.6, 4.2, 9), "blued")
-    g.box((-1.3, -2.8, 3), (1.3, 1.0, 7), "blued")
-    g.path([(0, 0.5, 0.6), (0, -2.0, 1.4), (0, -2.0, 3)], 0.5, "blued")
-    g.rod((0, 4.0, -1), (0, 4.0, 4), 1.0, "steel")
-    g.path([(0.8, 3.8, 0.5), (2.8, 2.8, 0.8)], 0.5, "steel")
-    g.ball((3.2, 2.6, 0.9), (0.9, 0.9, 0.9), "steel", shade=3)
-    g.rod((0, 1.0, 8), (0, 1.0, 25), 1.6, "wood", flat=True)
-    g.box((-1.2, 3.0, 9), (1.2, 4.2, 22), "wood")
-    g.rod((0, 3.4, 9), (0, 3.4, 31), 0.8, "blued")
-    g.box((-1.3, -0.6, 25), (1.3, 4.6, 28), "blued")
-    g.box((-0.5, 4.6, 26), (0.5, 5.8, 27), "blued")
-    g.box((-1.2, 4.2, 9), (1.2, 5.6, 11), "blued")
-    for z in (17, 22):
-        g.box((-1.9, -1.2, z), (1.9, 4.4, z + 1), "brass", shade=0)
-    g.rod((0, 1.0, 9.5), (0, 1.0, 15.5), 1.7, "rag", flat=True)
-    for (x, y, z), (material, _) in list(g.cells.items()):
-        if material == "rag" and z % 2:
-            g.put((x, y, z), "rag", 0)
-    g.path([(0, -5.0, -10), (0, -6.5, -4), (0, -5, 6), (0, -1.5, 17)], 0.5, "leather", square=True)
+    g.rod(-wrist_axis * 5.5, wrist_axis * 5.0, GRIP_RADIUS, "wood")
+    # A short stock that ends at the shoulder, a brass plate on its end.
+    for z in range(-24, -3):
+        t = (z + 24) / 21
+        g.box((-2.8, -10.5 + t * 7.5, z), (2.8, 4.4 - t * 0.4, z + 1), "wood", shade=2 if z % 7 else 1)
+    g.box((-3.0, -11.0, -26), (3.0, 4.8, -24), "brass", shade=1)
+    # The receiver, magazine, trigger guard and trigger, the bolt and its handle out to the right.
+    g.box((-3.0, 2.0, -2), (3.0, 8.6, 18), "blued", round_edges=0.6)
+    g.box((-2.6, -5.6, 6), (2.6, 2.0, 14), "blued", round_edges=0.5)
+    g.path([(0, 1.0, 1.2), (0, -4.0, 2.8), (0, -4.0, 6.0)], 0.9, "blued")
+    g.box((-0.8, -3.0, 3.6), (0.8, 1.0, 5.0), "steel", shade=3)
+    g.rod((0, 8.4, -2), (0, 8.4, 9), 2.0, "steel")
+    g.path([(1.6, 8.0, 1.5), (5.6, 5.8, 2.0)], 1.0, "steel")
+    g.ball((6.2, 5.4, 2.2), (1.8, 1.8, 1.8), "steel", shade=3)
+    # The forestock, the handguard over the barrel, the barrel, its nose cap, sights and bands.
+    g.rod((0, 2.4, 16), (0, 2.4, 50), 3.0, "wood", flat=True)
+    g.box((-2.4, 5.4, 18), (2.4, 8.4, 44), "wood", round_edges=0.5)
+    g.rod((0, 6.8, 18), (0, 6.8, 64), 1.6, "blued")
+    g.box((-2.8, -1.2, 50), (2.8, 9.4, 57), "blued", round_edges=0.5)
+    g.box((-1.0, 9.4, 54), (1.0, 12.0, 56), "blued")
+    g.box((-2.4, 8.4, 19), (2.4, 11.4, 23), "blued", round_edges=0.4)
+    for z in (34, 44):
+        g.box((-3.6, -1.0, z), (3.6, 9.2, z + 1.6), "brass", shade=0)
+    # Rags wound round the forestock where the other hand holds it, and a sling under it all.
+    for i, z in enumerate(range(15, 27, 2)):
+        g.rod((0, 2.4, z), (0, 2.4, z + 2), 3.4, "rag", shade=0 if i % 2 else 2, flat=True)
+    g.path([(0, -9.5, -20), (0, -12, -8), (0, -10, 10), (0, -3, 34)], 0.8, "leather", square=True)
     return {
         "right": (wrist_axis, (-0.85, -0.5, 0.0), np.zeros(3), GRIP_RADIUS),
-        "carry": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 1.0, 9.5)), 1.7),
-        "aim": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 1.0, 10.0)), 1.7),
-        "stock": np.array((0.0, -1.6, -12.5)),
+        "carry": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 2.4, 19.0)), 3.4),
+        "aim": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 2.4, 24.0)), 3.4),
+        "stock": np.array((0.0, -3.2, -25.0)),
     }
 
 
 def smg(g):
     """A drum-fed submachine gun along +Z, the middle of its pistol grip at the origin, a vertical grip under its
     barrel for the other hand. Gives where each hand holds it, as `rifle` does."""
+    g.panels = True
     grip_axis = np.array((0.0, 0.8, 0.6))
-    g.rod(-grip_axis * 2.8, grip_axis * 2.6, GRIP_RADIUS, "wood")
-    g.box((-1.5, -3.8, -1.8), (1.5, -2.6, 0.4), "wood", round_edges=1)
-    g.box((-1.8, 2.4, -2), (1.8, 6, 12), "blued")
-    g.box((-1.3, 6, 1), (1.3, 6.8, 8), "steel")
-    g.box((-0.5, 6.4, -0.5), (0.5, 7.6, 0.8), "blued")
-    g.box((1.8, 4, 5), (2.8, 5, 6.2), "steel", shade=3)
-    for z in range(-11, -2):
-        t = (z + 11) / 9
-        g.box((-1.4, 2.2 - (1 - t) * 3.4, z), (1.4, 5.6, z + 1), "wood")
-    g.box((-1.5, -1.4, -12), (1.5, 5.8, -11), "steel", shade=0)
-    g.path([(0, 2.4, 0.8), (0, 0.6, 1.6), (0, 0.6, 3.8), (0, 2.4, 4.2)], 0.5, "blued")
-    g.rod((0, 4.2, 12), (0, 4.2, 21), 1.3, "blued", flat=True)
-    for z in range(13, 20, 2):
-        g.rod((0, 4.2, z), (0, 4.2, z + 0.9), 1.8, "steel", shade=0, flat=True)
-    g.box((-1.2, 3.0, 21), (1.2, 5.4, 23), "blued")
-    g.box((-0.5, 5.4, 21.5), (0.5, 6.4, 22.5), "blued")
-    g.rod((-1.9, -1.0, 6.5), (1.9, -1.0, 6.5), 3.6, "blued", flat=True)
-    g.rod((-2.1, -1.0, 6.5), (2.1, -1.0, 6.5), 1.1, "steel", flat=True)
+    g.rod(-grip_axis * 5.5, grip_axis * 5.0, GRIP_RADIUS, "wood")
+    g.box((-2.8, -7.0, -3.4), (2.8, -5.0, 1.0), "wood", round_edges=1)
+    # The receiver, its top cover, sights and cocking knob, and a wooden stock behind.
+    g.box((-3.6, 4.8, -4), (3.6, 12.0, 24), "blued", round_edges=0.6)
+    g.box((-2.8, 12.0, 2), (2.8, 13.6, 16), "steel", round_edges=0.4)
+    g.box((-1.0, 12.8, -1), (1.0, 15.2, 1.6), "blued")
+    g.box((3.6, 8.0, 10), (5.6, 10.0, 12.4), "steel", shade=3)
+    for z in range(-22, -4):
+        t = (z + 22) / 18
+        g.box((-2.8, 4.4 - (1 - t) * 7.0, z), (2.8, 11.2, z + 1), "wood", shade=2 if z % 6 else 1)
+    g.box((-3.0, -3.2, -24), (3.0, 11.6, -22), "steel", shade=0)
+    g.path([(0, 4.8, 1.6), (0, 1.2, 3.2), (0, 1.2, 7.6), (0, 4.8, 8.4)], 0.9, "blued")
+    g.box((-0.8, 2.2, 4.8), (0.8, 6.0, 6.4), "steel", shade=3)
+    # The barrel with its cooling fins, a compensator and the foresight.
+    g.rod((0, 8.4, 24), (0, 8.4, 42), 2.6, "blued", flat=True)
+    for z in range(25, 41, 3):
+        g.rod((0, 8.4, z), (0, 8.4, z + 1.2), 3.6, "steel", shade=0, flat=True)
+    g.box((-2.4, 6.0, 42), (2.4, 10.8, 46), "blued", round_edges=0.4)
+    g.box((-1.0, 10.8, 43), (1.0, 12.8, 45), "blued")
+    # The drum before the trigger, a ring and hub on its face, rust at its rim.
+    g.rod((-3.8, -2.0, 13), (3.8, -2.0, 13), 7.2, "blued", flat=True)
+    g.rod((-4.2, -2.0, 13), (4.2, -2.0, 13), 2.4, "steel", flat=True)
+    for side in (-1, 1):
+        g.fill(lambda x, y, z, side=side: (np.hypot(y + 2.0, z - 13) > 4.6) & (np.hypot(y + 2.0, z - 13) < 5.6) &
+               (x * side > 3.4) & (x * side < 4.2), ((-5, -10, 5), (5, 6, 21)), "steel", shade=3)
     for (x, y, z), (material, _) in list(g.cells.items()):
-        if material == "blued" and abs(x + 0.5) >= 1.8 and hashed(x, y, z, 31) < 0.15:
+        if material == "blued" and abs(x + 0.5) >= 3.4 and hashed(x, y, z, 31) < 0.12:
             g.put((x, y, z), "rust")
     fore_axis = np.array((0.0, 0.98, 0.18))
-    top = np.array((0, 3.0, 12.5))
-    g.rod(top - fore_axis * 5.8, top, GRIP_RADIUS, "wood")
-    middle = top - fore_axis * 3.0
+    top = np.array((0, 6.0, 24.0))
+    g.rod(top - fore_axis * 11.0, top, GRIP_RADIUS, "wood")
+    middle = top - fore_axis * 6.0
     return {
         "right": (grip_axis, (-0.85, -0.5, 0.0), np.zeros(3), GRIP_RADIUS),
         "carry": (fore_axis, (1.0, 0.0, 0.0), middle, GRIP_RADIUS),
         "aim": (fore_axis, (1.0, 0.0, 0.0), middle, GRIP_RADIUS),
-        "stock": np.array((0.0, 2.0, -11.5)),
+        "stock": np.array((0.0, 4.0, -23.0)),
     }
 
 
@@ -568,13 +612,13 @@ def hold(model, grips, gun_r, gun_t, body_keys, hold_with, tag):
 
 # How the gun is held at rest, for each: the way its muzzle points, its top, and where the right hand's grip is.
 CARRY = {
-    "rifleman": ((-0.65, -0.55, 0.52), (0.15, 1.0, 0.35), (7.0, 22.0, 9.0)),
-    "scavenger": ((-0.65, -0.55, 0.52), (0.15, 1.0, 0.35), (7.0, 22.0, 9.0)),
+    "rifleman": ((-0.55, -0.62, 0.42), (0.15, 1.0, 0.35), (6.0, 63.0, 21.0)),
+    "scavenger": ((-0.55, -0.62, 0.42), (0.15, 1.0, 0.35), (6.0, 63.0, 21.0)),
 }
 # Which way each elbow points, the right's then the left's, at rest and aiming.
-POLES = {"carry": ((0.6, -1.0, -0.8), (-0.4, -1.0, -0.6)), "aim": ((1.0, 0.0, -0.4), (-0.3, -1.0, -0.2))}
+POLES = {"carry": ((1.0, -0.5, -0.6), (-0.6, -1.0, -0.2)), "aim": ((1.0, 0.0, -0.4), (-0.3, -1.0, -0.2))}
 # Aiming: how far the hips turn side on, and where in the chest the stock sits.
-AIM = {"rifleman": (50.0, (8.5, 3.5, 8.0)), "scavenger": (50.0, (8.5, 3.5, 8.0))}
+AIM = {"rifleman": (60.0, (18.0, 6.0, 12.0)), "scavenger": (60.0, (18.0, 14.0, 12.0))}
 
 
 def carry(kind):
@@ -608,16 +652,14 @@ def aim_gun(kind, model, grips, sway=0.0, kick=0.0):
     pocket = ct + cr @ np.array(AIM[kind][1])
     up = math.radians(-1.0 + sway * 0.8 + kick * 9.0)
     gun_r = rot_y(math.radians(sway * 0.6)) @ rot_x(-up)
-    return gun_r, pocket - gun_r @ grips["stock"] + np.array((0.0, 0.0, -kick * 1.2))
+    return gun_r, pocket - gun_r @ grips["stock"] + np.array((0.0, 0.0, -kick * 2.4))
 
 
 def make(kind):
     model = Model(palette(kind), pixels_per_block=PIXELS)
     skeleton(model)
-    for bone in model.bones:
-        bone.grid.patch = 2
     body(model, kind)
-    webbing(model, kind)
+    rig(model, kind)
     if kind == "rifleman":
         rifleman_head(model)
         rifleman_gear(model)
@@ -625,14 +667,15 @@ def make(kind):
         scavenger_head(model)
         scavenger_gear(model)
     gun = model.bone("Gun", "Chest")
-    gun.grid.patch = 2
     grips = rifle(gun.grid) if kind == "rifleman" else smg(gun.grid)
     for name, held in (("Left", "carry"), ("Right", "right")):
         hand(model, name, "glove", fingertips="skin" if kind == "scavenger" else None, radius=grips[held][3])
 
     # At rest the arms hold the gun low across the body: that pose's turnings are the bones' rest.
     gun_r, gun_t = carry(kind)
-    for name, (rotation, move) in hold(model, grips, gun_r, gun_t, {}, "carry", f"{kind} carrying").items():
+    # The left shoulder reaches forward a little, as one does to hold a gun across the body.
+    reach = {"LeftShoulder": ((0.0, 25.0, 0.0), (0, 0, 0))}
+    for name, (rotation, move) in hold(model, grips, gun_r, gun_t, reach, "carry", f"{kind} carrying").items():
         bone = model.by_name(name)
         bone.rotation = degrees_of(rotation)
         bone.pivot = bone.pivot + np.array(move, float)

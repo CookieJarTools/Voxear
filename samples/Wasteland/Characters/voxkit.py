@@ -72,6 +72,10 @@ class Grid:
         self.cells = {}
         self.seed = seed
         self.patch = patch
+        # With panels, each shape takes one shade for all its cubes, a few cubes picking another, so a model reads
+        # as plates, pouches and straps of their own tones rather than as speckled cubes.
+        self.panels = False
+        self.shapes = 0
 
     def put(self, cell, material, shade=None):
         x, y, z = (int(math.floor(v)) for v in cell)
@@ -107,12 +111,21 @@ class Grid:
     def fill(self, inside, bounds, material, shade=None, only=None):
         """Puts `material` in every cube in `bounds` whose middle `inside` takes; with `only`, just over cubes
         already there of those materials (or any, for True)."""
+        self.shapes += 1
+        panel = shade
+        if shade is None and self.panels:
+            panel = int(hashed(self.seed, self.shapes, 3) * 3.99)
         for cell in self._cells(inside, bounds):
+            if panel is not None and shade is None:
+                pick = hashed(*cell, self.seed, 11)
+                shade_here = panel if pick > 0.12 else max(0, min(3, panel + (1 if pick > 0.06 else -1)))
+            else:
+                shade_here = shade
             if only is not None:
                 there = self.cells.get(cell)
                 if there is None or (only is not True and there[0] not in only):
                     continue
-            self.put(cell, material, shade)
+            self.put(cell, material, shade_here)
 
     def remove(self, inside, bounds):
         for cell in self._cells(inside, bounds):

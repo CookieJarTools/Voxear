@@ -2255,21 +2255,23 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     - Not done: a sheet's tint mask painted pixel by pixel rather than by colour, glass tinted, and parts that
       follow another skeleton by a rig's parts rather than by name.
   - ~~**Soldiers of cubes (a sample):**~~ done: `samples/Wasteland` has two chibi soldiers with gear from the world
-    wars, worn down by an apocalypse: big heads with large eyes over a mask, helmets with goggles, short bodies packed
-    with webbing and pouches, knee pads and chunky boots. The **Rifleman** has a dish helmet with netting and rags, a
-    respirator with a round filter, an olive tunic, a pack and blanket roll and a bolt-action rifle. The
-    **Scavenger**, a radioman in faded blue, has a deep steel helmet, a headset with a microphone, a radio with two
-    aerials on his back, a bandolier, fingerless gloves and a drum-fed submachine gun. Each is one `.boxmodel` of
-    about 23,000 cubes at 34 to a block (1.9 m tall), on bones named as a humanoid rig names them (Hips, Spine, Chest,
-    Neck, Head, LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and so on).
-    `Characters/make_soldiers.py` (with `voxkit.py`) makes them from shapes. The hands are sculpted closed round the
-    grips they hold, and each pose puts them there exactly: each arm reaches its wrist to the place and turning its
-    grip asks for, the elbow bending out and the forearm twisting to spare the wrist. At rest they hold the gun low
-    across the body, the stock at the right shoulder, the right hand on the grip at the belly, the muzzle down to the
-    left and the left hand under the barrel. The script counts the cubes of the gun, forearms and hands inside the
-    body for each pose (60 to 350 of 23,000, mostly the stock against the shoulder and the forearms against the vest),
-    so a changed pose shows how it fares. Their arms have no role, so Mob Motion walks, runs and idles the body and
-    legs while the hands stay on the gun. **Aim** (a breath's sway) and **Fire** (a shot's kick) are clips in each
+    wars, worn down by an apocalypse, 128 cubes and 1.9 m tall: a helmeted head nearly a third of that and as wide as
+    the shoulders, large eyes over a mask, a short body in a rig of straps and two rows of pouches, chunky arms with
+    badges, knee pads and big boots. Each part is built of plates and blocks that each take a tone of their own, a few
+    cubes picking another, so they read as panels rather than speckled cubes. The **Rifleman** has a dish helmet with
+    netting and rags, a respirator with a round filter, an olive uniform, a pack and blanket roll and a bolt-action
+    rifle. The **Scavenger**, a radioman in faded blue, has a steel helmet cut high with rails and a headset, a
+    microphone, a radio with two aerials on his back, a bandolier, fingerless gloves and a drum-fed submachine gun.
+    Each is one `.boxmodel` of about 128,000 cubes at 67 to a block, on bones named as a humanoid rig names them
+    (Hips, Spine, Chest, Neck, Head, LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and so on).
+    `Characters/make_soldiers.py` (with `voxkit.py`) makes them from shapes. The hands have four fingers and a thumb
+    closed round the grips they hold, and each pose puts them there exactly: each arm reaches its wrist to the place
+    and turning its grip asks for, the elbow bending out and the forearm twisting to spare the wrist. At rest they
+    hold the gun across the body, the stock at the right of the chest, the right hand on the grip under the chest
+    pouches, the muzzle down towards the left knee and the left hand under the barrel, the left shoulder reaching
+    forward. The script counts the cubes of the gun, forearms and hands inside the body for each pose, so a changed
+    pose shows how it fares. Their arms have no role, so Mob Motion walks, runs and idles the body and legs while the
+    hands stay on the gun. **Aim** (turned 60 degrees, a breath's sway) and **Fire** (a shot's kick) are clips in each
     model. `Scripts/Patrol.cs` walks them round their points, running every other leg, and stops to aim and fire on
     their Animators. Levels: Wasteland (the patrol) and Lineup (the two standing). Manual: Box Models, Mob Motion. Not
     done: walking while aiming, since a clip stops Mob Motion until it ends.

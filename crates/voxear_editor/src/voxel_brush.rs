@@ -8,8 +8,13 @@
 //! gone a third of the size along; Shift does the other. A stroke is one
 //! step to undo, and the scene saves what it changed, as scripts' and
 //! `vox editor call voxels.carve`'s changes are kept.
+//!
+//! Set to Print, the box of the **Brush Print** picked shows where the
+//! ground under the pointer is, turned **Brush Turn** degrees, and a click
+//! prints it there, its model's origin on the ground.
 
-use voxear_core::math::Vec3;
+use voxear_assets::AssetGuid;
+use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::Game;
 use voxear_render::{VoxelMaterial, VoxelVolume};
@@ -19,6 +24,7 @@ use crate::{props::Value, scene_tools::ViewCamera};
 
 const CARVE_COLOR: u32 = 0xe8784c;
 const FILL_COLOR: u32 = 0x5ad1e6;
+const PRINT_COLOR: u32 = 0xf2c94c;
 /// How far a ray from the pointer looks for the ground, in metres.
 const REACH: f32 = 2000.0;
 /// How far apart a stroke's balls are, as a share of the brush's size.
@@ -31,16 +37,18 @@ pub enum VoxelBrushMode {
     Off,
     Carve,
     Fill,
+    Print,
 }
 
 impl VoxelBrushMode {
-    pub const ALL: [Self; 3] = [Self::Off, Self::Carve, Self::Fill];
+    pub const ALL: [Self; 4] = [Self::Off, Self::Carve, Self::Fill, Self::Print];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Off => "Off",
             Self::Carve => "Carve",
             Self::Fill => "Fill",
+            Self::Print => "Print",
         }
     }
 }
@@ -53,11 +61,15 @@ pub struct VoxelBrushUi {
     /// The balls' radius, in metres.
     pub size: f32,
     pub ground: VoxelMaterial,
+    /// The Voxel Print a click prints, and how far it is turned about the
+    /// up axis, in degrees.
+    pub print: Option<AssetGuid>,
+    pub turn: f32,
 }
 
 impl Default for VoxelBrushUi {
     fn default() -> Self {
-        Self { mode: VoxelBrushMode::Off, size: 1.0, ground: VoxelMaterial::Dirt }
+        Self { mode: VoxelBrushMode::Off, size: 1.0, ground: VoxelMaterial::Dirt, print: None, turn: 0.0 }
     }
 }
 
@@ -79,13 +91,17 @@ pub enum VoxelBrushField {
     Mode,
     Size,
     Ground,
+    Print,
+    Turn,
 }
 
 /// The rows an endless volume's section shows for its brush: the size and
-/// ground with the brush on, the ground for filling.
+/// ground with the brush carving or filling, the print and its turn with
+/// it printing.
 pub fn fields(world: &World) -> Vec<VoxelBrushField> {
     match ui(world).mode {
         VoxelBrushMode::Off => vec![VoxelBrushField::Mode],
+        VoxelBrushMode::Print => vec![VoxelBrushField::Mode, VoxelBrushField::Print, VoxelBrushField::Turn],
         _ => vec![VoxelBrushField::Mode, VoxelBrushField::Size, VoxelBrushField::Ground],
     }
 }
@@ -95,6 +111,8 @@ pub fn label(field: VoxelBrushField) -> &'static str {
         VoxelBrushField::Mode => "Brush",
         VoxelBrushField::Size => "Brush Size",
         VoxelBrushField::Ground => "Brush Ground",
+        VoxelBrushField::Print => "Brush Print",
+        VoxelBrushField::Turn => "Brush Turn",
     }
 }
 
@@ -104,17 +122,45 @@ pub fn key(field: VoxelBrushField) -> &'static str {
         VoxelBrushField::Mode => "brush",
         VoxelBrushField::Size => "brush_size",
         VoxelBrushField::Ground => "brush_ground",
+        VoxelBrushField::Print => "brush_print",
+        VoxelBrushField::Turn => "brush_turn",
     }
 }
 
 pub fn tooltip(field: VoxelBrushField) -> &'static str {
     match field {
         VoxelBrushField::Mode => {
-            "Carve balls out of the ground or fill them, dragging in the Scene view; Shift does the other"
+            "Carve balls out of the ground or fill them, dragging in the Scene view, Shift doing the other; or print a Voxel Print where you click"
         }
         VoxelBrushField::Size => "The balls' radius, in metres",
         VoxelBrushField::Ground => "What a ball filled is",
+        VoxelBrushField::Print => "The Voxel Print a click prints",
+        VoxelBrushField::Turn => "How far the print is turned about the up axis, in degrees",
     }
+}
+
+/// Whether a row picks an asset: the print.
+pub fn is_picked(field: VoxelBrushField) -> bool {
+    field == VoxelBrushField::Print
+}
+
+/// The Voxel Prints a row can pick, with none first.
+pub fn choices(game: &Game) -> Vec<(String, crate::fields::Pick)> {
+    crate::fields::assets_of(game, Some(voxear_assets::AssetKind::VoxelPrint))
+}
+
+/// Picks the brush's print, read now so its box shows under the pointer.
+pub fn pick(game: &mut Game, choice: &crate::fields::Pick) -> bool {
+    let crate::fields::Pick::Asset(path) = choice else { return false };
+    let print = match path {
+        Some(path) => match game.content.voxel_print(path) {
+            Some((guid, _)) => Some(guid),
+            None => return false,
+        },
+        None => None,
+    };
+    ui_mut(&mut game.engine.world).print = print;
+    true
 }
 
 fn choice<T: PartialEq + Copy>(all: &[T], one: T, name: fn(T) -> &'static str) -> Value {
@@ -122,12 +168,17 @@ fn choice<T: PartialEq + Copy>(all: &[T], one: T, name: fn(T) -> &'static str) -
     Value::Choice(at, all.iter().map(|each| name(*each).to_string()).collect())
 }
 
-pub fn get(world: &World, field: VoxelBrushField) -> Value {
-    let ui = ui(world);
+pub fn get(game: &Game, field: VoxelBrushField) -> Value {
+    let ui = ui(&game.engine.world);
     match field {
         VoxelBrushField::Mode => choice(&VoxelBrushMode::ALL, ui.mode, VoxelBrushMode::name),
         VoxelBrushField::Size => Value::Number(ui.size),
         VoxelBrushField::Ground => choice(&VoxelMaterial::ALL, ui.ground, VoxelMaterial::name),
+        VoxelBrushField::Print => {
+            let path = ui.print.and_then(|guid| game.content.db().get(guid)).map(|entry| entry.path.clone());
+            Value::Asset(path.unwrap_or_else(|| "None".into()))
+        }
+        VoxelBrushField::Turn => Value::Number(ui.turn),
     }
 }
 
@@ -141,6 +192,7 @@ pub fn set(world: &mut World, field: VoxelBrushField, value: Value) -> bool {
         (VoxelBrushField::Ground, Value::Choice(at, _)) => {
             ui.ground = VoxelMaterial::ALL.get(at).copied().unwrap_or_default()
         }
+        (VoxelBrushField::Turn, Value::Number(turn)) => ui.turn = turn.rem_euclid(360.0),
         _ => return false,
     }
     true
@@ -152,6 +204,8 @@ struct Stroke {
     entity: Entity,
     fill: bool,
     last: Vec3,
+    /// Whether it printed a print, which dragging does not repeat.
+    printed: bool,
 }
 
 /// The Scene view's voxel brush.
@@ -196,7 +250,8 @@ impl VoxelTools {
     }
 
     /// Starts a stroke under `point`: a ball carved or filled there, Shift
-    /// doing the other. Returns whether it took the press.
+    /// doing the other; or the brush's print printed there. Returns whether
+    /// it took the press.
     pub fn begin(
         &mut self,
         game: &mut Game,
@@ -207,8 +262,18 @@ impl VoxelTools {
     ) -> bool {
         self.hover(game, camera, Some(entity), Some(point));
         let Some((_, at)) = self.under else { return false };
-        let fill = (ui(&game.engine.world).mode == VoxelBrushMode::Fill) != shift;
-        self.stroke = Some(Stroke { entity, fill, last: at });
+        let ui = ui(&game.engine.world);
+        if ui.mode == VoxelBrushMode::Print {
+            let Some(print) = ui.print else { return false };
+            let (content, world) = (&mut game.content, &mut game.engine.world);
+            let reference = print.to_string();
+            voxear_engine::voxel_volumes::print(content, world, &reference, at, [0.0, ui.turn, 0.0], Some(entity));
+            // A stroke of its own, for one step to undo, which dragging carries no further.
+            self.stroke = Some(Stroke { entity, fill: false, last: at, printed: true });
+            return true;
+        }
+        let fill = (ui.mode == VoxelBrushMode::Fill) != shift;
+        self.stroke = Some(Stroke { entity, fill, last: at, printed: false });
         self.dab(game, at);
         true
     }
@@ -216,7 +281,7 @@ impl VoxelTools {
     /// Carries the stroke on to the ground under `point`: a ball each time
     /// it has gone a third of the size.
     pub fn drag_to(&mut self, game: &mut Game, camera: &ViewCamera, point: [f32; 2]) {
-        let Some(stroke) = &self.stroke else { return };
+        let Some(stroke) = self.stroke.as_ref().filter(|stroke| !stroke.printed) else { return };
         let (entity, last) = (stroke.entity, stroke.last);
         let Some(at) = ground_under(game, camera, entity, point) else { return };
         self.under = Some((entity, at));
@@ -250,6 +315,9 @@ impl VoxelTools {
             return Vec::new();
         }
         let ui = ui(&game.engine.world);
+        if ui.mode == VoxelBrushMode::Print {
+            return print_box(game, camera, &ui, at);
+        }
         let fill = self.stroke.as_ref().map_or((ui.mode == VoxelBrushMode::Fill) != shift, |stroke| stroke.fill);
         let color = Color::hex(if fill { FILL_COLOR } else { CARVE_COLOR });
         let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
@@ -274,4 +342,30 @@ impl VoxelTools {
         }
         shapes
     }
+}
+
+/// The box of the brush's print placed at `at`, turned as the brush turns
+/// it: its twelve edges, and a dot at its origin, as shapes in the view's
+/// own coordinates.
+fn print_box(game: &Game, camera: &ViewCamera, ui: &VoxelBrushUi, at: Vec3) -> Vec<Shape> {
+    let color = Color::hex(PRINT_COLOR);
+    let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
+    let mut shapes = Vec::new();
+    if let Some(print) = ui.print.and_then(|guid| game.content.loaded_voxel_print(guid)) {
+        let (low, high) = print.bounds();
+        let turn = Quat::from_rotation_y(ui.turn.to_radians());
+        let corner = |i: usize| {
+            let c = Vec3::new([low.x, high.x][i & 1], [low.y, high.y][(i >> 1) & 1], [low.z, high.z][i >> 2]);
+            camera.project(at + turn * c).map(local)
+        };
+        for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
+            if let (Some(from), Some(to)) = (corner(a), corner(b)) {
+                shapes.push(Shape::Line { from, to, width: 1.5, color });
+            }
+        }
+    }
+    if let Some(middle) = camera.project(at).map(local) {
+        shapes.push(Shape::Circle { center: middle, radius: 3.0, fill: color, border: None });
+    }
+    shapes
 }

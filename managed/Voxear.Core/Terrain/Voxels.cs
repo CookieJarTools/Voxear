@@ -5,15 +5,18 @@ using Voxear.Interop;
 namespace Voxear;
 
 /// <summary>
-/// The level's endless Voxel Volumes, ground of voxels a few centimetres across: where a ray meets it, and balls
-/// carved out of it and filled with ground. Each change reaches every endless Voxel Volume the ball falls in, which makes its ground there again
-/// within a frame or two, and a save of the scene keeps it, after what was changed before.
+/// The level's endless Voxel Volumes, ground of voxels a few centimetres across: where a ray meets it, balls carved
+/// out of it and filled with ground, and Voxel Prints printed into it. Each change reaches every endless Voxel Volume
+/// it falls in, which makes its ground there again within a frame or two, and a save of the scene keeps it, after what
+/// was changed before.
 /// <code>
-/// // A crater where a shell lands, and a heap of rock where a wall is raised.
+/// // A crater where a shell lands, a heap of rock where a wall is raised, and sandbags round a dug-out.
 /// Voxels.Carve(landed, 1.5f);
 /// Voxels.Fill(wall, 1f, VoxelMaterial.Rock);
+/// Voxels.Print(SandbagWall, dugOut, turn: 90f);
 /// </code>
-/// A later change goes over an earlier one: a ball carved into rock just filled takes a bite out of it.
+/// A later change goes over an earlier one: a ball carved into rock just filled, or into a print, takes a bite out of
+/// it.
 /// </summary>
 public static unsafe class Voxels
 {
@@ -38,9 +41,37 @@ public static unsafe class Voxels
 	}
 
 	/// <summary>
+	/// Prints <paramref name="print"/> into every endless Voxel Volume its box reaches, its model's origin at
+	/// <paramref name="at"/>, turned <paramref name="turn"/> degrees about the up axis. It is solid all through, so a
+	/// ball carved into it later finds more of it, in the colours nearest its skin. It is printed once the frame is done;
+	/// gives whether it was asked for, false without the engine or a print.
+	/// </summary>
+	public static bool Print(VoxelPrint print, Vector3 at, float turn = 0f)
+	{
+		return Print(print, at, new Vector3(0f, turn, 0f));
+	}
+
+	/// <summary>
+	/// Prints <paramref name="print"/> as <see cref="Print(VoxelPrint, Vector3, float)"/> does, turned
+	/// <paramref name="rotation"/> degrees about X, Y and Z, as an Obj's rotation is written: leaning with a slope, say.
+	/// </summary>
+	public static bool Print(VoxelPrint print, Vector3 at, Vector3 rotation)
+	{
+		if (!Native.IsConnected || !print.IsSet)
+		{
+			return false;
+		}
+		var bytes = System.Text.Encoding.UTF8.GetBytes(print.Reference);
+		fixed (byte* text = bytes)
+		{
+			return Native.Api->VoxelPrint(text, bytes.Length, &at, &rotation) == 1;
+		}
+	}
+
+	/// <summary>
 	/// Where a ray from <paramref name="origin"/> along <paramref name="direction"/> first meets the ground of an
 	/// endless Voxel Volume within <paramref name="maxDistance"/> metres: its ground as it is made and as it was changed,
-	/// not its grass, flowers or trees. Every machine finds the same, so a game can carve where a player aims.
+	/// the prints printed into it with the rest, not its grass, flowers or trees. Every machine finds the same, so a game can carve where a player aims.
 	/// <code>
 	/// // Dig where the player looks.
 	/// if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f) &amp;&amp; Input.Pressed(dig))

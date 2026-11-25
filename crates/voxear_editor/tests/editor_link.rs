@@ -862,6 +862,54 @@ fn a_tool_carves_and_fills_an_endless_voxel_volume_each_one_step_to_undo() {
 }
 
 #[test]
+fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_one_step_to_undo() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    // The pyramid made into voxels, at 8 a metre, solid all through.
+    let args = json!({ "model": "Models/Pyramid.gltf", "voxels_per_metre": 8, "colours": 8 });
+    let made = done(&mut editor, &mut renderer, "voxel_prints.make", args);
+    assert_eq!(made["print"]["path"], "Models/Pyramid.voxprint", "{made}");
+    assert!(made["solid"].as_u64().unwrap() > 50 && made["colours"].as_u64().unwrap() <= 8, "{made}");
+    assert!(dir.path().join("Models/Pyramid.voxprint").is_file());
+    let info = done(&mut editor, &mut renderer, "voxel_prints.info", json!({ "print": "Models/Pyramid.voxprint" }));
+    assert_eq!(info["voxels_per_metre"], 8);
+    assert_eq!(info["settings"]["fill"], "solid", "{info}");
+    // Made again, finer, from what it was made with.
+    let again = json!({ "print": "Models/Pyramid.voxprint", "voxels_per_metre": 16 });
+    let finer = done(&mut editor, &mut renderer, "voxel_prints.make", again);
+    assert!(finer["solid"].as_u64() > made["solid"].as_u64(), "{finer} against {made}");
+    let wrong = json!({ "model": "Scenes/Main.scene" });
+    assert!(ask(&mut editor, &mut renderer, "voxel_prints.make", wrong).is_err(), "a scene is no model");
+    // Printed into an endless volume, turned.
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Voxels" }));
+    let volume = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": volume, "component": "voxel_volume" }));
+    let endless = json!({ "obj": volume, "component": "voxel_volume", "field": "endless", "value": true });
+    done(&mut editor, &mut renderer, "field.set", endless);
+    let print = json!({ "print": "Models/Pyramid.voxprint", "at": [4.0, 2.0, 4.0], "turn": 45.0 });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.print", print)["reached"], 1);
+    let entity = link::resolve_obj(&editor.game, &volume).unwrap();
+    let edits =
+        |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
+    assert!(edits(&editor)[0].print.is_some());
+    // The CPU's ray meets it over the ground, coming down on its middle.
+    let down = json!({ "from": [4.0, 30.0, 4.0], "direction": [0.0, -1.0, 0.0], "obj": volume });
+    let met = done(&mut editor, &mut renderer, "voxels.raycast", down);
+    assert!(met["point"][1].as_f64().unwrap() > 2.2, "on the pyramid: {met}");
+    let carve = json!({ "at": [6.0, 2.0, 4.0], "radius": 0.5 });
+    done(&mut editor, &mut renderer, "voxels.carve", carve);
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(edits(&editor).len(), 1, "the carve taken back alone");
+    frames(&mut editor, &mut renderer, 5);
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let scene = std::fs::read_to_string(dir.path().join(saved["saved"][0].as_str().unwrap())).unwrap();
+    let guid = editor.game.content.db().guid_of("Models/Pyramid.voxprint").unwrap().to_string();
+    assert!(scene.contains(&format!("print = \"{guid}\"")) && scene.contains("rotation = [0.0, 45.0, 0.0]"), "{scene}");
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert!(edits(&editor).is_empty(), "the print taken back");
+}
+
+#[test]
 fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_finds_its_ground() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
@@ -925,6 +973,28 @@ fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_
     assert!(editor.selected() == Some(entity), "the stroke is not a click that selects");
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert_eq!(edits(&editor), 0, "the stroke taken back whole");
+
+    // Set to Print, a click prints the print picked where the pointer meets the ground, dragging no more of it.
+    let args = json!({ "model": "Models/Pyramid.gltf", "voxels_per_metre": 8 });
+    done(&mut editor, &mut renderer, "voxel_prints.make", args);
+    for (field, value) in [("brush", json!("Print")), ("brush_print", json!("Models/Pyramid.voxprint")), ("brush_turn", json!(30.0))] {
+        let set = json!({ "obj": volume, "component": "voxel_volume", "field": field, "value": value });
+        assert_eq!(done(&mut editor, &mut renderer, "field.set", set)["changed"], true, "{field}");
+    }
+    editor.select(Some(entity));
+    pointer_to(&mut editor, from);
+    frames(&mut editor, &mut renderer, 1);
+    left_button(&mut editor, true);
+    frames(&mut editor, &mut renderer, 1);
+    pointer_to(&mut editor, to);
+    frames(&mut editor, &mut renderer, 1);
+    left_button(&mut editor, false);
+    frames(&mut editor, &mut renderer, 2);
+    let printed = editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
+    assert_eq!(printed.len(), 1, "one print for a click and a drag");
+    assert!(printed[0].print.is_some());
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(edits(&editor), 0, "the print taken back");
 }
 
 fn pointer_to(editor: &mut Editor, [x, y]: [f32; 2]) {

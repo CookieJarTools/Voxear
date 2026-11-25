@@ -537,6 +537,8 @@ pub struct Content {
     biomes: HashMap<AssetGuid, Option<Arc<voxear_terrain::generate::BiomeDef>>>,
     structures: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::structure::StructureDef>>>,
     plants: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::plant::PlantDef>>>,
+    /// Voxel Prints read, each once, until it is saved again.
+    voxel_prints: HashMap<AssetGuid, Option<Arc<voxear_render::VoxelPrint>>>,
     /// The blocks the project's plants grow as their wood, found once as a
     /// block is first read, and again once a plant is saved.
     plant_woods: Option<std::collections::HashSet<AssetGuid>>,
@@ -740,6 +742,7 @@ impl Content {
             biomes: HashMap::new(),
             structures: HashMap::new(),
             plants: HashMap::new(),
+            voxel_prints: HashMap::new(),
             plant_woods: None,
             terrain_greys: HashMap::new(),
             world_gens: HashMap::new(),
@@ -927,6 +930,7 @@ impl Content {
         self.texts.remove(&guid);
         self.box_sheets.retain(|&(model, picture), _| model != guid && picture != guid);
         self.box_models.remove(&guid);
+        self.voxel_prints.remove(&guid);
         self.prefabs.files.remove(&guid);
         if let Some(&id) = self.prefabs.ids.get(&guid)
             && let Some(template) = self.prefabs.templates.get_mut(id.0 as usize)
@@ -1059,6 +1063,15 @@ impl Content {
         *mounts = crate::package_assets::mounts(mounts.root())?;
         *reader = FolderReader::mounted(mounts.clone());
         self.rescan()
+    }
+
+    /// The project's folders and packages, where content is read from a
+    /// project's folder: none for built content.
+    pub fn mounts(&self) -> Option<&voxear_assets::Mounts> {
+        match &self.source {
+            Source::Folder(_, mounts) => Some(mounts),
+            _ => None,
+        }
     }
 
     /// Saves a `.material` asset, and shows the change at once wherever it is
@@ -1879,6 +1892,25 @@ impl Content {
         let kept = read.map(Arc::new).map_err(|error| tracing::warn!("{path} could not be read: {error:#}")).ok();
         self.plants.insert(guid, kept.clone());
         kept.map(|kept| (guid, kept))
+    }
+
+    /// The Voxel Print `reference` names, read once, with its GUID: none,
+    /// with a warning, where it cannot be read.
+    pub fn voxel_print(&mut self, reference: &str) -> Option<(AssetGuid, Arc<voxear_render::VoxelPrint>)> {
+        let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+        if let Some(kept) = self.voxel_prints.get(&guid) {
+            return kept.clone().map(|kept| (guid, kept));
+        }
+        let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::VoxelPrint)?.path.clone();
+        let read = self.read(&path).and_then(|bytes| voxear_render::VoxelPrint::from_bytes(&bytes));
+        let kept = read.map(Arc::new).map_err(|error| tracing::warn!("{path} could not be read: {error:#}")).ok();
+        self.voxel_prints.insert(guid, kept.clone());
+        kept.map(|kept| (guid, kept))
+    }
+
+    /// The Voxel Print at `guid`, where it was read already.
+    pub fn loaded_voxel_print(&self, guid: AssetGuid) -> Option<Arc<voxear_render::VoxelPrint>> {
+        self.voxel_prints.get(&guid)?.clone()
     }
 
     /// Forgets a structure or a plant, read again when next asked for, as

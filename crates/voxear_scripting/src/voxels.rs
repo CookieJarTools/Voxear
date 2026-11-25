@@ -1,8 +1,11 @@
 //! Voxel Volumes for C#: `Voxels.Carve` and `Voxels.Fill` in Voxear.Core
-//! change every endless Voxel Volume a ball falls in, and `Voxels.Raycast`
+//! change every endless Voxel Volume a ball falls in, `Voxels.Print`
+//! prints a Voxel Print into those its box reaches, and `Voxels.Raycast`
 //! finds where a ray meets their ground. The engine answers, as
-//! only it keeps the volumes (see `voxear_engine::voxel_volumes`).
+//! only it keeps the volumes (see `voxear_engine::voxel_volumes`); a print
+//! is printed after the frame, when the engine has its project's files.
 
+use std::cell::RefCell;
 use std::sync::OnceLock;
 
 use voxear_ecs::{Entity, World};
@@ -67,5 +70,41 @@ pub(crate) unsafe extern "C" fn voxel_raycast(
         *hit = [point[0], point[1], point[2], normal[0], normal[1], normal[2], distance];
         *obj = entity.to_bits();
     }
+    1
+}
+
+/// A print a script asked for: the `.voxprint` by GUID or path, where its
+/// model's origin goes in the world, and how it is turned, in degrees about
+/// X, Y and Z.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoxelPrintRequest {
+    pub print: String,
+    pub at: [f32; 3],
+    pub rotation: [f32; 3],
+}
+
+thread_local! {
+    static PRINTS: RefCell<Vec<VoxelPrintRequest>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The prints scripts asked for since this was last called, in order.
+pub fn take_voxel_prints() -> Vec<VoxelPrintRequest> {
+    PRINTS.with_borrow_mut(std::mem::take)
+}
+
+/// `Voxels.Print`: 1 once the print is asked for, printed after the frame;
+/// 0 for no print named.
+pub(crate) unsafe extern "C" fn voxel_print(
+    print: *const u8,
+    length: i32,
+    at: *const [f32; 3],
+    rotation: *const [f32; 3],
+) -> i32 {
+    if print.is_null() || length <= 0 || at.is_null() || rotation.is_null() {
+        return 0;
+    }
+    let print = unsafe { crate::interop::utf8(print, length) }.into_owned();
+    let (at, rotation) = unsafe { (*at, *rotation) };
+    PRINTS.with_borrow_mut(|prints| prints.push(VoxelPrintRequest { print, at, rotation }));
     1
 }

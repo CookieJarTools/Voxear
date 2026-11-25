@@ -446,6 +446,7 @@ fn gather(
                 | AssetKind::Structure
                 | AssetKind::Plant
                 | AssetKind::VoxModel
+                | AssetKind::VoxelPrint
                 // A particle effect is read when a Particle System first plays it.
                 | AssetKind::Particles => false,
             } && !models.stripped.contains(&guid);

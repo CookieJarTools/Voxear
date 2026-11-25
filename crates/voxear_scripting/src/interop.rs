@@ -635,6 +635,10 @@ pub(crate) struct NativeApi {
         hit: *mut [f32; 7],
         obj: *mut u64,
     ) -> i32,
+    /// `Voxels.Print`: a Voxel Print by reference printed after the frame, its origin at `at`, turned `rotation`
+    /// degrees about X, Y and Z; 1 once asked for.
+    pub voxel_print:
+        unsafe extern "C" fn(print: *const u8, length: i32, at: *const [f32; 3], rotation: *const [f32; 3]) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2386,6 +2390,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         towns_info: crate::services::towns_info,
         voxel_edit: crate::voxels::voxel_edit,
         voxel_raycast: crate::voxels::voxel_raycast,
+        voxel_print: crate::voxels::voxel_print,
     }
 }
 

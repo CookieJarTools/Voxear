@@ -128,6 +128,8 @@ pub enum PickFor {
     BiomeRef { biome: String, field: crate::biome_inspector::BiomeRef },
     /// One of the blocks of the plant at this path.
     PlantRef { plant: String, field: crate::plant_inspector::PlantRef },
+    /// The model or a part's picture of a Voxel Print.
+    VoxelPrintRef { print: String, field: crate::voxel_print_inspector::PrintRef },
     /// A control's picture in the Prompt Icons at this path.
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.
@@ -587,6 +589,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Structure) => "block",
         Some(AssetKind::Plant) => "sprout",
         Some(AssetKind::VoxModel) => "blocks",
+        Some(AssetKind::VoxelPrint) => "box",
         Some(AssetKind::Lighting) => "light",
         Some(AssetKind::LookPack) => "eye",
         Some(AssetKind::ShaderPack) => "layers",

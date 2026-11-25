@@ -304,6 +304,9 @@ impl Editor {
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
             "voxels.carve" | "voxels.fill" => self.voxels_edit(call, args),
             "voxels.raycast" => self.voxels_raycast(args),
+            "voxels.print" => self.voxels_print(args),
+            "voxel_prints.make" => self.voxel_prints_make(args),
+            "voxel_prints.info" => self.voxel_prints_info(args),
             "blocks.restore" => self.blocks_restore(args),
             "blocks.bake_far" => {
                 let world = match args.get("obj").filter(|obj| !obj.is_null()) {
@@ -2541,6 +2544,144 @@ impl Editor {
             }
         }
         done(json!({ "reached": reached }))
+    }
+
+    fn voxels_print(&mut self, args: &Json) -> Called {
+        use voxear_render::VoxelVolume;
+        let (guid, _, kind) = link::resolve_project_asset(&self.game, need(args, "print")?)?;
+        if kind != AssetKind::VoxelPrint {
+            return Err(refuse(ErrorKind::WrongValue, "`print` is not a .voxprint"));
+        }
+        let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+        let turn = args.get("turn").and_then(Json::as_f64).unwrap_or(0.0) as f32;
+        let rotation = opt_vector(args, "rotation")?.unwrap_or([0.0, turn, 0.0]);
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        let volumes: Vec<Entity> = self
+            .game
+            .engine
+            .world
+            .query_ref::<(Entity, &VoxelVolume)>()
+            .into_iter()
+            .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        let reference = guid.to_string();
+        let mut reached = 0;
+        for entity in volumes {
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            let (content, world) = (&mut self.game.content, &mut self.game.engine.world);
+            let printed = voxear_engine::voxel_volumes::print(content, world, &reference, at, rotation, Some(entity));
+            match printed {
+                None => return Err(refuse(ErrorKind::WrongValue, "the Voxel Print could not be read")),
+                Some(0) => {}
+                Some(_) => {
+                    reached += 1;
+                    self.record_change(entity, before);
+                }
+            }
+        }
+        done(json!({ "reached": reached }))
+    }
+
+    fn voxel_prints_make(&mut self, args: &Json) -> Called {
+        use voxear_render::{VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
+        let made_again = match args.get("print") {
+            Some(print) if !print.is_null() => Some(link::resolve_project_asset(&self.game, print)?),
+            _ => None,
+        };
+        let mut settings = match &made_again {
+            Some((guid, _, kind)) => {
+                if *kind != AssetKind::VoxelPrint {
+                    return Err(refuse(ErrorKind::WrongValue, "`print` is not a .voxprint"));
+                }
+                voxear_engine::voxel_prints::settings_of(&mut self.game.content, &guid.to_string())
+                    .ok_or_else(|| refuse(ErrorKind::WrongValue, "the Voxel Print could not be read"))?
+            }
+            None => VoxelPrintSettings::default(),
+        };
+        if let Some(model) = args.get("model").filter(|model| !model.is_null()) {
+            let (guid, _, kind) = link::resolve_project_asset(&self.game, model)?;
+            if kind != AssetKind::Model {
+                return Err(refuse(ErrorKind::WrongValue, "`model` is not a model"));
+            }
+            settings.model = guid.to_string();
+        }
+        if settings.model.is_empty() {
+            return Err(bad("give `model`, or `print` to make again"));
+        }
+        if let Some(per) = args.get("voxels_per_metre").and_then(Json::as_u64) {
+            settings.voxels_per_metre = (per as u32).clamp(1, voxear_render::MOST_VOXELS_A_METRE);
+        }
+        if let Some(scale) = args.get("scale").and_then(Json::as_f64) {
+            settings.scale = scale as f32;
+        }
+        if let Some(colours) = args.get("colours").and_then(Json::as_u64) {
+            settings.colours = (colours as u32).clamp(1, voxear_render::MOST_PRINT_COLOURS);
+        }
+        if let Some(fill) = args.get("fill").and_then(Json::as_str) {
+            settings.fill = VoxelPrintFill::ALL
+                .into_iter()
+                .find(|each| each.name().eq_ignore_ascii_case(fill))
+                .ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{fill} is not solid, sealed or shell")))?;
+        }
+        if let Some(pictures) = args.get("pictures").and_then(Json::as_array) {
+            settings.pictures.clear();
+            for given in pictures {
+                let part = need(given, "part")?.as_str().ok_or_else(|| bad("a picture's `part` is text"))?;
+                let (guid, _, kind) = link::resolve_project_asset(&self.game, need(given, "picture")?)?;
+                if kind != AssetKind::Texture {
+                    return Err(refuse(ErrorKind::WrongValue, format!("the picture for {part} is not a picture")));
+                }
+                settings.pictures.push(VoxelPrintPicture { part: part.to_string(), picture: guid.to_string() });
+            }
+        }
+        let path = match (&made_again, args.get("path").and_then(Json::as_str)) {
+            (_, Some(path)) => path.to_string(),
+            (Some((_, path, _)), None) => path.clone(),
+            (None, None) => {
+                let model = self.game.content.parse(&settings.model).ok().and_then(|reference| reference.guid());
+                let model = model.and_then(|guid| self.game.content.db().get(guid)).map(|entry| entry.path.clone());
+                voxear_engine::voxel_prints::path_for(&model.unwrap_or_default())
+            }
+        };
+        let started = std::time::Instant::now();
+        let (print, guid) = voxear_engine::voxel_prints::make_file(&mut self.game.content, &path, &settings)
+            .map_err(|error| refuse(ErrorKind::WrongValue, format!("{error:#}")))?;
+        tracing::info!("made the Voxel Print {path} in {:.1} s", started.elapsed().as_secs_f32());
+        let bytes = print.to_bytes().map(|bytes| bytes.len()).unwrap_or_default();
+        done(json!({
+            "print": { "guid": guid.map(|guid| guid.to_string()), "path": path },
+            "size": print.size,
+            "metres": print.metres().to_array(),
+            "solid": print.solid,
+            "colours": print.palette.len(),
+            "bytes": bytes,
+        }))
+    }
+
+    fn voxel_prints_info(&mut self, args: &Json) -> Called {
+        let (guid, _, kind) = link::resolve_project_asset(&self.game, need(args, "print")?)?;
+        if kind != AssetKind::VoxelPrint {
+            return Err(refuse(ErrorKind::WrongValue, "`print` is not a .voxprint"));
+        }
+        let (_, print) = self
+            .game
+            .content
+            .voxel_print(&guid.to_string())
+            .ok_or_else(|| refuse(ErrorKind::WrongValue, "the Voxel Print could not be read"))?;
+        let bytes = print.to_bytes().map(|bytes| bytes.len()).unwrap_or_default();
+        done(json!({
+            "size": print.size,
+            "metres": print.metres().to_array(),
+            "voxels_per_metre": print.voxels_per_metre,
+            "solid": print.solid,
+            "colours": print.palette.len(),
+            "bytes": bytes,
+            "settings": serde_json::to_value(&print.settings).unwrap_or(Json::Null),
+        }))
     }
 
     fn paint_map(&mut self, args: &Json) -> Called {

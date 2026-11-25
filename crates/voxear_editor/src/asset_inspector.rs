@@ -172,6 +172,23 @@ pub enum AssetAction {
         field: crate::plant_inspector::PlantRef,
         source: DragSource,
     },
+    /// Open the object picker under `anchor` for a field of the Voxel Print
+    /// at this path, or take what was dragged onto it.
+    BrowseVoxelPrintRef {
+        print: String,
+        field: crate::voxel_print_inspector::PrintRef,
+        anchor: NodeId,
+    },
+    DropVoxelPrintRef {
+        print: String,
+        field: crate::voxel_print_inspector::PrintRef,
+        source: DragSource,
+    },
+    /// Make the Voxel Print at this path from its model as these say.
+    MakeVoxelPrint {
+        path: String,
+        settings: voxear_render::VoxelPrintSettings,
+    },
     /// Write the biome at this path as this, for the worlds of blocks
     /// listing it to make their ground again, and when `rebuild`, show it
     /// again.
@@ -320,6 +337,8 @@ pub struct AssetView {
     block: Option<crate::block_inspector::BlockFields>,
     biome: Option<crate::biome_inspector::BiomeFields>,
     plant: Option<crate::plant_inspector::PlantFields>,
+    /// A Voxel Print's size and how it is made.
+    voxel_print: Option<crate::voxel_print_inspector::VoxelPrintFields>,
     dimension: Option<crate::dimension_inspector::DimensionFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
@@ -525,6 +544,7 @@ impl AssetView {
             block: None,
             biome: None,
             plant: None,
+            voxel_print: None,
             dimension: None,
             prompt_icons: None,
             preview,
@@ -593,6 +613,17 @@ impl AssetView {
                     Some(db.get(guid)?.path.clone())
                 };
                 view.plant = Some(crate::plant_inspector::PlantFields::new(ui, root, plant, &path_of));
+            }
+            ItemKind::Asset(AssetKind::VoxelPrint) => {
+                let bytes = std::fs::read(&file).unwrap_or_default();
+                let print = voxear_render::VoxelPrint::from_bytes(&bytes).ok();
+                let db = game.content.db();
+                let path_of = |reference: &str| {
+                    let guid = game.content.parse(reference).ok()?.guid()?;
+                    Some(db.get(guid)?.path.clone())
+                };
+                let fields = crate::voxel_print_inspector::VoxelPrintFields::new;
+                view.voxel_print = Some(fields(ui, root, print.as_ref(), bytes.len(), &path_of));
             }
             ItemKind::Asset(AssetKind::Dimension) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
@@ -765,6 +796,7 @@ impl AssetView {
             block: None,
             biome: None,
             plant: None,
+            voxel_print: None,
             dimension: None,
             prompt_icons: None,
             preview: None,
@@ -913,6 +945,16 @@ impl AssetView {
                 PlantChange::Ping(path) => AssetAction::Ping(path),
             });
         }
+        if let Some(change) = self.voxel_print.as_mut().and_then(|fields| fields.update(ui)) {
+            use crate::voxel_print_inspector::PrintChange;
+            let print = self.item.path.clone();
+            return Some(match change {
+                PrintChange::Browse(field, anchor) => AssetAction::BrowseVoxelPrintRef { print, field, anchor },
+                PrintChange::Drop(field, source) => AssetAction::DropVoxelPrintRef { print, field, source },
+                PrintChange::Ping(path) => AssetAction::Ping(path),
+                PrintChange::Make(settings) => AssetAction::MakeVoxelPrint { path: print, settings },
+            });
+        }
         if let Some(fields) = self.biome.as_mut()
             && let Some(change) = fields.update(ui)
         {
@@ -1055,6 +1097,11 @@ impl AssetView {
             false => *fields = Some(ClipFields::build(ui, *rows, names, settings)),
         }
         *filled = true;
+    }
+
+    /// The fields of the Voxel Print shown, if one is.
+    pub fn voxel_print(&mut self) -> Option<&mut crate::voxel_print_inspector::VoxelPrintFields> {
+        self.voxel_print.as_mut()
     }
 
     /// Whether a model is shown whose materials wait for it to load.
@@ -2092,6 +2139,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Structure) => "Structure",
         ItemKind::Asset(AssetKind::Plant) => "Plant",
         ItemKind::Asset(AssetKind::VoxModel) => "Block Model",
+        ItemKind::Asset(AssetKind::VoxelPrint) => "Voxel Print",
     }
 }
 
@@ -2134,6 +2182,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Structure) => "block",
         ItemKind::Asset(AssetKind::Plant) => "sprout",
         ItemKind::Asset(AssetKind::VoxModel) => "blocks",
+        ItemKind::Asset(AssetKind::VoxelPrint) => "box",
     }
 }
 

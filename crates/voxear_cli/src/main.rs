@@ -1708,6 +1708,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Structure => "structure",
             AssetKind::Plant => "voxplant",
             AssetKind::VoxModel => "vox",
+            AssetKind::VoxelPrint => "voxprint",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

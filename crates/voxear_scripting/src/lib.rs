@@ -58,7 +58,7 @@ pub use post::{
 };
 pub use plants::{FoliageCall, set_foliage_call};
 pub use columns::{ColumnEventData, GroundMade, set_ground_made};
-pub use voxels::{VoxelEdits, VoxelRaycast, set_voxel_edits, set_voxel_raycast};
+pub use voxels::{VoxelEdits, VoxelPrintRequest, VoxelRaycast, set_voxel_edits, set_voxel_raycast, take_voxel_prints};
 pub use crowds::{CrowdRecordsState, FarFigureData, FarFiguresSet, set_crowd_records, set_far_figures};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};

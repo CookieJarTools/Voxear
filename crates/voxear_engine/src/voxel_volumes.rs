@@ -42,11 +42,22 @@
 //! radius = 1.0
 //! fill = "rock"
 //! ```
+//!
+//! A Voxel Print printed into it is an edit too, kept in the same order:
+//! the `.voxprint`, where its model's origin is, and how it is turned, in
+//! degrees about X, Y and Z, as an Obj's rotation is written:
+//!
+//! ```toml
+//! [[obj.voxel_volume.edits]]
+//! print = "Prints/Sandbag Wall.voxprint"
+//! at = [10.0, 24.0, 6.0]
+//! rotation = [0.0, 30.0, 0.0]
+//! ```
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use voxear_core::math::Vec3;
+use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume};
 
@@ -90,25 +101,68 @@ pub struct VoxelVolumeData {
 }
 
 /// A change to an endless volume as a scene writes it: a ball, its middle
-/// in metres from the volume's corner, carved out or filled with a ground.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// in metres from the volume's corner, carved out or filled with a ground;
+/// or a Voxel Print, a reference to a `.voxprint`, its origin at `at` and
+/// turned `rotation` degrees about X, Y and Z.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoxelEditData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub print: Option<String>,
     pub at: [f32; 3],
+    #[serde(skip_serializing_if = "is_one_metre")]
     pub radius: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<VoxelMaterial>,
+    #[serde(skip_serializing_if = "is_unturned")]
+    pub rotation: [f32; 3],
+}
+
+/// A radius of a metre, as unwritten: a print's, which its box takes the
+/// place of, is so.
+fn is_one_metre(radius: &f32) -> bool {
+    *radius == 1.0
+}
+
+fn is_unturned(rotation: &[f32; 3]) -> bool {
+    *rotation == [0.0; 3]
 }
 
 impl Default for VoxelEditData {
     fn default() -> Self {
-        Self { at: [0.0; 3], radius: 1.0, fill: None }
+        Self { print: None, at: [0.0; 3], radius: 1.0, fill: None, rotation: [0.0; 3] }
     }
 }
 
-impl From<VoxelEditData> for VoxelEdit {
-    fn from(data: VoxelEditData) -> Self {
-        Self { at: Vec3::from(data.at), radius: data.radius.max(0.0), fill: data.fill }
+impl VoxelEditData {
+    /// A ball carved out, or filled with `fill`.
+    pub fn ball(at: [f32; 3], radius: f32, fill: Option<VoxelMaterial>) -> Self {
+        Self { at, radius, fill, ..Self::default() }
+    }
+
+    /// A print, by its reference, its origin at `at`, turned `rotation`
+    /// degrees about X, Y and Z.
+    pub fn printed(print: String, at: [f32; 3], rotation: [f32; 3]) -> Self {
+        Self { print: Some(print), at, radius: 1.0, fill: None, rotation }
+    }
+
+    /// How it is turned, as a scene writes an Obj's rotation.
+    pub fn turn(&self) -> Quat {
+        let [x, y, z] = self.rotation;
+        Quat::from_euler(EulerRot::YXZ, y.to_radians(), x.to_radians(), z.to_radians())
+    }
+
+    /// The edit the renderer makes, its print read from `content`: none,
+    /// with a warning, for a print that cannot be read.
+    pub fn made(&self, content: &mut Content) -> Option<VoxelEdit> {
+        let Some(reference) = &self.print else {
+            return Some(VoxelEdit::ball(Vec3::from(self.at), self.radius, self.fill));
+        };
+        let Some((_, print)) = content.voxel_print(reference) else {
+            tracing::warn!("a Voxel Volume's print {reference} is not a Voxel Print in the project");
+            return None;
+        };
+        Some(VoxelEdit::printed(print, Vec3::from(self.at), self.turn()))
     }
 }
 
@@ -226,11 +280,11 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         reach: data.reach,
         generator,
         trees,
-        edits: Arc::new(data.edits.iter().map(|&edit| edit.into()).collect()),
+        edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
     }
 }
 
-/// Sets what answers `Voxels.Carve`, `Voxels.Fill` and `Voxels.Raycast` in scripts.
+/// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Print` and `Voxels.Raycast` in scripts.
 pub(crate) fn register() {
     voxear_scripting::set_voxel_edits(from_script);
     voxear_scripting::set_voxel_raycast(|world, origin, direction, reach| {
@@ -290,18 +344,69 @@ pub fn edit(world: &mut World, at: Vec3, radius: f32, fill: Option<VoxelMaterial
             let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
             // Endless across the ground, as tall as the volume.
             let inside = at.y + radius >= corner.y && at.y - radius <= corner.y + volume.size.y;
-            inside.then_some((entity, VoxelEditData { at: (at - corner).to_array(), radius, fill }))
+            inside.then_some((entity, VoxelEditData::ball((at - corner).to_array(), radius, fill)))
         })
         .collect();
-    for &(entity, data) in &reached {
-        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
-            Arc::make_mut(&mut volume.edits).push(data.into());
+    for (entity, data) in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(*entity) {
+            Arc::make_mut(&mut volume.edits).push(VoxelEdit::ball(Vec3::from(data.at), data.radius, data.fill));
         }
-        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
-            source.0.edits.push(data);
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(*entity) {
+            source.0.edits.push(data.clone());
         }
     }
     reached.len()
+}
+
+/// Prints `print` (read from `content` by `reference`) into every endless
+/// Voxel Volume its box reaches, or into `only`'s alone: its model's origin
+/// at `at` in the world, turned `rotation` degrees about X, Y and Z. Each
+/// keeps it after what was changed in it before, as its scene writes it,
+/// and makes again the columns it reaches. Gives how many volumes it
+/// reached, or none for a reference that is not a Voxel Print.
+pub fn print(
+    content: &mut Content,
+    world: &mut World,
+    reference: &str,
+    at: Vec3,
+    rotation: [f32; 3],
+    only: Option<Entity>,
+) -> Option<usize> {
+    let (guid, voxel_print) = content.voxel_print(reference)?;
+    let data = VoxelEditData::printed(guid.to_string(), at.to_array(), rotation);
+    let turn = data.turn();
+    let (low, high) = voxel_print.placed_bounds(at, turn);
+    let reached: Vec<(Entity, Vec3)> = world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .filter_map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            let inside = high.y >= corner.y && low.y <= corner.y + volume.size.y;
+            inside.then_some((entity, corner))
+        })
+        .collect();
+    for &(entity, corner) in &reached {
+        let local = VoxelEditData { at: (at - corner).to_array(), ..data.clone() };
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            let edit = VoxelEdit::printed(voxel_print.clone(), Vec3::from(local.at), turn);
+            Arc::make_mut(&mut volume.edits).push(edit);
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.edits.push(local);
+        }
+    }
+    Some(reached.len())
+}
+
+/// Prints what scripts asked to print this frame (`Voxels.Print`), in order.
+pub(crate) fn print_from_scripts(content: &mut Content, world: &mut World) {
+    for request in voxear_scripting::take_voxel_prints() {
+        let at = Vec3::from(request.at);
+        if print(content, world, &request.print, at, request.rotation, None).is_none() {
+            tracing::error!(target: "script", "Voxels.Print: {} is not a Voxel Print in the project", request.print);
+        }
+    }
 }
 
 /// A kind of tree as the renderer draws it, its plant read from `content`
@@ -339,6 +444,24 @@ pub fn regenerate(content: &mut Content, world: &mut World, guid: voxear_assets:
         .filter(|(_, source)| {
             let reference = source.0.generator.as_deref();
             reference.and_then(|r| content.parse(r).ok()).and_then(|parsed| parsed.guid()) == Some(guid)
+        })
+        .map(|(entity, source)| (entity, source.0.clone()))
+        .collect();
+    for (entity, data) in using {
+        set(content, world, entity, data);
+    }
+}
+
+/// Makes again every volume printing the Voxel Print `guid`, as after it
+/// was made again (read again from `content`).
+pub fn reprint(content: &mut Content, world: &mut World, guid: voxear_assets::AssetGuid) {
+    let using: Vec<(Entity, VoxelVolumeData)> = world
+        .query_ref::<(Entity, &VoxelVolumeSource)>()
+        .into_iter()
+        .filter(|(_, source)| {
+            source.0.edits.iter().filter_map(|edit| edit.print.as_deref()).any(|reference| {
+                content.parse(reference).ok().and_then(|parsed| parsed.guid()) == Some(guid)
+            })
         })
         .map(|(entity, source)| (entity, source.0.clone()))
         .collect();
@@ -406,13 +529,16 @@ mod tests {
             endless: true,
             size: [16.0, 40.0, 16.0],
             edits: vec![
-                VoxelEditData { at: [1.0, 20.0, 2.0], radius: 1.5, fill: None },
-                VoxelEditData { at: [3.0, 21.0, 2.0], radius: 1.0, fill: Some(VoxelMaterial::Rock) },
+                VoxelEditData::ball([1.0, 20.0, 2.0], 1.5, None),
+                VoxelEditData::ball([3.0, 21.0, 2.0], 1.0, Some(VoxelMaterial::Rock)),
+                VoxelEditData::printed("Prints/Crate.voxprint".into(), [4.0, 20.0, 2.0], [0.0, 30.0, 0.0]),
             ],
             ..VoxelVolumeData::default()
         };
         let text = toml::to_string(&data).unwrap();
         assert!(text.contains("fill = \"rock\""), "{text}");
+        assert!(text.contains("print = \"Prints/Crate.voxprint\"") && text.contains("rotation = [0.0, 30.0, 0.0]"), "{text}");
+        assert_eq!(text.matches("radius").count(), 1, "a radius of a metre, as a print's, goes unwritten: {text}");
         assert_eq!(toml::from_str::<VoxelVolumeData>(&text).unwrap(), data);
         let mut world = World::new();
         let at = voxear_scene::Transform::from_position(Vec3::new(100.0, -10.0, 0.0));
@@ -426,8 +552,8 @@ mod tests {
         assert_eq!(made.edits.len(), 1);
         assert_eq!(made.edits[0].at, Vec3::new(4900.0, 15.0, -300.0), "from the volume's corner");
         let source = &world.get::<VoxelVolumeSource>(endless).unwrap().0;
-        assert_eq!(source.edits.len(), 3, "after the two it was written with");
-        assert_eq!(source.edits[2].fill, Some(VoxelMaterial::Sand));
+        assert_eq!(source.edits.len(), 4, "after the three it was written with");
+        assert_eq!(source.edits[3].fill, Some(VoxelMaterial::Sand));
         assert!(world.get::<VoxelVolume>(plain).unwrap().edits.is_empty(), "a volume of a set size is not edited");
     }
 }

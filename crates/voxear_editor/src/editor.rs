@@ -62,6 +62,7 @@ mod placing;
 mod play;
 mod prefab_mode;
 mod prefab_overrides;
+mod voxel_prints;
 mod previews;
 mod project_layers;
 mod projects;
@@ -1180,6 +1181,7 @@ impl Editor {
                 self.update_model(renderer);
             }
             self.fill_model_materials(renderer);
+            self.fill_print_parts(renderer);
             self.fill_model_clips();
             let listening = self.game.audio.previewing().map(str::to_string);
             if let Some(view) = self.inspector.asset_view() {
@@ -1383,6 +1385,7 @@ impl Editor {
             ProjectEvent::NewEffect { folder, anchor } => self.browse_effect_starters(folder, anchor),
             ProjectEvent::NewDimension { folder, anchor } => self.browse_dimension_kinds(folder, anchor),
             ProjectEvent::NewDataAsset { folder, anchor } => self.browse_definitions(folder, anchor),
+            ProjectEvent::MakeVoxelPrint(model) => self.make_print_of(&model, renderer),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
                 if parts.is_empty() {
@@ -1534,6 +1537,9 @@ impl Editor {
                 }
             }
             AssetAction::BrowsePlantRef { plant, field, anchor } => self.browse_plant_ref(&plant, field, anchor),
+            AssetAction::BrowseVoxelPrintRef { print, field, anchor } => self.browse_print_ref(&print, field, anchor),
+            AssetAction::DropVoxelPrintRef { print, field, source } => self.drop_print_ref(&print, field, &source),
+            AssetAction::MakeVoxelPrint { path, settings } => self.make_voxel_print(&path, &settings, renderer),
             AssetAction::DropPlantRef { plant, field, source } => self.drop_plant_ref(&plant, field, &source),
             AssetAction::BrowseBiomeRef { biome, field, anchor } => self.browse_biome_ref(&biome, field, anchor),
             AssetAction::DropBiomeRef { biome, field, source } => self.drop_biome_ref(&biome, field, &source),
@@ -3159,6 +3165,9 @@ impl Editor {
                 (PickFor::BlockRef { block, field }, Chosen::Value(pick)) => self.pick_block_ref(&block, field, &pick),
                 (PickFor::BiomeRef { biome, field }, Chosen::Value(pick)) => self.pick_biome_ref(&biome, field, &pick),
                 (PickFor::PlantRef { plant, field }, Chosen::Value(pick)) => self.pick_plant_ref(&plant, field, &pick),
+                (PickFor::VoxelPrintRef { print, field }, Chosen::Value(pick)) => {
+                    self.pick_print_ref(&print, &field, &pick)
+                }
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::ProjectSetting(key), Chosen::Value(pick)) => self.pick_project_setting(key, &pick),

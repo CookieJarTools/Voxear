@@ -397,6 +397,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Structure
         | AssetKind::Plant
         | AssetKind::VoxModel
+        | AssetKind::VoxelPrint
         | AssetKind::Dimension => true,
         AssetKind::Texture
         | AssetKind::Material
@@ -812,7 +813,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Shader
         | AssetKind::VoxShade
         | AssetKind::WorldGen
-        | AssetKind::VoxModel => {}
+        | AssetKind::VoxModel
+        | AssetKind::VoxelPrint => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

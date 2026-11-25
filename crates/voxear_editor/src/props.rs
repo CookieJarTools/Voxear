@@ -3426,6 +3426,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::Placement(field), _) => crate::road_props::placement_unit(*field),
         (Prop::PrefabBrush(field), _) => crate::road_props::brush_unit(*field),
         (Prop::VoxelBrush(crate::voxel_brush::VoxelBrushField::Size), _) => Some("m"),
+        (Prop::VoxelBrush(crate::voxel_brush::VoxelBrushField::Turn), _) => Some("°"),
         (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::Nav(field), _) => crate::nav_props::unit(*field),
         (Prop::NavArea(crate::nav_props::NavAreaField::Size), _) => Some("m"),
@@ -3903,7 +3904,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::World(field) => return crate::world_props::get(game, entity, *field),
         Prop::Placement(field) => return crate::road_props::placement_get(game, entity, *field),
         Prop::PrefabBrush(field) => return crate::road_props::brush_get(game, entity, *field),
-        Prop::VoxelBrush(field) => return Some(crate::voxel_brush::get(&game.engine.world, *field)),
+        Prop::VoxelBrush(field) => return Some(crate::voxel_brush::get(game, *field)),
         Prop::WalkableDoor => {
             let walkable = game.engine.world.get::<voxear_engine::walkable_models::Walkable>(entity)?;
             return Some(Value::Toggle(walkable.door));
@@ -4792,6 +4793,10 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::road_props::brush_pick(game, entity, *field, &choice))
         }
         (Prop::PrefabBrush(field), value) => crate::road_props::brush_set(game, entity, *field, value),
+        (Prop::VoxelBrush(field), Value::Asset(label)) if crate::voxel_brush::is_picked(*field) => {
+            let choice = crate::voxel_brush::choices(game).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::voxel_brush::pick(game, &choice))
+        }
         (Prop::VoxelBrush(field), value) => crate::voxel_brush::set(&mut game.engine.world, *field, value),
         (Prop::WalkableDoor, Value::Toggle(on)) => {
             let walkable = game.engine.world.get_mut::<voxear_engine::walkable_models::Walkable>(entity);
@@ -4871,6 +4876,11 @@ pub fn pick(
     }
     if let Prop::PrefabBrush(field) = prop {
         return crate::road_props::brush_pick(game, entity, *field, choice);
+    }
+    if let Prop::VoxelBrush(field) = prop
+        && crate::voxel_brush::is_picked(*field)
+    {
+        return crate::voxel_brush::pick(game, choice);
     }
     if let Prop::AreaFill(field) = prop {
         return crate::road_props::area_pick(game, entity, *field, choice);
@@ -5397,6 +5407,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::PrefabBrush(field) if crate::road_props::brush_picked(*field) => {
             return crate::road_props::prefab_choices(game);
         }
+        Prop::VoxelBrush(field) if crate::voxel_brush::is_picked(*field) => return crate::voxel_brush::choices(game),
         Prop::AreaFill(field) if crate::road_props::area_picked(*field) => {
             return crate::road_props::block_choices(game);
         }
@@ -5647,6 +5658,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::GroundFit(field) if crate::fit_props::is_picked(*field) => crate::fit_props::takes_name(*field).into(),
         Prop::Road(field) if crate::road_props::road_picked(*field) => "Block".into(),
         Prop::PrefabBrush(field) if crate::road_props::brush_picked(*field) => "Prefab".into(),
+        Prop::VoxelBrush(field) if crate::voxel_brush::is_picked(*field) => "Voxel Print".into(),
         Prop::AreaFill(field) if crate::road_props::area_picked(*field) => "Block".into(),
         Prop::World(field) if crate::world_props::is_picked(*field) => crate::world_props::takes_name(*field).into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)

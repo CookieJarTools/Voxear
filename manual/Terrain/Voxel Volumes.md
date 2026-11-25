@@ -150,6 +150,10 @@ A column takes up to 1,024 changes that reach it, and a half-metre brick 128; pa
 
 With an endless volume selected, set its **Brush** to Carve or Fill: a ball under the pointer in the Scene view shows where it meets the volume's ground, as big as **Brush Size**. Hold the left button and drag to carve balls out along the way, or fill them with **Brush Ground**; hold Shift to do the other. Each stroke is one step to undo. The brush is the editor's own setting, kept for every volume and not saved with the scene.
 
+### Printing models
+
+A model made into a [[Voxel Prints|Voxel Print]] is printed into the ground as another change, kept in order with the balls: a sandbag wall or a crate of voxels, solid all through, which a ball carved later bites into. Set the **Brush** to Print to place one with a click, or call `Voxels.Print` from a script.
+
 ### Where a ray meets the ground
 
 `Voxels.Raycast` finds where a ray first meets an endless volume's ground, as it was made and changed, within a reach; not its grass, flowers or trees. It is worked out on the CPU the way the GPU makes the ground, so every machine finds the same, in well under a millisecond:
@@ -179,4 +183,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no rivers or water, and no Cave Network halls, yet.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
-- A volume of a set size can't be changed yet, only an endless one, and only by balls: not a voxel at a time, or over the network. A ray meets its ground, not its grass, flowers or trees, and bodies don't collide with it yet.
+- A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A ray meets its ground, not its grass, flowers or trees, and bodies don't collide with it yet.

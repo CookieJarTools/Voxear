@@ -113,6 +113,7 @@ mod props;
 mod block_inspector;
 mod biome_inspector;
 mod plant_inspector;
+mod voxel_print_inspector;
 pub mod block_database;
 mod block_panel;
 mod block_props;

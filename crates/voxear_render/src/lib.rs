@@ -173,7 +173,8 @@ pub use lightmaps::{
 pub use voxel_volume::{
     GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelEdit, VoxelGenerator,
     VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
-    VoxelPrinted, VoxelRayHit, VoxelStamp, VoxelTrees, VoxelVolume, raycast as voxel_raycast, voxel_print_model,
+    VoxelPrinted, VoxelRayHit, VoxelStamp, VoxelTrees, VoxelVolume, print::MOST_COLOURS as MOST_PRINT_COLOURS,
+    raycast as voxel_raycast, voxel_print_model,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;

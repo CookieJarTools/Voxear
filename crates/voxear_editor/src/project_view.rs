@@ -116,6 +116,9 @@ pub enum ProjectEvent {
     /// A file or folder of the panel's was dragged onto a folder, by their
     /// paths, to move it there.
     Move { path: String, folder: String },
+    /// Make Voxel Print was chosen on the model at this path: the editor
+    /// makes a print of it beside it.
+    MakeVoxelPrint(String),
 }
 
 /// A part of a model, or an Obj of a prefab, shown after it when it is
@@ -146,6 +149,7 @@ enum MenuAction {
     NewEffect,
     NewDimension,
     NewDataAsset,
+    MakeVoxelPrint,
 }
 
 /// How long a pinged file stays lit, in seconds.
@@ -281,6 +285,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Structure) => "block",
                 FileKind::Asset(AssetKind::Plant) => "sprout",
                 FileKind::Asset(AssetKind::VoxModel) => "blocks",
+                FileKind::Asset(AssetKind::VoxelPrint) => "box",
                 FileKind::Asset(AssetKind::Lighting) => "light",
                 FileKind::Asset(AssetKind::LookPack) => "eye",
                 FileKind::Asset(AssetKind::ShaderPack) => "layers",
@@ -1001,10 +1006,15 @@ impl ProjectView {
             let contents = self.contents.borrow();
             let scene =
                 matches!(entry, Entry::File(file) if contents.files[file].kind == FileKind::Asset(AssetKind::Scene));
+            let model =
+                matches!(entry, Entry::File(file) if contents.files[file].kind == FileKind::Asset(AssetKind::Model));
             let duplicates = matches!(entry, Entry::File(_)) && open_to_new;
             drop(contents);
             if scene {
                 add(MenuItem::new("Open Additively"), Some(MenuAction::OpenAdditively));
+            }
+            if model {
+                add(MenuItem::new("Make Voxel Print").enabled(open_to_new), Some(MenuAction::MakeVoxelPrint));
             }
             add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
@@ -1070,6 +1080,7 @@ impl ProjectView {
                 _ => vec![ProjectEvent::Open(item)],
             },
             MenuAction::OpenAdditively => vec![ProjectEvent::OpenAdditively(item)],
+            MenuAction::MakeVoxelPrint => vec![ProjectEvent::MakeVoxelPrint(item.path.clone())],
             MenuAction::Reveal => {
                 let shown = if item.kind == ItemKind::Folder { item.path.as_str() } else { parent(&item.path) };
                 let folder = self.mounts.file(shown);

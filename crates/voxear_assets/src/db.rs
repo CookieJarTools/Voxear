@@ -113,6 +113,9 @@ pub enum AssetKind {
     /// A `.vox` file: a model of small coloured blocks, as voxel sculpting
     /// tools save it, which a Block World's Model brush builds.
     VoxModel,
+    /// A `.voxprint` file: a model made into small voxels, solid all
+    /// through, which is printed into endless Voxel Volumes.
+    VoxelPrint,
     /// A `.particles` file: a particle effect of several emitters, which a
     /// Particle System plays in place of its own settings.
     Particles,
@@ -167,6 +170,7 @@ impl AssetKind {
             "structure" => Self::Structure,
             "voxplant" => Self::Plant,
             "vox" => Self::VoxModel,
+            "voxprint" => Self::VoxelPrint,
             "particles" => Self::Particles,
             "voxshade" => Self::VoxShade,
             "dimension" => Self::Dimension,

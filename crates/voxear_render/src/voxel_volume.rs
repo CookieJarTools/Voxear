@@ -266,6 +266,7 @@ pub(crate) struct GpuVoxelVolume {
     window_sector: [i32; 3],
     windowed: u32,
     empty_sector: u64,
+    pages: u64,
 }
 
 /// A view's volumes (`VoxelVolumes` in shaders/common.slang).
@@ -366,6 +367,14 @@ impl VoxelVolumes {
                     }
                     None => {}
                 }
+                // A room that ran short is made again half as large again: the window is made over.
+                if let Some(grow) = self.endless.get(&entity).and_then(endless::Endless::short) {
+                    tracing::info!("an endless Voxel Volume's room ran short: made again with half as much again");
+                    let made = endless::Endless::grown(gpu, &volume, grow * 1.5)?;
+                    if let Some(old) = self.endless.insert(entity, made) {
+                        old.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
+                    }
+                }
                 let made = self.endless.get_mut(&entity).expect("made above");
                 made.from.roughness = volume.roughness;
                 made.follow(corner, camera.unwrap_or(corner));
@@ -418,7 +427,8 @@ impl VoxelVolumes {
     /// Whether any volume is still being made, or an endless one has columns
     /// round the camera still to make.
     pub fn making(&self) -> bool {
-        !self.making.is_empty() || self.endless.values().any(endless::Endless::unfinished)
+        !self.making.is_empty()
+            || self.endless.values().any(|made| made.unfinished() || made.short().is_some())
     }
 
     /// Records the passes that make this frame's columns of endless volumes,
@@ -591,6 +601,7 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         window_sector: [0; 3],
         windowed: 0,
         empty_sector: 0,
+        pages: 0,
     };
     Ok(Resident { buffer, record, bytes: total as u64, bricks: packed.brick_count() })
 }
@@ -601,8 +612,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 88);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 88 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 96);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 96 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

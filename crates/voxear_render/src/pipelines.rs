@@ -241,6 +241,8 @@ pub struct Pipelines {
     pub voxel_world_coarse: vk::Pipeline,
     pub voxel_world_brick_arguments: vk::Pipeline,
     pub voxel_world_bricks: vk::Pipeline,
+    pub voxel_world_free: vk::Pipeline,
+    pub voxel_world_pack: vk::Pipeline,
     pub voxel_world_sectors: vk::Pipeline,
     /// A world generator run at places alone, for checking it against the CPU's.
     pub voxel_world_places: vk::Pipeline,
@@ -1046,6 +1048,8 @@ impl Pipelines {
                 c"voxelWorldBrickArguments",
             )?,
             voxel_world_bricks: maker.compute("Voxel world bricks", voxel_world, c"voxelWorldBricks")?,
+            voxel_world_free: maker.compute("Voxel world free", voxel_world, c"voxelWorldFree")?,
+            voxel_world_pack: maker.compute("Voxel world pack", voxel_world, c"voxelWorldPack")?,
             voxel_world_sectors: maker.compute("Voxel world sectors", voxel_world, c"voxelWorldSectors")?,
             voxel_world_places: maker.compute("Voxel world places", voxel_world, c"voxelWorldPlaces")?,
             voxel_depth: graphics(&GraphicsPipelineDesc {
@@ -1455,6 +1459,8 @@ impl Pipelines {
             self.voxel_world_coarse,
             self.voxel_world_brick_arguments,
             self.voxel_world_bricks,
+            self.voxel_world_free,
+            self.voxel_world_pack,
             self.voxel_world_sectors,
             self.voxel_world_places,
             self.block_wireframe,

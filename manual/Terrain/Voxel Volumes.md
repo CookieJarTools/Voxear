@@ -42,7 +42,7 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Plateaus, Peaks, Raised Land, Spires, Fins, Chasms, Slope Mask, a painted map) makes the volume's own ground instead, and the Console names the node.
 
-Overhangs and caves cost more: every brick from the volume's floor up is asked about, though most are passed over as solid rock or open air at a look at their corners. An Alpine slope with a world's own overhangs, tunnels and chambers takes about 0.5 ms a column, four columns a frame, and about 165 MB at a reach of 64 m; the ground round a camera standing still is made in about two and a half seconds.
+Overhangs and caves cost more: every brick from the volume's floor up is asked about, though most are passed over as solid rock or open air at a look at their corners. An Alpine slope with a world's own overhangs, tunnels and chambers takes about 0.5 ms a column, four columns a frame, and about 65 MB at a reach of 64 m; the ground round a camera standing still is made in about two and a half seconds.
 
 Running the graph about doubles what making a column costs: with Rolling Hills, about 0.08 ms of the GPU's time a column against 0.045 ms for the volume's own ground, at a reach of 64 m on an RTX 3070.
 
@@ -77,7 +77,7 @@ An endless volume grows trees where its ground grows grass. Each kind is one of 
 - Each kind is grown from four seeds and turned four ways, so no two trees side by side are alike. Trees stand at most one in each 5 m square, on grass: not on rock, sand, snow or steep ground, and not where the generator's overhangs or caves have moved the ground.
 - The colours are the plant's wood and leaves blocks' colours.
 
-Trees take room. A wood of 100 oaks and pines a hectare takes about 430 MB at a reach of 64 m, against 100 MB for its ground alone, and its columns cost about 0.33 ms each to make, eight a frame. The crowns' loose cubes add about 2.4 ms a frame to drawing at 1080p on an RTX 3070. Fewer trees take less.
+Trees take room. A wood of 100 oaks and pines a hectare takes about 185 MB at a reach of 64 m, against 90 MB for its ground alone, and its columns cost about 0.33 ms each to make, eight a frame. The crowns' loose cubes add about 2.4 ms a frame to drawing at 1080p on an RTX 3070. Fewer trees take less.
 
 `vox editor call field.set` sets the trees' rows as the Inspector does: `trees` is the first kind's plant, `trees#2` how many of it to a hectare, and so on, then the last to add a kind. In the scene:
 

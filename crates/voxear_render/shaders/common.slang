@@ -2163,6 +2163,8 @@ struct VoxelVolume
     int3 windowSector;
     uint windowed;
     uint* emptySector;
+    // An endless volume's slots' pages of bricks in its shared room: each slot's sixty-four, sixty-four bricks a page.
+    uint* pages;
 };
 
 struct VoxelVolumes

@@ -30,21 +30,31 @@ use crate::pipelines::Pipelines;
 pub(crate) const MAX_JOBS: usize = 16;
 const MAX_VOLUME_JOBS: usize = 4;
 const MAX_TREE_JOBS: usize = 8;
-/// How many bricks a column's slot has room for, and material bytes a brick
-/// on average. A column of grass and flowers on hills keeps 150 to 200
-/// bricks, of 120 to 160 bytes. One with overhangs and caves keeps up to 800
-/// of the deep column's bricks, and those far fewer bytes, 90 at most, as
-/// what a brick keeps of a cave's wall is a skin.
-const BRICK_ROOM: u32 = 384;
-const MATERIALS_A_BRICK: u32 = 160;
-const VOLUME_BRICK_ROOM: u32 = 1024;
-const VOLUME_MATERIALS_A_BRICK: u32 = 64;
-/// How many more bricks a column keeps for each tree to a hectare, and
-/// material bytes each: a wood of 100 oaks and pines a hectare keeps 430
-/// bricks a column at the median and up to 1,700, of 90 to 110 bytes, as a
-/// crown's thin shell of leaves crosses many bricks.
-const BRICKS_A_TREE_A_HECTARE: f32 = 14.0;
-const TREE_MATERIALS_A_BRICK: u32 = 112;
+/// How many bricks a job keeps while its column is made, and how many
+/// material bytes: a column of a wood keeps up to 1,700 bricks of about 110
+/// bytes each, one with caves up to 800 of 40.
+const JOB_BRICKS: u64 = 4096;
+const JOB_MATERIALS: u64 = 512 * 1024;
+/// The shared room every column's bricks and materials are kept in: pages
+/// of 64 bricks, at most 64 a slot, and pages of 4,096 material bytes, at
+/// most 128 a slot (`shaders/voxel_world.slang`).
+const PAGE_BRICKS: u64 = 64;
+const SLOT_PAGES: u64 = 64;
+const MATERIAL_PAGE: u64 = 4096;
+const SLOT_MATERIAL_PAGES: u64 = 128;
+/// What a column keeps on average, which its shared room is sized by, with
+/// a quarter more: measured over a thousand columns of each, grass and
+/// flowers on hills keep 170 bricks and 20 KB of materials; overhangs and
+/// caves 100 and 4.5 KB; and a wood 3.6 more bricks and 270 more bytes for
+/// each tree to a hectare. Where the room runs short it is made again
+/// half as large again.
+const AVERAGE_BRICKS: f64 = 200.0;
+const AVERAGE_VOLUME_BRICKS: f64 = 150.0;
+const AVERAGE_BRICKS_A_TREE: f64 = 4.5;
+const AVERAGE_MATERIALS: f64 = 24_000.0;
+const AVERAGE_VOLUME_MATERIALS: f64 = 8_000.0;
+const AVERAGE_MATERIALS_A_TREE: f64 = 330.0;
+const ROOM_SPARE: f64 = 1.25;
 /// The most numbers a Volume carries up a column, and the most spans.
 const MOST_CARRIED: usize = 8;
 const MOST_SPANS: usize = 4;
@@ -105,6 +115,13 @@ struct GpuWorldMake {
     forest: u64,
     trees: u64,
     tree_carried: u64,
+    pages: u64,
+    material_pages: u64,
+    slot_counts: u64,
+    free_pages: u64,
+    pool: u64,
+    staging: u64,
+    placed: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -134,7 +151,7 @@ struct GpuWorldMake {
     depth: f32,
     tree_kinds: u32,
     tree_reach: f32,
-    pad: u32,
+    brick_pages: u32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -176,8 +193,19 @@ pub(crate) struct Endless {
     forest: Option<(Buffer, u32, f32)>,
     trees: Buffer,
     tree_carried: Buffer,
-    /// How many bricks and material bytes a column's slot has room for.
+    /// The shared room: how many pages of bricks and of materials it has,
+    /// each slot's pages of each and how many, the pages free, how many are
+    /// free and whether any ran short (read on the CPU), and each job's
+    /// materials and where they are placed while its column is made.
     room: Room,
+    grow: f64,
+    pages: Buffer,
+    material_pages: Buffer,
+    slot_counts: Buffer,
+    free_pages: Buffer,
+    pool: Buffer,
+    staging: Buffer,
+    placed: Buffer,
     /// The passes' records: one a frame in flight, and one for making
     /// columns before the frames start.
     makes: Vec<Buffer>,
@@ -285,24 +313,30 @@ fn gpu_program_of(volume: &VoxelVolume) -> Option<GpuProgram> {
     program
 }
 
-/// How many bricks and material bytes a column's slot has room for.
+/// How many pages of bricks and of materials the shared room has.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Room {
-    bricks: u32,
-    materials: u32,
+    brick_pages: u32,
+    material_pages: u32,
 }
 
-/// The room a column's slot has, with a Volume or without, and with as
-/// many trees to a hectare as `trees`.
-fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees]) -> Room {
-    let (bricks, a_brick) = match program.is_some_and(|program| program.volume.is_some()) {
-        true => (VOLUME_BRICK_ROOM, VOLUME_MATERIALS_A_BRICK),
-        false => (BRICK_ROOM, MATERIALS_A_BRICK),
+/// The shared room of a volume of `slots` columns, with a Volume or
+/// without and with `trees`, `grow` times what columns keep on average.
+fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64) -> Room {
+    let volume = program.is_some_and(|program| program.volume.is_some());
+    let per_hectare: f64 = trees.iter().map(|kind| f64::from(kind.per_hectare.max(0.0))).sum();
+    let (bricks, materials) = match volume {
+        true => (AVERAGE_VOLUME_BRICKS, AVERAGE_VOLUME_MATERIALS),
+        false => (AVERAGE_BRICKS, AVERAGE_MATERIALS),
     };
-    let per_hectare: f32 = trees.iter().map(|kind| kind.per_hectare.max(0.0)).sum();
-    // In steps of 512, so dragging how many trees there are makes the buffers again only now and then.
-    let more = ((per_hectare * BRICKS_A_TREE_A_HECTARE / 512.0).ceil() as u32 * 512).min(4096);
-    Room { bricks: bricks + more, materials: bricks * a_brick + more * TREE_MATERIALS_A_BRICK }
+    let bricks = bricks + per_hectare * AVERAGE_BRICKS_A_TREE;
+    // Half a page of each a column on top, the part of its last page it leaves.
+    let materials = materials + per_hectare * AVERAGE_MATERIALS_A_TREE + MATERIAL_PAGE as f64 / 2.0;
+    let columns = f64::from(slots) * ROOM_SPARE * grow;
+    let jobs = MAX_JOBS as f64;
+    let brick_pages = columns * (bricks / PAGE_BRICKS as f64 + 0.5) + jobs * SLOT_PAGES as f64;
+    let material_pages = columns * materials / MATERIAL_PAGE as f64 + jobs * SLOT_MATERIAL_PAGES as f64;
+    Room { brick_pages: brick_pages.ceil() as u32, material_pages: material_pages.ceil() as u32 }
 }
 
 /// An endless volume's palette, its own ground's colours, a generator's
@@ -364,6 +398,12 @@ fn program_buffers(
 impl Endless {
     /// The buffers of an endless volume, every slot holding no column yet.
     pub fn new(gpu: &Gpu, volume: &VoxelVolume) -> Result<Self> {
+        Self::grown(gpu, volume, 1.0)
+    }
+
+    /// The buffers of an endless volume whose shared room is `grow` times
+    /// what its columns keep on average.
+    pub fn grown(gpu: &Gpu, volume: &VoxelVolume, grow: f64) -> Result<Self> {
         let (window, tall) = window_of(volume);
         let slots_in = u64::from(window * window);
         let rows = u64::from(tall * 8);
@@ -388,12 +428,24 @@ impl Endless {
         let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
-        let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees);
-        let bricks = make("bricks", slots_in * u64::from(room.bricks) * BRICK_BYTES, none)?;
-        let materials = make("materials", slots_in * u64::from(room.materials), none)?;
+        let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees, window * window, grow);
+        let bricks = make("bricks", u64::from(room.brick_pages) * PAGE_BRICKS * BRICK_BYTES, none)?;
+        let materials = make("materials", u64::from(room.material_pages) * MATERIAL_PAGE, none)?;
+        let pages = make("pages", slots_in * SLOT_PAGES * 4, none)?;
+        let material_pages = make("material pages", slots_in * SLOT_MATERIAL_PAGES * 4, none)?;
+        let slot_counts = make("slot counts", slots_in * 4, none)?;
+        // Every page free at first: the bricks' pages, then the materials'.
+        let free: Vec<u32> = (0..room.brick_pages).chain(0..room.material_pages).collect();
+        let free_pages = make("free pages", free.len() as u64 * 4, none)?;
+        gpu.upload_buffer(&free_pages, 0, bytemuck::cast_slice(&free))?;
+        let pool = gpu.create_buffer("voxel world pool", 16, storage, MemoryLocation::GpuToCpu)?;
+        pool.write(0, &[room.brick_pages, room.material_pages, 0, 0]);
+        let staging = make("staging", jobs * JOB_MATERIALS, none)?;
+        let placed = make("placed", jobs * JOB_BRICKS * 4, none)?;
         let slots = make("slots", jobs * 64 * rows * 4, none)?;
-        let loose = make("loose bricks", jobs * u64::from(room.bricks) * BRICK_BYTES, none)?;
-        let counters = make("counters", (jobs * COUNTERS + 8 + jobs) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
+        let loose = make("loose bricks", jobs * JOB_BRICKS * BRICK_BYTES, none)?;
+        let counters =
+            make("counters", (jobs * COUNTERS + 8 + jobs + jobs * 16) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
         // The candidate bricks, and after them those the coarse pass leaves.
         let candidates = make("candidates", 2 * jobs * 64 * rows * 4, none)?;
         let mut makes = Vec::new();
@@ -405,8 +457,11 @@ impl Endless {
                 MemoryLocation::CpuToGpu,
             )?);
         }
-        // No slot holds a column yet: every entry names a sector nowhere.
-        gpu.immediate(|cmd| unsafe { gpu.device.cmd_fill_buffer(cmd, table.handle, 0, vk::WHOLE_SIZE, 0x8000_0000) })?;
+        // No slot holds a column yet: every entry names a sector nowhere, and every slot holds no pages.
+        gpu.immediate(|cmd| unsafe {
+            gpu.device.cmd_fill_buffer(cmd, table.handle, 0, vk::WHOLE_SIZE, 0x8000_0000);
+            gpu.device.cmd_fill_buffer(cmd, slot_counts.handle, 0, vk::WHOLE_SIZE, 0);
+        })?;
         Ok(Self {
             from: volume.clone(),
             window,
@@ -429,6 +484,14 @@ impl Endless {
             trees,
             tree_carried,
             room,
+            grow,
+            pages,
+            material_pages,
+            slot_counts,
+            free_pages,
+            pool,
+            staging,
+            placed,
             makes,
             made: vec![None; (window * window) as usize],
             jobs: Vec::new(),
@@ -449,7 +512,7 @@ impl Endless {
             return Ok(None);
         }
         let program = gpu_program_of(volume);
-        if room_of(program.as_ref(), &volume.trees) != self.room {
+        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow) != self.room {
             return Ok(None);
         }
         let (program, caves) = program_buffers(gpu, program)?;
@@ -477,6 +540,10 @@ impl Endless {
             &self.slots,
             &self.loose,
             &self.grounds,
+            &self.pages,
+            &self.material_pages,
+            &self.staging,
+            &self.placed,
         ]
         .iter()
         .map(|buffer| buffer.size)
@@ -522,6 +589,14 @@ impl Endless {
         (column[1].rem_euclid(w) * w + column[0].rem_euclid(w)) as u32
     }
 
+    /// Whether its shared room ran short of pages for a column, as the GPU
+    /// noted it a frame or two ago, and how many times what its columns keep
+    /// on average it has room for.
+    pub fn short(&self) -> Option<f64> {
+        let words: &[u32] = bytemuck::cast_slice(&self.pool.read()[..16]);
+        (words[2] != 0).then_some(self.grow)
+    }
+
     /// Whether any column of the window is still to be made.
     pub fn unfinished(&self) -> bool {
         !self.jobs.is_empty()
@@ -544,6 +619,7 @@ impl Endless {
             window_sector: self.window_sector,
             windowed: 1,
             empty_sector: self.empty.address,
+            pages: self.pages.address,
         };
         let at = Vec3::new(self.window_sector[0] as f32, 0.0, self.window_sector[2] as f32) * metres;
         (record, self.corner + at)
@@ -596,8 +672,8 @@ impl Endless {
             voxel: 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32,
             window: self.window,
             tall: self.tall,
-            brick_room: self.room.bricks,
-            material_room: self.room.materials,
+            brick_room: JOB_BRICKS as u32,
+            material_room: JOB_MATERIALS as u32,
             job_count: self.jobs.len() as u32,
             candidate_room: (MAX_JOBS as u64 * 64 * rows) as u32,
             program_words: if program == 0 { 0 } else { words.words.len() as u32 },
@@ -620,7 +696,14 @@ impl Endless {
             tree_carried: self.tree_carried.address,
             tree_kinds: self.forest.as_ref().map_or(0, |(_, kinds, _)| *kinds),
             tree_reach: self.forest.as_ref().map_or(0.0, |(_, _, reach)| *reach),
-            pad: 0,
+            pages: self.pages.address,
+            material_pages: self.material_pages.address,
+            slot_counts: self.slot_counts.address,
+            free_pages: self.free_pages.address,
+            pool: self.pool.address,
+            staging: self.staging.address,
+            placed: self.placed.address,
+            brick_pages: self.room.brick_pages,
             jobs,
         };
         let mut make = make;
@@ -637,8 +720,7 @@ impl Endless {
     /// What recording this frame's passes needs, apart from the volume.
     pub fn recording(&self) -> Recording {
         Recording {
-            material_room: self.room.materials,
-            materials: self.materials.handle,
+            staging: self.staging.handle,
             slots: self.slots.handle,
             counters: self.counters.handle,
             jobs: self.jobs.iter().map(|(_, slot)| *slot).collect(),
@@ -649,8 +731,7 @@ impl Endless {
 
 /// What recording the passes that make a frame's columns needs.
 pub(crate) struct Recording {
-    material_room: u32,
-    materials: vk::Buffer,
+    staging: vk::Buffer,
     slots: vk::Buffer,
     counters: vk::Buffer,
     jobs: Vec<u32>,
@@ -659,8 +740,8 @@ pub(crate) struct Recording {
 
 impl Recording {
     /// Records the passes that make this frame's columns, from the record at
-    /// `make`, into `cmd`: each slot's materials cleared, then the four
-    /// passes with what each reads of the last finished between them.
+    /// `make`, into `cmd`: each job's materials cleared, then the passes,
+    /// with what each reads of the last finished between them.
     pub fn record(&self, gpu: &Gpu, cmd: vk::CommandBuffer, (pipelines, bindless): (&Pipelines, &Bindless), make: u64) {
         let device = &gpu.device;
         let barrier = |dst: vk::PipelineStageFlags2, access: vk::AccessFlags2| {
@@ -674,10 +755,7 @@ impl Recording {
         let read_write = vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE;
         let jobs = self.jobs.len() as u32;
         unsafe {
-            for &slot in &self.jobs {
-                let room = u64::from(self.material_room);
-                device.cmd_fill_buffer(cmd, self.materials, u64::from(slot) * room, room, 0);
-            }
+            device.cmd_fill_buffer(cmd, self.staging, 0, self.jobs.len() as u64 * JOB_MATERIALS, 0);
             device.cmd_fill_buffer(cmd, self.slots, 0, vk::WHOLE_SIZE, 0);
             device.cmd_fill_buffer(cmd, self.counters, 0, vk::WHOLE_SIZE, 0);
         }
@@ -715,6 +793,10 @@ impl Recording {
         );
         indirect(pipelines.voxel_world_bricks, 5);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
+        run(pipelines.voxel_world_free, [1, 1, 1]);
+        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
+        run(pipelines.voxel_world_pack, [1, 1, 1]);
+        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_sectors, [self.tall, jobs, 1]);
     }
 }
@@ -744,6 +826,13 @@ impl Endless {
             self.grounds,
             self.trees,
             self.tree_carried,
+            self.pages,
+            self.material_pages,
+            self.slot_counts,
+            self.free_pages,
+            self.pool,
+            self.staging,
+            self.placed,
         ];
         all.extend(self.forest.map(|(buffer, _, _)| buffer));
         all.extend(self.program.map(|(buffer, _)| buffer));

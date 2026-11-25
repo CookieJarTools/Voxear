@@ -90,7 +90,15 @@ int voxelBrickAt(VoxelVolume volume, int3 b)
     }
     uint before = (sector[16 + (index >> 6)] >> (((index >> 5) & 1u) * 16u)) & 0xFFFFu;
     before += countbits(word & ((1u << bit) - 1u));
-    return int(sector[24] + before);
+    uint first = sector[24] + before;
+    if (volume.windowed == 0u)
+    {
+        return int(first);
+    }
+    // An endless volume's sector names its slot and where its bricks start among the slot's, which are kept in pages
+    // of the shared room (src/voxel_volume/endless.rs).
+    uint at = first & 0xFFFu;
+    return int(volume.pages[(first >> 12) * 64u + (at >> 6)] * 64u + (at & 63u));
 }
 
 bool voxelSolid(VoxelVolume volume, int3 cell)

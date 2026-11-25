@@ -669,6 +669,47 @@ An endless Voxel Volume grows trees of a project's `.voxplant` plants, each kind
   trees of its plant, which the plan has as stage 3's second step. Crowns' rays cost 1.5 ms of depth: levels of
   detail for far crowns would take some of that and keep them from shimmering.
 
+## Stage 3, room shared by the columns (2026-11-25)
+
+Each column's slot had room of its own for bricks and materials, enough for the fullest column. Columns keep far
+less on average: grass and flowers on hills 170 bricks and 20 KB of materials against room for 384 and 61 KB; caves
+99 and 4.5 KB against 1,024 and 64 KB; a wood of 100 trees a hectare 534 and 47 KB against 1,920 and 233 KB.
+
+- **Pages.** An endless volume's bricks are kept in pages of 64, its materials in pages of 4 KB, all in one shared
+  room. A slot lists the pages it holds, at most 64 of bricks and 128 of materials. While a column is made, its
+  bricks and materials are kept in its job's own room; then three passes place them: one gives back the pages the
+  slot held, one takes the pages the new column needs from those free and places each brick's materials in them,
+  none across the end of a page, and the sectors pass copies each brick to its page.
+- **The walk.** A sector's entry names its slot and where its bricks start among the slot's. Finding a brick takes
+  one more read than before: its page in the slot's list (`voxelBrickAt` in `voxels.slang`). The pictures are the
+  same to the pixel.
+- **How large.** The room is what a column keeps on average, as measured, a quarter more, for every slot of the
+  window. A column that finds no page free marks it, and the volume is made again with room half as large again: a
+  test with room for 0.3 of the average grew three times and showed the whole window.
+
+| Reach 64 m | Room of its own | Shared room |
+|---|---|---|
+| The volume's own ground | 102 MB | 90 MB |
+| Rolling Hills | 103 MB | 91 MB |
+| With 100 oaks and pines a hectare | 426 MB | 185 MB |
+| Alpine with overhangs and caves | 164 MB | 64 MB |
+
+Making a column costs about as much as before (0.36 against 0.33 ms with trees). Of the 90 MB of plain ground,
+about 25 MB is the room jobs use while making and the sectors' entries, which do not grow with what is kept.
+
+## Wind in voxels (planned)
+
+Traced voxels do not move with a vertex shader, but the ray can be moved instead.
+
+- **Whole trees.** Once a tree's bricks are shared by all the trees of its plant, each tree is drawn by moving the
+  ray into its own place. Bending that move a little over time, more towards the top, sways the whole tree at
+  almost no cost.
+- **Leaves and grass blades.** Inside bricks of leaves and grass the ray can look up each voxel a little to one
+  side, by an offset that grows with the height over the ground and moves with the wind. Such bricks are marked a
+  few voxels larger than they are, so leaves moved over a brick's edge are not cut off. Shadow rays take the same
+  offset, so the shadows move with the leaves.
+- **Near the camera**, grass and flowers that are pushed aside can stay the swaying meshes of ground cover.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

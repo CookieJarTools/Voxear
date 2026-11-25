@@ -37,8 +37,16 @@ static const uint EMPTY = 0xFFFFFFFFu;
 static const uint ROW = 1024;
 // Each job's counters: bricks kept, material bytes taken, bricks placed, bricks that did not fit.
 // After them: how many candidate bricks there are and the coarse pass's groups, then how many of them it leaves for
-// the bricks pass and that pass's groups, then how many trees stand round each job's column.
+// the bricks pass and that pass's groups, then how many trees stand round each job's column, then how many bricks
+// each job keeps in each of its sectors.
 static const uint COUNTERS = 4;
+static const uint SECTOR_COUNTS = MAX_JOBS * COUNTERS + 8 + MAX_JOBS;
+// The shared room: a page of bricks, the most pages a slot has, a page of material bytes, and the most a slot has.
+static const uint PAGE_BRICKS = 64;
+static const uint SLOT_PAGES = 64;
+static const uint MATERIAL_PAGE = 4096;
+static const uint SLOT_MATERIAL_PAGES = 128;
+static const uint UNPLACED = 0xFFFFFFFFu;
 
 struct WorldJob
 {
@@ -72,6 +80,16 @@ struct WorldMake
     uint* forest;
     int* trees;
     uint* treeCarried;
+    // The shared room (src/voxel_volume/endless.rs): each slot's pages of bricks and of material bytes, how many of
+    // each it has, the pages free (bricks', then materials'), how many are free and whether any were wanted when none
+    // were, each job's materials before they are placed, and where each of a job's bricks' materials are placed.
+    uint* pages;
+    uint* materialPages;
+    uint* slotCounts;
+    uint* freePages;
+    uint* pool;
+    uint* staging;
+    uint* placed;
     float height;
     float hills;
     float hillSpacing;
@@ -111,7 +129,8 @@ struct WorldMake
     // How many kinds of tree there are, and how far the furthest reaches across from its trunk, in metres.
     uint treeKinds;
     float treeReach;
-    uint pad0;
+    // How many pages of bricks the pool has: the free materials' pages are listed after theirs.
+    uint brickPages;
     WorldJob jobs[MAX_JOBS];
 };
 
@@ -1254,9 +1273,10 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedKept = 0;
         if (count > 0)
         {
+            // Its materials are kept a word at a time, so they are placed a word at a time.
             uint* counters = make->counters + job * COUNTERS;
             InterlockedAdd(counters[0], 1u, sharedSlot);
-            InterlockedAdd(counters[1], count, sharedOffset);
+            InterlockedAdd(counters[1], (count + 3u) & ~3u, sharedOffset);
             if (sharedSlot < make->brickRoom && sharedOffset + count <= make->materialRoom)
             {
                 sharedKept = 1;
@@ -1264,6 +1284,11 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             else
             {
                 InterlockedAdd(counters[3], 1u);
+                // A brick there is no room for is marked so the pack pass places nothing for it.
+                if (sharedSlot < make->brickRoom)
+                {
+                    make->loose[(job * make->brickRoom + sharedSlot) * BRICK_WORDS + 18] = UNPLACED;
+                }
             }
         }
     }
@@ -1272,8 +1297,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         return;
     }
-    uint slot = make->jobs[job].slot;
-    uint materialBase = slot * make->materialRoom;
+    uint materialBase = job * make->materialRoom;
     if (m != 0)
     {
         uint rank = countbits(sharedMask[index >> 5] & ((1u << (index & 31u)) - 1u));
@@ -1282,7 +1306,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             rank += countbits(sharedMask[w]);
         }
         uint at = materialBase + sharedOffset + rank;
-        InterlockedOr(make->materials[at >> 2], (m - 1) << ((at & 3u) * 8u));
+        InterlockedOr(make->staging[at >> 2], (m - 1) << ((at & 3u) * 8u));
     }
     uint* record = make->loose + (job * make->brickRoom + sharedSlot) * BRICK_WORDS;
     if (index < 16)
@@ -1295,7 +1319,8 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     else if (index == 18)
     {
-        record[18] = materialBase + sharedOffset;
+        // Where its materials are in the job's own, and how many: placed in the shared room by the pack pass.
+        record[18] = sharedOffset | (sharedCount << 20);
     }
     else if (index == 19)
     {
@@ -1311,12 +1336,123 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         uint rows = make->tall * 8;
         make->slots[job * 64 * rows + uint(row * 64 + bz * 8 + bx)] = sharedSlot + 1;
+        InterlockedAdd(make->counters[SECTOR_COUNTS + job * 16 + uint(row) / 8], 1u);
     }
+}
+
+// Gives back the pages each job's slot held for the column it held before: a thread a job. A page given back is taken
+// again by the pack pass after it, for this frame's columns.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldFree(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint job = id.x;
+    if (job >= make->jobCount)
+    {
+        return;
+    }
+    uint slot = make->jobs[job].slot;
+    uint held = make->slotCounts[slot];
+    for (uint i = 0; i < (held & 0xFFFFu); i++)
+    {
+        uint at;
+        InterlockedAdd(make->pool[0], 1u, at);
+        make->freePages[at] = make->pages[slot * SLOT_PAGES + i];
+    }
+    for (uint i = 0; i < (held >> 16); i++)
+    {
+        uint at;
+        InterlockedAdd(make->pool[1], 1u, at);
+        make->freePages[make->brickPages + at] = make->materialPages[slot * SLOT_MATERIAL_PAGES + i];
+    }
+    make->slotCounts[slot] = 0;
+}
+
+// A free page of bricks (`which` 0) or of materials (1), or UNPLACED where none is left, which is noted.
+uint takePage(WorldMake* make, uint which)
+{
+    uint was;
+    InterlockedAdd(make->pool[which], 0xFFFFFFFFu, was);
+    if (was == 0u || was == UNPLACED)
+    {
+        InterlockedAdd(make->pool[which], 1u);
+        InterlockedOr(make->pool[2], 1u << which);
+        return UNPLACED;
+    }
+    return make->freePages[(which == 0u ? 0u : make->brickPages) + was - 1u];
+}
+
+// Takes the pages each job's column needs from the free ones, and places each of its bricks' materials in them, a
+// brick's never across the end of a page: a thread a job, going through its bricks in turn.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldPack(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint job = id.x;
+    if (job >= make->jobCount)
+    {
+        return;
+    }
+    uint slot = make->jobs[job].slot;
+    uint total = 0;
+    for (uint s = 0; s < make->tall; s++)
+    {
+        total += make->counters[SECTOR_COUNTS + job * 16 + s];
+    }
+    uint wanted = min((total + PAGE_BRICKS - 1u) / PAGE_BRICKS, SLOT_PAGES);
+    uint got = 0;
+    while (got < wanted)
+    {
+        uint page = takePage(make, 0u);
+        if (page == UNPLACED)
+        {
+            break;
+        }
+        make->pages[slot * SLOT_PAGES + got] = page;
+        got++;
+    }
+    uint materialPages = 0;
+    uint used = MATERIAL_PAGE;
+    uint at = 0;
+    uint bricks = min(make->counters[job * COUNTERS], make->brickRoom);
+    for (uint k = 0; k < bricks; k++)
+    {
+        uint record = make->loose[(job * make->brickRoom + k) * BRICK_WORDS + 18];
+        uint bytes = record == UNPLACED ? 0u : ((record >> 20) + 3u) & ~3u;
+        uint where = UNPLACED;
+        if (bytes > 0u)
+        {
+            if (used + bytes > MATERIAL_PAGE && materialPages < SLOT_MATERIAL_PAGES)
+            {
+                uint page = takePage(make, 1u);
+                if (page != UNPLACED)
+                {
+                    make->materialPages[slot * SLOT_MATERIAL_PAGES + materialPages] = page;
+                    materialPages++;
+                    at = page * MATERIAL_PAGE;
+                    used = 0;
+                }
+            }
+            if (used + bytes <= MATERIAL_PAGE)
+            {
+                where = at + used;
+                used += bytes;
+            }
+        }
+        make->placed[job * make->brickRoom + k] = where;
+    }
+    make->slotCounts[slot] = got | (materialPages << 16);
 }
 
 groupshared uint sectorMask[16];
 groupshared uint sectorFirst;
+groupshared uint sectorUnplaced;
 
+// Puts each sector's bricks in its slot's pages, in the order of its bits after the sectors under it, with their
+// materials, and writes its entry: where it is in the world, its bits, and its slot and first brick in the slot's
+// pages, which the walk finds its bricks by (voxels.slang). A sector any of whose bricks has no room is left empty.
 [shader("compute")]
 [numthreads(512, 1, 1)]
 void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
@@ -1332,17 +1468,25 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         sectorMask[index] = 0;
     }
+    if (index == 0)
+    {
+        sectorUnplaced = 0;
+    }
     GroupMemoryBarrierWithGroupSync();
     int3 l = int3(index & 7u, (index >> 3) & 7u, index >> 6);
     uint row = sy * 8 + uint(l.y);
     uint rows = make->tall * 8;
     uint kept = make->slots[job * 64 * rows + row * 64 + uint(l.z * 8 + l.x)];
+    uint slot = make->jobs[job].slot;
     if (kept != 0)
     {
         InterlockedOr(sectorMask[index >> 5], 1u << (index & 31u));
+        if (make->placed[job * make->brickRoom + kept - 1] == UNPLACED)
+        {
+            sectorUnplaced = 1;
+        }
     }
     GroupMemoryBarrierWithGroupSync();
-    uint slot = make->jobs[job].slot;
     if (index == 0)
     {
         uint count = 0;
@@ -1350,13 +1494,13 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         {
             count += countbits(sectorMask[w]);
         }
-        sectorFirst = EMPTY;
-        if (count > 0)
+        uint first = 0;
+        for (uint s = 0; s < sy; s++)
         {
-            uint placed;
-            InterlockedAdd(make->counters[job * COUNTERS + 2], count, placed);
-            sectorFirst = slot * make->brickRoom + placed;
+            first += make->counters[SECTOR_COUNTS + job * 16 + s];
         }
+        uint room = (make->slotCounts[slot] & 0xFFFFu) * PAGE_BRICKS;
+        sectorFirst = (count > 0 && sectorUnplaced == 0 && first + count <= room) ? (slot << 12) | first : EMPTY;
     }
     GroupMemoryBarrierWithGroupSync();
     uint w = make->window;
@@ -1370,7 +1514,7 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     else if (index >= 3 && index < 19)
     {
-        entry[index] = sectorMask[index - 3];
+        entry[index] = sectorFirst == EMPTY ? 0u : sectorMask[index - 3];
     }
     else if (index >= 19 && index < 27)
     {
@@ -1386,18 +1530,28 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         entry[27] = sectorFirst;
     }
-    if (kept != 0)
+    if (kept != 0 && sectorFirst != EMPTY)
     {
         uint rank = countbits(sectorMask[index >> 5] & ((1u << (index & 31u)) - 1u));
         for (uint k = 0; k < (index >> 5); k++)
         {
             rank += countbits(sectorMask[k]);
         }
+        uint logical = (sectorFirst & 0xFFFu) + rank;
+        uint brick = make->pages[slot * SLOT_PAGES + logical / PAGE_BRICKS] * PAGE_BRICKS + logical % PAGE_BRICKS;
         uint* from = make->loose + (job * make->brickRoom + kept - 1) * BRICK_WORDS;
-        uint* to = make->bricks + (sectorFirst + rank) * BRICK_WORDS;
+        uint* to = make->bricks + brick * BRICK_WORDS;
+        uint where = make->placed[job * make->brickRoom + kept - 1];
         for (uint k = 0; k < BRICK_WORDS; k++)
         {
-            to[k] = from[k];
+            to[k] = k == 18 ? where : from[k];
+        }
+        uint materials = from[18];
+        uint words = (((materials >> 20) + 3u) & ~3u) / 4u;
+        uint source = (job * make->materialRoom + (materials & 0xFFFFFu)) / 4u;
+        for (uint k = 0; k < words; k++)
+        {
+            make->materials[where / 4u + k] = make->staging[source + k];
         }
     }
 }

@@ -3,7 +3,7 @@
 
     python3 make_soldiers.py    # writes Rifleman.boxmodel and Scavenger.boxmodel beside this file
 
-Each soldier is a chibi figure about 64 cubes tall at 40 to a metre: a big head with large eyes under a helmet
+Each soldier is a chibi figure about 64 cubes tall at 34 to a metre (1.9 m): a big head with large eyes under a helmet
 with goggles, a mask over the lower face, a short body packed with webbing and pouches, stubby arms and legs, knee
 pads and chunky boots. The bones are named as a humanoid rig names them (Hips, Spine, Chest, Neck, Head,
 LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and the right side's), so the engine finds its
@@ -38,7 +38,7 @@ from voxkit import (  # noqa: E402
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIXELS = 40.0  # cubes to a metre
+PIXELS = 34.0  # cubes to a metre: about 1.9 m tall
 
 # Where the bones stand, in cubes: the hips from the ground, each other from the one above.
 HIPS = 18
@@ -48,8 +48,8 @@ NECK = 6
 HEAD = 1
 SHOULDER = (4.0, 4.8)
 UPPER_ARM = 6.5
-ELBOW = 9.5
-WRIST = 9.0
+ELBOW = 10.0
+WRIST = 10.0
 THIGH = (4.3, -1.0)
 KNEE = 7.5
 ANKLE = 6.0
@@ -170,16 +170,16 @@ def body(model, kind):
     for side, name in ((-1, "Left"), (1, "Right")):
         upper = grid(model, f"{name}UpperArm")
         upper.ball((0, -1, 0), (4.0, 3.8, 4.0), "cloth")
-        upper.rod((0, -1, 0), (0, -8.5, 0), 3.5, "cloth", radius2=3.2)
+        upper.rod((0, -1, 0), (0, -9.5, 0), 3.5, "cloth", radius2=3.2)
         upper.box((side * 2.8, -5.0, -1.5), (side * 4.1, -2.0, 1.5), "patch")  # a sleeve badge
         for dy in (0, 1.2):
             upper.rod((side * 4.0, -4.6 + dy, -1.6), (side * 4.0, -3.8 + dy, 0), 0.5, "tan", square=True)
             upper.rod((side * 4.0, -3.8 + dy, 0), (side * 4.0, -4.6 + dy, 1.6), 0.5, "tan", square=True)
         fore = grid(model, f"{name}Forearm")
         fore.ball((0, 0, 0), (3.2, 3.2, 3.2), "cloth")
-        fore.rod((0, 0, 0), (0, -5.5, 0), 3.2, "cloth", radius2=3.0)
-        fore.rod((0, -4.6, 0), (0, -6.6, 0), 3.4, "cloth_dark", flat=True)
-        fore.rod((0, -6.6, 0), (0, -8.0, 0), 2.3, "glove", flat=True)
+        fore.rod((0, 0, 0), (0, -6.5, 0), 3.2, "cloth", radius2=3.0)
+        fore.rod((0, -5.6, 0), (0, -7.6, 0), 3.4, "cloth_dark", flat=True)
+        fore.rod((0, -7.6, 0), (0, -10.4, 0), 2.3, "glove", flat=True)
     # Legs: trousers, a knee pad, puttees wound to the boot, and the chunky boot.
     for side, name in ((-1, "Left"), (1, "Right")):
         thigh = grid(model, f"{name}Thigh")
@@ -460,10 +460,11 @@ def rifle(g):
     each hand holds it: for each, the grip's axis, the way from the palm to it, and its middle."""
     wrist_axis = np.array((0.0, 0.77, 0.64))
     g.rod(-wrist_axis * 2.8, wrist_axis * 2.8, GRIP_RADIUS, "wood")
-    for z in range(-17, -1):
-        t = (z + 17) / 16
-        g.box((-1.5, -5.6 + t * 4.2, z), (1.5, 2.2 - t * 0.2, z + 1), "wood")
-    g.box((-1.6, -6, -18), (1.6, 2.4, -17), "brass", shade=1)
+    # A short stock, as the style wants, that ends at the shoulder when the hand is on the grip.
+    for z in range(-12, -1):
+        t = (z + 12) / 11
+        g.box((-1.5, -5.2 + t * 3.8, z), (1.5, 2.2 - t * 0.2, z + 1), "wood")
+    g.box((-1.6, -5.6, -13), (1.6, 2.4, -12), "brass", shade=1)
     g.box((-1.6, 1.0, -1), (1.6, 4.2, 9), "blued")
     g.box((-1.3, -2.8, 3), (1.3, 1.0, 7), "blued")
     g.path([(0, 0.5, 0.6), (0, -2.0, 1.4), (0, -2.0, 3)], 0.5, "blued")
@@ -482,12 +483,12 @@ def rifle(g):
     for (x, y, z), (material, _) in list(g.cells.items()):
         if material == "rag" and z % 2:
             g.put((x, y, z), "rag", 0)
-    g.path([(0, -5.5, -15), (0, -6.5, -6), (0, -5, 6), (0, -1.5, 17)], 0.5, "leather", square=True)
+    g.path([(0, -5.0, -10), (0, -6.5, -4), (0, -5, 6), (0, -1.5, 17)], 0.5, "leather", square=True)
     return {
         "right": (wrist_axis, (-0.85, -0.5, 0.0), np.zeros(3), GRIP_RADIUS),
-        "carry": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 1.0, 13.0)), 1.7),
+        "carry": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 1.0, 9.5)), 1.7),
         "aim": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), np.array((0.0, 1.0, 10.0)), 1.7),
-        "stock": np.array((0.0, -1.8, -17.5)),
+        "stock": np.array((0.0, -1.6, -12.5)),
     }
 
 
@@ -501,10 +502,10 @@ def smg(g):
     g.box((-1.3, 6, 1), (1.3, 6.8, 8), "steel")
     g.box((-0.5, 6.4, -0.5), (0.5, 7.6, 0.8), "blued")
     g.box((1.8, 4, 5), (2.8, 5, 6.2), "steel", shade=3)
-    for z in range(-14, -2):
-        t = (z + 14) / 12
-        g.box((-1.4, 2.2 - (1 - t) * 4.0, z), (1.4, 5.6, z + 1), "wood")
-    g.box((-1.5, -2.0, -15), (1.5, 5.8, -14), "steel", shade=0)
+    for z in range(-11, -2):
+        t = (z + 11) / 9
+        g.box((-1.4, 2.2 - (1 - t) * 3.4, z), (1.4, 5.6, z + 1), "wood")
+    g.box((-1.5, -1.4, -12), (1.5, 5.8, -11), "steel", shade=0)
     g.path([(0, 2.4, 0.8), (0, 0.6, 1.6), (0, 0.6, 3.8), (0, 2.4, 4.2)], 0.5, "blued")
     g.rod((0, 4.2, 12), (0, 4.2, 21), 1.3, "blued", flat=True)
     for z in range(13, 20, 2):
@@ -524,7 +525,7 @@ def smg(g):
         "right": (grip_axis, (-0.85, -0.5, 0.0), np.zeros(3), GRIP_RADIUS),
         "carry": (fore_axis, (1.0, 0.0, 0.0), middle, GRIP_RADIUS),
         "aim": (fore_axis, (1.0, 0.0, 0.0), middle, GRIP_RADIUS),
-        "stock": np.array((0.0, 1.8, -14.5)),
+        "stock": np.array((0.0, 2.0, -11.5)),
     }
 
 
@@ -567,11 +568,11 @@ def hold(model, grips, gun_r, gun_t, body_keys, hold_with, tag):
 
 # How the gun is held at rest, for each: the way its muzzle points, its top, and where the right hand's grip is.
 CARRY = {
-    "rifleman": ((-0.9, -0.2, 0.38), (0.1, 1.0, 0.4), (5.0, 27.0, 15.0)),
-    "scavenger": ((-0.8, -0.38, 0.46), (0.0, 1.0, 0.2), (3.0, 30.0, 13.0)),
+    "rifleman": ((-0.65, -0.55, 0.52), (0.15, 1.0, 0.35), (7.0, 22.0, 9.0)),
+    "scavenger": ((-0.65, -0.55, 0.52), (0.15, 1.0, 0.35), (7.0, 22.0, 9.0)),
 }
 # Which way each elbow points, the right's then the left's, at rest and aiming.
-POLES = {"carry": ((1.0, -0.6, -0.5), (-1.0, 0.0, 0.3)), "aim": ((1.0, 0.6, -0.2), (-0.9, -0.7, 0.15))}
+POLES = {"carry": ((0.6, -1.0, -0.8), (-0.4, -1.0, -0.6)), "aim": ((1.0, 0.6, -0.2), (-0.9, -0.7, 0.15))}
 # Aiming: how far the hips turn side on, and where in the chest the stock sits.
 AIM = {"rifleman": (90.0, (13.0, 4.0, 11.0)), "scavenger": (80.0, (13.0, 4.0, 11.0))}
 

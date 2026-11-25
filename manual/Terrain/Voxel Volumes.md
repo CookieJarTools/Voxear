@@ -77,7 +77,7 @@ An endless volume grows trees where its ground grows grass. Each kind is one of 
 - Each kind is grown from four seeds and turned four ways, so no two trees side by side are alike. Trees stand at most one in each 5 m square, on grass: not on rock, sand, snow or steep ground, and not where the generator's overhangs or caves have moved the ground.
 - The colours are the plant's wood and leaves blocks' colours.
 
-Trees take room. A wood of 100 oaks and pines a hectare takes about 185 MB at a reach of 64 m, against 90 MB for its ground alone, and its columns cost about 0.33 ms each to make, eight a frame. The crowns' loose cubes add about 2.4 ms a frame to drawing at 1080p on an RTX 3070. Fewer trees take less.
+Each plant's voxels are made once, in each of its four turns, and shared by every tree of it: a tree stands on the grid of the volume's half-metre bricks, up to half a metre from where it would otherwise, its foot a little in the ground. A wood of 100 oaks and pines a hectare takes about 120 MB at a reach of 64 m, against 91 MB for its ground alone, and its columns cost about 0.3 ms each to make, eight a frame. The crowns' loose cubes add about 2.5 ms a frame to drawing at 1080p on an RTX 3070. Fewer trees take less.
 
 `vox editor call field.set` sets the trees' rows as the Inspector does: `trees` is the first kind's plant, `trees#2` how many of it to a hectare, and so on, then the last to add a kind. In the scene:
 

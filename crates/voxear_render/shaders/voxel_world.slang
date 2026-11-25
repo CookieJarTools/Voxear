@@ -11,12 +11,14 @@
 // 3. voxelWorldTrees: the trees that may reach the column, placed by hash where the ground grows grass.
 // 4. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass, flowers and trees could reach.
 // 5. voxelWorldCoarse: a thread a listed brick passes over those a Volume leaves solid or open through and through,
-//    by the Volume at the brick's corners, which with caves are most of them, and those in a tree's box but none of
-//    its blocks.
+//    by the Volume at the brick's corners, which with caves are most of them, and those in a tree's box where its
+//    plant has no brick.
 // 6. voxelWorldBricks: one group a brick left, a thread a voxel, works out each voxel, and keeps the brick in its
-//    job's own list if anything is in it, its materials in the column's slot in the order of its bits.
+//    job's own list if anything is in it, its materials in the column's slot in the order of its bits; or where the
+//    brick is one tree's alone, the brick of the tree's plant it is.
 // 7. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
-//    of its bits, and writes the sector's entry: where it is in the world, its bits and where its bricks start.
+//    of its bits, and writes the sector's entry: where it is in the world, its bits and where its bricks start, and
+//    which of its bricks are trees' and where the plants' bricks they are are named.
 //
 // The ground is the one a Voxel Volume's own ground is (src/voxel_volume/ground.rs), to the voxel: the same hashes,
 // noise and rules, worked out from the voxel's place in the world. Or, for a volume made by a world generator, the
@@ -31,16 +33,21 @@
 #include "generator.slang"
 
 static const uint MAX_JOBS = 16;
-static const uint ENTRY_WORDS = 28;
+static const uint ENTRY_WORDS = 53;
 static const uint BRICK_WORDS = 20;
 static const uint EMPTY = 0xFFFFFFFFu;
 static const uint ROW = 1024;
 // Each job's counters: bricks kept, material bytes taken, bricks placed, bricks that did not fit.
 // After them: how many candidate bricks there are and the coarse pass's groups, then how many of them it leaves for
 // the bricks pass and that pass's groups, then how many trees stand round each job's column, then how many bricks
-// each job keeps in each of its sectors.
+// each job keeps in each of its sectors, then how many of its trees' bricks are in each.
 static const uint COUNTERS = 4;
 static const uint SECTOR_COUNTS = MAX_JOBS * COUNTERS + 8 + MAX_JOBS;
+static const uint TREE_COUNTS = SECTOR_COUNTS + MAX_JOBS * 16;
+// A brick that is a tree's alone, in a job's list of its column's bricks: the plant's brick it is, marked.
+static const uint TREE_BRICK = 0x80000000u;
+// How many plants' bricks a word each a brick of room names: those of a slot's trees follow its own bricks.
+static const uint NAMES_A_BRICK = BRICK_WORDS;
 // The shared room: a page of bricks, the most pages a slot has, a page of material bytes, and the most a slot has.
 static const uint PAGE_BRICKS = 64;
 static const uint SLOT_PAGES = 64;
@@ -90,6 +97,11 @@ struct WorldMake
     uint* pool;
     uint* staging;
     uint* placed;
+    // The trees' plants as voxels, in each of their four turns (src/voxel_volume/trees.rs): how many and how many
+    // voxels a block is, then for each its sectors a side, where its sectors start among these words, and the least
+    // corner of its box from the least corner of its trunk's foot block; their bricks and materials are the first of
+    // the shared room's.
+    uint* models;
     float height;
     float hills;
     float hillSpacing;
@@ -586,10 +598,11 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16) | (bare ? 1u << 24 : 0u);
 }
 
-// Trees (src/voxel_volume/trees.rs): each kind grown as a few plants, each plant a grid of its blocks, a byte a block,
-// each block a metre of voxels. A trees pass places them round each job's column, at most one in each cell
-// TREE_CELL metres square, by hash, where the ground grows grass; the bricks they reach are listed with the ground's,
-// and a brick works out which of its voxels each tree near it fills.
+// Trees (src/voxel_volume/trees.rs): each kind grown as a few plants, each plant's voxels made once on the CPU in each
+// of four turns. A trees pass places them round each job's column, at most one in each cell TREE_CELL metres square,
+// by hash, where the ground grows grass, each with its plant's box on the bricks' grid, so the plant's bricks are the
+// world's. A brick that is one tree's alone names its plant's brick; one that trees share, or a tree and the ground,
+// is worked out of them all.
 static const uint MAX_TREES = 32;
 static const uint TREE_WORDS = 8;
 static const uint TREE_VARIANTS = 4;
@@ -598,8 +611,9 @@ static const uint TREE_KINDS_AT = 4;
 static const uint TREE_PLANTS_AT = TREE_KINDS_AT + 8 * 4;
 static const uint TREE_PLANT_WORDS = 8;
 static const uint MOST_CARRIED_HERE = 8;
-static const uint TREE_WOOD = 0x80u;
-static const uint TREE_LEAVES = 0x40u;
+static const uint MODELS_AT = 4;
+static const uint MODEL_WORDS = 8;
+static const uint MODEL_SECTOR_WORDS = 25;
 
 // How many trees stand round a job's column.
 uint treeCount(WorldMake* make, uint job)
@@ -607,9 +621,8 @@ uint treeCount(WorldMake* make, uint job)
     return min(make->counters[MAX_JOBS * COUNTERS + 8 + job], MAX_TREES);
 }
 
-// A tree placed round a job's column: the least corner of its trunk's foot block in the world's voxels, which of
-// the plants it is, how many quarter turns it is turned, how far it reaches across from the middle of its trunk in
-// voxels, and its lowest and highest voxel.
+// A tree placed round a job's column: the least corner of its plant's box in the world's voxels, on the bricks' grid,
+// which of the plants' turns it is, and the size of the box.
 int* treeOf(WorldMake* make, uint job, uint t)
 {
     return make->trees + (job * MAX_TREES + t) * TREE_WORDS;
@@ -621,134 +634,57 @@ int blockVoxels(WorldMake* make)
     return max(int(round(1.0 / make->voxel)), 1);
 }
 
-int floorDivide(int a, int b)
-{
-    return a >= 0 ? a / b : -((-a + b - 1) / b);
-}
-
-uint forestByte(WorldMake* make, uint at)
-{
-    return (make->forest[at >> 2] >> ((at & 3u) * 8u)) & 255u;
-}
-
-// Where voxel `p` of the world is in a tree's plant, in voxels from the least corner of its trunk's foot block, the
-// tree's turn undone.
-int3 inTree(WorldMake* make, int* tree, int3 p)
-{
-    int b = blockVoxels(make);
-    // Doubled, from the middle of the trunk's foot, so a quarter turn keeps to whole numbers.
-    int2 d = int2(2 * (p.x - tree[0]) + 1 - b, 2 * (p.z - tree[2]) + 1 - b);
-    for (int i = 0; i < tree[4]; i++)
-    {
-        d = int2(d.y, -d.x);
-    }
-    return int3((d.x + b - 1) / 2, p.y - tree[1], (d.y + b - 1) / 2);
-}
-
-// The byte of the block at `block` of a tree's plant, from the foot of its trunk: none outside it.
-uint treeBlock(WorldMake* make, uint* plant, int3 block)
-{
-    int3 at = block - int3(int(plant[0]), int(plant[1]), int(plant[2]));
-    int3 size = int3(int(plant[3]), int(plant[4]), int(plant[5]));
-    if (any(at < 0) || any(at >= size))
-    {
-        return 0;
-    }
-    return forestByte(make, plant[6] + uint(at.x + size.x * (at.y + size.y * at.z)));
-}
-
-// How much of the leaves of a tree's plant are round point `g`, in blocks from the middle of its trunk's foot block:
-// from 0 for none to 1 for all, the eight blocks round it blended, so a crown of blocks is rounded into clumps. Wood
-// beside leaves counts as leaves, so a branch inside the crown leaves no hollow in it.
-float leavesAt(WorldMake* make, uint* plant, float3 g)
-{
-    int3 base = int3(floor(g));
-    float3 t = g - float3(base);
-    float sum = 0.0;
-    for (uint c = 0; c < 8; c++)
-    {
-        int3 corner = int3(int(c & 1u), int((c >> 1) & 1u), int(c >> 2));
-        if ((treeBlock(make, plant, base + corner) & TREE_LEAVES) != 0)
-        {
-            float3 w = select(corner == int3(1, 1, 1), t, 1.0 - t);
-            sum += w.x * w.y * w.z;
-        }
-    }
-    return sum;
-}
-
-// What a tree has at voxel `p` of the world: one of its colours, or nothing. A log is round, as thick as its byte
-// says. Leaves are a shell a few voxels deep where the blended leaves cross a half, the half moved a little by hash
-// at each voxel so their edge is ragged, loosely filled: clumps of loose cubes with nothing inside.
-uint treeVoxel(WorldMake* make, int* tree, int3 p)
-{
-    int b = blockVoxels(make);
-    int3 l = inTree(make, tree, p);
-    int3 block = int3(floorDivide(l.x, b), floorDivide(l.y, b), floorDivide(l.z, b));
-    uint* plant = make->forest + TREE_PLANTS_AT + uint(tree[3]) * TREE_PLANT_WORDS;
-    uint byte = treeBlock(make, plant, block);
-    uint colours = make->forest[TREE_KINDS_AT + uint(tree[3]) / TREE_VARIANTS * 4 + 3];
-    uint h = hashOf(p.x, p.y, p.z, make->seed + 41);
-    if ((byte & TREE_WOOD) != 0)
-    {
-        int3 f = l - block * b;
-        uint axis = byte & 3u;
-        float thick = float((byte >> 2) & 15u) / 8.0;
-        int2 across = axis == 0 ? f.yz : (axis == 1 ? f.xz : f.xy);
-        float2 c = float2(across) + 0.5 - float(b) * 0.5;
-        float r = thick * float(b) * 0.5;
-        if (thick < 1.0 && dot(c, c) > r * r)
-        {
-            return 0;
-        }
-        return colours + 1 + (h & 1u);
-    }
-    float leaves = leavesAt(make, plant, (float3(l) + 0.5) / float(b) - 0.5);
-    float edge = 0.5 + (unit(hashOf(p.x, p.y, p.z, make->seed + 43)) - 0.5) * 0.3;
-    float shell = max(2.0, float(b) * 2.0 / 16.0) / float(b);
-    if (leaves < edge || leaves > edge + shell || unit(h) > 0.6)
-    {
-        return 0;
-    }
-    return colours + 3 + (h >> 8) % 3u;
-}
-
-// Whether any block of a tree's plant is in the box of voxels from `low` to `high` of the world.
-bool treeIn(WorldMake* make, int* tree, int3 low, int3 high)
-{
-    int b = blockVoxels(make);
-    int3 a = inTree(make, tree, low);
-    int3 c = inTree(make, tree, high);
-    int3 from = int3(floorDivide(min(a.x, c.x), b), floorDivide(a.y, b), floorDivide(min(a.z, c.z), b));
-    int3 to = int3(floorDivide(max(a.x, c.x), b), floorDivide(c.y, b), floorDivide(max(a.z, c.z), b));
-    uint* plant = make->forest + TREE_PLANTS_AT + uint(tree[3]) * TREE_PLANT_WORDS;
-    // Leaves round over into the blocks beside them.
-    from -= 1;
-    to += 1;
-    for (int z = from.z; z <= to.z; z++)
-    {
-        for (int y = from.y; y <= to.y; y++)
-        {
-            for (int x = from.x; x <= to.x; x++)
-            {
-                if (treeBlock(make, plant, int3(x, y, z)) != 0)
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
 // Whether a tree's box reaches the box of voxels from `low` to `high` of the world.
 bool treeReaches(WorldMake* make, int* tree, int3 low, int3 high)
 {
-    int middle = 2 * tree[0] + blockVoxels(make);
-    int middleZ = 2 * tree[2] + blockVoxels(make);
-    int r = 2 * tree[5];
-    return 2 * high.x + 1 >= middle - r && 2 * low.x <= middle + r && 2 * high.z + 1 >= middleZ - r
-        && 2 * low.z <= middleZ + r && high.y >= tree[6] && low.y <= tree[7];
+    int3 least = int3(tree[0], tree[1], tree[2]);
+    int3 most = least + int3(tree[5], tree[6], tree[7]) - 1;
+    return all(high >= least) && all(low <= most);
+}
+
+// The brick of a tree's plant at the brick of the world whose least voxel is `p`, among the shared room's: -1 for none.
+int treeBrick(WorldMake* make, int* tree, int3 p)
+{
+    uint* r = make->models + MODELS_AT + uint(tree[3]) * MODEL_WORDS;
+    int3 b = (p - int3(tree[0], tree[1], tree[2])) >> 3;
+    int3 count = int3(int(r[0]), int(r[1]), int(r[2]));
+    if (any(b < 0) || any(b >= count * 8))
+    {
+        return -1;
+    }
+    int3 s = b >> 3;
+    uint* sector = make->models + r[3] + uint((s.y * count.z + s.z) * count.x + s.x) * MODEL_SECTOR_WORDS;
+    if (sector[24] == EMPTY)
+    {
+        return -1;
+    }
+    int3 l = b & 7;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint word = sector[index >> 5];
+    if (((word >> (index & 31u)) & 1u) == 0u)
+    {
+        return -1;
+    }
+    uint before = (sector[16 + (index >> 6)] >> (((index >> 5) & 1u) * 16u)) & 0xFFFFu;
+    return int(sector[24] + before + countbits(word & ((1u << (index & 31u)) - 1u)));
+}
+
+// What a plant's brick has at its voxel `l`: a palette place and one, or nothing.
+uint treeVoxel(WorldMake* make, int brick, int3 l)
+{
+    uint* bits = make->bricks + uint(brick) * BRICK_WORDS;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    if (((bits[index >> 5] >> (index & 31u)) & 1u) == 0u)
+    {
+        return 0;
+    }
+    uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
+    for (uint k = 0; k < (index >> 5); k++)
+    {
+        before += countbits(bits[k]);
+    }
+    uint at = bits[18] + before;
+    return ((make->materials[at >> 2] >> ((at & 3u) * 8u)) & 255u) + 1u;
 }
 
 // Whether the ground at voxel column `foot` of the world grows grass, and how high it is there: worked out afresh,
@@ -793,8 +729,10 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
     }
     float v = make->voxel;
     int2 corner = make->jobs[job].column * 64;
-    int2 first = int2(floor((float2(corner) * v - make->treeReach) / TREE_CELL));
-    int2 last = int2(floor((float2(corner + 64) * v + make->treeReach) / TREE_CELL));
+    // Leaves round over a block past the plant's own, and a tree stands up to a brick aside, to keep to their grid.
+    float reach = make->treeReach + 1.5;
+    int2 first = int2(floor((float2(corner) * v - reach) / TREE_CELL));
+    int2 last = int2(floor((float2(corner + 64) * v + reach) / TREE_CELL));
     int2 cells = last - first + 1;
     uint seed = make->seed + 91;
     uint* carried = make->treeCarried + (job * 64 + id.x) * MOST_CARRIED_HERE;
@@ -821,9 +759,9 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
         uint pick = hashOf(cell.x, 10, cell.y, seed);
         uint* kindOf = make->forest + TREE_KINDS_AT + kind * 4;
         uint plantIndex = kindOf[1] + pick % max(kindOf[2], 1u);
-        uint* plant = make->forest + TREE_PLANTS_AT + plantIndex * TREE_PLANT_WORDS;
+        uint model = plantIndex * 4 + ((pick >> 8) & 3u);
+        uint* r = make->models + MODELS_AT + model * MODEL_WORDS;
         int b = blockVoxels(make);
-        int foot0 = h + 1;
         uint t;
         InterlockedAdd(make->counters[MAX_JOBS * COUNTERS + 8 + job], 1u, t);
         if (t >= MAX_TREES)
@@ -831,14 +769,18 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
             continue;
         }
         int* tree = treeOf(make, job, t);
-        tree[0] = foot.x - b / 2;
-        tree[1] = foot0;
-        tree[2] = foot.y - b / 2;
-        tree[3] = int(plantIndex);
-        tree[4] = int((pick >> 8) & 3u);
-        tree[5] = int(ceil(asfloat(plant[7]) * float(b))) + 1;
-        tree[6] = foot0 + int(plant[1]) * b;
-        tree[7] = foot0 + (int(plant[1]) + int(plant[4])) * b - 1;
+        // Its plant's box on the bricks' grid: the tree stands up to a brick less a voxel aside and lower, its foot in
+        // the ground.
+        int3 trunk = int3(foot.x - b / 2, h + 1, foot.y - b / 2);
+        int3 least = (trunk + int3(int(r[4]), int(r[5]), int(r[6]))) & ~7;
+        tree[0] = least.x;
+        tree[1] = least.y;
+        tree[2] = least.z;
+        tree[3] = int(model);
+        tree[4] = 0;
+        tree[5] = int(r[0]) * 64;
+        tree[6] = int(r[1]) * 64;
+        tree[7] = int(r[2]) * 64;
     }
 }
 
@@ -913,8 +855,8 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
         int* tree = treeOf(make, job, t);
         if (treeReaches(make, tree, low, high))
         {
-            treeLow = min(treeLow, tree[6]);
-            treeHigh = max(treeHigh, tree[7]);
+            treeLow = min(treeLow, tree[1]);
+            treeHigh = max(treeHigh, tree[1] + tree[6] - 1);
         }
     }
     lowest = min(lowest, treeLow);
@@ -996,7 +938,7 @@ bool evenThrough(WorldMake* make, uint packed)
     return solid || open;
 }
 
-// Whether a block of any tree whose box reaches a candidate brick is in it.
+// Whether any tree's plant has a brick at a candidate brick.
 bool treesIn(WorldMake* make, uint packed)
 {
     if ((packed & TREED) == 0)
@@ -1010,7 +952,7 @@ bool treesIn(WorldMake* make, uint packed)
     for (uint t = 0; t < treeCount(make, job); t++)
     {
         int* tree = treeOf(make, job, t);
-        if (treeReaches(make, tree, low, high) && treeIn(make, tree, low, high))
+        if (treeReaches(make, tree, low, high) && treeBrick(make, tree, low) >= 0)
         {
             return true;
         }
@@ -1019,7 +961,7 @@ bool treesIn(WorldMake* make, uint packed)
 }
 
 // Passes over the candidate bricks a Volume leaves solid or open through and through, and those listed for a tree's
-// box that none of its blocks is in, before a group of 512 works out each one's voxels: the rest go on, in the second
+// box where its plant has no brick, before a group of 512 works out each one's voxels: the rest go on, in the second
 // half of the candidates, to the bricks pass. Without a Volume, the ground's own bricks all go on.
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -1062,9 +1004,10 @@ groupshared uint sharedSlot;
 groupshared uint sharedOffset;
 groupshared uint sharedCount;
 groupshared uint sharedKept;
-// The trees whose boxes reach the brick.
+// The bricks of the trees' plants at the brick, and whether the ground has anything in it.
 groupshared uint sharedTrees[MAX_TREES];
 groupshared uint sharedTreeCount;
+groupshared uint sharedOwn;
 
 // How far into or out of the ground a brick's first look must find every voxel it looks at to take the whole
 // brick as solid or open, in metres.
@@ -1135,6 +1078,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         sharedEven = 0;
         sharedTreeCount = 0;
+        sharedOwn = 0;
     }
     GroupMemoryBarrierWithGroupSync();
     uint packed = make->candidates[make->candidateRoom + candidate];
@@ -1155,11 +1099,16 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if ((packed & TREED) != 0)
     {
         int3 low = int3(corner.x + bx * 8, row * 8, corner.y + bz * 8);
+        int brick = -1;
         if (index < treeCount(make, job) && treeReaches(make, treeOf(make, job, index), low, low + 7))
+        {
+            brick = treeBrick(make, treeOf(make, job, index), low);
+        }
+        if (brick >= 0)
         {
             uint at;
             InterlockedAdd(sharedTreeCount, 1u, at);
-            sharedTrees[at] = index;
+            sharedTrees[at] = uint(brick);
         }
     }
     GroupMemoryBarrierWithGroupSync();
@@ -1239,11 +1188,31 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             m = (y == h + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
         }
     }
-    // A tree's voxel where the ground leaves none, and over its grass and flowers, in its order.
+    // A brick one tree's alone is its plant's brick: the job's list names it.
+    if (sharedTreeCount == 1)
+    {
+        if (m != 0)
+        {
+            sharedOwn = 1;
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (sharedTreeCount == 1 && sharedOwn == 0)
+    {
+        if (index == 0)
+        {
+            uint rows = make->tall * 8;
+            make->slots[job * 64 * rows + uint(row * 64 + bz * 8 + bx)] = TREE_BRICK | sharedTrees[0];
+            InterlockedAdd(make->counters[TREE_COUNTS + job * 16 + uint(row) / 8], 1u);
+        }
+        return;
+    }
+    // Else a tree's voxel where the ground leaves none, and over its grass and flowers, in their order: the plants'
+    // bricks are on the world's grid.
     int ground = volume ? min(surfaceOf(make, job, px, pz), tall - 1) : h;
     for (uint t = 0; t < sharedTreeCount && (m == 0 || y > ground); t++)
     {
-        uint filled = treeVoxel(make, treeOf(make, job, sharedTrees[t]), int3(corner.x + px, y, corner.y + pz));
+        uint filled = treeVoxel(make, int(sharedTrees[t]), l);
         if (filled != 0)
         {
             m = filled;
@@ -1397,10 +1366,14 @@ void voxelWorldPack(uint3 id: SV_DispatchThreadID)
     }
     uint slot = make->jobs[job].slot;
     uint total = 0;
+    uint named = 0;
     for (uint s = 0; s < make->tall; s++)
     {
         total += make->counters[SECTOR_COUNTS + job * 16 + s];
+        named += make->counters[TREE_COUNTS + job * 16 + s];
     }
+    // The column's own bricks, then the names of its trees' bricks, so many to a brick of room.
+    total += (named + NAMES_A_BRICK - 1u) / NAMES_A_BRICK;
     uint wanted = min((total + PAGE_BRICKS - 1u) / PAGE_BRICKS, SLOT_PAGES);
     uint got = 0;
     while (got < wanted)
@@ -1447,12 +1420,16 @@ void voxelWorldPack(uint3 id: SV_DispatchThreadID)
 }
 
 groupshared uint sectorMask[16];
+groupshared uint sectorTrees[16];
 groupshared uint sectorFirst;
+groupshared uint sectorNames;
 groupshared uint sectorUnplaced;
 
 // Puts each sector's bricks in its slot's pages, in the order of its bits after the sectors under it, with their
-// materials, and writes its entry: where it is in the world, its bits, and its slot and first brick in the slot's
-// pages, which the walk finds its bricks by (voxels.slang). A sector any of whose bricks has no room is left empty.
+// materials, and writes its entry: where it is in the world, its bits, its slot and first brick in the slot's pages,
+// which of its bricks are trees' and where the names of the plants' bricks they are start among the slot's words,
+// after all its own bricks. The walk finds its bricks by them (voxels.slang). A sector any of whose bricks has no room
+// is left empty.
 [shader("compute")]
 [numthreads(512, 1, 1)]
 void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
@@ -1467,6 +1444,7 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (index < 16)
     {
         sectorMask[index] = 0;
+        sectorTrees[index] = 0;
     }
     if (index == 0)
     {
@@ -1478,10 +1456,15 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     uint rows = make->tall * 8;
     uint kept = make->slots[job * 64 * rows + row * 64 + uint(l.z * 8 + l.x)];
     uint slot = make->jobs[job].slot;
+    bool named = (kept & TREE_BRICK) != 0;
     if (kept != 0)
     {
         InterlockedOr(sectorMask[index >> 5], 1u << (index & 31u));
-        if (make->placed[job * make->brickRoom + kept - 1] == UNPLACED)
+        if (named)
+        {
+            InterlockedOr(sectorTrees[index >> 5], 1u << (index & 31u));
+        }
+        else if (make->placed[job * make->brickRoom + kept - 1] == UNPLACED)
         {
             sectorUnplaced = 1;
         }
@@ -1490,22 +1473,36 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (index == 0)
     {
         uint count = 0;
+        uint trees = 0;
         for (uint w = 0; w < 16; w++)
         {
             count += countbits(sectorMask[w]);
+            trees += countbits(sectorTrees[w]);
         }
         uint first = 0;
-        for (uint s = 0; s < sy; s++)
+        uint firstName = 0;
+        uint own = 0;
+        for (uint s = 0; s < make->tall; s++)
         {
-            first += make->counters[SECTOR_COUNTS + job * 16 + s];
+            uint here = make->counters[SECTOR_COUNTS + job * 16 + s];
+            own += here;
+            if (s < sy)
+            {
+                first += here;
+                firstName += make->counters[TREE_COUNTS + job * 16 + s];
+            }
         }
         uint room = (make->slotCounts[slot] & 0xFFFFu) * PAGE_BRICKS;
-        sectorFirst = (count > 0 && sectorUnplaced == 0 && first + count <= room) ? (slot << 12) | first : EMPTY;
+        uint names = own * NAMES_A_BRICK + firstName;
+        bool fits = first + count - trees <= room && (names + trees + NAMES_A_BRICK - 1u) / NAMES_A_BRICK <= room;
+        sectorFirst = (count > 0 && sectorUnplaced == 0 && fits) ? (slot << 12) | first : EMPTY;
+        sectorNames = names;
     }
     GroupMemoryBarrierWithGroupSync();
     uint w = make->window;
     uint* entry = make->table + ((sy * w * w) + slot) * ENTRY_WORDS;
     int2 column = make->jobs[job].column;
+    bool empty = sectorFirst == EMPTY;
     if (index == 0)
     {
         entry[0] = uint(column.x);
@@ -1514,45 +1511,75 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     else if (index >= 3 && index < 19)
     {
-        entry[index] = sectorFirst == EMPTY ? 0u : sectorMask[index - 3];
+        entry[index] = empty ? 0u : sectorMask[index - 3];
     }
     else if (index >= 19 && index < 27)
     {
+        // Counts of the sector's own bricks before each pair of words.
         uint pair = index - 19;
         uint before = 0;
         for (uint k = 0; k < pair * 2; k++)
         {
-            before += countbits(sectorMask[k]);
+            before += countbits(sectorMask[k] & ~sectorTrees[k]);
         }
-        entry[index] = before | ((before + countbits(sectorMask[pair * 2])) << 16);
+        entry[index] = before | ((before + countbits(sectorMask[pair * 2] & ~sectorTrees[pair * 2])) << 16);
     }
     else if (index == 27)
     {
         entry[27] = sectorFirst;
     }
-    if (kept != 0 && sectorFirst != EMPTY)
+    else if (index >= 28 && index < 44)
     {
-        uint rank = countbits(sectorMask[index >> 5] & ((1u << (index & 31u)) - 1u));
-        for (uint k = 0; k < (index >> 5); k++)
+        entry[index] = empty ? 0u : sectorTrees[index - 28];
+    }
+    else if (index >= 44 && index < 52)
+    {
+        uint pair = index - 44;
+        uint before = 0;
+        for (uint k = 0; k < pair * 2; k++)
         {
-            rank += countbits(sectorMask[k]);
+            before += countbits(sectorTrees[k]);
         }
-        uint logical = (sectorFirst & 0xFFFu) + rank;
+        entry[index] = before | ((before + countbits(sectorTrees[pair * 2])) << 16);
+    }
+    else if (index == 52)
+    {
+        entry[52] = sectorNames;
+    }
+    if (kept == 0 || empty)
+    {
+        return;
+    }
+    uint mask = named ? sectorTrees[index >> 5] : sectorMask[index >> 5] & ~sectorTrees[index >> 5];
+    uint rank = countbits(mask & ((1u << (index & 31u)) - 1u));
+    for (uint k = 0; k < (index >> 5); k++)
+    {
+        rank += countbits(named ? sectorTrees[k] : sectorMask[k] & ~sectorTrees[k]);
+    }
+    if (named)
+    {
+        // The plant's brick's name, a word among the slot's words after its own bricks.
+        uint at = sectorNames + rank;
+        uint logical = at / NAMES_A_BRICK;
         uint brick = make->pages[slot * SLOT_PAGES + logical / PAGE_BRICKS] * PAGE_BRICKS + logical % PAGE_BRICKS;
-        uint* from = make->loose + (job * make->brickRoom + kept - 1) * BRICK_WORDS;
-        uint* to = make->bricks + brick * BRICK_WORDS;
-        uint where = make->placed[job * make->brickRoom + kept - 1];
-        for (uint k = 0; k < BRICK_WORDS; k++)
-        {
-            to[k] = k == 18 ? where : from[k];
-        }
-        uint materials = from[18];
-        uint words = (((materials >> 20) + 3u) & ~3u) / 4u;
-        uint source = (job * make->materialRoom + (materials & 0xFFFFFu)) / 4u;
-        for (uint k = 0; k < words; k++)
-        {
-            make->materials[where / 4u + k] = make->staging[source + k];
-        }
+        make->bricks[brick * BRICK_WORDS + at % NAMES_A_BRICK] = kept & ~TREE_BRICK;
+        return;
+    }
+    uint logical = (sectorFirst & 0xFFFu) + rank;
+    uint brick = make->pages[slot * SLOT_PAGES + logical / PAGE_BRICKS] * PAGE_BRICKS + logical % PAGE_BRICKS;
+    uint* from = make->loose + (job * make->brickRoom + kept - 1) * BRICK_WORDS;
+    uint* to = make->bricks + brick * BRICK_WORDS;
+    uint where = make->placed[job * make->brickRoom + kept - 1];
+    for (uint k = 0; k < BRICK_WORDS; k++)
+    {
+        to[k] = k == 18 ? where : from[k];
+    }
+    uint materials = from[18];
+    uint words = (((materials >> 20) + 3u) & ~3u) / 4u;
+    uint source = (job * make->materialRoom + (materials & 0xFFFFFu)) / 4u;
+    for (uint k = 0; k < words; k++)
+    {
+        make->materials[where / 4u + k] = make->staging[source + k];
     }
 }
 

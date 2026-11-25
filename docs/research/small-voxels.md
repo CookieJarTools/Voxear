@@ -697,13 +697,54 @@ less on average: grass and flowers on hills 170 bricks and 20 KB of materials ag
 Making a column costs about as much as before (0.36 against 0.33 ms with trees). Of the 90 MB of plain ground,
 about 25 MB is the room jobs use while making and the sectors' entries, which do not grow with what is kept.
 
+## Stage 3, trees sharing their plants' bricks (2026-11-25)
+
+Each column filled its trees' voxels itself, working out each leaf voxel from the eight blocks round it, and kept
+them: a wood's columns kept 360 more bricks than its ground's, with their materials. Now each plant's voxels are made
+once, on the CPU, and a column keeps only a word for most of a tree's bricks.
+
+- **Each plant made once.** Each plant is filled as the bricks pass filled it, in each of four turns
+  (`trees::models`), and packed as a volume of its own. Their bricks and materials go first in the shared room, in
+  pages no column is given; an oak and a pine, four plants each, take 13 MB in all.
+- **On the bricks' grid.** A tree's plant's box is set on the grid of the world's bricks: the tree stands up to
+  half a metre aside of where its cell's hash puts it, and up to seven voxels lower, its foot in the ground. A
+  brick of the world is then a brick of the plant, whole.
+- **Named, not kept.** Where a brick is one tree's alone and the ground has nothing in it, the column keeps the
+  number of the plant's brick, a word after its own bricks; the sector's entry marks which of its bricks are named so
+  and where their names start. Where two trees cross, or a tree stands in the grass, the bricks pass works the
+  brick out from the plants' bricks and the ground and keeps it as its own: 0.6 bricks a column for each tree to a
+  hectare.
+- **The walk** reads a named brick's name, one more read for those bricks alone (`voxelBrickAt`), and draws the
+  plant's brick as any other.
+
+Measured back to back with the code before, twice (Rolling Hills, 100 oaks and pines a hectare, reach 64 m, 1080p):
+
+| | Columns' own trees | Plants' bricks shared |
+|---|---|---|
+| On the GPU | 185 MB | 120 MB |
+| A column made | 0.44 ms | 0.26 to 0.35 ms |
+| Window made before the frames | 1.54 to 1.60 s | 1.68 to 1.77 s |
+| Depth (voxels), still view | 4.64 ms | 5.13 ms |
+| Opaque (voxels), still view | 5.85 to 6.06 ms | 6.19 to 6.20 ms |
+
+Volumes without trees are drawn and made as before, within the runs' noise.
+
+**Tried first: each tree walked through its plant.** Each column listed the trees that reach it, and the walk took
+the ray into each tree's plant, moved and turned, as a volume of its own. It kept 96 MB and made a column in
+0.20 ms, but the depth pass took 9.4 ms: a ray skimming a wood goes through the boxes of many trees, which overlap,
+and walked each through its own voxels, where the bricks of the world are walked once. Without the walks through the
+plants it took 3.4 ms; taking the trees nearest first, and shadow rays stopping at the first they meet, saved
+nothing. A second walk in the shader also made volumes without trees 0.3 to 0.4 ms slower to draw.
+
+**Next.** The crowns' rays are still most of a wood's depth pass: levels of detail for far crowns, then wind.
+
 ## Wind in voxels (planned)
 
 Traced voxels do not move with a vertex shader, but the ray can be moved instead.
 
-- **Whole trees.** Once a tree's bricks are shared by all the trees of its plant, each tree is drawn by moving the
-  ray into its own place. Bending that move a little over time, more towards the top, sways the whole tree at
-  almost no cost.
+- **Whole trees.** A whole tree sways with the same look aside as its leaves below, by an offset that grows with the
+  height over its foot. Walking each tree through its own plant, moved and turned, was tried for sharing its bricks
+  and drew a wood at half the speed; see the section above.
 - **Leaves and grass blades.** Inside bricks of leaves and grass the ray can look up each voxel a little to one
   side, by an offset that grows with the height over the ground and moves with the wind. Such bricks are marked a
   few voxels larger than they are, so leaves moved over a brick's edge are not cut off. Shadow rays take the same

@@ -3,16 +3,20 @@
 //!
 //! Each kind of tree is grown from a few seeds on the CPU, and each plant
 //! grown becomes a grid of its blocks, a byte a block: a log, which way it
-//! lies and how thick it is; leaves; or nothing. The grids go to the GPU
-//! once, which rounds the leaves into clumps and fills only a thin shell
-//! of them. The trees themselves are placed there, at most
-//! one in each [`CELL`] metres square, by hash.
+//! lies and how thick it is; leaves; or nothing. Each plant's voxels are
+//! made from its grid once ([`models`]), its leaves rounded into clumps of
+//! which only a thin shell is filled, in each of four turns. The trees are
+//! placed on the GPU, at most one in each [`CELL`] metres square, by hash,
+//! each plant's box on the grid of the volume's bricks: a brick of the
+//! world that is one tree's alone is its plant's brick, named, and only
+//! where trees cross or stand in the grass does a column keep bricks of
+//! its own.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use voxear_terrain::blocks::{plant::PlantPart, shape::BlockFacing};
 
-use super::VoxelTrees;
+use super::{VoxelTrees, bricks};
 
 /// How many plants a kind of tree is grown as, each turned four ways.
 pub(crate) const VARIANTS: u32 = 4;
@@ -130,6 +134,250 @@ pub(crate) fn forest(trees: &[VoxelTrees], first_color: u32) -> Option<Forest> {
     Some(Forest { words, colors, reach })
 }
 
+/// Where the models' records start in their words, and the words each takes.
+pub(crate) const MODELS_AT: usize = 4;
+pub(crate) const MODEL_WORDS: usize = 8;
+
+/// Each plant of a forest as voxels, in each of its four turns: what the
+/// passes making columns read of them, and their bricks and materials, which
+/// go at the start of the volume's own.
+pub(crate) struct Models {
+    /// How many models there are (four a plant, a plant's turns one after
+    /// another) and how many voxels a block is; for each its sectors a side,
+    /// where its sectors start among the words, the least corner of its box
+    /// in voxels from the least corner of its trunk's foot block as it is
+    /// turned, and the size of its box; then their sectors, whose first
+    /// bricks are their places among all the models' bricks.
+    pub words: Vec<u32>,
+    pub bricks: Vec<u32>,
+    pub materials: Vec<u8>,
+}
+
+/// The voxels of each plant of `forest`, `block` voxels a block, turned each
+/// of four ways. A plant's box is its grid and a block round it, which its
+/// leaves round over into.
+pub(crate) fn models(forest: &Forest, block: u32, palette: &[[u8; 4]]) -> Models {
+    let plants = (forest.words[0] * VARIANTS) as usize;
+    let b = block.max(1) as i32;
+    let mut words = vec![0u32; MODELS_AT + plants * 4 * MODEL_WORDS];
+    words[0] = (plants * 4) as u32;
+    words[1] = b as u32;
+    let bytes: Vec<u8> = forest.words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let made: Vec<Vec<(bricks::Packed, [i32; 3])>> = std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..plants)
+            .map(|plant| {
+                let bytes = &bytes;
+                let words = &forest.words;
+                scope.spawn(move || {
+                    let record = &words[VARIANTS_AT + plant * VARIANT_WORDS..][..VARIANT_WORDS];
+                    let kind = plant / VARIANTS as usize;
+                    let colours = words[KINDS_AT + kind * 4 + 3];
+                    let grid = Grid {
+                        low: [0, 1, 2].map(|a| record[a] as i32),
+                        size: [3, 4, 5].map(|a| record[a] as i32),
+                        bytes: &bytes[record[6] as usize..],
+                    };
+                    if grid.size.iter().any(|&a| a <= 0) {
+                        return Vec::new();
+                    }
+                    let (voxels, low, size) = grid.voxels(b, colours, plant as u32);
+                    (0..4)
+                        .map(|turns| {
+                            let (turned, low, size) = turned(&voxels, low, size, b, turns);
+                            (turned.pack(size.map(|a| a as u32), palette), low)
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|job| job.join().expect("a plant's voxels")).collect()
+    });
+    let mut all_bricks = Vec::new();
+    let mut materials: Vec<u8> = Vec::new();
+    for (plant, turns) in made.into_iter().enumerate() {
+        for (turn, (packed, low)) in turns.into_iter().enumerate() {
+            let first = (all_bricks.len() / bricks::BRICK_WORDS) as u32;
+            let sectors = words.len() as u32;
+            for sector in packed.sectors.chunks(bricks::SECTOR_WORDS) {
+                let mut sector = sector.to_vec();
+                if sector[24] != bricks::EMPTY {
+                    sector[24] += first;
+                }
+                words.extend_from_slice(&sector);
+            }
+            for brick in packed.bricks.chunks(bricks::BRICK_WORDS) {
+                let mut brick = brick.to_vec();
+                brick[18] += materials.len() as u32;
+                all_bricks.extend_from_slice(&brick);
+            }
+            materials.extend_from_slice(&packed.materials);
+            let count = packed.sector_count.map(|a| a as u32);
+            let at = MODELS_AT + (plant * 4 + turn) * MODEL_WORDS;
+            words[at..at + MODEL_WORDS].copy_from_slice(&[
+                count[0],
+                count[1],
+                count[2],
+                sectors,
+                low[0] as u32,
+                low[1] as u32,
+                low[2] as u32,
+                0,
+            ]);
+        }
+    }
+    Models { words, bricks: all_bricks, materials }
+}
+
+/// A plant's voxels turned `turns` quarter turns about the middle of its
+/// trunk's foot block, `b` voxels a side, as the world sees a tree turned
+/// so: and the least corner and size of their box as turned.
+fn turned(
+    voxels: &bricks::Builder,
+    low: [i32; 3],
+    size: [i32; 3],
+    b: i32,
+    turns: u32,
+) -> (bricks::Builder, [i32; 3], [i32; 3]) {
+    // In doubled voxels from the middle of the foot block, so a turn keeps to whole numbers.
+    let turn = |l: [i32; 3]| {
+        let mut d = [2 * l[0] + 1 - b, 2 * l[2] + 1 - b];
+        for _ in 0..turns {
+            d = [-d[1], d[0]];
+        }
+        [(d[0] + b - 1) / 2, l[1], (d[1] + b - 1) / 2]
+    };
+    let a = turn(low);
+    let c = turn([0, 1, 2].map(|i| low[i] + size[i] - 1));
+    let least = [0, 1, 2].map(|i| a[i].min(c[i]));
+    let most = [0, 1, 2].map(|i| a[i].max(c[i]));
+    let mut out = bricks::Builder::default();
+    voxels.each(|cell, material| {
+        let w = turn([0, 1, 2].map(|i| cell[i] + low[i]));
+        out.set([0, 1, 2].map(|i| w[i] - least[i]), material);
+    });
+    (out, least, [0, 1, 2].map(|i| most[i] - least[i] + 1))
+}
+
+/// A plant's grid of blocks: its least block from the foot of its trunk, its
+/// size, and its bytes from its first.
+struct Grid<'a> {
+    low: [i32; 3],
+    size: [i32; 3],
+    bytes: &'a [u8],
+}
+
+impl Grid<'_> {
+    /// The byte of the block at `block` from the foot of the trunk: none
+    /// outside the grid.
+    fn at(&self, block: [i32; 3]) -> u8 {
+        let at = [0, 1, 2].map(|a| block[a] - self.low[a]);
+        if (0..3).any(|a| at[a] < 0 || at[a] >= self.size[a]) {
+            return 0;
+        }
+        self.bytes[(at[0] + self.size[0] * (at[1] + self.size[1] * at[2])) as usize]
+    }
+
+    /// How much of the leaves are round point `g`, in blocks from the middle
+    /// of the trunk's foot block: from 0 for none to 1 for all, the eight
+    /// blocks round it blended, so a crown of blocks is rounded into clumps.
+    fn leaves_at(&self, g: [f32; 3]) -> f32 {
+        let base = g.map(|a| a.floor() as i32);
+        let t = [0, 1, 2].map(|a| g[a] - base[a] as f32);
+        let mut sum = 0.0;
+        for c in 0..8 {
+            let corner = [c & 1, (c >> 1) & 1, c >> 2];
+            if self.at([0, 1, 2].map(|a| base[a] + corner[a])) & LEAVES != 0 {
+                sum += (0..3).map(|a| if corner[a] == 1 { t[a] } else { 1.0 - t[a] }).product::<f32>();
+            }
+        }
+        sum
+    }
+
+    /// The plant's voxels, `b` a block, its colours from palette place
+    /// `colours`, and the least corner and size of their box in voxels from
+    /// the least corner of the trunk's foot block. A log is round, as thick
+    /// as its byte says. Leaves are a shell a few voxels deep where the
+    /// blended leaves cross a half, the half moved a little by hash at each
+    /// voxel so their edge is ragged, loosely filled: clumps of loose cubes
+    /// with nothing inside.
+    fn voxels(&self, b: i32, colours: u32, plant: u32) -> (bricks::Builder, [i32; 3], [i32; 3]) {
+        let low = self.low.map(|a| (a - 1) * b);
+        let size = self.size.map(|a| (a + 2) * b);
+        // Only the blocks with something in them or leaves beside them can have voxels.
+        let mut near = HashSet::new();
+        for z in 0..self.size[2] {
+            for y in 0..self.size[1] {
+                for x in 0..self.size[0] {
+                    let block = [x + self.low[0], y + self.low[1], z + self.low[2]];
+                    let byte = self.at(block);
+                    if byte & WOOD != 0 {
+                        near.insert(block);
+                    }
+                    if byte & LEAVES != 0 {
+                        for n in 0..27 {
+                            near.insert([block[0] + n % 3 - 1, block[1] + (n / 3) % 3 - 1, block[2] + n / 9 - 1]);
+                        }
+                    }
+                }
+            }
+        }
+        let seed = 0x7EE5 + plant * 977;
+        let shell = (2.0f32).max(b as f32 * 2.0 / 16.0) / b as f32;
+        let mut builder = bricks::Builder::default();
+        for block in near {
+            let byte = self.at(block);
+            for i in 0..b * b * b {
+                let f = [i % b, (i / b) % b, i / (b * b)];
+                let l = [0, 1, 2].map(|a| block[a] * b + f[a]);
+                let m = [0, 1, 2].map(|a| l[a] - low[a]);
+                let h = hash_of(m, seed + 41);
+                let material = if byte & WOOD != 0 {
+                    let axis = byte & 3;
+                    let thick = f32::from((byte >> 2) & 15) / 8.0;
+                    let across = match axis {
+                        0 => [f[1], f[2]],
+                        1 => [f[0], f[2]],
+                        _ => [f[0], f[1]],
+                    };
+                    let c = across.map(|a| a as f32 + 0.5 - b as f32 * 0.5);
+                    let r = thick * b as f32 * 0.5;
+                    if thick < 1.0 && c[0] * c[0] + c[1] * c[1] > r * r {
+                        continue;
+                    }
+                    colours + 1 + (h & 1)
+                } else {
+                    let leaves = self.leaves_at(l.map(|a| (a as f32 + 0.5) / b as f32 - 0.5));
+                    let edge = 0.5 + (unit(hash_of(m, seed + 43)) - 0.5) * 0.3;
+                    if leaves < edge || leaves > edge + shell || unit(h) > 0.6 {
+                        continue;
+                    }
+                    colours + 3 + (h >> 8) % 3
+                };
+                builder.set(m, material.min(255) as u8);
+            }
+        }
+        (builder, low, size)
+    }
+}
+
+/// The shaders' hash of a voxel (`hashOf` in `shaders/voxel_world.slang`).
+fn hash_of(p: [i32; 3], seed: u32) -> u32 {
+    let mut h = (p[0] as u32).wrapping_mul(0x8DA6_B343)
+        ^ (p[1] as u32).wrapping_mul(0xD816_3841)
+        ^ (p[2] as u32).wrapping_mul(0xCB1A_B31F)
+        ^ seed.wrapping_mul(0x9E37_79B9);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7FEB_352D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846C_A68B);
+    h ^= h >> 16;
+    h
+}
+
+fn unit(h: u32) -> f32 {
+    (h >> 8) as f32 / 16_777_216.0
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -178,5 +426,57 @@ mod tests {
         };
         assert_eq!(at([0, 0, 0]) & (WOOD | 3), WOOD | 1, "the trunk's foot stands up");
         assert!(forest.reach >= f32::from_bits(plant[7]) && forest.reach > 2.0);
+    }
+
+    #[test]
+    fn a_plants_voxels_are_round_logs_and_a_shell_of_leaves() {
+        let oak = VoxelTrees {
+            plant: Arc::new(PlantDef::default()),
+            per_hectare: 80.0,
+            wood: [90, 60, 40],
+            leaves: [60, 120, 40],
+        };
+        let forest = forest(&[oak], 22).expect("trees");
+        let palette = vec![[100, 100, 100, 255]; 32];
+        let made = models(&forest, 16, &palette);
+        assert_eq!(made.words[..2], [VARIANTS * 4, 16]);
+        let record = &forest.words[VARIANTS_AT..VARIANTS_AT + VARIANT_WORDS];
+        // Its box is its grid and a block round it; turned a quarter, its X and Z are turned too.
+        let model = |turn: usize| &made.words[MODELS_AT + turn * MODEL_WORDS..][..MODEL_WORDS];
+        let low = [0, 1, 2].map(|a| (record[a] as i32 - 1) * 16);
+        assert_eq!(model(0)[4..7], low.map(|a| a as u32));
+        let size = [3, 4, 5].map(|a| (record[a] as i32 + 2) * 16);
+        let turned = [-(low[2] + size[2] - 16), low[1], low[0]];
+        assert_eq!(model(1)[4..7], turned.map(|a| a as u32), "turned a quarter");
+        assert!(made.bricks.len() > 100 * bricks::BRICK_WORDS && !made.materials.is_empty());
+        let bytes: Vec<u8> = forest.words.iter().flat_map(|word| word.to_le_bytes()).collect();
+        let grid = Grid {
+            low: [0, 1, 2].map(|a| record[a] as i32),
+            size: [3, 4, 5].map(|a| record[a] as i32),
+            bytes: &bytes[record[6] as usize..],
+        };
+        let (voxels, low, _) = grid.voxels(16, 22, 0);
+        let at = |l: [i32; 3]| voxels.get([0, 1, 2].map(|a| l[a] - low[a]));
+        // The middle of the trunk's foot is wood, in the kind's first colours.
+        assert!(matches!(at([8, 0, 8]), 23 | 24), "{}", at([8, 0, 8]));
+        // Leaves only near the crown's skin: none in a block of leaves with leaves all round it.
+        let mut leaves = 0;
+        let mut deep = 0;
+        for z in grid.low[2]..grid.low[2] + grid.size[2] {
+            for y in grid.low[1]..grid.low[1] + grid.size[1] {
+                for x in grid.low[0]..grid.low[0] + grid.size[0] {
+                    let inside = (0..27).all(|n| grid.at([x + n % 3 - 1, y + n / 3 % 3 - 1, z + n / 9 - 1]) == LEAVES);
+                    for i in 0..16 * 16 * 16 {
+                        let l = [x * 16 + i % 16, y * 16 + i / 16 % 16, z * 16 + i / 256];
+                        if at(l) >= 25 {
+                            leaves += 1;
+                            deep += usize::from(inside);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(leaves > 1000, "{leaves} voxels of leaves");
+        assert_eq!(deep, 0, "leaves deep in the crown");
     }
 }

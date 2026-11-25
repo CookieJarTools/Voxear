@@ -45,20 +45,22 @@ const SLOT_MATERIAL_PAGES: u64 = 128;
 /// What a column keeps on average, which its shared room is sized by, with
 /// a quarter more: measured over a thousand columns of each, grass and
 /// flowers on hills keep 170 bricks and 20 KB of materials; overhangs and
-/// caves 100 and 4.5 KB; and a wood 3.6 more bricks and 270 more bytes for
-/// each tree to a hectare. Where the room runs short it is made again
-/// half as large again.
+/// caves 100 and 4.5 KB. A tree's bricks are its plant's, a word each in
+/// the column, but where trees cross or stand in the grass the column keeps
+/// bricks of its own: a wood keeps 0.6 more bricks and 44 more bytes for
+/// each tree to a hectare. Where the room runs short it is made again half
+/// as large again.
 const AVERAGE_BRICKS: f64 = 200.0;
 const AVERAGE_VOLUME_BRICKS: f64 = 150.0;
-const AVERAGE_BRICKS_A_TREE: f64 = 4.5;
+const AVERAGE_BRICKS_A_TREE: f64 = 0.7;
 const AVERAGE_MATERIALS: f64 = 24_000.0;
 const AVERAGE_VOLUME_MATERIALS: f64 = 8_000.0;
-const AVERAGE_MATERIALS_A_TREE: f64 = 330.0;
+const AVERAGE_MATERIALS_A_TREE: f64 = 50.0;
 const ROOM_SPARE: f64 = 1.25;
 /// The most numbers a Volume carries up a column, and the most spans.
 const MOST_CARRIED: usize = 8;
 const MOST_SPANS: usize = 4;
-const ENTRY_WORDS: u64 = 28;
+const ENTRY_WORDS: u64 = 53;
 const BRICK_BYTES: u64 = 80;
 /// How many voxel columns a column's heights and its tops are kept for a
 /// side: a border of four, and of two.
@@ -122,6 +124,7 @@ struct GpuWorldMake {
     pool: u64,
     staging: u64,
     placed: u64,
+    models: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -193,6 +196,10 @@ pub(crate) struct Endless {
     forest: Option<(Buffer, u32, f32)>,
     trees: Buffer,
     tree_carried: Buffer,
+    /// Its trees' plants as voxels in each of their turns, where it has
+    /// trees: their records and sectors, their bricks and materials being
+    /// kept at the start of the volume's own, in pages no column is given.
+    models: Option<Buffer>,
     /// The shared room: how many pages of bricks and of materials it has,
     /// each slot's pages of each and how many, the pages free, how many are
     /// free and whether any ran short (read on the CPU), and each job's
@@ -340,19 +347,27 @@ fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow:
 }
 
 /// An endless volume's palette, its own ground's colours, a generator's
-/// and its trees', and its trees as the GPU reads them, where it has any.
+/// and its trees', and its trees as the GPU reads them, where it has any;
+/// with their plants' voxels too, with `models`.
 #[allow(clippy::type_complexity)]
-fn forest_buffers(gpu: &Gpu, volume: &VoxelVolume) -> Result<(Buffer, Option<(Buffer, u32, f32)>)> {
+fn forest_buffers(
+    gpu: &Gpu,
+    volume: &VoxelVolume,
+    models: bool,
+) -> Result<(Buffer, Option<(Buffer, u32, f32)>, Option<trees::Models>)> {
     let first = (GROUND_COLORS.len() + GENERATED_COLORS.len()) as u32;
     let forest = trees::forest(&volume.trees, first);
     let tree_colors = forest.as_ref().map(|forest| forest.colors.clone()).unwrap_or_default();
-    let all = GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&tree_colors);
-    let colours: Vec<u32> = all.map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+    let all: Vec<[u8; 4]> = GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&tree_colors).copied().collect();
+    let colours: Vec<u32> =
+        all.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
     let palette = gpu.create_buffer("voxel world palette", colours.len() as u64 * 4, usage, MemoryLocation::GpuOnly)?;
     gpu.upload_buffer(&palette, 0, bytemuck::cast_slice(&colours))?;
+    let block = volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+    let made = forest.as_ref().filter(|_| models).map(|forest| trees::models(forest, block, &all));
     let forest = match forest {
         Some(forest) => {
             let size = forest.words.len() as u64 * 4;
@@ -362,7 +377,14 @@ fn forest_buffers(gpu: &Gpu, volume: &VoxelVolume) -> Result<(Buffer, Option<(Bu
         }
         None => None,
     };
-    Ok((palette, forest))
+    Ok((palette, forest, made))
+}
+
+/// What a volume's trees' plants' voxels are made from: its kinds that grow,
+/// whatever how many, and how many voxels a metre.
+fn plants_of(volume: &VoxelVolume) -> (Vec<VoxelTrees>, u32) {
+    let kinds = volume.trees.iter().filter(|kind| kind.per_hectare > 0.0).take(trees::MOST_KINDS);
+    (kinds.map(|kind| VoxelTrees { per_hectare: 1.0, ..kind.clone() }).collect(), volume.voxels_per_metre)
 }
 
 /// A program's buffer, and its Volume's cells' program and what each column
@@ -416,7 +438,7 @@ impl Endless {
         let none = vk::BufferUsageFlags::empty();
         let jobs = MAX_JOBS as u64;
         let table = make("table", slots_in * u64::from(tall) * ENTRY_WORDS * 4, none)?;
-        let (palette, forest) = forest_buffers(gpu, volume)?;
+        let (palette, forest, made) = forest_buffers(gpu, volume, true)?;
         let trees = make("trees", jobs * MAX_TREES * TREE_WORDS * 4, none)?;
         let tree_carried = make("tree carried", jobs * 64 * MOST_CARRIED as u64 * 4, none)?;
         let empty = make("empty sector", 25 * 4, none)?;
@@ -429,13 +451,41 @@ impl Endless {
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
         let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees, window * window, grow);
-        let bricks = make("bricks", u64::from(room.brick_pages) * PAGE_BRICKS * BRICK_BYTES, none)?;
-        let materials = make("materials", u64::from(room.material_pages) * MATERIAL_PAGE, none)?;
+        // The trees' plants' bricks and materials first, in pages no column is given.
+        let (model_bricks, model_materials) =
+            made.as_ref().map_or((&[][..], &[][..]), |made| (&made.bricks[..], &made.materials[..]));
+        let reserved = [
+            (model_bricks.len() as u64 * 4 / BRICK_BYTES).div_ceil(PAGE_BRICKS) as u32,
+            (model_materials.len() as u64).div_ceil(MATERIAL_PAGE) as u32,
+        ];
+        let bricks = make("bricks", u64::from(reserved[0] + room.brick_pages) * PAGE_BRICKS * BRICK_BYTES, none)?;
+        let materials = make("materials", u64::from(reserved[1] + room.material_pages) * MATERIAL_PAGE, none)?;
+        for (buffer, bytes) in [(&bricks, bytemuck::cast_slice(model_bricks)), (&materials, model_materials)] {
+            for (i, piece) in bytes.chunks(64 << 20).enumerate() {
+                gpu.upload_buffer(buffer, (i * (64 << 20)) as u64, piece)?;
+            }
+        }
+        let models = match &made {
+            Some(made) => {
+                let usage = storage;
+                let buffer = gpu.create_buffer(
+                    "voxel world tree models",
+                    made.words.len() as u64 * 4,
+                    usage,
+                    MemoryLocation::GpuOnly,
+                )?;
+                gpu.upload_buffer(&buffer, 0, bytemuck::cast_slice(&made.words))?;
+                Some(buffer)
+            }
+            None => None,
+        };
         let pages = make("pages", slots_in * SLOT_PAGES * 4, none)?;
         let material_pages = make("material pages", slots_in * SLOT_MATERIAL_PAGES * 4, none)?;
         let slot_counts = make("slot counts", slots_in * 4, none)?;
         // Every page free at first: the bricks' pages, then the materials'.
-        let free: Vec<u32> = (0..room.brick_pages).chain(0..room.material_pages).collect();
+        let free: Vec<u32> = (reserved[0]..reserved[0] + room.brick_pages)
+            .chain(reserved[1]..reserved[1] + room.material_pages)
+            .collect();
         let free_pages = make("free pages", free.len() as u64 * 4, none)?;
         gpu.upload_buffer(&free_pages, 0, bytemuck::cast_slice(&free))?;
         let pool = gpu.create_buffer("voxel world pool", 16, storage, MemoryLocation::GpuToCpu)?;
@@ -445,7 +495,7 @@ impl Endless {
         let slots = make("slots", jobs * 64 * rows * 4, none)?;
         let loose = make("loose bricks", jobs * JOB_BRICKS * BRICK_BYTES, none)?;
         let counters =
-            make("counters", (jobs * COUNTERS + 8 + jobs + jobs * 16) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
+            make("counters", (jobs * COUNTERS + 8 + jobs + jobs * 32) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
         // The candidate bricks, and after them those the coarse pass leaves.
         let candidates = make("candidates", 2 * jobs * 64 * rows * 4, none)?;
         let mut makes = Vec::new();
@@ -483,6 +533,7 @@ impl Endless {
             forest,
             trees,
             tree_carried,
+            models,
             room,
             grow,
             pages,
@@ -515,8 +566,12 @@ impl Endless {
         if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow) != self.room {
             return Ok(None);
         }
+        // Other plants make other voxels at the start of the room.
+        if plants_of(volume) != plants_of(&self.from) {
+            return Ok(None);
+        }
         let (program, caves) = program_buffers(gpu, program)?;
-        let (palette, forest) = forest_buffers(gpu, volume)?;
+        let (palette, forest, _) = forest_buffers(gpu, volume, false)?;
         let mut gone: Vec<Buffer> =
             std::mem::replace(&mut self.program, program).map(|(buffer, _)| buffer).into_iter().collect();
         gone.extend(
@@ -547,7 +602,8 @@ impl Endless {
         ]
         .iter()
         .map(|buffer| buffer.size)
-        .sum()
+        .sum::<u64>()
+            + self.models.as_ref().map_or(0, |models| models.size)
     }
 
     /// Moves the window round `camera`, the volume's corner at `corner`, and
@@ -703,6 +759,7 @@ impl Endless {
             pool: self.pool.address,
             staging: self.staging.address,
             placed: self.placed.address,
+            models: self.models.as_ref().map_or(0, |models| models.address),
             brick_pages: self.room.brick_pages,
             jobs,
         };
@@ -835,6 +892,7 @@ impl Endless {
             self.placed,
         ];
         all.extend(self.forest.map(|(buffer, _, _)| buffer));
+        all.extend(self.models);
         all.extend(self.program.map(|(buffer, _)| buffer));
         all.extend(self.volume.into_iter().flat_map(|(words, carried)| [words, carried]));
         all.extend(self.makes);

@@ -61,6 +61,17 @@ impl Builder {
         self.bricks.get(&brick).map_or(0, |cells| cells[(local[0] + BRICK * (local[1] + BRICK * local[2])) as usize])
     }
 
+    /// Each voxel set, and its palette place and one.
+    pub fn each(&self, mut f: impl FnMut([i32; 3], u8)) {
+        for (brick, cells) in &self.bricks {
+            for (index, &cell) in cells.iter().enumerate().filter(|(_, cell)| **cell != 0) {
+                let index = index as i32;
+                let local = [index % BRICK, (index / BRICK) % BRICK, index / (BRICK * BRICK)];
+                f([0, 1, 2].map(|a| brick[a] * BRICK + local[a]), cell);
+            }
+        }
+    }
+
     /// Packs the voxels within `size` (in voxels, from the corner at 0) for
     /// the GPU, with `palette`'s colours averaged into each brick's.
     pub fn pack(&self, size: [u32; 3], palette: &[[u8; 4]]) -> Packed {

@@ -20,7 +20,7 @@
 #include "shading.slang"
 
 static const uint VOXEL_SECTOR_WORDS = 25;
-static const uint VOXEL_ENTRY_WORDS = 28;
+static const uint VOXEL_ENTRY_WORDS = 53;
 static const uint VOXEL_BRICK_WORDS = 20;
 static const uint VOXEL_EMPTY = 0xFFFFFFFFu;
 static const int VOXEL_MOST_STEPS = 1024;
@@ -88,17 +88,28 @@ int voxelBrickAt(VoxelVolume volume, int3 b)
     {
         return -1;
     }
-    uint before = (sector[16 + (index >> 6)] >> (((index >> 5) & 1u) * 16u)) & 0xFFFFu;
-    before += countbits(word & ((1u << bit) - 1u));
-    uint first = sector[24] + before;
+    uint below = (1u << bit) - 1u;
+    uint pair = (index >> 5) & 1u;
     if (volume.windowed == 0u)
     {
-        return int(first);
+        uint before = (sector[16 + (index >> 6)] >> (pair * 16u)) & 0xFFFFu;
+        return int(sector[24] + before + countbits(word & below));
     }
     // An endless volume's sector names its slot and where its bricks start among the slot's, which are kept in pages
-    // of the shared room (src/voxel_volume/endless.rs).
-    uint at = first & 0xFFFu;
-    return int(volume.pages[(first >> 12) * 64u + (at >> 6)] * 64u + (at & 63u));
+    // of the shared room (src/voxel_volume/endless.rs). A brick that is a tree's alone is its plant's, at the start
+    // of the room: the slot names it, a word a brick, after its own bricks.
+    uint slot = sector[24] >> 12;
+    uint trees = sector[25 + (index >> 5)];
+    uint at;
+    if (((trees >> bit) & 1u) != 0u)
+    {
+        uint name = sector[49] + ((sector[41 + (index >> 6)] >> (pair * 16u)) & 0xFFFFu) + countbits(trees & below);
+        at = name / VOXEL_BRICK_WORDS;
+        uint brick = volume.pages[slot * 64u + (at >> 6)] * 64u + (at & 63u);
+        return int(volume.bricks[brick * VOXEL_BRICK_WORDS + name % VOXEL_BRICK_WORDS]);
+    }
+    at = (sector[24] & 0xFFFu) + ((sector[16 + (index >> 6)] >> (pair * 16u)) & 0xFFFFu) + countbits(word & ~trees & below);
+    return int(volume.pages[slot * 64u + (at >> 6)] * 64u + (at & 63u));
 }
 
 bool voxelSolid(VoxelVolume volume, int3 cell)

@@ -4573,12 +4573,18 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     5 m cell at most, turned four ways, and fills their voxels: round logs, leaves rounded into clumps of loose cubes.
   - Measured with 100 oaks and pines a hectare at reach 64 m: 0.33 ms a column, eight a frame, 426 MB, drawing
     +2.4 ms at 1080p.
-  - Not yet: a tree's bricks shared between trees of one plant, levels of detail for far crowns, swaying, felling,
-    bushes and ground cover.
+  - Not yet: levels of detail for far crowns, swaying, felling, bushes and ground cover. (A tree's bricks shared
+    between trees of one plant: done, below.)
 - **Room shared by the columns (2026-11-25).** An endless volume keeps its bricks and materials in pages of one
   shared room, sized by what a column keeps on average, made again larger where it runs short. A wood of 100 trees a
   hectare at reach 64 m takes 185 MB against 426, caves 64 MB against 164; the pictures are the same to the pixel.
   Next: wind, the ray moved by it in leaves and grass (research/small-voxels.md).
+- **Trees sharing their plants' bricks (2026-11-25).** Each plant's voxels are made once on the CPU, in four turns,
+  and kept at the start of the shared room; each tree stands with its plant's box on the bricks' grid, so a brick
+  that is one tree's alone is named by a word in its column, and only bricks where trees cross or stand in the grass
+  are kept whole. A wood of 100 trees a hectare at reach 64 m takes 120 MB against 185, a column 0.26 to 0.35 ms to
+  make against 0.44; drawing it 0.5 ms more, volumes without trees as before. Walking each tree through its own plant
+  was tried first and drew a wood at half the speed.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -4595,7 +4595,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   sway. The walk walks such a brick whole with the ray moved back by its sway, so shadows move with it; a breeze
   changes 20,000 pixels of the trees' view in a fifth of a second, still air 217. The passes got faster, as a
   swaying brick is looked up once and not at each voxel: a wood's depth and lit voxels 4.0 + 3.7 ms against
-  5.2 + 6.3. Blades in the brick with their soil keep still. Next: walking every brick whole.
+  5.2 + 6.3. Blades in the brick with their soil keep still. Walking every brick whole was tried and left out: the depth pass
+  got faster but its shadows' levels went out of step, and kept in step the lit pass got slower.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

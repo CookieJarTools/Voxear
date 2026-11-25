@@ -791,8 +791,19 @@ faster.
 | With 100 oaks and pines a hectare | 5.17 + 6.31 ms | 4.00 + 3.67 ms |
 | Alpine with overhangs and caves | 1.11 + 1.94 ms | 1.60 + 2.06 ms |
 
-**Next.** Walking every brick whole, not only those that sway, as it saves a look-up at each step: a first try made
-Alpine's lit pass 1.94 to 1.74 ms, but the hills' runs were too noisy to tell; it wants measuring on its own.
+**Walking every brick whole, tried and left out.** Measured three times in turn against the code before:
+
+- Every ray walking each brick whole made the depth pass 0.1 to 0.8 ms faster and the lit pass 0.4 to 1.0 ms slower,
+  through the shadow rays, which start at a surface and cross many thinly filled bricks of grass.
+- The camera's rays alone walking bricks whole was faster in both, at first (the hills' frame 7.1 to 6.0 ms). But a
+  ray walked whole counts its steps differently and stays at single voxels a little further out, where a shadow ray
+  from the same place already walks groups and finds the group the voxel is in over it: lines and bands of the
+  ground went dark. Starting such shadows off the group fixed the pictures, and the shadow rays then walk on instead
+  of stopping at once: the lit pass took 0.6 to 1.3 ms more than before, and the pictures were no nearer one with
+  every ray walked to its voxels.
+
+So only bricks that sway are walked whole. A shadow ray's level is tied to the camera ray's by step counts, which
+any faster walk has to keep the same.
 
 ## Kept elsewhere
 

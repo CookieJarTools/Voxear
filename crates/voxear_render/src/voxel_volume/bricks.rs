@@ -147,6 +147,43 @@ impl Builder {
     }
 }
 
+/// Marks a packed brick as leaves (`VOXEL_LEAFY` in `shaders/voxels.slang`),
+/// over its average colour, `seed` telling it from the others: its groups
+/// are loosely filled as its voxels are, about three in five of those with
+/// any leaves and all those mostly full, by hash. Far off, where the walk
+/// stops at groups, leaves stay loose cubes, twice the size, each group in
+/// the colour of a voxel of its own, and not a solid skin.
+pub fn mark_leafy(brick: &mut [u32], seed: u32) {
+    let mut counts = [0u8; 64];
+    for index in 0..BRICK_CELLS {
+        if brick[index >> 5] & (1 << (index & 31)) != 0 {
+            let (x, y, z) = (index % 8, (index / 8) % 8, index / 64);
+            counts[(x >> 1) + 4 * ((y >> 1) + 4 * (z >> 1))] += 1;
+        }
+    }
+    brick[16] = 0;
+    brick[17] = 0;
+    for (group, &count) in counts.iter().enumerate() {
+        if count >= 5 || (count > 0 && loosely_kept(seed, group as u32)) {
+            brick[16 + (group >> 5)] |= 1 << (group & 31);
+        }
+    }
+    brick[19] |= LEAFY;
+}
+
+/// Whether a group of leaves with only a few of its voxels is kept: three in
+/// five, by hash (`looselyKept` in `shaders/voxel_world.slang`).
+pub fn loosely_kept(seed: u32, group: u32) -> bool {
+    let mut h = seed.wrapping_mul(0x9E37_79B9) ^ group.wrapping_mul(0x85EB_CA6B);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7FEB_352D);
+    h ^= h >> 15;
+    (h >> 8) % 5 < 3
+}
+
+/// The mark of a brick of leaves, over its average colour.
+pub const LEAFY: u32 = 1 << 24;
+
 /// A volume's voxels packed for the GPU.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Packed {
@@ -236,5 +273,26 @@ mod tests {
         let packed = builder.pack([16, 16, 16], &[[200, 0, 0, 255], [0, 100, 0, 255]]);
         assert_eq!(packed.brick_count(), 1);
         assert_eq!(packed.bricks[19], 100 | (50 << 8));
+    }
+
+    #[test]
+    fn a_brick_of_leaves_keeps_its_full_groups_and_about_three_in_five_of_its_sparse_ones() {
+        let mut brick = vec![0u32; BRICK_WORDS];
+        // The lower half full, the upper half a voxel in each group.
+        for index in 0..BRICK_CELLS {
+            let (x, y, z) = (index % 8, (index / 8) % 8, index / 64);
+            if y < 4 || (x % 2 == 0 && y % 2 == 0 && z % 2 == 0) {
+                brick[index >> 5] |= 1 << (index & 31);
+            }
+        }
+        brick[19] = 40 | (90 << 8);
+        mark_leafy(&mut brick, 7);
+        let kept = |group: usize| brick[16 + (group >> 5)] & (1 << (group & 31)) != 0;
+        // A group's Y is the second of its places, four groups a side.
+        let lower = |group: &usize| (group / 4) % 4 < 2;
+        assert!((0..64).filter(lower).all(kept), "every full group");
+        let sparse = (0..64).filter(|group| !lower(group) && kept(*group)).count();
+        assert!((12..=26).contains(&sparse), "{sparse} of 32 sparse groups");
+        assert_eq!(brick[19], 40 | (90 << 8) | LEAFY, "its average colour kept under the mark");
     }
 }

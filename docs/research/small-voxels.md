@@ -736,7 +736,28 @@ and walked each through its own voxels, where the bricks of the world are walked
 plants it took 3.4 ms; taking the trees nearest first, and shadow rays stopping at the first they meet, saved
 nothing. A second walk in the shader also made volumes without trees 0.3 to 0.4 ms slower to draw.
 
-**Next.** The crowns' rays are still most of a wood's depth pass: levels of detail for far crowns, then wind.
+**Next.** Wind. The crowns' rays are still most of a wood's depth pass.
+
+## Stage 3, far crowns (2026-11-25)
+
+The walk stops at 2×2×2 groups where a voxel is under a pixel, and at whole bricks under a quarter, by distance and
+by how many steps a ray has taken. A group was full where any of its voxels is, in the brick's average colour.
+
+- **Coarser sooner was tried, and left out.** Leaves going to their groups 2, 4 and 8 times nearer than the ground
+  took a wood's frame (Rolling Hills, 100 oaks and pines a hectare, reach 64 m, 1080p) from 13.3 ms to 11.7, 10.5
+  and 9.7. But a crown 20 to 40 m off, its voxels one or two pixels, then showed as solid lumps of one colour in
+  steps, where its voxels are the loose cubes wanted. Within a reach of 64 m there are hardly any crowns far enough
+  for coarser levels to look right; they belong with the rings of stage 5.
+- **Groups of leaves kept loose.** Keeping only the groups at least half full emptied the crowns: a crown's leaves
+  are a shell two voxels deep, which few groups lie wholly in, and the walk saw through to the logs. A plant's
+  bricks, and a column's bricks mostly of trees' voxels, are now marked as leaves (over the average colour); their
+  groups are all those mostly full and three in five, by hash, of those with a few voxels, as the voxels themselves
+  are loosely filled; and a group of leaves takes the colour of a voxel of its own, not the brick's average.
+- Against a picture with every ray walked to its voxels, the tones (means over 4×4 pixels) come nearer: from above
+  8.6 against 7.2 before, on the volume's own ground 3.6 against 4.5, across the hills 2.4 against 2.7. Drawing costs
+  the same (5.19 and 6.28 ms against 5.12 and 6.29 for depth and lit voxels).
+
+![Far crowns at a reach of 128 m: groups full where any voxel is, and loosely filled](../images/small-voxels/far-crowns.webp)
 
 ## Wind in voxels (planned)
 

@@ -4585,6 +4585,11 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   are kept whole. A wood of 100 trees a hectare at reach 64 m takes 120 MB against 185, a column 0.26 to 0.35 ms to
   make against 0.44; drawing it 0.5 ms more, volumes without trees as before. Walking each tree through its own plant
   was tried first and drew a wood at half the speed.
+- **Far crowns (2026-11-25).** Where the walk stops at 2×2×2 groups, leaves stay loose cubes in their own shades:
+  a plant's bricks and a column's bricks mostly of leaves keep three in five of their sparse groups, by hash, and a
+  group takes a voxel's colour, not the brick's average. Nearer an all-voxels picture, at the same cost. Going to
+  groups sooner for leaves saved up to 3.6 ms a frame but made crowns 20 to 40 m off into lumps; left for the rings of
+  stage 5. Next: wind.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -25,6 +25,9 @@ static const uint VOXEL_BRICK_WORDS = 20;
 static const uint VOXEL_EMPTY = 0xFFFFFFFFu;
 static const int VOXEL_MOST_STEPS = 1024;
 static const float VOXEL_STEP_COARSENING = 0.01;
+// A brick of leaves, marked over its average colour (src/voxel_volume/bricks.rs): its groups are loosely filled as its
+// voxels are, and a group of it takes the colour of a voxel of its own.
+static const uint VOXEL_LEAFY = 1u << 24;
 // How far a voxel's shadow is traced towards the sun, in metres.
 static const float VOXEL_SHADOW_REACH = 64.0;
 
@@ -255,13 +258,27 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
 {
     uint* bits = volume.bricks + uint(hit.brick) * VOXEL_BRICK_WORDS;
     uint packed;
-    if (hit.level != 0)
+    bool leafGroup = hit.level == 1 && (bits[19] & VOXEL_LEAFY) != 0u;
+    if (hit.level != 0 && !leafGroup)
     {
         packed = bits[19];
     }
     else
     {
+        // A voxel's own colour; a group of leaves takes its first voxel's, so leaves keep their shades far off.
         int3 l = hit.cell & 7;
+        if (leafGroup)
+        {
+            int3 g = l & ~1;
+            for (uint k = 0; k < 8; k++)
+            {
+                l = g + int3(int(k & 1u), int((k >> 1) & 1u), int(k >> 2));
+                if (voxelBit(bits, uint(l.x + 8 * (l.y + 8 * l.z))))
+                {
+                    break;
+                }
+            }
+        }
         uint index = uint(l.x + 8 * (l.y + 8 * l.z));
         uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
         for (uint k = 0; k < (index >> 5); k++)

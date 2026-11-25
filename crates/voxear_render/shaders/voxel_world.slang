@@ -48,6 +48,8 @@ static const uint TREE_COUNTS = SECTOR_COUNTS + MAX_JOBS * 16;
 static const uint TREE_BRICK = 0x80000000u;
 // How many plants' bricks a word each a brick of room names: those of a slot's trees follow its own bricks.
 static const uint NAMES_A_BRICK = BRICK_WORDS;
+// A brick of leaves, marked over its average colour (VOXEL_LEAFY in voxels.slang).
+static const uint LEAFY = 1u << 24;
 // The shared room: a page of bricks, the most pages a slot has, a page of material bytes, and the most a slot has.
 static const uint PAGE_BRICKS = 64;
 static const uint SLOT_PAGES = 64;
@@ -642,6 +644,16 @@ bool treeReaches(WorldMake* make, int* tree, int3 low, int3 high)
     return all(high >= least) && all(low <= most);
 }
 
+// Whether a group of leaves with only a few of its voxels is kept: three in five, by hash (bricks::loosely_kept).
+bool looselyKept(uint seed, uint group)
+{
+    uint h = seed * 0x9E3779B9u ^ group * 0x85EBCA6Bu;
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    return (h >> 8) % 5u < 3u;
+}
+
 // The brick of a tree's plant at the brick of the world whose least voxel is `p`, among the shared room's: -1 for none.
 int treeBrick(WorldMake* make, int* tree, int3 p)
 {
@@ -996,6 +1008,10 @@ void voxelWorldBrickArguments(uint3 id: SV_DispatchThreadID)
 
 groupshared uint sharedMask[16];
 groupshared uint sharedGroups[2];
+// How many voxels each group has, and how many of the brick's voxels are trees': a brick mostly trees' is leaves, whose
+// groups are loosely filled as its voxels are (VOXEL_LEAFY in voxels.slang).
+groupshared uint sharedGroupCounts[64];
+groupshared uint sharedTreeVoxels;
 groupshared uint sharedSum[4];
 // With a Volume: which voxels of the brick and a border of one round it are solid, ten a side.
 groupshared uint sharedSolid[32];
@@ -1066,6 +1082,10 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         sharedGroups[index] = 0;
     }
+    if (index < 64)
+    {
+        sharedGroupCounts[index] = 0;
+    }
     if (index < 4)
     {
         sharedSum[index] = 0;
@@ -1079,6 +1099,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedEven = 0;
         sharedTreeCount = 0;
         sharedOwn = 0;
+        sharedTreeVoxels = 0;
     }
     GroupMemoryBarrierWithGroupSync();
     uint packed = make->candidates[make->candidateRoom + candidate];
@@ -1216,6 +1237,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         if (filled != 0)
         {
             m = filled;
+            InterlockedAdd(sharedTreeVoxels, 1u);
             break;
         }
     }
@@ -1224,6 +1246,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         InterlockedOr(sharedMask[index >> 5], 1u << (index & 31u));
         uint g = uint((l.x >> 1) + 4 * ((l.y >> 1) + 4 * (l.z >> 1)));
         InterlockedOr(sharedGroups[g >> 5], 1u << (g & 31u));
+        InterlockedAdd(sharedGroupCounts[g], 1u);
         uint colour = make->palette[m - 1];
         InterlockedAdd(sharedSum[0], colour & 255u);
         InterlockedAdd(sharedSum[1], (colour >> 8) & 255u);
@@ -1284,7 +1307,18 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     else if (index < 18)
     {
-        record[index] = sharedGroups[index - 16];
+        uint groups = sharedGroups[index - 16];
+        if (sharedTreeVoxels * 2u >= sharedCount)
+        {
+            groups = 0;
+            uint seed = hashOf(corner.x + bx * 8, row * 8, corner.y + bz * 8, make->seed + 53);
+            for (uint g = 0; g < 32; g++)
+            {
+                uint count = sharedGroupCounts[(index - 16) * 32 + g];
+                groups |= count >= 5u || (count > 0u && looselyKept(seed, (index - 16) * 32 + g)) ? 1u << g : 0u;
+            }
+        }
+        record[index] = groups;
     }
     else if (index == 18)
     {
@@ -1299,7 +1333,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             uint dirt = make->palette[1];
             avg = uint3(dirt & 255u, (dirt >> 8) & 255u, (dirt >> 16) & 255u);
         }
-        record[19] = avg.x | (avg.y << 8) | (avg.z << 16);
+        record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u);
     }
     else if (index == 20)
     {

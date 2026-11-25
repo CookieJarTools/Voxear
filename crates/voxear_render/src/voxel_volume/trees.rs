@@ -208,6 +208,7 @@ pub(crate) fn models(forest: &Forest, block: u32, palette: &[[u8; 4]]) -> Models
             for brick in packed.bricks.chunks(bricks::BRICK_WORDS) {
                 let mut brick = brick.to_vec();
                 brick[18] += materials.len() as u32;
+                bricks::mark_leafy(&mut brick, (all_bricks.len() / bricks::BRICK_WORDS) as u32);
                 all_bricks.extend_from_slice(&brick);
             }
             materials.extend_from_slice(&packed.materials);

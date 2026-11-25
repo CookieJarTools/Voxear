@@ -159,6 +159,20 @@ class Grid:
             if inside and near >= 2:
                 self.cells[(x, y, z)] = (there, min(3, tone + 1))
 
+    def bevelled(self, middle, half, material, cut=6.0, shade=None, only=None):
+        """A block whose edges are cut back on a slope `cut` cubes deep, so it reads as a rounded box of chunky
+        steps while its faces stay flat."""
+        lo = np.array(middle, float) - half
+        hi = np.array(middle, float) + half
+
+        def inside(x, y, z):
+            e = [np.minimum(v - a, b - v) for v, a, b in ((x, lo[0], hi[0]), (y, lo[1], hi[1]), (z, lo[2], hi[2]))]
+            ok = (e[0] >= 0) & (e[1] >= 0) & (e[2] >= 0)
+            return ok & (e[0] + e[1] >= cut) & (e[1] + e[2] >= cut) & (e[0] + e[2] >= cut) & \
+                (e[0] + e[1] + e[2] >= cut * 1.5)
+
+        self.fill(inside, (lo, hi), material, shade, only)
+
     def rounded(self, middle, half, material, power=3.0, shade=None, only=None, keep=None):
         """A box with its corners worn round: |x|^p + |y|^p + |z|^p <= 1 over its half sizes."""
         cx, cy, cz = middle

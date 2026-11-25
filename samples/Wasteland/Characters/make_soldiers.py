@@ -370,7 +370,7 @@ EYE_COLOURS = {"L": "lash", "I": "iris", "J": "iris_light", "W": "eye_light"}
 
 
 def head_shape(g):
-    g.block((0, 16, 1), (17.5, 16.0, 15.0), "skin", chamfer=3.5, bevel=False)
+    g.bevelled((0, 16, 1), (18.0, 16.0, 15.5), "skin", cut=8.0)
 
 
 def face(g, mask):

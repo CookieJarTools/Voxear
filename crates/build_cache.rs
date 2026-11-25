@@ -57,20 +57,31 @@ impl BuildKey {
     }
 }
 
-/// Copies the kept files for `name` into `out`; false when none are kept.
+/// Copies the kept files for `name` into `out`; false when none are kept, or the set is not whole (a folder
+/// emptied by a tool that tidies `target`), so the build makes them again.
 #[allow(dead_code)]
 fn take_kept(name: &str, out: &std::path::Path) -> bool {
     let Some(kept) = build_cache_folder().map(|folder| folder.join(name)) else { return false };
-    let Ok(entries) = std::fs::read_dir(&kept) else { return false };
-    for entry in entries.flatten() {
-        if std::fs::copy(entry.path(), out.join(entry.file_name())).is_err() {
-            return false;
-        }
+    let Ok(list) = std::fs::read_to_string(kept.join(KEPT_LIST)) else { return false };
+    let files: Vec<&str> = list.lines().filter(|line| !line.is_empty()).collect();
+    if files.is_empty() || !files.iter().all(|file| std::fs::copy(kept.join(file), out.join(file)).is_ok()) {
+        return false;
     }
     // Marked used, so tidying keeps it over sets not used lately.
     let _ = std::fs::File::open(&kept).and_then(|folder| folder.set_modified(std::time::SystemTime::now()));
     true
 }
+
+/// Whether a kept set names its files and holds every one.
+#[allow(dead_code)]
+fn is_whole(kept: &std::path::Path) -> bool {
+    std::fs::read_to_string(kept.join(KEPT_LIST))
+        .is_ok_and(|list| list.lines().filter(|line| !line.is_empty()).all(|file| kept.join(file).is_file()))
+}
+
+/// The file in a kept set naming the files it holds, written last.
+#[allow(dead_code)]
+const KEPT_LIST: &str = "kept.txt";
 
 /// Keeps `files`, made in `out`, under `name`, and lets go of the sets used longest ago past the `kept` most
 /// recent of the same kind. A failure to keep them only means the next build folder makes them again.
@@ -78,12 +89,23 @@ fn take_kept(name: &str, out: &std::path::Path) -> bool {
 fn keep(name: &str, out: &std::path::Path, files: &[std::path::PathBuf], kept: usize) {
     let Some(folder) = build_cache_folder() else { return };
     let partial = folder.join(format!("{name}.{}", std::process::id()));
+    let mut list = String::new();
     let made = std::fs::create_dir_all(&partial).is_ok()
-        && files
-            .iter()
-            .all(|file| file.file_name().is_some_and(|base| std::fs::copy(out.join(base), partial.join(base)).is_ok()));
+        && files.iter().all(|file| {
+            file.file_name().is_some_and(|base| {
+                list.push_str(&base.to_string_lossy());
+                list.push('\n');
+                std::fs::copy(out.join(base), partial.join(base)).is_ok()
+            })
+        })
+        && std::fs::write(partial.join(KEPT_LIST), &list).is_ok();
     // Put in place whole, so another build never finds half of it; another may have kept the same set first.
-    if !made || std::fs::rename(&partial, folder.join(name)).is_err() {
+    let whole = folder.join(name);
+    if made && whole.is_dir() && !is_whole(&whole) {
+        // Left part of by a tool that tidies `target`, or kept before sets named their files.
+        let _ = std::fs::remove_dir_all(&whole);
+    }
+    if !made || std::fs::rename(&partial, &whole).is_err() {
         let _ = std::fs::remove_dir_all(&partial);
     }
     let kind = name.rsplit_once('-').map_or(name, |(kind, _)| kind);

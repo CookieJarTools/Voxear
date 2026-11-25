@@ -141,6 +141,24 @@ class Grid:
             return out < 2
         self.fill(inside, (lo, hi), material, shade, only)
 
+    def block(self, middle, half, material, chamfer=1.0, shade=None, only=None, bevel=True):
+        """A straight-sided block about `middle`, its corners cut back `chamfer` cubes, and with `bevel` the cubes
+        along its edges a shade lighter, as a softened edge catches the light."""
+        lo = tuple(m - h for m, h in zip(middle, half))
+        hi = tuple(m + h for m, h in zip(middle, half))
+        self.box(lo, hi, material, shade=shade, round_edges=chamfer, only=only)
+        if not bevel:
+            return
+        for (x, y, z), (there, tone) in list(self.cells.items()):
+            if there != material:
+                continue
+            near = sum(1 for v, a, b in ((x + 0.5, lo[0], hi[0]), (y + 0.5, lo[1], hi[1]), (z + 0.5, lo[2], hi[2]))
+                       if a <= v <= b and (v - a < chamfer + 1.0 or b - v < chamfer + 1.0))
+            inside = all(a <= v <= b for v, a, b in ((x + 0.5, lo[0], hi[0]), (y + 0.5, lo[1], hi[1]),
+                                                     (z + 0.5, lo[2], hi[2])))
+            if inside and near >= 2:
+                self.cells[(x, y, z)] = (there, min(3, tone + 1))
+
     def rounded(self, middle, half, material, power=3.0, shade=None, only=None, keep=None):
         """A box with its corners worn round: |x|^p + |y|^p + |z|^p <= 1 over its half sizes."""
         cx, cy, cz = middle

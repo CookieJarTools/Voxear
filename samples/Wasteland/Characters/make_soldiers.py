@@ -148,6 +148,35 @@ def chevron(g, x0, y0, z, width, material, side=1, axis="z"):
                     g.put((z, y0 + i + dy, x0 + dx), material, 3)
 
 
+def plates(g, lo, hi, face, count, seed, material, size=(3.0, 7.0), proud=1.4):
+    """Raised plates scattered over one face of the region from `lo` to `hi`: `face` is its axis and which way it
+    looks (1 or -1), so a helmet or a sleeve reads as plates laid over one another."""
+    axis, sign = face
+    others = [a for a in range(3) if a != axis]
+    for i in range(count):
+        middle, half = [0.0] * 3, [0.0] * 3
+        for j, a in enumerate(others):
+            span = hi[a] - lo[a]
+            h = min(span / 2, (size[0] + hashed(seed, i, j) * (size[1] - size[0])) / 2)
+            middle[a] = lo[a] + h + hashed(seed, i, j, 9) * max(0.0, span - 2 * h)
+            half[a] = h
+        surface = hi[axis] if sign > 0 else lo[axis]
+        middle[axis] = surface + sign * (proud / 2 - 0.4)
+        half[axis] = proud / 2 + 0.4
+        g.block(middle, half, material, chamfer=0.5)
+
+
+def dome(g, middle, half, steps, material):
+    """A dome stepped in blocks, each narrower than the one under it, as the style builds a helmet."""
+    cx, cy, cz = middle
+    hx, hy, hz = half
+    for i in range(steps):
+        t0, t1 = i / steps, (i + 1) / steps
+        k = math.sqrt(max(0.0, 1 - t0 * t0))
+        g.block((cx, cy + hy * (t0 + t1) / 2, cz), (hx * k, hy * (t1 - t0) / 2 + 0.5, hz * k), material,
+                chamfer=1.0 + 1.5 * (1 - t0))
+
+
 # The skeleton -----------------------------------------------------------------------------------------------------
 
 
@@ -175,53 +204,51 @@ def skeleton(model):
 
 
 def body(model, kind):
+    """The body, arms and legs as blocks with softened edges, slabs and plates laid over them, and boots."""
     hips, spine, chest = grid(model, "Hips"), grid(model, "Spine"), grid(model, "Chest")
-    hips.rounded((0, -1, 0), (15.0, 7.0, 10.5), "cloth", power=2.8)
-    spine.rounded((0, 4, 0), (14.5, 7.5, 10.5), "cloth", power=2.8)
-    chest.rounded((0, 8, 0), (18.0, 12.0, 11.5), "cloth", power=2.8)
-    chest.rounded((0, 15, 0), (21.0, 6.0, 10.0), "cloth", power=2.4)
-    chest.rod((0, 19, -0.5), (0, 23.5, -0.5), 7.6, "cloth_dark", flat=True)
-    chest.remove(lambda x, y, z: (x * x + (z + 0.5) ** 2 < 5.4 ** 2) & (y > 19), ((-9, 19, -9), (9, 24, 9)))
-    grid(model, "Neck").rod((0, -3, 0), (0, 4, 0.5), 6.0, "skin")
-    # Arms: a padded shoulder with a badge, the sleeve, a cuff, the glove's wrist.
+    hips.block((0, -1, 0), (15.0, 7.0, 10.5), "cloth", chamfer=2.0)
+    spine.block((0, 4, 0), (14.5, 7.5, 10.5), "cloth", chamfer=2.0)
+    chest.block((0, 8, 0), (18.0, 12.0, 11.5), "cloth", chamfer=2.5)
+    chest.block((0, 15, 0), (21.0, 6.0, 10.0), "cloth", chamfer=2.5)
+    chest.block((0, 21.2, -0.5), (8.4, 2.4, 7.6), "cloth_dark", chamfer=1.5)
+    chest.remove(lambda x, y, z: (np.abs(x) < 5.5) & (np.abs(z + 0.5) < 5) & (y > 19), ((-9, 19, -9), (9, 24, 9)))
+    grid(model, "Neck").block((0, 0.5, 0.5), (6.0, 3.5, 6.0), "skin", chamfer=1.5, bevel=False)
     for side, name in ((-1, "Left"), (1, "Right")):
         upper = grid(model, f"{name}UpperArm")
-        upper.ball((0, -2, 0), (8.4, 7.6, 8.4), "cloth")
-        upper.rounded((0, -ELBOW / 2 - 0.5, 0), (7.2, ELBOW / 2, 7.2), "cloth", power=2.5)
-        badge = (side * 6.2, -10, -4), (side * 8.6, -2, 4)
-        upper.box(tuple(min(a, b) for a, b in zip(*badge)), tuple(max(a, b) for a, b in zip(*badge)), "patch",
-                  round_edges=0.5)
-        chevron(upper, -2, -8, int(side * 8.6) - (0 if side > 0 else 1), 5, "tan", axis="x")
-        band(upper, -ELBOW + 1, -ELBOW + 3, 6.9, 6.9, "cloth_dark", out=0.4)
+        upper.block((0, -2, 0), (8.4, 7.6, 8.4), "cloth", chamfer=2.5)
+        upper.block((0, -ELBOW / 2 - 0.5, 0), (7.2, ELBOW / 2, 7.2), "cloth", chamfer=1.5)
+        upper.block((side * 7.4, -6, 0), (1.3, 4.2, 4.2), "patch", chamfer=0.5)
+        chevron(upper, -2, -8, int(side * 8.8) - (0 if side > 0 else 1), 5, "tan", axis="x")
+        upper.block((0, -ELBOW + 2, 0), (7.8, 1.2, 7.8), "cloth_dark", chamfer=0.8)
+        plates(upper, (-7.2, -ELBOW + 4, -7.2), (7.2, -9, 7.2), (2, -1), 1, 70 + side, "cloth", size=(4, 7))
         fore = grid(model, f"{name}Forearm")
-        fore.ball((0, 0, 0), (6.8, 6.8, 6.8), "cloth")
-        fore.rounded((0, -(WRIST - 3) / 2, 0), (6.6, (WRIST - 1) / 2, 6.6), "cloth", power=2.5)
-        fore.rod((0, -WRIST + 6.5, 0), (0, -WRIST + 3.8, 0), 7.0, "cloth_dark", flat=True)
-        fore.rod((0, -WRIST + 4.0, 0), (0, -WRIST + 1.0, 0), 4.6, "glove", flat=True)
-    # Legs: the thigh with straps, a knee pad, puttees wound to the boot, and the boot itself.
+        fore.block((0, 0, 0), (6.8, 6.0, 6.8), "cloth", chamfer=2.0)
+        fore.block((0, -(WRIST - 3) / 2, 0), (6.6, (WRIST - 1) / 2, 6.6), "cloth", chamfer=1.5)
+        fore.block((0, -WRIST + 5.2, 0), (7.2, 1.4, 7.2), "cloth_dark", chamfer=0.8)
+        fore.block((0, -WRIST + 2.5, 0), (4.8, 1.8, 4.8), "glove", chamfer=0.8)
     for side, name in ((-1, "Left"), (1, "Right")):
         thigh = grid(model, f"{name}Thigh")
-        thigh.rounded((0, -8, 0), (8.8, 11.5, 9.0), "cloth", power=2.6)
-        band(thigh, -6, -4, 8.8, 9.0, "webbing")
+        thigh.block((0, -8, 0), (8.8, 11.5, 9.0), "cloth", chamfer=2.0)
+        thigh.block((0, -5, 0), (9.4, 1.2, 9.6), "webbing", chamfer=0.6)
+        plates(thigh, (-8.8, -17, -9), (8.8, -7, 9), (2, 1), 2, 80 + side, "cloth", size=(4, 8))
         if side > 0:
             pouch(thigh, (8.2, -15, -4.5), (12.4, -6, 4.5))
         else:
-            band(thigh, -14, -12, 8.4, 8.6, "webbing")
+            thigh.block((0, -13, 0), (9.2, 1.0, 9.4), "webbing", chamfer=0.6)
         shin = grid(model, f"{name}Shin")
-        shin.rounded((0, -1, 0), (8.0, 5.0, 8.0), "cloth", power=2.6)
-        shin.rounded((0, -10, 0), (7.4, 8.0, 7.4), "puttee", power=2.4)
-        for (x, y, z), (material, _) in list(shin.cells.items()):
-            if material == "puttee" and (y + round(math.atan2(z, x) / math.tau * 3)) % 3 == 0:
-                shin.put((x, y, z), "puttee", 0)
-        shin.rounded((0, -2.5, 7.2), (6.4, 5.8, 2.6), "leather", power=2.6)
-        shin.box((-5.6, -4.5, 8.9), (5.6, -0.5, 10.2), "leather", shade=3)
-        band(shin, -3, -1, 7.8, 7.8, "webbing")
+        shin.block((0, -1, 0), (8.0, 5.0, 8.0), "cloth", chamfer=2.0)
+        for i, y in enumerate(range(-4, -18, -3)):
+            wide = 7.4 + 0.5 * (i % 2)
+            shin.block((0, y - 1.5, 0), (wide, 1.6, wide), "puttee", chamfer=0.8, shade=2 if i % 2 else 1)
+        shin.block((0, -2.5, 7.6), (6.4, 5.8, 2.2), "leather", chamfer=1.2)
+        shin.block((0, -2.5, 9.6), (4.4, 3.8, 0.8), "leather", chamfer=0.5, shade=3)
+        shin.block((0, -2.0, 0), (8.3, 1.0, 8.3), "webbing", chamfer=0.6)
         foot = grid(model, f"{name}Foot")
-        foot.rod((0, -2, -0.5), (0, 7, -0.5), 7.2, "boot", flat=True)
-        foot.rounded((0, -5.5, 3.5), (8.0, 5.5, 13.0), "boot", power=2.6)
-        foot.box((-8.4, -11, -9.8), (8.4, -8.6, 16.9), "sole", round_edges=1)
-        foot.box((-8.2, -8.6, 9), (8.2, -3.5, 16.6), "boot", only=("boot",), shade=3)
-        foot.box((-8.6, 3, -8), (8.6, 5, 7), "leather_dark", only=None)
+        foot.block((0, 2.5, -0.5), (7.4, 4.5, 7.4), "boot", chamfer=1.5)
+        foot.block((0, -5.0, 3.5), (8.0, 5.0, 12.8), "boot", chamfer=2.5)
+        foot.block((0, -10.0, 3.5), (8.6, 1.2, 13.6), "sole", chamfer=0.8, bevel=False)
+        foot.block((0, -6.0, 13.0), (8.2, 3.0, 3.2), "boot", chamfer=1.2, shade=3)
+        foot.block((0, 5.0, -0.5), (7.9, 1.0, 7.9), "leather_dark", chamfer=0.5)
         for y in range(-5, 6, 2):
             for x in (-2, -1, 0, 1):
                 spot = front_of(foot, x, y)
@@ -233,8 +260,7 @@ def rig(model, kind):
     """The belt and its pouches, and a rig over the chest packed as a plate carrier is: a dark panel of straps and
     two rows of pouches, a back panel with a badge, straps over the shoulders."""
     hips, spine, chest = grid(model, "Hips"), grid(model, "Spine"), grid(model, "Chest")
-    hips.fill(lambda x, y, z: ((x / 16.4) ** 2 + (z / 12.0) ** 2 <= 1) & (np.abs(y - 4) < 2.3),
-              ((-17, 1, -13), (17, 7, 13)), "leather")
+    hips.block((0, 4, 0), (16.2, 2.3, 11.8), "leather", chamfer=1.5)
     hips.box((-2.6, 1.4, 11), (2.6, 6.6, 13.2), "brass")
     hips.box((-1.2, 2.6, 12.6), (1.2, 5.4, 13.4), "leather_dark")
     for x0 in (-14.5, 8.5):
@@ -344,7 +370,7 @@ EYE_COLOURS = {"L": "lash", "I": "iris", "J": "iris_light", "W": "eye_light"}
 
 
 def head_shape(g):
-    g.rounded((0, 16, 1), (17.5, 16.0, 15.0), "skin", power=3.0)
+    g.block((0, 16, 1), (17.5, 16.0, 15.0), "skin", chamfer=3.5, bevel=False)
 
 
 def face(g, mask):
@@ -364,8 +390,8 @@ def face(g, mask):
             if spot is not None:
                 g.put((x, 14, spot), "blush")
     g.paint(lambda x, y, z: (y > 24.5) | ((np.abs(x) > 13.5) & (y > 12) & (z < 9)) | ((z < 4) & (y > 5)),
-            ((-17, 0, -15), (17, 35, 17)), "hair")
-    for x in range(-16, 16):
+            ((-20, 0, -16), (20, 35, 18)), "hair")
+    for x in range(-18, 18):
         for y in range(0, 14):
             spot = front_of(g, x, y)
             if spot is None:
@@ -373,7 +399,7 @@ def face(g, mask):
             front = max(spot, 17 if abs(x) < 12 else spot)
             for z in range(spot, front + 2):
                 g.put((x, y, z), mask, 1 if (y // 3 + x // 6) % 2 else 2)
-    g.paint(lambda x, y, z: y < 14, ((-17, -1, -15), (17, 14, 19)), mask, only=("skin",))
+    g.paint(lambda x, y, z: y < 14, ((-20, -1, -16), (20, 14, 19)), mask, only=("skin",))
 
 
 def goggles(g, y, z0, width=10):
@@ -397,58 +423,57 @@ def rifleman_head(model):
         g.rod((0, 7, z), (0, 7, z + 0.8), 5.4, "steel", shade=0, flat=True)
     for side in (-1, 1):
         g.path([(side * 5, 9, 18), (side * 12, 11, 12), (side * 15.5, 13, 4)], 0.8, "leather_dark", square=True)
-    # The dish helmet: a low crown of plates, a wide brim, netting, rags tied in, a band round it.
-    g.rounded((0, 27, 1), (17.4, 12.0, 16.4), "helmet", power=2.4, keep=lambda x, y, z: y > 26)
-    for x in range(-25, 25):
-        for z in range(-24, 26):
-            d = (abs(x + 0.5) / 24.5) ** 4 + (abs(z + 0.5 - 1) / 24.0) ** 4
-            if d <= 1:
-                g.put((x, 26 if d < 0.6 else 25, z), "helmet")
-                if d < 0.6:
-                    g.put((x, 27, z), "helmet")
-    band(g, 28, 31, 16.8, 15.8, "leather_dark", out=0.8)
+    # The dish helmet: a low crown stepped in blocks, plates over it, a wide brim, netting, rags, a band round it.
+    dome(g, (0, 23.5, 1), (19.8, 12.0, 18.4), 4, "helmet")
+    g.block((0, 23.4, 1), (25.0, 0.9, 24.5), "helmet", chamfer=4.0)
+    g.block((0, 26.2, 1), (20.4, 1.5, 19.0), "leather_dark", chamfer=1.5)
+    plates(g, (-12, 30, -11), (12, 35.5, 12), (1, 1), 6, 21, "helmet", size=(4, 9))
+    for axis, sign in ((0, 1), (0, -1), (2, -1)):
+        lo, hi = [-19.8, 28.0, -17.4], [19.8, 31.0, 19.4]
+        plates(g, lo, hi, (axis, sign), 2, 30 + axis * 3 + sign, "helmet", size=(4, 7))
     for (x, y, z), (material, _) in list(g.cells.items()):
-        if material == "helmet" and y > 31 and (x + y + z) % 5 == 0 and (x - y + z) % 5 == 0:
+        if material == "helmet" and y > 28 and (x + y + z) % 5 == 0 and (x - y + z) % 5 == 0:
             g.put((x, y, z), "scrim", 0)
         elif material == "helmet" and hashed(x // 3, y // 2, z // 3, 77) < 0.08:
             g.put((x, y, z), "rust")
-    for i in range(14):
+    for i in range(10):
         a = hashed(i, 5) * math.tau
         r = 6 + hashed(i, 6) * 9
         x, z = int(math.cos(a) * r), int(math.sin(a) * r)
         top = max((y for (cx, y, cz) in g.cells if cx == x and cz == z), default=None)
         if top is not None:
-            g.box((x - 1, top, z - 1), (x + 2, top + 2, z + 2), "scrim")
-    goggles(g, 31, 15.4)
-    g.path([(-16.4, 25, 4), (-15.4, 8, 7), (-10, 1, 9)], 0.9, "leather")
-    g.path([(16.4, 25, 4), (15.4, 8, 7), (10, 1, 9)], 0.9, "leather")
+            g.block((x + 0.5, top + 1, z + 0.5), (1.6, 1.2, 1.6), "scrim", chamfer=0.3)
+    goggles(g, 28, 18.6)
+    g.path([(-18.0, 23, 4), (-17.6, 8, 8), (-12, 1, 12)], 0.9, "leather")
+    g.path([(18.0, 23, 4), (17.6, 8, 8), (12, 1, 12)], 0.9, "leather")
 
 
 def scavenger_head(model):
     g = grid(model, "Head")
     head_shape(g)
     face(g, "mask")
-    # A steel helmet cut high over the ears, plates and rails on its sides, a headset's big ear cups over it.
-    def shell(x, y, z):
-        return (y > 22) & ((np.abs(x) / 19.6) ** 2.6 + (np.abs(y - 22) / 13.0) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6
-                           <= 1)
-    g.fill(shell, ((-21, 22, -18), (21, 36, 20)), "helmet")
-    g.fill(lambda x, y, z: (y > 15) & (y <= 22) & ((np.abs(x) / 19.6) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6 <= 1) &
-           ~((z > 4) & (np.abs(x) < 16.5)), ((-21, 15, -18), (21, 23, 20)), "helmet")
+    # A steel helmet cut high over the ears, stepped in blocks, plates and rails on it, a headset's big ear cups.
+    dome(g, (0, 21, 1), (19.6, 13.5, 17.8), 5, "helmet")
     for side in (-1, 1):
-        g.box((side * 18.8 - 1.4, 22, -9), (side * 18.8 + 1.4, 25, 9), "steel", round_edges=0.5)
-        g.box((side * 15 - 3, 28, -6), (side * 15 + 3, 32, 2), "helmet", round_edges=0.6)
-        g.rounded((side * 19.6, 15, 1.5), (3.8, 7.4, 6.8), "steel", power=2.6)
-        g.rounded((side * 22.0, 15, 1.5), (1.8, 5.4, 5.0), "tan_dark", power=2.4)
-        g.rod((side * 19.4, 21, 1.5), (side * 18.4, 28, 1.5), 1.2, "leather_dark")
-    g.box((-15, 33, -8), (15, 34.6, 8), "helmet", shade=3)
+        g.block((side * 18.0, 18.5, -1), (2.0, 3.5, 14.0), "helmet", chamfer=1.0)
+    g.block((0, 18.5, -14.6), (18.0, 3.5, 2.6), "helmet", chamfer=1.0)
+    for side in (-1, 1):
+        g.block((side * 19.6, 23.5, 0), (1.4, 1.6, 9.0), "steel", chamfer=0.5)
+        g.block((side * 17.0, 29.5, -2), (3.0, 2.2, 4.2), "helmet", chamfer=0.6)
+        g.block((side * 20.0, 15, 1.5), (3.8, 7.2, 6.8), "steel", chamfer=2.0)
+        g.block((side * 22.4, 15, 1.5), (1.6, 5.2, 4.8), "tan_dark", chamfer=1.2)
+        g.rod((side * 19.8, 21, 1.5), (side * 18.6, 29, 1.5), 1.2, "leather_dark")
+    plates(g, (-13, 33, -12), (13, 34.5, 13), (1, 1), 6, 41, "helmet", size=(4, 9))
+    for axis, sign in ((0, 1), (0, -1), (2, -1), (2, 1)):
+        plates(g, [-18.0, 24.0, -16.0], [18.0, 30.0, 18.0], (axis, sign), 2, 50 + axis * 3 + sign, "helmet",
+               size=(4, 7))
     g.path([(17, 11, 5), (14, 8, 12), (8, 6, 17.6)], 0.9, "blued")
     g.ball((7.0, 6.0, 18.0), (1.8, 1.8, 1.8), "blued")
     for (x, y, z), (material, _) in list(g.cells.items()):
         if material == "helmet" and hashed(x // 3, y // 3, z // 3, 41) < 0.07:
             g.put((x, y, z), "rust")
-    goggles(g, 26, 16.2)
-    band(g, 27, 29.5, 19.2, 17.4, "leather_dark", out=0.6)
+    goggles(g, 25, 17.0)
+    g.block((0, 27.4, 1), (17.8, 1.2, 16.4), "leather_dark", chamfer=1.0)
 
 
 # Gear on the back ------------------------------------------------------------------------------------------------

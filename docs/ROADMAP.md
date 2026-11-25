@@ -2257,8 +2257,9 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   - ~~**Soldiers of cubes (a sample):**~~ done: `samples/Wasteland` has two chibi soldiers with gear from the world
     wars, worn down by an apocalypse, 128 cubes and 1.9 m tall: a helmeted head nearly a third of that and as wide as
     the shoulders, large eyes over a mask, a short body in a rig of straps and two rows of pouches, chunky arms with
-    badges, knee pads and big boots. Each part is built of plates and blocks that each take a tone of their own, a few
-    cubes picking another, so they read as panels rather than speckled cubes. The **Rifleman** has a dish helmet with
+    badges, knee pads and big boots. Each part is a straight-sided block with its corners cut and its edges a shade
+    lighter, plates and slabs laid over it and helmets stepped in blocks, each taking a tone of its own, a few cubes
+    picking another, so they read as panels rather than speckled cubes. The **Rifleman** has a dish helmet with
     netting and rags, a respirator with a round filter, an olive uniform, a pack and blanket roll and a bolt-action
     rifle. The **Scavenger**, a radioman in faded blue, has a steel helmet cut high with rails and a headset, a
     microphone, a radio with two aerials on his back, a bandolier, fingerless gloves and a drum-fed submachine gun.

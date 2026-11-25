@@ -357,6 +357,7 @@ pub struct Editor {
     prefab_brushes: prefab_brushes::PrefabBrushes,
     /// The selected Terrain's brush and layer handles (see `terrain_tools`).
     terrain_tools: crate::terrain_tools::TerrainTools,
+    voxel_tools: crate::voxel_brush::VoxelTools,
     block_tools: crate::block_tools::BlockTools,
     /// The selected Foliage's brush (see `plants_tools`).
     plants_tools: crate::plants_tools::PlantsTools,
@@ -763,6 +764,7 @@ impl Editor {
             road_handles: RoadHandles::default(),
             prefab_brushes: prefab_brushes::PrefabBrushes::default(),
             terrain_tools: Default::default(),
+            voxel_tools: Default::default(),
             block_tools: Default::default(),
             plants_tools: Default::default(),
             field_drag_start: None,
@@ -1951,6 +1953,11 @@ impl Editor {
                 if self.terrain_tools.begin(&mut self.game, &camera, entity, point, (self.shift, self.control)) {
                     self.field_drag_start = before;
                 }
+            } else if let Some(entity) = editing.filter(|_| self.voxel_tools.is_hovered()) {
+                let before = ObjState::of(world, entity);
+                if self.voxel_tools.begin(&mut self.game, &camera, entity, point, self.shift) {
+                    self.field_drag_start = before;
+                }
             } else if let Some(entity) = selected.filter(|_| self.block_tools.is_hovered()) {
                 self.block_tools.set_control(self.control);
                 // Blocks are built while playing too, as a game would build them; play keeps none of it.
@@ -2013,6 +2020,11 @@ impl Editor {
         {
             self.block_tools.drag_to(&mut self.game, &camera, point, self.shift);
         }
+        if self.voxel_tools.is_dragging()
+            && let Some(point) = point
+        {
+            self.voxel_tools.drag_to(&mut self.game, &camera, point);
+        }
         if self.prefab_brushes.is_dragging()
             && let Some(point) = point
         {
@@ -2042,6 +2054,8 @@ impl Editor {
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
             let free = free && !self.terrain_tools.is_hovered();
+            self.voxel_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
+            let free = free && !self.voxel_tools.is_hovered();
             // The block the brush builds with read, so how it would stand put down shows before the first click.
             if let Some(guid) = crate::block_props::built_with(&self.game) {
                 let _ = self.game.content.block(&guid.to_string());
@@ -2072,6 +2086,7 @@ impl Editor {
         shapes.extend(self.path_handles.shapes(world, &camera, editing));
         shapes.extend(self.road_handles.shapes(world, &camera, editing));
         shapes.extend(self.terrain_tools.shapes(&self.game, &camera, editing));
+        shapes.extend(self.voxel_tools.shapes(&self.game, &camera, editing, self.shift));
         shapes.extend(self.block_tools.shapes(&self.game, &camera, selected, self.shift));
         shapes.extend(self.plants_tools.shapes(&self.game, renderer, &camera, editing));
         shapes.extend(self.prefab_brush_shapes(renderer, &camera));
@@ -2128,6 +2143,7 @@ impl Editor {
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
         let held = held.or_else(|| self.road_handles.end());
         let held = held.or_else(|| self.terrain_tools.end()).or_else(|| self.block_tools.end());
+        let held = held.or_else(|| self.voxel_tools.end());
         // A map brush's stroke: the world's painted maps before and after it, one step to undo.
         if let Some((world, before)) = self.block_tools.take_painted()
             && let Some(painted) = self.game.content.painted(world, false)
@@ -2880,6 +2896,7 @@ impl Editor {
                 || self.road_handles.is_hovered()
                 || self.script_handles.is_hovered()
                 || self.terrain_tools.is_hovered()
+                || self.voxel_tools.is_hovered()
                 || self.block_tools.is_hovered()
                 || self.plants_tools.is_hovered()
                 || self.prefab_brushes.is_hovered();
@@ -2894,6 +2911,7 @@ impl Editor {
                 || self.road_handles.is_dragging()
                 || self.script_handles.is_dragging()
                 || self.terrain_tools.is_dragging()
+                || self.voxel_tools.is_dragging()
                 || self.block_tools.is_dragging()
                 || self.plants_tools.is_dragging()
                 || self.prefab_brushes.is_dragging();

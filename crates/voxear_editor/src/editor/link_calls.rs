@@ -303,6 +303,7 @@ impl Editor {
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
             "voxels.carve" | "voxels.fill" => self.voxels_edit(call, args),
+            "voxels.raycast" => self.voxels_raycast(args),
             "blocks.restore" => self.blocks_restore(args),
             "blocks.bake_far" => {
                 let world = match args.get("obj").filter(|obj| !obj.is_null()) {
@@ -2480,6 +2481,26 @@ impl Editor {
         // A block a world did not hold is drawn as its file says from this frame.
         voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
         done(json!({ "changed": changed }))
+    }
+
+    fn voxels_raycast(&mut self, args: &Json) -> Called {
+        let from = Vec3::from_array(opt_vector(args, "from")?.ok_or_else(|| bad("`from` is missing"))?);
+        let direction = Vec3::from_array(opt_vector(args, "direction")?.ok_or_else(|| bad("`direction` is missing"))?);
+        let reach = args.get("reach").and_then(Json::as_f64).map_or(1000.0, |reach| reach as f32);
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        let world = &self.game.engine.world;
+        match voxear_engine::voxel_volumes::raycast(world, from, direction, reach, only) {
+            Some((entity, hit)) => done(json!({
+                "obj": obj_ref(&self.game, entity),
+                "point": hit.point.to_array(),
+                "normal": hit.normal.to_array(),
+                "distance": hit.distance,
+            })),
+            None => done(json!({ "obj": null, "point": null, "normal": null, "distance": null })),
+        }
     }
 
     fn voxels_edit(&mut self, call: &str, args: &Json) -> Called {

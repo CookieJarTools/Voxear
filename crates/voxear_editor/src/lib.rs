@@ -119,6 +119,7 @@ mod block_props;
 mod block_tools;
 mod plants_panel;
 mod volume_panel;
+mod voxel_brush;
 mod heat_props;
 mod storm_props;
 mod fit_props;

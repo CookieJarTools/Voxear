@@ -10,6 +10,7 @@ internal static class VoxelsTests
 	{
 		Check.True(Voxels.Carve(new Vector3(1f, 2f, 3f), 1.5f) == 0, "no volume to carve");
 		Check.True(Voxels.Fill(Vector3.Zero, 1f, VoxelMaterial.Rock) == 0, "no volume to fill");
+		Check.True(!Voxels.Raycast(Vector3.Zero, -Vector3.UnitY, out var hit) && hit == default, "no ground to meet");
 	}
 
 	[Test]

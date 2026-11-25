@@ -230,9 +230,35 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
     }
 }
 
-/// Sets what answers `Voxels.Carve` and `Voxels.Fill` in scripts.
+/// Sets what answers `Voxels.Carve`, `Voxels.Fill` and `Voxels.Raycast` in scripts.
 pub(crate) fn register() {
     voxear_scripting::set_voxel_edits(from_script);
+    voxear_scripting::set_voxel_raycast(|world, origin, direction, reach| {
+        raycast(world, Vec3::from(origin), Vec3::from(direction), reach, None)
+            .map(|(entity, hit)| (entity, hit.point.to_array(), hit.normal.to_array(), hit.distance))
+    });
+}
+
+/// Where a ray from `origin` along `direction`, in the world, first meets
+/// the ground of an endless Voxel Volume within `reach` metres, or `only`'s
+/// alone: the volume, and where and how far. Its ground as it is made, its
+/// edits over it; not its grass, flowers or trees.
+pub fn raycast(
+    world: &World,
+    origin: Vec3,
+    direction: Vec3,
+    reach: f32,
+    only: Option<Entity>,
+) -> Option<(Entity, voxear_render::VoxelRayHit)> {
+    world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .filter_map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            voxear_render::voxel_raycast(volume, corner, origin, direction, reach).map(|hit| (entity, hit))
+        })
+        .min_by(|a, b| a.1.distance.total_cmp(&b.1.distance))
 }
 
 /// A script's carve (`fill` -1) or fill with the ground numbered as

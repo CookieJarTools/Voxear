@@ -1433,6 +1433,9 @@ impl Inspector {
                 if let Prop::PrefabBrush(field) = value {
                     meta.tooltip = Some(crate::road_props::brush_tooltip(*field).to_string());
                 }
+                if let Prop::VoxelBrush(field) = value {
+                    meta.tooltip = Some(crate::voxel_brush::tooltip(*field).to_string());
+                }
                 if let Prop::Placement(field) = value {
                     meta.tooltip = Some(crate::road_props::placement_tooltip(*field).to_string());
                 }
@@ -3345,6 +3348,7 @@ pub(crate) fn field_tooltip(types: &ScriptTypes, prop: &Prop) -> Option<String> 
     let written = match prop {
         Prop::Road(field) => crate::road_props::road_tooltip(*field),
         Prop::PrefabBrush(field) => crate::road_props::brush_tooltip(*field),
+        Prop::VoxelBrush(field) => crate::voxel_brush::tooltip(*field),
         Prop::Placement(field) => crate::road_props::placement_tooltip(*field),
         Prop::AreaFill(field) => crate::road_props::area_tooltip(*field),
         Prop::World(field) => crate::world_props::tooltip(*field),

@@ -10,7 +10,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use voxear_core::logging::LogCapture;
+use voxear_core::{logging::LogCapture, math::Vec3};
 use voxear_editor::{Editor, link};
 use voxear_engine::{
     Project,
@@ -859,6 +859,85 @@ fn a_tool_carves_and_fills_an_endless_voxel_volume_each_one_step_to_undo() {
     let saved = done(&mut editor, &mut renderer, "save", json!({}));
     let scene = std::fs::read_to_string(dir.path().join(saved["saved"][0].as_str().unwrap())).unwrap();
     assert!(scene.contains("radius = 1.5") && !scene.contains("fill = \"rock\""), "the carve saved alone:\n{scene}");
+}
+
+#[test]
+fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_finds_its_ground() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    // Under the Scene view: an endless volume whose own flat ground is 20 m under the camera's feet.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let feet = camera.position - Vec3::Y * 20.0;
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Voxels" }));
+    let volume = made["obj"].clone();
+    let entity = link::resolve_obj(&editor.game, &volume).unwrap();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": volume, "component": "voxel_volume" }));
+    for (field, value) in [("endless", json!(true)), ("brush", json!("Carve")), ("brush_size", json!(0.75))] {
+        done(
+            &mut editor,
+            &mut renderer,
+            "field.set",
+            json!({ "obj": volume, "component": "voxel_volume", "field": field, "value": value }),
+        );
+    }
+    let corner = feet - Vec3::Y * 2.0;
+    done(&mut editor, &mut renderer, "obj.set", json!({ "obj": volume, "position": corner.to_array() }));
+    editor.select(Some(entity));
+    frames(&mut editor, &mut renderer, 3);
+
+    // A tool finds the ground the brush will carve, below the camera.
+    let found = done(
+        &mut editor,
+        &mut renderer,
+        "voxels.raycast",
+        json!({ "from": camera.position.to_array(), "direction": [0.0, -1.0, 0.0] }),
+    );
+    assert_eq!(found["obj"], volume, "{found}");
+    // The volume's own ground stands about its height over its corner, 22 m under the camera, its hills either way.
+    let distance = found["distance"].as_f64().unwrap();
+    assert!((16.0..23.0).contains(&distance), "{found}");
+
+    // A stroke across the ground low in the Scene view: one step to undo.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let (from, to) = ([x + w * 0.45, y + h * 0.8], [x + w * 0.55, y + h * 0.8]);
+    let world = &editor.game.engine.world;
+    let (origin, direction) = camera.ray(from);
+    assert!(
+        voxear_engine::voxel_volumes::raycast(world, origin, direction, 2000.0, Some(entity)).is_some(),
+        "the ground under the stroke"
+    );
+    pointer_to(&mut editor, from);
+    frames(&mut editor, &mut renderer, 1);
+    left_button(&mut editor, true);
+    frames(&mut editor, &mut renderer, 1);
+    for step in 1..=8 {
+        let along = step as f32 / 8.0;
+        pointer_to(&mut editor, [from[0] + (to[0] - from[0]) * along, from[1]]);
+        frames(&mut editor, &mut renderer, 1);
+    }
+    left_button(&mut editor, false);
+    frames(&mut editor, &mut renderer, 2);
+    let edits =
+        |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.len();
+    let carved = edits(&editor);
+    assert!(carved >= 3, "balls carved along the stroke: {carved}");
+    assert!(editor.selected() == Some(entity), "the stroke is not a click that selects");
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(edits(&editor), 0, "the stroke taken back whole");
+}
+
+fn pointer_to(editor: &mut Editor, [x, y]: [f32; 2]) {
+    let device_id = winit::event::DeviceId::dummy();
+    let position = winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y));
+    editor.handle(&winit::event::WindowEvent::CursorMoved { device_id, position });
+}
+
+fn left_button(editor: &mut Editor, pressed: bool) {
+    use winit::event::{ElementState, MouseButton, WindowEvent};
+    let device_id = winit::event::DeviceId::dummy();
+    let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+    editor.handle(&WindowEvent::MouseInput { device_id, state, button: MouseButton::Left });
 }
 
 #[test]

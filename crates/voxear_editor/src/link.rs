@@ -452,6 +452,18 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "voxels.raycast",
+        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed, not its grass, flowers or trees. `obj` is null where it meets none.",
+        args: &[
+            arg("from", ArgKind::Vector, "Where the ray starts, in metres, in the world."),
+            arg("direction", ArgKind::Vector, "Which way it goes."),
+            maybe("reach", ArgKind::Number, "How far it goes, in metres: 1000 unless given."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: false,
+        returns: "{ obj, point, normal, distance }",
+    },
+    CallInfo {
         name: "voxels.carve",
         about: "Carves a ball round a point of the world, in metres, out of every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Carve does: its ground, grass, flowers and trees. The volume keeps it after what was changed in it before, and its scene saves it. One step to undo.",
         args: &[

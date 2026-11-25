@@ -146,6 +146,24 @@ fill = "rock"
 
 A column takes up to 1,024 changes that reach it, and a half-metre brick 128; past those the latest are left out.
 
+### The brush
+
+With an endless volume selected, set its **Brush** to Carve or Fill: a ball under the pointer in the Scene view shows where it meets the volume's ground, as big as **Brush Size**. Hold the left button and drag to carve balls out along the way, or fill them with **Brush Ground**; hold Shift to do the other. Each stroke is one step to undo. The brush is the editor's own setting, kept for every volume and not saved with the scene.
+
+### Where a ray meets the ground
+
+`Voxels.Raycast` finds where a ray first meets an endless volume's ground, as it was made and changed, within a reach; not its grass, flowers or trees. It is worked out on the CPU the way the GPU makes the ground, so every machine finds the same, in well under a millisecond:
+
+```csharp
+// Dig where the player looks.
+if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f) && Input.Pressed(dig))
+{
+    Voxels.Carve(hit.Point, 0.5f);
+}
+```
+
+`hit` has the point, on the face of the voxel met, which way that face looks, how far along the ray, and the volume's Obj. `vox editor call voxels.raycast '{ "from": [0, 40, 0], "direction": [0, -1, 0] }'` finds the same.
+
 ## How it is drawn
 
 A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog. Its voxels shadow each other, traced through the volume towards the sun.
@@ -161,4 +179,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no rivers or water, and no Cave Network halls, yet.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
-- A volume of a set size can't be changed yet, only an endless one, and only by balls: not a voxel at a time, by a brush in the Scene view, or over the network. Scripts can't yet ask which voxel a ray meets.
+- A volume of a set size can't be changed yet, only an endless one, and only by balls: not a voxel at a time, or over the network. A ray meets its ground, not its grass, flowers or trees, and bodies don't collide with it yet.

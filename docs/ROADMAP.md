@@ -4601,8 +4601,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   carved out or filled with a ground (dirt, grass, rock, sand, snow, gravel), in order, and its columns are made on
   the GPU with them: pits open walls of the layers under the grass, fills in their ground's shades, a later edit over
   an earlier. `Voxels.Carve` and `Voxels.Fill` in C#, `voxels.carve` and `voxels.fill` in `vox editor call` (one
-  step to undo each), saved with the scene as `[[obj.voxel_volume.edits]]`. Next: changed bricks in region files,
-  edits over the network, a brush, `Voxels.Raycast`.
+  step to undo each), saved with the scene as `[[obj.voxel_volume.edits]]`.
+- **Voxel rays and a brush (2026-11-25).** `Voxels.Raycast` in C# and `voxels.raycast` in `vox editor call` find
+  where a ray meets an endless volume's ground, worked out on the CPU as the GPU makes it, edits and all: 0.09 ms
+  down the hills, 0.46 ms into mountains with caves. A brush in the Scene view carves or fills balls where the
+  pointer meets the ground of a selected volume (its Inspector's Brush, Brush Size and Brush Ground), Shift for the
+  other, one step to undo a stroke. Next: changed bricks in region files, edits over the network, collision.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

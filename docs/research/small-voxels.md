@@ -820,9 +820,18 @@ ground, in order (`VoxelVolume::edits`), as the plan has edits go out over the n
 - **Made again.** A changed list makes again the columns its changed edits reach, a frame or two later.
 - **From scripts and tools.** `Voxels.Carve` and `Voxels.Fill` in C#, and `voxels.carve` and `voxels.fill` in
   `vox editor call`, reach every endless volume the ball falls in. The scene saves the list.
+- **Where a ray meets it** (`voxel_volume/ray.rs`). On the CPU, worked out as the GPU makes the ground, to the voxel:
+  its own ground's hills, the generator's height, or the generator's Volume with its overhangs and caves, then the
+  edits. Far from the ground and from the balls filled, the ray takes steps of four tenths of how far over the ground
+  it is (three tenths of how far into the Volume's air); near them, a voxel at a time. A ray down the hills 9 m off
+  took 0.09 ms, one into the mountains through the Volume 52 m off 0.46 ms; a small ball carved where the CPU's ray
+  met the ground opened a pit where the GPU's picture has the middle of its view. Grass, flowers and trees are not
+  met, as the CPU does not make them. `Voxels.Raycast` in C#, `voxels.raycast` in `vox editor call`.
+- **A brush.** In the Scene view, on a selected endless volume with its Inspector's Brush on: a ball where the
+  pointer's ray meets the ground, carving or filling as it is dragged, a ball every third of its size, one step to
+  undo a stroke.
 - **Not yet.** Changed bricks in region files, so a long list of edits needn't be played again; sending edits over
-  the network; a brush in the Scene view; `Voxels.Raycast` and picking; setting one voxel; volumes of a set size;
-  collision.
+  the network; setting one voxel; volumes of a set size; collision; rays that meet grass, flowers and trees.
 
 ![A pit carved out and a ball of rock filled, a bite carved out of the rock after](../images/small-voxels/edits-from-above.webp)
 

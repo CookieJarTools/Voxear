@@ -626,6 +626,15 @@ pub(crate) struct NativeApi {
     /// `Voxels.Carve` and `Voxels.Fill`: a ball carved out of every endless Voxel Volume it reaches (`fill` -1) or
     /// filled with a ground; how many it reached.
     pub voxel_edit: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, fill: i32) -> i32,
+    /// `Voxels.Raycast`: where a ray meets an endless Voxel Volume's ground, 1 with the point, the face's way and
+    /// the distance in `hit` and the volume's Obj in `obj`, else 0.
+    pub voxel_raycast: unsafe extern "C" fn(
+        origin: *const [f32; 3],
+        direction: *const [f32; 3],
+        reach: f32,
+        hit: *mut [f32; 7],
+        obj: *mut u64,
+    ) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2376,6 +2385,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         ground_made: crate::columns::ground_made,
         towns_info: crate::services::towns_info,
         voxel_edit: crate::voxels::voxel_edit,
+        voxel_raycast: crate::voxels::voxel_raycast,
     }
 }
 

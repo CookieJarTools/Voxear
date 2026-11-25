@@ -20,6 +20,7 @@ pub mod bricks;
 mod endless;
 pub(crate) use endless::generated_at;
 mod ground;
+mod ray;
 mod trees;
 
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
@@ -30,6 +31,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
 pub use ground::{GROUND_COLORS, VoxelGround};
+pub use ray::{VoxelRayHit, raycast};
 
 use crate::BoxModel;
 use bricks::{Builder, Packed};

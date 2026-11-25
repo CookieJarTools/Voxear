@@ -649,6 +649,37 @@ fn an_endless_volumes_edits_carve_its_ground_and_fill_it() {
     );
 }
 
+#[test]
+fn a_ray_worked_out_on_the_cpu_meets_the_ground_the_gpu_draws() {
+    let Some(mut renderer) = renderer() else { return };
+    for (name, world) in [("hills", without_rivers(&starter("Rolling Hills"))), ("mountains", caved_alpine())] {
+        // Looking down the slope from 6 m up, through the middle of the picture.
+        let mut scene = generated_view(Arc::new(world), 8.0, 8.0, 6.0, 35.0);
+        let bare = render(&mut renderer, &scene, 3);
+        let (camera, volume) = {
+            let camera = scene.query::<(&Camera, &Transform)>().into_iter().next().unwrap().1.clone();
+            (camera, scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone())
+        };
+        let forward = camera.rotation * Vec3::Z;
+        let started = std::time::Instant::now();
+        let hit =
+            voxear_render::voxel_raycast(&volume, Vec3::ZERO, camera.position, forward, 500.0).expect("the ground");
+        let took = started.elapsed();
+        eprintln!("{name}: met at {:.2} m, {:?}, in {took:?}", hit.distance, hit.normal);
+        // A small ball carved there opens a pit in the middle of the picture.
+        let pit = VoxelEdit { at: hit.point, radius: 0.8, fill: None };
+        scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(vec![pit]);
+        let carved = render(&mut renderer, &scene, 3);
+        keep_image(&format!("ray into the {name}.png"), &carved);
+        let changed = (0..9)
+            .flat_map(|dy| (0..9).map(move |dx| (WIDTH / 2 + dx - 4, HEIGHT / 2 + dy - 4)))
+            .filter(|&(x, y)| (0..3).any(|i| (rgb_at(&bare, x, y)[i] - rgb_at(&carved, x, y)[i]).abs() > 25))
+            .count();
+        assert!(changed > 25, "{name}: the pit where the ray met the ground changes {changed} of 81 pixels");
+        assert!(took.as_millis() < 50, "{name}: a ray takes {took:?}");
+    }
+}
+
 fn with_trees(mut scene: World) -> World {
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = oaks_and_pines();
     scene

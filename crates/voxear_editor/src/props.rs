@@ -672,6 +672,8 @@ pub enum Prop {
     VoxelTreePlant(usize),
     VoxelTreesPerHectare(usize),
     VoxelTreeAdd,
+    /// A row of an endless volume's brush in the Scene view.
+    VoxelBrush(crate::voxel_brush::VoxelBrushField),
     /// A Mist's trail: whether it is left now, how wide and thick it is, its
     /// colour, how long it lingers, and which swirls.
     /// When a Reflection Probe is captured: once, or live.
@@ -1309,7 +1311,8 @@ impl Prop {
             | Prop::VoxelStamps
             | Prop::VoxelTreePlant(_)
             | Prop::VoxelTreesPerHectare(_)
-            | Prop::VoxelTreeAdd => Part::VoxelVolume,
+            | Prop::VoxelTreeAdd
+            | Prop::VoxelBrush(_) => Part::VoxelVolume,
             Prop::MistEmitting
             | Prop::MistWidth
             | Prop::MistDensity
@@ -1603,6 +1606,7 @@ impl Prop {
             Prop::World(field) => crate::world_props::key(*field),
             Prop::Placement(field) => crate::road_props::placement_key(*field),
             Prop::PrefabBrush(field) => crate::road_props::brush_key(*field),
+            Prop::VoxelBrush(field) => crate::voxel_brush::key(*field),
             Prop::WalkableDoor => "door",
             Prop::NavObstacle(field) => crate::nav_props::obstacle_key(*field),
             Prop::CrowdMember(field) => crate::nav_props::crowd_key(*field),
@@ -2426,6 +2430,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 let rows = (0..kinds).flat_map(|kind| [Prop::VoxelTreePlant(kind), Prop::VoxelTreesPerHectare(kind)]);
                 props.extend(rows);
                 props.push(Prop::VoxelTreeAdd);
+                props.extend(crate::voxel_brush::fields(world).into_iter().map(Prop::VoxelBrush));
             }
             props.push(Prop::VoxelGround);
             // A generator's ground has its own hills: the volume's ground gives it grass and flowers.
@@ -2930,6 +2935,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::World(field) => return crate::world_props::label(*field),
         Prop::Placement(field) => return crate::road_props::placement_label(*field),
         Prop::PrefabBrush(field) => return crate::road_props::brush_label(*field),
+        Prop::VoxelBrush(field) => return crate::voxel_brush::label(*field).into(),
         Prop::WalkableDoor => return "Door".into(),
         Prop::NavObstacle(field) => return crate::nav_props::obstacle_label(*field),
         Prop::CrowdMember(field) => return crate::nav_props::crowd_label(*field),
@@ -3419,6 +3425,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::World(field), _) => crate::world_props::unit(*field),
         (Prop::Placement(field), _) => crate::road_props::placement_unit(*field),
         (Prop::PrefabBrush(field), _) => crate::road_props::brush_unit(*field),
+        (Prop::VoxelBrush(crate::voxel_brush::VoxelBrushField::Size), _) => Some("m"),
         (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::Nav(field), _) => crate::nav_props::unit(*field),
         (Prop::NavArea(crate::nav_props::NavAreaField::Size), _) => Some("m"),
@@ -3896,6 +3903,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::World(field) => return crate::world_props::get(game, entity, *field),
         Prop::Placement(field) => return crate::road_props::placement_get(game, entity, *field),
         Prop::PrefabBrush(field) => return crate::road_props::brush_get(game, entity, *field),
+        Prop::VoxelBrush(field) => return Some(crate::voxel_brush::get(&game.engine.world, *field)),
         Prop::WalkableDoor => {
             let walkable = game.engine.world.get::<voxear_engine::walkable_models::Walkable>(entity)?;
             return Some(Value::Toggle(walkable.door));
@@ -4784,6 +4792,7 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::road_props::brush_pick(game, entity, *field, &choice))
         }
         (Prop::PrefabBrush(field), value) => crate::road_props::brush_set(game, entity, *field, value),
+        (Prop::VoxelBrush(field), value) => crate::voxel_brush::set(&mut game.engine.world, *field, value),
         (Prop::WalkableDoor, Value::Toggle(on)) => {
             let walkable = game.engine.world.get_mut::<voxear_engine::walkable_models::Walkable>(entity);
             walkable.map(|walkable| walkable.door = on).is_some()

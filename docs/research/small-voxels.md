@@ -736,7 +736,7 @@ and walked each through its own voxels, where the bricks of the world are walked
 plants it took 3.4 ms; taking the trees nearest first, and shadow rays stopping at the first they meet, saved
 nothing. A second walk in the shader also made volumes without trees 0.3 to 0.4 ms slower to draw.
 
-**Next.** Wind. The crowns' rays are still most of a wood's depth pass.
+**Next.** Wind, below. The crowns' rays are still most of a wood's depth pass.
 
 ## Stage 3, far crowns (2026-11-25)
 
@@ -759,18 +759,40 @@ by how many steps a ray has taken. A group was full where any of its voxels is, 
 
 ![Far crowns at a reach of 128 m: groups full where any voxel is, and loosely filled](../images/small-voxels/far-crowns.webp)
 
-## Wind in voxels (planned)
+## Wind in voxels (2026-11-25)
 
-Traced voxels do not move with a vertex shader, but the ray can be moved instead.
+Traced voxels do not move with a vertex shader, but the ray can be moved instead. Leaves and grass of an endless
+volume move in the level's wind (a Wind Zone, or a fair day's wind), as block leaves sway (`blockSway`).
 
-- **Whole trees.** A whole tree sways with the same look aside as its leaves below, by an offset that grows with the
-  height over its foot. Walking each tree through its own plant, moved and turned, was tried for sharing its bricks
-  and drew a wood at half the speed; see the section above.
-- **Leaves and grass blades.** Inside bricks of leaves and grass the ray can look up each voxel a little to one
-  side, by an offset that grows with the height over the ground and moves with the wind. Such bricks are marked a
-  few voxels larger than they are, so leaves moved over a brick's edge are not cut off. Shadow rays take the same
-  offset, so the shadows move with the leaves.
-- **Near the camera**, grass and flowers that are pushed aside can stay the swaying meshes of ground cover.
+- **Which bricks.** A brick of leaves with no wood in it sways whole; a brick of grass and flowers with no ground
+  in it leans, more the higher up, from nothing at its foot. A brick with any ground or wood keeps still. The mark is
+  two bits over a brick's average colour, set where a plant's voxels are made and where the bricks pass works a brick
+  out.
+- **How.** The walk finds a swaying brick's voxels where they stand moved by walking the brick whole with the ray
+  moved back by the sway, and its lean undone, which keeps a ray straight (`voxelSwayedBrick`). The ray keeps its own
+  distances, so the hit's place, depth and shadows are where the moved voxel is: shadow rays sway alike.
+- **How far.** Downwind as hard as the wind and the gust over it blow, to and fro and across at a pace drifting
+  slowly over the ground, so neighbouring bricks move nearly alike: leaves up to 2 voxels, grass 0.2 voxels across
+  for each voxel up. Moved voxels are cut at the edges of the brick the ray is in by up to that; no gaps show.
+- **What it leaves out.** Blades wholly in the brick with the soil under them keep still, as most short grass does.
+  A swaying voxel's motion vector is the camera's alone: it moves under a tenth of a voxel a frame, and working its
+  sway twice a pixel cost 2 ms of the lit pass, as the shader carried more.
+
+![Crowns swaying in a breeze, enlarged twice](../images/small-voxels/crowns-in-the-wind.webp)
+
+Measured against the code before, one run against two (reach 64 m, 1080p, a fair day's wind): walking a swaying
+brick whole skips looking up its brick again at each voxel, which every ray through grass did, so the passes got
+faster.
+
+| Depth + lit voxels | Before | Swaying |
+|---|---|---|
+| The volume's own ground | 2.36 + 2.84 ms | 1.88 + 1.67 ms |
+| Rolling Hills | 3.00 + 5.33 ms | 2.29 + 3.30 ms |
+| With 100 oaks and pines a hectare | 5.17 + 6.31 ms | 4.00 + 3.67 ms |
+| Alpine with overhangs and caves | 1.11 + 1.94 ms | 1.60 + 2.06 ms |
+
+**Next.** Walking every brick whole, not only those that sway, as it saves a look-up at each step: a first try made
+Alpine's lit pass 1.94 to 1.74 ms, but the hills' runs were too noisy to tell; it wants measuring on its own.
 
 ## Kept elsewhere
 

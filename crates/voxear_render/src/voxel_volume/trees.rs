@@ -195,6 +195,8 @@ pub(crate) fn models(forest: &Forest, block: u32, palette: &[[u8; 4]]) -> Models
     let mut all_bricks = Vec::new();
     let mut materials: Vec<u8> = Vec::new();
     for (plant, turns) in made.into_iter().enumerate() {
+        // Its wood's two colours: a brick with none of them sways in the wind.
+        let wood = forest.words[KINDS_AT + plant / VARIANTS as usize * 4 + 3];
         for (turn, (packed, low)) in turns.into_iter().enumerate() {
             let first = (all_bricks.len() / bricks::BRICK_WORDS) as u32;
             let sectors = words.len() as u32;
@@ -207,6 +209,11 @@ pub(crate) fn models(forest: &Forest, block: u32, palette: &[[u8; 4]]) -> Models
             }
             for brick in packed.bricks.chunks(bricks::BRICK_WORDS) {
                 let mut brick = brick.to_vec();
+                let count: u32 = brick[..16].iter().map(|word| word.count_ones()).sum();
+                let own = &packed.materials[brick[18] as usize..(brick[18] + count) as usize];
+                if own.iter().all(|&m| u32::from(m) != wood && u32::from(m) != wood + 1) {
+                    brick[19] |= bricks::SWAY_LEAVES;
+                }
                 brick[18] += materials.len() as u32;
                 bricks::mark_leafy(&mut brick, (all_bricks.len() / bricks::BRICK_WORDS) as u32);
                 all_bricks.extend_from_slice(&brick);

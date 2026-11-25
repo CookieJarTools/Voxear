@@ -8,6 +8,7 @@ use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
     Renderer, RendererSettings, Sky, VoxelGenerator, VoxelGround, VoxelStamp, VoxelTrees, VoxelVolume, Voxels,
+    WindZone,
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
@@ -560,6 +561,39 @@ fn an_endless_volume_grows_trees_where_its_ground_grows_grass() {
     keep_image("trees on its own ground.png", &pixels);
     let pixels = render(&mut renderer, &with_trees(generated_view(Arc::new(caved_alpine()), 8.0, 8.0, 20.0, 30.0)), 3);
     keep_image("trees with caves.png", &pixels);
+}
+
+#[test]
+fn an_endless_volumes_leaves_and_grass_move_in_the_wind() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    // The view across the trees, at two moments a fifth of a second apart, in a breeze and in still air.
+    let mut moments = |strength: f32| {
+        let mut scene = with_trees(generated_view(hills.clone(), 8.0, 8.0, 16.0, 16.0));
+        scene.spawn((WindZone { strength, ..WindZone::default() }, Transform::default()));
+        render(&mut renderer, &scene, 0);
+        [2.0, 2.2].map(|time| {
+            renderer.render(&scene, time).expect("frame renders");
+            renderer.read_pixels().expect("pixels").2
+        })
+    };
+    let differ = |[a, b]: &[Vec<u8>; 2]| {
+        (0..HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let (a, b) = (rgb_at(a, x, y), rgb_at(b, x, y));
+                (0..3).any(|i| (a[i] - b[i]).abs() > 12)
+            })
+            .count()
+    };
+    let breeze = moments(2.0);
+    keep_image("wind a.png", &breeze[0]);
+    keep_image("wind b.png", &breeze[1]);
+    let still = moments(0.0);
+    let (moving, resting) = (differ(&breeze), differ(&still));
+    eprintln!("{moving} pixels change in a breeze, {resting} in still air");
+    assert!(moving > 2000, "leaves and grass move in the wind: {moving} pixels change");
+    assert!(resting * 20 < moving, "and keep still without it: {resting} pixels change");
 }
 
 fn with_trees(mut scene: World) -> World {

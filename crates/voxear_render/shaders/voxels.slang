@@ -9,7 +9,8 @@
 //
 // The walk steps over a whole empty sector, a whole empty brick, an empty group or an empty voxel at a time. Where
 // a voxel is under half a pixel it stops at the groups, and under an eighth at whole bricks in their average
-// colour; a ray that has taken many steps goes coarser the same way.
+// colour; a ray that has taken many steps goes coarser the same way. A brick of leaves or grass that sways in the
+// wind is walked whole with the ray moved back by its sway (voxelSwayedBrick).
 //
 // The passes, as blocks have them: a coarse pass first walks one ray every COARSE_STEP pixels against whole
 // bricks, so every pixel's ray starts near what it meets (voxelCoarse); the depth pass writes the frame's depth and
@@ -18,6 +19,7 @@
 // and the GI, then hazes it (voxelOpaque). Both draw a triangle over the screen and write their own depth.
 
 #include "shading.slang"
+#include "wind.slang"
 
 static const uint VOXEL_SECTOR_WORDS = 25;
 static const uint VOXEL_ENTRY_WORDS = 53;
@@ -28,6 +30,16 @@ static const float VOXEL_STEP_COARSENING = 0.01;
 // A brick of leaves, marked over its average colour (src/voxel_volume/bricks.rs): its groups are loosely filled as its
 // voxels are, and a group of it takes the colour of a voxel of its own.
 static const uint VOXEL_LEAFY = 1u << 24;
+// What moves a brick in the wind, in two bits over that: nothing; its grass and flowers, leant from the brick's foot;
+// or its leaves, the whole brick swaying.
+static const uint VOXEL_SWAY_SHIFT = 25u;
+static const uint VOXEL_SWAY_GRASS = 1u;
+static const uint VOXEL_SWAY_LEAVES = 2u;
+// How far leaves sway at strength 1, and how far the tip of a brick of grass leans for each voxel up, in voxels; and
+// the most either moves.
+static const float VOXEL_LEAF_SWAY = 1.2;
+static const float VOXEL_GRASS_LEAN = 0.2;
+static const float VOXEL_SWAY_MOST = 2.0;
 // How far a voxel's shadow is traced towards the sun, in metres.
 static const float VOXEL_SHADOW_REACH = 64.0;
 
@@ -126,6 +138,90 @@ bool voxelSolid(VoxelVolume volume, int3 cell)
     return voxelBit(volume.bricks + uint(brick) * VOXEL_BRICK_WORDS, uint(l.x + 8 * (l.y + 8 * l.z)));
 }
 
+// How the wind moves the brick at brick cell `b` of a volume at `time`, whose voxels sway as `kind` says: how far its
+// leaves are moved, and how far its grass leans across for each voxel up from the brick's foot, in voxels. Downwind as
+// hard as the wind and the gust over it blow, to and fro and across at a pace that drifts slowly over the ground, so a
+// crown stirs while a gust still crosses it whole, as block leaves sway (blockSway), and neighbouring bricks move
+// nearly alike. As far as the game's foliage bends (Wind.bend).
+void voxelSwayOf(VoxelVolume volume, int3 b, uint kind, float time, out float3 moved, out float2 lean)
+{
+    moved = 0.0;
+    lean = 0.0;
+    Frame* frame = push.frame;
+    Wind wind = frame->wind;
+    if (kind == 0u || wind.strength <= 0.0 || wind.bend <= 0.0)
+    {
+        return;
+    }
+    float3 world = levelPosition(frame, volume.corner + (float3(b * 8) + 4.0) * volume.voxel, 4096.0);
+    // The gust over it drifting downwind, as windPush's, in one noise; and its pace, drifting slowly over the ground.
+    float2 drift = world.xz / wind.gustSize - wind.direction * (time * wind.gustSpeed / wind.gustSize);
+    float blow = clamp(wind.strength * (1.0 + wind.gusts * (windNoise(drift) * 2.0 - 0.6)), 0.0, 2.0);
+    float phase = windNoise(world.xz * 0.3 + world.y * 0.2) * 6.2831853;
+    float stir = 0.4 + 0.6 * saturate(wind.turbulence);
+    float to = sin(time * 2.1 + phase) * 0.6 + sin(time * 3.7 + phase * 1.7) * 0.4;
+    float side = sin(time * 2.9 + phase * 2.3);
+    float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
+    float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
+    float3 swayed = (along * (0.5 + 0.5 * to * stir) + across * (side * 0.45 * stir)) * (blow * wind.bend);
+    if (kind == VOXEL_SWAY_LEAVES)
+    {
+        swayed.y += sin(time * 3.3 + phase * 1.3) * 0.3 * stir * blow * wind.bend;
+        moved = swayed * VOXEL_LEAF_SWAY;
+        float far = length(moved);
+        moved *= far > VOXEL_SWAY_MOST ? VOXEL_SWAY_MOST / far : 1.0;
+    }
+    else
+    {
+        lean = swayed.xz * VOXEL_GRASS_LEAN;
+        float far = length(lean) * 8.0;
+        lean *= far > VOXEL_SWAY_MOST ? VOXEL_SWAY_MOST / far : 1.0;
+    }
+}
+
+// The first voxel (or 2x2x2 group, `level` 1) the ray from `o` along `d` meets from `t` on in the brick at brick cell
+// `b`, whose voxels the wind has moved by `moved` and leant by `lean` (voxelSwayOf): walked in the brick's voxels as
+// they stand, the ray moved back and its lean undone, which keeps it straight, so `t` is the ray's own. Voxels moved
+// out of the brick are found as far as the ray goes in it; a voxel moved into it from a brick beside it is not.
+bool voxelSwayedBrick(uint* bits, int3 b, float3 o, float3 d, float t, int axisIn, float3 moved, float2 lean, uint level, inout VoxelHit hit)
+{
+    float3 so = o - moved - float3(b * 8);
+    so.xz -= lean * so.y;
+    float3 sd = d;
+    sd.xz -= lean * d.y;
+    sd = select(abs(sd) < 1e-7, select(sd < 0.0, -1e-7, 1e-7), sd);
+    float3 inv = 1.0 / sd;
+    float3 a0 = -so * inv;
+    float3 a1 = (8.0 - so) * inv;
+    float3 tn = min(a0, a1);
+    float3 tf = max(a0, a1);
+    float enter = max(max(tn.x, tn.y), tn.z);
+    float exit = min(min(tf.x, tf.y), tf.z);
+    int axis = enter > t ? (tn.x >= tn.y && tn.x >= tn.z ? 0 : (tn.y >= tn.z ? 1 : 2)) : axisIn;
+    float at = max(enter, t);
+    int size = level == 1u ? 2 : 1;
+    int3 up = int3(sd > 0.0);
+    for (int k = 0; k < 26 && at < exit; k++)
+    {
+        int3 q = clamp(int3(floor(so + sd * min(at + 0.001, exit))), int3(0), int3(7));
+        bool solid = level == 1u ? voxelBit(bits + 16, uint((q.x >> 1) + 4 * ((q.y >> 1) + 4 * (q.z >> 1))))
+                                 : voxelBit(bits, uint(q.x + 8 * (q.y + 8 * q.z)));
+        if (solid)
+        {
+            hit.t = at;
+            hit.axis = axis;
+            hit.cell = b * 8 + q;
+            hit.level = level;
+            return true;
+        }
+        float3 edge = float3((q & ~(size - 1)) + up * size);
+        float3 te = (edge - so) * inv;
+        axis = te.x < te.y && te.x < te.z ? 0 : (te.y < te.z ? 1 : 2);
+        at = max(te[axis], at);
+    }
+    return false;
+}
+
 // Walks the ray from `o` along `d` (both in the volume's voxels, `o` from its corner) to `tMax` voxels. A voxel is
 // `foot0 + t * footScale` voxels to a pixel at distance `t`, which picks the level it stops at.
 bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0, float footScale, out VoxelHit hit)
@@ -154,6 +250,9 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
         boundary = d[axis] > 0.0 ? 0 : dims[axis];
     }
     float t = tEnter;
+    float time = push.frame->time;
+    int lastBrick = -1;
+    uint sway = 0;
     for (int i = 0; i < VOXEL_MOST_STEPS; i++)
     {
         if (t >= tExit)
@@ -188,7 +287,24 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
                 hit.level = 2;
                 return true;
             }
-            if (foot >= 2.0)
+            // A brick the wind moves is walked whole, as its voxels stand moved, then passed.
+            if (brick != lastBrick)
+            {
+                lastBrick = brick;
+                sway = (bits[19] >> VOXEL_SWAY_SHIFT) & 3u;
+            }
+            if (sway != 0u)
+            {
+                float3 moved;
+                float2 lean;
+                voxelSwayOf(volume, c >> 3, sway, time, moved, lean);
+                if (voxelSwayedBrick(bits, c >> 3, o, d, t, axis, moved, lean, foot >= 2.0 ? 1u : 0u, hit))
+                {
+                    return true;
+                }
+                size = 8;
+            }
+            else if (foot >= 2.0)
             {
                 int3 g = l >> 1;
                 if (voxelBit(bits + 16, uint(g.x + 4 * (g.y + 4 * g.z))))
@@ -566,6 +682,8 @@ VoxelOut voxelOpaque(VoxelVertex input)
         color = debugColor(hit.level) * (0.35 + 0.65 * shadow * saturate(dot(s.normal, -frame->sunDirection)));
     }
 
+    // A voxel the wind moves goes under a tenth of a voxel a frame, too little for the anti-aliasing to smear: its
+    // motion is the camera's alone, which keeps the pass light.
     VoxelOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));

@@ -4589,7 +4589,13 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   a plant's bricks and a column's bricks mostly of leaves keep three in five of their sparse groups, by hash, and a
   group takes a voxel's colour, not the brick's average. Nearer an all-voxels picture, at the same cost. Going to
   groups sooner for leaves saved up to 3.6 ms a frame but made crowns 20 to 40 m off into lumps; left for the rings of
-  stage 5. Next: wind.
+  stage 5.
+- **Wind (2026-11-25).** An endless volume's leaves and grass move in the level's wind: a brick of leaves with no
+  wood sways whole, a brick of grass with no ground leans from its foot, by the wind and its gusts, as block leaves
+  sway. The walk walks such a brick whole with the ray moved back by its sway, so shadows move with it; a breeze
+  changes 20,000 pixels of the trees' view in a fifth of a second, still air 217. The passes got faster, as a
+  swaying brick is looked up once and not at each voxel: a wood's depth and lit voxels 4.0 + 3.7 ms against
+  5.2 + 6.3. Blades in the brick with their soil keep still. Next: walking every brick whole.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -183,6 +183,11 @@ pub fn loosely_kept(seed: u32, group: u32) -> bool {
 
 /// The mark of a brick of leaves, over its average colour.
 pub const LEAFY: u32 = 1 << 24;
+/// The mark, over its average colour and the mark of leaves, of a brick of
+/// leaves that sways whole in the wind (`VOXEL_SWAY_SHIFT` in
+/// `shaders/voxels.slang`). A brick with ground or wood in it stays still;
+/// one of grass and flowers leans from its foot, as the GPU marks it.
+pub const SWAY_LEAVES: u32 = 2 << 25;
 
 /// A volume's voxels packed for the GPU.
 #[derive(Clone, Debug, Default, PartialEq)]

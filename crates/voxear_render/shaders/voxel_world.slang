@@ -50,6 +50,12 @@ static const uint TREE_BRICK = 0x80000000u;
 static const uint NAMES_A_BRICK = BRICK_WORDS;
 // A brick of leaves, marked over its average colour (VOXEL_LEAFY in voxels.slang).
 static const uint LEAFY = 1u << 24;
+// What moves a brick in the wind, two bits over that mark (VOXEL_SWAY_SHIFT in voxels.slang); and a voxel that keeps
+// still.
+static const uint SWAY_SHIFT = 25u;
+static const uint SWAY_STILL = 0u;
+static const uint SWAY_GRASS = 1u;
+static const uint SWAY_LEAVES = 2u;
 // The shared room: a page of bricks, the most pages a slot has, a page of material bytes, and the most a slot has.
 static const uint PAGE_BRICKS = 64;
 static const uint SLOT_PAGES = 64;
@@ -1012,6 +1018,8 @@ groupshared uint sharedGroups[2];
 // groups are loosely filled as its voxels are (VOXEL_LEAFY in voxels.slang).
 groupshared uint sharedGroupCounts[64];
 groupshared uint sharedTreeVoxels;
+// Which of SWAY_STILL, SWAY_GRASS and SWAY_LEAVES its voxels are, a bit each.
+groupshared uint sharedSway;
 groupshared uint sharedSum[4];
 // With a Volume: which voxels of the brick and a border of one round it are solid, ten a side.
 groupshared uint sharedSolid[32];
@@ -1100,6 +1108,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedTreeCount = 0;
         sharedOwn = 0;
         sharedTreeVoxels = 0;
+        sharedSway = 0;
     }
     GroupMemoryBarrierWithGroupSync();
     uint packed = make->candidates[make->candidateRoom + candidate];
@@ -1183,12 +1192,15 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         }
         GroupMemoryBarrierWithGroupSync();
     }
+    // What the voxel is to the wind: ground, which keeps still; grass or a flower; or leaves.
+    uint moves = SWAY_STILL;
     if (volume)
     {
         m = volumeVoxel(make, job, column, h, l, int3(corner.x + px, y, corner.y + pz));
         int surface = min(surfaceOf(make, job, px, pz), tall - 1);
         if (m == 0 && y > surface && !solidNear(l, int3(0, 0, 0)))
         {
+            moves = SWAY_GRASS;
             m = flowerAt(make, job, int3(corner.x + px, y, corner.y + pz));
             if (m == 0 && surface >= 0 && y <= min(surface + blade, tall - 1))
             {
@@ -1202,6 +1214,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     else if (y > h)
     {
+        moves = SWAY_GRASS;
         // Flowers over the grass, as they are set after it.
         m = flowerAt(make, job, int3(corner.x + px, y, corner.y + pz));
         if (m == 0 && h >= 0 && y <= min(h + blade, tall - 1))
@@ -1237,6 +1250,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         if (filled != 0)
         {
             m = filled;
+            moves = ((make->bricks[sharedTrees[t] * BRICK_WORDS + 19] >> SWAY_SHIFT) & 3u) == SWAY_LEAVES ? SWAY_LEAVES : SWAY_STILL;
             InterlockedAdd(sharedTreeVoxels, 1u);
             break;
         }
@@ -1247,6 +1261,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         uint g = uint((l.x >> 1) + 4 * ((l.y >> 1) + 4 * (l.z >> 1)));
         InterlockedOr(sharedGroups[g >> 5], 1u << (g & 31u));
         InterlockedAdd(sharedGroupCounts[g], 1u);
+        InterlockedOr(sharedSway, 1u << moves);
         uint colour = make->palette[m - 1];
         InterlockedAdd(sharedSum[0], colour & 255u);
         InterlockedAdd(sharedSum[1], (colour >> 8) & 255u);
@@ -1333,7 +1348,10 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             uint dirt = make->palette[1];
             avg = uint3(dirt & 255u, (dirt >> 8) & 255u, (dirt >> 16) & 255u);
         }
-        record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u);
+        // A brick with any ground or wood stays still in the wind; else its leaves sway, or its grass leans.
+        uint sway = (sharedSway & (1u << SWAY_STILL)) != 0 ? 0u : ((sharedSway & (1u << SWAY_LEAVES)) != 0 ? SWAY_LEAVES : SWAY_GRASS);
+        record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u)
+            | (sway << SWAY_SHIFT);
     }
     else if (index == 20)
     {

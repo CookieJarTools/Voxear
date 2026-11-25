@@ -30,6 +30,16 @@ static const uint OP_WETNESS = 16;
 static const uint OP_MILD = 17;
 static const uint OP_LANDMASS = 18;
 static const uint OP_FALLOFF = 19;
+static const uint OP_Y = 20;
+static const uint OP_SIZE = 21;
+static const uint OP_CARRIED = 22;
+static const uint OP_UNDER = 23;
+static const uint OP_JOIN = 24;
+static const uint OP_NOISE3D = 25;
+static const uint OP_STEEP = 26;
+static const uint OP_PUSH = 27;
+static const uint OP_TUNNELS = 28;
+static const uint OP_CHAMBERS = 29;
 
 // noise.rs: a lattice point's hash, the gradient noise and its fractal kinds.
 
@@ -99,6 +109,99 @@ float fractalNoise(uint style, float x, float z, uint octaves, uint seed)
     for (uint octave = 0; octave < count; octave++)
     {
         float n = gradientNoise(x * frequency, z * frequency, seed + octave * 0x632BE5ABu);
+        float value;
+        if (style == 0)
+        {
+            value = n * 0.5 + 0.5;
+        }
+        else if (style == 2)
+        {
+            value = abs(n);
+        }
+        else
+        {
+            float ridge = 1.0 - abs(n);
+            ridge = ridge * ridge * weight;
+            weight = clamp(ridge * 2.0, 0.0, 1.0);
+            value = ridge;
+        }
+        sum += value * amplitude;
+        total += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    return clamp(sum / total, 0.0, 1.0);
+}
+
+// noise.rs in three dimensions: a lattice point's hash, gradient noise through space and its fractal kinds.
+
+uint latticeHash3(int x, int y, int z, uint seed)
+{
+    return latticeHash(int(uint(x) ^ (uint(y) * 0x2C1B3C6Du)), z, seed + uint(y));
+}
+
+float3 gradient3Of(uint h)
+{
+    switch (h % 12u)
+    {
+    case 0: return float3(1.0, 1.0, 0.0);
+    case 1: return float3(-1.0, 1.0, 0.0);
+    case 2: return float3(1.0, -1.0, 0.0);
+    case 3: return float3(-1.0, -1.0, 0.0);
+    case 4: return float3(1.0, 0.0, 1.0);
+    case 5: return float3(-1.0, 0.0, 1.0);
+    case 6: return float3(1.0, 0.0, -1.0);
+    case 7: return float3(-1.0, 0.0, -1.0);
+    case 8: return float3(0.0, 1.0, 1.0);
+    case 9: return float3(0.0, -1.0, 1.0);
+    case 10: return float3(0.0, 1.0, -1.0);
+    default: return float3(0.0, -1.0, -1.0);
+    }
+}
+
+float corner3(int3 i, float3 t, int dx, int dy, int dz, uint seed)
+{
+    float3 g = gradient3Of(latticeHash3(i.x + dx, i.y + dy, i.z + dz, seed));
+    return g.x * (t.x - float(dx)) + g.y * (t.y - float(dy)) + g.z * (t.z - float(dz));
+}
+
+float gradientNoise3(float x, float y, float z, uint seed)
+{
+    float3 f = floor(float3(x, y, z));
+    int3 i = int3(f);
+    float3 t = float3(x, y, z) - f;
+    float u = fadeOf(t.x);
+    float v = fadeOf(t.y);
+    float w = fadeOf(t.z);
+    float c000 = corner3(i, t, 0, 0, 0, seed);
+    float c100 = corner3(i, t, 1, 0, 0, seed);
+    float c010 = corner3(i, t, 0, 1, 0, seed);
+    float c110 = corner3(i, t, 1, 1, 0, seed);
+    float c001 = corner3(i, t, 0, 0, 1, seed);
+    float c101 = corner3(i, t, 1, 0, 1, seed);
+    float c011 = corner3(i, t, 0, 1, 1, seed);
+    float c111 = corner3(i, t, 1, 1, 1, seed);
+    float a = c000 + (c100 - c000) * u;
+    float b = c010 + (c110 - c010) * u;
+    float near = a + (b - a) * v;
+    float c = c001 + (c101 - c001) * u;
+    float d = c011 + (c111 - c011) * u;
+    float far = c + (d - c) * v;
+    return near + (far - near) * w;
+}
+
+float fractalNoise3(uint style, float3 at, uint octaves, uint seed)
+{
+    float sum = 0.0;
+    float total = 0.0;
+    float amplitude = 1.0;
+    float frequency = 1.0;
+    float weight = 1.0;
+    uint count = clamp(octaves, 1u, 12u);
+    for (uint octave = 0; octave < count; octave++)
+    {
+        float3 p = at * frequency;
+        float n = gradientNoise3(p.x, p.y, p.z, seed + octave * 0x632BE5ABu);
         float value;
         if (style == 0)
         {
@@ -689,15 +792,10 @@ struct Generated
     float rock;
 };
 
-// Runs the `words` words of `program` at (x, z), in metres in the generator's world; `outs` are the slots of its
-// height, warmth, wetness and rock (rock past the slots for none).
-Generated runGenerator(uint* program, uint words, uint4 outs, float x, float z)
+// Runs the `words` words of `program` at (x, y, z), in metres in the generator's world, into `slots`: for a cell, `y`
+// is its middle's height, `size` how large it is and `carried` what its column carries up, as the bits of each.
+void runSteps(uint* program, uint words, float x, float y, float z, float size, uint* carried, inout float slots[GENERATOR_SLOTS])
 {
-    float slots[GENERATOR_SLOTS];
-    for (uint s = 0; s < GENERATOR_SLOTS; s++)
-    {
-        slots[s] = 0.0;
-    }
     uint at = 0;
     while (at < words)
     {
@@ -842,12 +940,138 @@ Generated runGenerator(uint* program, uint words, uint4 outs, float x, float z)
             value = 1.0 - easeBetween(radius, radius + asfloat(program[p + 4]), far);
             break;
         }
+        case OP_Y:
+            value = y;
+            break;
+        case OP_SIZE:
+            value = size;
+            break;
+        case OP_CARRIED:
+            value = asfloat(carried[program[p]]);
+            break;
+        case OP_UNDER:
+            value = a[0] - a[1];
+            break;
+        case OP_JOIN:
+        {
+            uint operation = program[p];
+            float blend = asfloat(program[p + 1]);
+            if (operation == 0)
+            {
+                value = a[0] > a[1] ? a[0] : a[1];
+            }
+            else if (operation == 1)
+            {
+                value = a[0] < -a[1] ? a[0] : -a[1];
+            }
+            else
+            {
+                float greater = a[0] > a[1] ? a[0] : a[1];
+                float apart = a[0] > a[1] ? a[0] - a[1] : a[1] - a[0];
+                float near = apart < blend ? (blend - apart) / blend : 0.0;
+                value = greater + near * near * blend * 0.25;
+            }
+            break;
+        }
+        case OP_NOISE3D:
+        {
+            float size3 = asfloat(program[p + 1]);
+            float n = fractalNoise3(program[p], float3(a[0], a[1], a[2]) / size3, program[p + 2], program[p + 3]);
+            value = asfloat(program[p + 4]) + n * asfloat(program[p + 5]);
+            break;
+        }
+        case OP_STEEP:
+        {
+            float reach = asfloat(program[p]);
+            float along = (a[0] - a[1]) / (2.0 * reach);
+            float across = (a[2] - a[3]) / (2.0 * reach);
+            float climb = sqrt(along * along + across * across);
+            float t = clamp((climb - 0.55) / (1.0 - 0.55), 0.0, 1.0);
+            value = t * t * (3.0 - 2.0 * t);
+            break;
+        }
+        case OP_PUSH:
+        {
+            float amount = asfloat(program[p]);
+            float noiseSize = asfloat(program[p + 1]);
+            uint octaves = program[p + 2];
+            uint seed = program[p + 3];
+            float ground = a[0];
+            float mask = a[1];
+            float cell = a[5];
+            value = ground;
+            float beyond = amount + 3.0 * cell;
+            if (!(mask <= 0.0 || isnan(mask) || ground >= beyond || ground <= -beyond))
+            {
+                float sum = 0.0;
+                float total = 0.0;
+                float strength = 1.0;
+                float size3 = noiseSize;
+                for (uint octave = 0; octave < octaves; octave++)
+                {
+                    float held = cell > 0.0 ? clamp((size3 / cell - 2.0) * 0.5, 0.0, 1.0) : 1.0;
+                    if (held > 0.0)
+                    {
+                        sum += gradientNoise3(a[2] / size3, a[3] / size3, a[4] / size3, seed + octave * 0x632BE5ABu) * strength * held;
+                    }
+                    total += strength;
+                    strength *= 0.5;
+                    size3 *= 0.5;
+                }
+                float n = clamp(sum / total, -1.0, 1.0);
+                value = ground + n * amount * clamp(mask, 0.0, 1.0);
+            }
+            break;
+        }
+        case OP_TUNNELS:
+        {
+            float t = asfloat(program[p]);
+            float width = asfloat(program[p + 1]);
+            float under = a[0] - asfloat(program[p + 2]);
+            if (under <= -a[4])
+            {
+                value = under;
+                break;
+            }
+            float3 q = float3(a[1], a[2], a[3]) / t;
+            float apart = abs(gradientNoise3(q.x, q.y, q.z, program[p + 3])) + abs(gradientNoise3(q.x, q.y, q.z, program[p + 4]));
+            float inside = -((apart - width) * t * 0.5);
+            value = inside < under ? inside : under;
+            break;
+        }
+        case OP_CHAMBERS:
+        {
+            float c = asfloat(program[p]);
+            float level = asfloat(program[p + 1]);
+            float under = a[0] - asfloat(program[p + 2]);
+            if (under <= -a[4])
+            {
+                value = under;
+                break;
+            }
+            float high = gradientNoise3(a[1] / c, a[2] / (c * 0.6), a[3] / c, program[p + 3]);
+            float inside = -((level - high) * c * 0.5);
+            value = inside < under ? inside : under;
+            break;
+        }
         default:
             break;
         }
         slots[min(written, GENERATOR_SLOTS - 1)] = value;
         at = p + numbers;
     }
+}
+
+// Runs the `words` words of `program` at (x, z), in metres in the generator's world; `outs` are the slots of its
+// height, warmth, wetness and rock (rock past the slots for none).
+Generated runGenerator(uint* program, uint words, uint4 outs, float x, float z)
+{
+    float slots[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        slots[s] = 0.0;
+    }
+    runSteps(program, words, x, 0.0, z, 0.0, program, slots);
     Generated made;
     made.height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
     made.warmth = slots[min(outs.y, GENERATOR_SLOTS - 1)];

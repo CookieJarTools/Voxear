@@ -13,6 +13,7 @@
 //! its own (rooms, tunnels) joins them the same plain way, since blending
 //! them would let those out of reach of a chunk change it.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -157,6 +158,11 @@ struct Join {
 }
 
 impl Kernel for Join {
+    fn gpu(&self) -> Option<GpuStep> {
+        let operation = Combining::ALL.iter().position(|&operation| operation == self.operation).unwrap_or(0) as u32;
+        Some(GpuStep::new(GpuOp::Join).whole(operation).number(self.blend))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("combine").text(self.operation.name());
         if self.operation == Combining::Smooth {

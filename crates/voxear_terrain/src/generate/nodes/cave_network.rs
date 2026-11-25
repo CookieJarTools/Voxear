@@ -15,6 +15,7 @@
 //! Its sizes are in metres whatever the generator's scale, which stretches
 //! the ground sideways only.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -333,6 +334,12 @@ impl std::fmt::Debug for Reached {
 }
 
 impl Kernel for Reached {
+    fn gpu(&self) -> Option<GpuStep> {
+        // The network's rooms and tunnels are laid out over regions on the CPU alone: on the GPU no column has
+        // any over it.
+        Some(GpuStep::new(GpuOp::Constant).number(if self.top { -1.0 } else { 0.0 }).leaving_out("cave halls"))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("cave reach").whole(u32::from(self.top)).raw(&self.key);
     }
@@ -378,6 +385,11 @@ impl std::fmt::Debug for Hollow {
 }
 
 impl Kernel for Hollow {
+    fn gpu(&self) -> Option<GpuStep> {
+        // Nothing hollowed by the network on the GPU: see `Reached::gpu`.
+        Some(GpuStep::new(GpuOp::Constant).number(super::combine::NOTHING).leaving_out("cave halls"))
+    }
+
     fn key(&self, key: &mut Key) {
         key.raw(&self.key);
     }

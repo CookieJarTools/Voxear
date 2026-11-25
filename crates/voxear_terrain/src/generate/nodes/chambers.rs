@@ -10,6 +10,7 @@
 //! Its sizes are in metres whatever the generator's scale, which stretches
 //! the ground sideways only.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Solid, Value, ValueSpec, combine::NOTHING, noise3d::seed_for};
@@ -130,6 +131,11 @@ struct Hollow {
 }
 
 impl Kernel for Hollow {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Chambers).number(self.size).number(self.level).number(self.roof);
+        Some(step.whole(self.seed))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("chambers").number(self.size).number(self.level).number(self.roof).whole(self.seed);
     }

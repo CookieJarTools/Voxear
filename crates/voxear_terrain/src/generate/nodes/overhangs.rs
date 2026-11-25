@@ -17,6 +17,7 @@
 //! Its sizes are in metres whatever the generator's scale, which stretches
 //! the ground sideways only.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Solid, Value, ValueSpec, noise3d::seed_for};
@@ -160,6 +161,10 @@ const ROUND: [[f32; 2]; 4] = [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]];
 struct Moved(f32);
 
 impl Kernel for Moved {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Shift).number(self.0))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("moved").number(self.0);
     }
@@ -180,6 +185,10 @@ struct Steep {
 }
 
 impl Kernel for Steep {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Steep).number(self.reach))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("steep").number(self.reach).number(STEEP_FROM).number(STEEP_WHOLE);
     }
@@ -206,6 +215,11 @@ struct Push {
 }
 
 impl Kernel for Push {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Push).number(self.amount).number(self.size).whole(self.octaves);
+        Some(step.whole(self.seed))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("overhangs").number(self.amount).number(self.size).whole(self.octaves).whole(self.seed);
     }

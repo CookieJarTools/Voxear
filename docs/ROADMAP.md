@@ -4548,8 +4548,15 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - A ray starting on the corner of two sectors no longer loses a quarter of the view.
   - Measured at reach 64 m: the window made in 0.52 s; flying at 10 m/s, 0.083 ms a column against 0.045 ms for
     the volume's own ground.
-  - Not yet: rivers, water, overhangs and caves on the GPU; Plateaus, Peaks, Spires and the other tall nodes;
-    stamps and trees in endless ground; coarser rings.
+- **Stage 2, overhangs and caves on the GPU (2026-11-25).**
+  - A generator's Volume runs a voxel at a time: its columns' program with the height, its cells' program in the
+    bricks pass, each brick keeping only solid voxels with open air beside them. Solid, Combine, Noise 3D, Overhangs,
+    Tunnels and Chambers run there; a Cave Network's halls are left out.
+  - Grass and flowers follow the surface the overhangs moved; cave walls are rock.
+  - Its numbers are the CPU's: 27,647 of 27,648 cells on the same side of the ground.
+  - Measured: 1.65 ms a column, two a frame, 204 MB at reach 64 m; bricks of rock and air are still asked about.
+  - Not yet: rivers, water and Cave Network halls on the GPU; Plateaus, Peaks, Spires and the other tall nodes;
+    making a Volume cheaper; stamps and trees in endless ground; coarser rings.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

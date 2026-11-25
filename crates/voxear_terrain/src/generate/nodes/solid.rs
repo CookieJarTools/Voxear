@@ -5,6 +5,7 @@
 //! With nothing wired in it is the generator's own ground: what is wired
 //! into the Output's height.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port};
@@ -77,6 +78,10 @@ impl Kind for Solid {
 struct Under;
 
 impl Kernel for Under {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Under))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("under");
     }

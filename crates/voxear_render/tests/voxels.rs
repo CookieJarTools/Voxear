@@ -11,8 +11,8 @@ use voxear_render::{
 };
 use voxear_scene::Transform;
 use voxear_terrain::generate::{
-    Landmass, Preset, WorldGen,
-    nodes::{Output, Rivers},
+    Cells, Landmass, OwnVoxels, Preset, WorldGen,
+    nodes::{NodeKind, Output, Rivers},
     starters,
 };
 
@@ -281,7 +281,8 @@ fn a_generators_ground_and_climate_on_the_gpu_are_the_cpus() {
         (0..64 * 64).map(|i| [(i % 64) as f32 / 16.0 + 100.0, (i / 64) as f32 / 16.0 - 40.0]).collect();
     places.extend((0..4096).map(|i| [(i % 64) as f32 * 157.3 - 5000.0, (i / 64) as f32 * 149.1 - 4700.0]));
     for (name, world) in &worlds {
-        let made = renderer.generated_on_gpu(world, &places).expect("the generator runs on the GPU");
+        let asked: Vec<[f32; 3]> = places.iter().map(|&[x, z]| [x, 0.0, z]).collect();
+        let made = renderer.generated_on_gpu(world, &asked, 1.0 / 16.0).expect("the generator runs on the GPU");
         let xs: Vec<f32> = places.iter().map(|place| place[0]).collect();
         let zs: Vec<f32> = places.iter().map(|place| place[1]).collect();
         let mut heights = vec![0.0; places.len()];
@@ -397,8 +398,10 @@ fn an_endless_volume_made_by_a_starter_generator_shows_its_ground() {
 fn measure_an_endless_volume_made_by_a_generator() {
     let Ok(mut renderer) = Renderer::new_offscreen(1920, 1080, &RendererSettings::default()) else { return };
     let hills = Arc::new(starter("Rolling Hills"));
-    for generated in [false, true] {
-        let mut scene = generated_view(hills.clone(), 8.0, 8.0, 2.0, 8.0);
+    let caved = Arc::new(caved_alpine());
+    for (generated, world) in [(false, hills.clone()), (true, hills.clone()), (true, caved)] {
+        let caves = world.volume().is_some();
+        let mut scene = generated_view(world, 8.0, 8.0, 2.0, 8.0);
         for volume in scene.query::<&mut VoxelVolume>() {
             volume.reach = 64.0;
             if !generated {
@@ -410,7 +413,11 @@ fn measure_an_endless_volume_made_by_a_generator() {
             let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
             camera.position.y = 6.0;
         }
-        let name = if generated { "Rolling Hills" } else { "its own ground" };
+        let name = match (generated, caves) {
+            (false, _) => "its own ground",
+            (true, false) => "Rolling Hills",
+            (true, true) => "Alpine with overhangs and caves",
+        };
         let started = std::time::Instant::now();
         renderer.render(&scene, 0.0).unwrap();
         assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(60)).unwrap());
@@ -450,9 +457,136 @@ fn measure_an_endless_volume_made_by_a_generator() {
                 making.len(),
                 making[0],
                 making[making.len() - 1],
-                median / 16.0,
-                16
+                median / if caves { 2.0 } else { 16.0 },
+                if caves { 2 } else { 16 }
             );
         }
     }
+}
+
+/// Alpine without its rivers, with a world of blocks' own overhangs, tunnels
+/// and chambers wired into its Volume, open to the surface. Its network of
+/// great halls is taken out, as the GPU leaves them out.
+fn caved_alpine() -> WorldGen {
+    let world = without_rivers(&starter("Alpine"));
+    let mut graph = world.graph().clone();
+    assert!(graph.add_voxels(OwnVoxels { overhangs: 4.0, caves: 0.8, roof: 0.0 }, false));
+    let halls: Vec<_> =
+        graph.nodes.iter().filter(|node| matches!(node.kind, NodeKind::CaveNetwork(_))).map(|node| node.id).collect();
+    for node in halls {
+        graph.remove(node);
+    }
+    WorldGen::new(world.seed(), world.scale(), world.sea_level(), graph)
+}
+
+#[test]
+fn a_generators_overhangs_and_caves_on_the_gpu_are_the_cpus() {
+    let Some(renderer) = renderer() else { return };
+    let world = caved_alpine();
+    let program = world.gpu_program().expect("it runs on the GPU");
+    assert!(program.volume.is_some(), "its Volume runs on the GPU: {:?}", program.left_out);
+    // Cells a sixteenth of a metre across, round the ground of columns over the mountains: from 8 m under it to
+    // 5 m over, where the overhangs and tunnels are.
+    let size = 1.0 / 16.0;
+    let mut places = Vec::new();
+    for column in 0..1024 {
+        let (x, z) = ((column % 32) as f32 * 61.7 - 900.0, (column / 32) as f32 * 59.3 - 800.0);
+        let ground = world.height_at(x, z);
+        for step in 0..27 {
+            places.push([x, ground - 8.0 + step as f32 * 0.5 + 0.03125, z]);
+        }
+    }
+    let made = renderer.generated_on_gpu(&world, &places, size).expect("the generator runs on the GPU");
+    let volume = world.volume().expect("a Volume");
+    let xs: Vec<f32> = places.iter().map(|p| p[0]).collect();
+    let ys: Vec<f32> = places.iter().map(|p| p[1]).collect();
+    let zs: Vec<f32> = places.iter().map(|p| p[2]).collect();
+    let mut heights = vec![0.0; places.len()];
+    world.heights(&xs, &zs, &mut heights);
+    let carried = volume.carried(&xs, &zs, &heights);
+    let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+    let (mut density, mut ground) = (vec![0.0; places.len()], vec![0.0; places.len()]);
+    let cells = Cells { x: &xs, y: &ys, z: &zs, carried: &rows, size };
+    volume.densities(cells, false, &mut density, &mut ground);
+    let (mut sides, mut near, mut close, mut solid, mut hollowed) = (0, 0, 0, 0, 0);
+    for (at, gpu) in made.iter().enumerate() {
+        let cpu = density[at];
+        sides += usize::from((gpu[4] > 0.0) == (cpu > 0.0));
+        if cpu.abs() < 2.0 {
+            near += 1;
+            close += usize::from((gpu[4] - cpu).abs() < 0.01);
+        }
+        solid += usize::from(cpu > 0.0);
+        // Open air under the ground's height: a tunnel, a chamber or the underside of an overhang.
+        hollowed += usize::from(cpu <= 0.0 && ys[at] < heights[at] - 1.0);
+    }
+    eprintln!(
+        "{} cells: {sides} on the same side, {close} of {near} near the surface within 1 cm; {solid} solid, {hollowed} hollowed under the ground",
+        places.len()
+    );
+    assert!(hollowed > places.len() / 100, "caves and overhangs to compare: {hollowed} hollowed cells");
+    assert!(sides * 1000 >= places.len() * 998, "{sides} of {} cells on the same side of the ground", places.len());
+    assert!(close * 1000 >= near * 990, "{close} of {near} near the surface within a centimetre");
+}
+
+#[test]
+fn an_endless_volume_shows_its_generators_overhangs_and_caves() {
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(caved_alpine());
+    // Over steep ground, looking down the slope.
+    let steep = (0..4000)
+        .map(|i| [(i % 64) as f32 * 23.0 + 300.0, (i / 64) as f32 * 23.0 + 300.0])
+        .find(|&[x, z]| (world.height_at(x + 2.0, z) - world.height_at(x - 2.0, z)).abs() > 5.0)
+        .expect("steep ground in the mountains");
+    let scene = generated_view(world.clone(), steep[0], steep[1], 8.0, 50.0);
+    let caved = render(&mut renderer, &scene, 3);
+    keep_image("generated caves.png", &caved);
+    // The same without its Volume: the ground its height makes solid.
+    let plain = Arc::new(without_rivers(&starter("Alpine")));
+    let solid = render(&mut renderer, &generated_view(plain, steep[0], steep[1], 8.0, 50.0), 3);
+    keep_image("generated without caves.png", &solid);
+    let differ = (0..HEIGHT)
+        .step_by(4)
+        .flat_map(|y| (0..WIDTH).step_by(4).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let (a, b) = (rgb_at(&caved, x, y), rgb_at(&solid, x, y));
+            (0..3).any(|i| (a[i] - b[i]).abs() > 30)
+        })
+        .count();
+    assert!(differ * 20 > 14400, "the overhangs and caves change the view: {differ} of 14400 differ");
+    // A cave's mouth: open air from half a metre to two under the ground, by the CPU's own Volume, looked into
+    // from four metres over it.
+    let volume = world.volume().unwrap();
+    let open = |x: f32, z: f32| {
+        let ground = world.height_at(x, z);
+        let ys = [ground - 0.5, ground - 1.25, ground - 2.0];
+        let carried = volume.carried(&[x; 3], &[z; 3], &[ground; 3]);
+        let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+        let (mut density, mut under) = ([0.0; 3], [0.0; 3]);
+        let cells = Cells { x: &[x; 3], y: &ys, z: &[z; 3], carried: &rows, size: 1.0 / 16.0 };
+        volume.densities(cells, false, &mut density, &mut under);
+        density.iter().all(|&d| d < 0.0)
+    };
+    let mouth = (0..20000)
+        .map(|i| [(i % 141) as f32 * 7.3 - 500.0, (i / 141) as f32 * 7.1 - 500.0])
+        .find(|&[x, z]| open(x, z))
+        .expect("a cave open to the sky");
+    let pixels = render(&mut renderer, &generated_view(world.clone(), mouth[0], mouth[1], 6.0, 90.0), 3);
+    keep_image("generated cave mouth.png", &pixels);
+    // And from inside a cave four metres under the ground, looking along it.
+    let inside = |x: f32, z: f32| {
+        let ground = world.height_at(x, z);
+        let carried = volume.carried(&[x], &[z], &[ground]);
+        let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+        let (mut density, mut under) = ([0.0], [0.0]);
+        let cells = Cells { x: &[x], y: &[ground - 4.0], z: &[z], carried: &rows, size: 1.0 / 16.0 };
+        volume.densities(cells, false, &mut density, &mut under);
+        density[0] < -1.5
+    };
+    let cave = (0..40000)
+        .map(|i| [(i % 199) as f32 * 3.1 - 300.0, (i / 199) as f32 * 3.3 - 300.0])
+        .find(|&[x, z]| inside(x, z))
+        .expect("a cave under the ground");
+    let pixels = render(&mut renderer, &generated_view(world, cave[0], cave[1], -4.0, 5.0), 3);
+    keep_image("generated inside a cave.png", &pixels);
 }

@@ -7,6 +7,7 @@
 //! the ground sideways only. A Volume is read no more than 64 m over its
 //! ground (`compile::MOST_OVER`), so noise joined to the ground ends there.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -125,6 +126,12 @@ struct Through {
 }
 
 impl Kernel for Through {
+    fn gpu(&self) -> Option<GpuStep> {
+        let style = NoiseStyle::ALL.iter().position(|&style| style == self.style).unwrap_or(0) as u32;
+        let step = GpuStep::new(GpuOp::Noise3d).whole(style).number(self.size).whole(self.octaves).whole(self.seed);
+        Some(step.number(self.low).number(self.span))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("noise 3d").text(self.style.name()).number(self.size).whole(self.octaves).whole(self.seed);
         key.number(self.low).number(self.span);

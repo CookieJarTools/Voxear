@@ -39,8 +39,10 @@ Each has a pattern of its own in a few shades, as a block's face has. The volume
 Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies, Clamp, Blend, Terrace, Height Mask, Cells, Falloff, Landmass and Climate, which covers the Battlefield Plains, Rolling Hills, Alpine, Archipelago and Canyons starters. Some are left out there:
 
 - **Rivers** pass the ground through without cutting rivers into it, and there is no water.
-- A generator's **Volume** (overhangs, caves, arches) is left out: the ground is its height made solid.
+- A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Plateaus, Peaks, Raised Land, Spires, Fins, Chasms, Slope Mask, a painted map) makes the volume's own ground instead, and the Console names the node.
+
+Overhangs and caves cost far more: every brick from the volume's floor up is asked about. An Alpine slope with a world's own overhangs, tunnels and chambers takes about 1.6 ms a column, two columns a frame, and about 200 MB at a reach of 64 m; the ground round a camera standing still is made in about five and a half seconds.
 
 Running the graph about doubles what making a column costs: with Rolling Hills, about 0.08 ms of the GPU's time a column against 0.045 ms for the volume's own ground, at a reach of 64 m on an RTX 3070.
 
@@ -98,5 +100,5 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - Its voxels cast no shadow onto meshes, blocks or terrain.
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
-- An endless one made by a generator has no rivers, water, caves or overhangs yet.
+- An endless one made by a generator has no rivers or water, and no Cave Network halls, yet.
 - Its voxels can't be changed one by one from the editor or from scripts yet.

@@ -11,6 +11,7 @@
 //! Its sizes are in metres whatever the generator's scale, which stretches
 //! the ground sideways only.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Solid, Value, ValueSpec, combine::NOTHING, noise3d::seed_for};
@@ -133,6 +134,11 @@ struct Wind {
 }
 
 impl Kernel for Wind {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Tunnels).number(self.size).number(self.width).number(self.roof);
+        Some(step.whole(self.seeds[0]).whole(self.seeds[1]))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("tunnels").number(self.size).number(self.width).number(self.roof);
         key.whole(self.seeds[0]).whole(self.seeds[1]);

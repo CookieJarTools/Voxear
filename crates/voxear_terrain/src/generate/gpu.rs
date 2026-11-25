@@ -51,6 +51,18 @@ pub enum GpuOp {
     Mild = 17,
     Landmass = 18,
     Falloff = 19,
+    /// What a cell is given: how high its middle is, how large it is, and
+    /// the number its column carries up at the place its one number names.
+    Y = 20,
+    Size = 21,
+    Carried = 22,
+    Under = 23,
+    Join = 24,
+    Noise3d = 25,
+    Steep = 26,
+    Push = 27,
+    Tunnels = 28,
+    Chambers = 29,
 }
 
 /// One step as a kernel writes it for the GPU: its operation and numbers.
@@ -109,13 +121,98 @@ pub struct GpuProgram {
     pub warmth: u32,
     pub wetness: u32,
     pub rock: u32,
-    /// What its kernels leave out of the ground the CPU makes, by name.
-    pub left_out: Vec<&'static str>,
+    /// Its Volume, where it has one that is more than its height made solid
+    /// and that runs on the GPU.
+    pub volume: Option<GpuVolume>,
+    /// What it leaves out of the ground the CPU makes, by name: what its
+    /// kernels leave out, and its Volume where that cannot run on the GPU,
+    /// with the kernels that cannot.
+    pub left_out: Vec<String>,
+}
+
+/// A generator's Volume as the GPU runs it. Its columns' program runs with
+/// the height's, a voxel column at a time, and what it carries up each
+/// column is kept in [`GpuVolume::carried`]'s slots there; its cells'
+/// program runs a voxel at a time, given the voxel's middle, its size and
+/// those numbers, and leaves how far into the ground the voxel is, in
+/// metres (out of it where negative), in [`GpuVolume::density`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuVolume {
+    pub words: Vec<u32>,
+    pub steps: u32,
+    pub slots: u32,
+    pub density: u32,
+    pub carried: Vec<u32>,
+    /// How far over a column's ground it may be solid, and how far under it
+    /// anything but solid, in metres: without end where nothing says.
+    pub reach: f32,
+    pub depth: f32,
+    /// The carried numbers that say between which heights ground stands or
+    /// is hollowed apart from a column's own: a foot and a top, by their
+    /// place among the carried numbers.
+    pub spans: Vec<[u32; 2]>,
+}
+
+/// The steps of `program` for the GPU, its rows counted from `start`, each
+/// thing it is given made as `given` says: none where it cannot be, which
+/// is noted in `unsupported` as is each kernel that cannot run there.
+fn lower(
+    program: &Program,
+    start: u32,
+    given: impl Fn(Given) -> Option<(GpuStep, Vec<u32>)>,
+    unsupported: &mut Vec<String>,
+) -> Vec<(GpuStep, Vec<u32>)> {
+    let mut steps = Vec::with_capacity(program.steps.len());
+    for step in &program.steps {
+        steps.push(match step {
+            Step::Given(which) => given(*which).unwrap_or_else(|| {
+                unsupported.push(format!("{which:?}"));
+                (GpuStep::new(GpuOp::Constant).number(0.0), Vec::new())
+            }),
+            Step::Run { kernel, inputs } => {
+                let inputs = inputs.iter().map(|&input| input + start).collect();
+                match kernel.gpu() {
+                    Some(step) => (step, inputs),
+                    None => {
+                        unsupported.push(name_of(kernel.as_ref()));
+                        (GpuStep::new(GpuOp::Constant).number(0.0), inputs)
+                    }
+                }
+            }
+        });
+    }
+    steps
+}
+
+/// Steps as the words the shader reads, `kept` rows held to the end: the
+/// words, each row's slot, how many slots, and what the steps leave out.
+fn encode(steps: &[(GpuStep, Vec<u32>)], kept: &[u32]) -> Result<(Vec<u32>, Vec<u32>, u32, Vec<String>), String> {
+    let (slot_of, slots) = slots(steps, kept);
+    if slots > GPU_SLOTS as u32 {
+        return Err(format!("{slots} rows at once, of {GPU_SLOTS}"));
+    }
+    let mut words = Vec::new();
+    let mut left_out = Vec::new();
+    for (at, (step, inputs)) in steps.iter().enumerate() {
+        words.push(step.op as u32);
+        words.push(inputs.len() as u32);
+        words.extend(inputs.iter().map(|&input| slot_of[input as usize]));
+        words.push(slot_of[at]);
+        words.push(step.words.len() as u32);
+        words.extend(&step.words);
+        if let Some(what) = step.left_out
+            && !left_out.iter().any(|known| known == what)
+        {
+            left_out.push(what.to_owned());
+        }
+    }
+    Ok((words, slot_of, slots, left_out))
 }
 
 impl WorldGen {
     /// Its height, climate and rock as one program the GPU runs a column at
-    /// a time; or the names of the kernels it could not run there.
+    /// a time, with its Volume where it can run there too; or the names of
+    /// the kernels its height, climate or rock could not run there.
     pub fn gpu_program(&self) -> Result<GpuProgram, Vec<String>> {
         let compiled = self.compiled();
         let mut parts: Vec<&Program> = vec![&compiled.height, &compiled.climate];
@@ -129,28 +226,13 @@ impl WorldGen {
         let mut height = 0;
         for (part, program) in parts.iter().enumerate() {
             let start = steps.len() as u32;
-            for step in &program.steps {
-                let made = match step {
-                    Step::Given(Given::X) => (GpuStep::new(GpuOp::X), Vec::new()),
-                    Step::Given(Given::Z) => (GpuStep::new(GpuOp::Z), Vec::new()),
-                    Step::Given(Given::Ground) if part > 0 => (GpuStep::new(GpuOp::Copy).whole(0), vec![height]),
-                    Step::Given(given) => {
-                        unsupported.push(format!("{given:?}"));
-                        (GpuStep::new(GpuOp::Constant).number(0.0), Vec::new())
-                    }
-                    Step::Run { kernel, inputs } => {
-                        let inputs = inputs.iter().map(|&input| input + start).collect();
-                        match kernel.gpu() {
-                            Some(step) => (step, inputs),
-                            None => {
-                                unsupported.push(name_of(kernel.as_ref()));
-                                (GpuStep::new(GpuOp::Constant).number(0.0), inputs)
-                            }
-                        }
-                    }
-                };
-                steps.push(made);
-            }
+            let given = |which: Given| match which {
+                Given::X => Some((GpuStep::new(GpuOp::X), Vec::new())),
+                Given::Z => Some((GpuStep::new(GpuOp::Z), Vec::new())),
+                Given::Ground if part > 0 => Some((GpuStep::new(GpuOp::Copy).whole(0), vec![height])),
+                _ => None,
+            };
+            steps.extend(lower(program, start, given, &mut unsupported));
             let made: Vec<u32> = program.outputs.iter().map(|&output| output + start).collect();
             if part == 0 {
                 height = made[0];
@@ -162,32 +244,73 @@ impl WorldGen {
             unsupported.dedup();
             return Err(unsupported);
         }
-        // Its Volume is asked a cell at a time, on the CPU alone: on the GPU the ground is its height made solid.
-        let mut left_out = Vec::new();
-        if compiled.volume.is_some() {
-            left_out.push("overhangs and caves");
-        }
         let rock = compiled.rock.as_ref().map(|_| outputs[3]);
-        let kept = [Some(outputs[0]), Some(outputs[1]), Some(outputs[2]), rock];
-        let (slot_of, slots) = slots(&steps, &kept.iter().flatten().copied().collect::<Vec<_>>());
-        if slots > GPU_SLOTS as u32 {
-            return Err(vec![format!("{slots} rows at once, of {GPU_SLOTS}")]);
-        }
-        let mut words = Vec::new();
-        for (at, (step, inputs)) in steps.iter().enumerate() {
-            words.push(step.op as u32);
-            words.push(inputs.len() as u32);
-            words.extend(inputs.iter().map(|&input| slot_of[input as usize]));
-            words.push(slot_of[at]);
-            words.push(step.words.len() as u32);
-            words.extend(&step.words);
-            if let Some(what) = step.left_out
-                && !left_out.contains(&what)
+        let mut kept: Vec<u32> =
+            [Some(outputs[0]), Some(outputs[1]), Some(outputs[2]), rock].into_iter().flatten().collect();
+        let mut left_out = Vec::new();
+        // Its Volume, unless it is the height made solid with nothing taken out: its columns' steps after the rest,
+        // given the height made first, and its cells' in a program of their own.
+        let mut volume = None;
+        if let Some(voxels) = compiled.volume.as_ref().filter(|voxels| !voxels.plain || voxels.caved) {
+            let mut missing = Vec::new();
+            let start = steps.len() as u32;
+            let given = |which: Given| match which {
+                Given::X => Some((GpuStep::new(GpuOp::X), Vec::new())),
+                Given::Z => Some((GpuStep::new(GpuOp::Z), Vec::new())),
+                Given::Ground => Some((GpuStep::new(GpuOp::Copy).whole(0), vec![height])),
+                _ => None,
+            };
+            let columns = lower(&voxels.columns, start, given, &mut missing);
+            let given = |which: Given| match which {
+                Given::X => Some((GpuStep::new(GpuOp::X), Vec::new())),
+                Given::Y => Some((GpuStep::new(GpuOp::Y), Vec::new())),
+                Given::Z => Some((GpuStep::new(GpuOp::Z), Vec::new())),
+                Given::Size => Some((GpuStep::new(GpuOp::Size), Vec::new())),
+                Given::Carried(place) => Some((GpuStep::new(GpuOp::Carried).whole(u32::from(place)), Vec::new())),
+                Given::Ground => None,
+            };
+            let cells = lower(&voxels.cells, 0, given, &mut missing);
+            let density = voxels.cells.outputs[0];
+            let made = encode(&cells, &[density]);
+            if let Err(error) = &made {
+                missing.push(error.clone());
+            }
+            if missing.is_empty()
+                && let Ok((words, slot_of, slots, cells_left_out)) = made
             {
+                let carried: Vec<u32> = voxels.columns.outputs.iter().map(|&output| output + start).collect();
+                kept.extend(&carried);
+                steps.extend(columns);
+                left_out.extend(cells_left_out);
+                let spans = voxels.spans.iter().map(|([foot, top], _)| [*foot as u32, *top as u32]).collect();
+                volume = Some((
+                    carried,
+                    GpuVolume {
+                        words,
+                        steps: cells.len() as u32,
+                        slots,
+                        density: slot_of[density as usize],
+                        carried: Vec::new(),
+                        reach: voxels.reach,
+                        depth: voxels.depth,
+                        spans,
+                    },
+                ));
+            } else {
+                missing.sort();
+                missing.dedup();
+                left_out.push(format!("overhangs and caves ({})", missing.join(", ")));
+            }
+        }
+        let (words, slot_of, slots, made_left_out) = encode(&steps, &kept).map_err(|error| vec![error])?;
+        for what in made_left_out {
+            if !left_out.contains(&what) {
                 left_out.push(what);
             }
         }
         let slot = |row: u32| slot_of[row as usize];
+        let volume =
+            volume.map(|(carried, volume)| GpuVolume { carried: carried.into_iter().map(slot).collect(), ..volume });
         Ok(GpuProgram {
             words,
             steps: steps.len() as u32,
@@ -196,6 +319,7 @@ impl WorldGen {
             warmth: slot(outputs[1]),
             wetness: slot(outputs[2]),
             rock: rock.map_or(u32::MAX, slot),
+            volume,
             left_out,
         })
     }
@@ -265,8 +389,19 @@ mod tests {
                         starter.name, program.steps, program.slots, program.left_out
                     );
                     assert!(program.slots as usize <= GPU_SLOTS && program.steps > 0, "{}", starter.name);
-                    let caved = program.left_out.contains(&"overhangs and caves");
-                    assert_eq!(caved, world.volume().is_some(), "{}", starter.name);
+                    // A Volume runs on the GPU, or is left out saying why.
+                    let left = program.left_out.iter().any(|what| what.starts_with("overhangs and caves"));
+                    let solid = world.volume().is_some_and(|volume| volume.plain() && !volume.caved());
+                    let asked = world.volume().is_some() && !solid;
+                    assert_eq!(asked, left || program.volume.is_some(), "{}", starter.name);
+                    if let Some(volume) = &program.volume {
+                        eprintln!(
+                            "  its Volume: {} steps in {} slots, {} carried",
+                            volume.steps,
+                            volume.slots,
+                            volume.carried.len()
+                        );
+                    }
                 }
                 Err(names) => {
                     eprintln!("{}: not on the GPU for {names:?}", starter.name);
@@ -276,7 +411,7 @@ mod tests {
         }
         let hills = starters().into_iter().find(|starter| starter.name == "Rolling Hills").unwrap();
         let program = hills.world(1, 1.0).gpu_program().expect("rolling hills run on the GPU");
-        assert!(program.left_out.contains(&"rivers"));
+        assert!(program.left_out.iter().any(|what| what == "rivers"));
         assert!(program.slots < 24, "{} slots for {} steps", program.slots, program.steps);
     }
 }

@@ -1075,17 +1075,20 @@ impl Renderer {
         self.voxels.making()
     }
 
-    /// What world generator `world` makes at each of `places`, `[x, z]` in
-    /// metres in its world, run on the GPU as an endless Voxel Volume runs
-    /// it: the ground's height in metres, how warm it is in °C, how wet
-    /// from 0 to 1, and its rock mask. An error where its graph cannot run
-    /// on the GPU.
+    /// What world generator `world` makes at each of `places`, `[x, y, z]`
+    /// in metres in its world, run on the GPU as an endless Voxel Volume runs
+    /// it: the ground's height in metres, how warm it is in °C, how wet from
+    /// 0 to 1, its rock mask, and how far into its Volume's ground a cell
+    /// `size` metres across at the place is (out of it where negative;
+    /// nothing where its Volume does not run on the GPU). An error where its
+    /// graph cannot run on the GPU.
     pub fn generated_on_gpu(
         &self,
         world: &voxear_terrain::generate::WorldGen,
-        places: &[[f32; 2]],
-    ) -> Result<Vec<[f32; 4]>> {
-        voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, places)
+        places: &[[f32; 3]],
+        size: f32,
+    ) -> Result<Vec<[f32; 5]>> {
+        voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, places, size)
     }
 
     /// Makes every Voxel Volume in `world` and brings it up, waiting at most

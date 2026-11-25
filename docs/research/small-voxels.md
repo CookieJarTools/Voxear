@@ -474,11 +474,7 @@ voxel column at a time.
   column: Noise, Math, Curve, Warp (its moved places), Gullies (its four places a step off), Clamp, Blend, Terrace,
   Height Mask, Cells, Falloff, Landmass (warp, fields, ridges, curves, its own gullies and bumps) and Climate. That
   covers the Battlefield Plains, Rolling Hills, Alpine, Archipelago and Canyons starters, and the landmass a plain
-  generator is. Per voxel there is nothing yet:
-  - A **Volume** (overhangs, caves, arches) is asked a cell at a time on the CPU, with rows carried up each column
-    and spans for where ground stands apart; the GPU's ground is the height made solid. Its cells' program is made
-    of the same kind of steps, so the next step is to run it per voxel in the bricks pass, with the carried rows
-    from the columns pass.
+  generator is. Per voxel: a generator's Volume, since (below). What is left:
   - A **Rivers** node finds its rivers over a grid of points round each place, with their drainage, on the CPU; on
     the GPU it passes its ground through. Kept on the CPU, rivers could be laid into the columns as a height to cut
     to, as streamed worlds lay them.
@@ -532,6 +528,62 @@ voxel column at a time.
 ![An endless volume made by the Rolling Hills generator](../images/small-voxels/generated-hills.webp)
 
 ![Rock on an Alpine mountainside](../images/small-voxels/generated-mountainside.webp)
+
+## Stage 2, overhangs and caves on the GPU (2026-11-25)
+
+A generator's **Volume**, the ground in three dimensions, now runs on the GPU too, a voxel at a time.
+
+- **Two programs, as on the CPU.** A Volume is compiled into a columns' program, run once a column with the
+  height, and a cells' program, run once a cell with its middle, its size and what its column carries up
+  (`generate/compile.rs`). On the GPU the columns' program joins the height's, so the columns pass keeps what each
+  voxel column carries up beside its height. The cells' program is a word list of its own, run in the bricks pass.
+  Three givens are new (a cell's height, its size, a carried number) and seven operations: Solid, Combine (union,
+  subtract, smooth), Noise 3D, Overhangs (its steepness mask and its push), Tunnels and Chambers. A Volume made of
+  the height alone, with nothing taken out, is not asked at all.
+- **What runs and what not.** A world of blocks' own overhangs and caves (`Graph::add_voxels`) is Overhangs,
+  Tunnels and Chambers taken out of the ground, and a **Cave Network** of great halls. The network lays its rooms
+  and tunnels out over regions on the CPU, so on the GPU it runs in part: it hollows nothing, and its rooms' spans
+  are empty ("cave halls" left out). Raised Land, Spires, Fins, Arches and Roof are not ported: a Volume with one is
+  left out, and the ground is the height made solid. Of the starters, none has a Volume of only these nodes yet;
+  Caves and Cave Level are a Cave Network alone.
+- **Bricks of a Volume.** The candidates pass reaches as far over and under each column's ground as the Volume can
+  be solid or hollow (its reach and depth, and each column's spans), to the volume's floor where it says without
+  end, as noise caves do. Each brick works out which of its voxels and a border of one round them are solid, a
+  thousand looks in shared memory, and keeps only solid voxels with open air beside them; a brick of rock or of air
+  keeps nothing. It first looks at 64 voxels three apart, and where every one is more than 0.3 m into the ground,
+  or out of it, takes the whole as rock or air without the thousand: the Volume's numbers read about as how far a
+  place is from the surface, and a cave is wider than the gap. That changed 46 pixels of 230,400 in a test view and
+  took 28% off making. The volume's bottom voxels are always solid, so a cave that goes deeper has a floor there.
+- **What the voxels are.** The tops pass finds each column's surface: its top solid voxel with open air over it,
+  within 4 m of its ground's height. Grass, flowers and the dirt under grass go by it, so they follow ground the
+  overhangs pushed out or in. A column whose top is taken away or covered over grows nothing. A voxel open to the
+  sky near the surface takes the column's ground (grass, sand, snow, rock); the sides of overhangs and the mouths of
+  caves take the layer under it; deeper, cave walls and ground standing apart are rock.
+- **The same as the CPU's.** Alpine with a world's own overhangs (4 m), tunnels and chambers (0.8, open to the sky),
+  its network taken out, asked at 27,648 cells from 8 m under the ground to 5 m over it
+  (`a_generators_overhangs_and_caves_on_the_gpu_are_the_cpus`): 27,647 on the same side of the ground, and all
+  9,748 within 2 m of the surface within a centimetre of the CPU's number. 1,594 of the cells are hollowed under the
+  ground.
+- **Measured** (reach 64 m, 48 m tall, 16 voxels a metre, 1920×1080, the GPU shared at about 35%):
+
+  | | Rolling Hills | Alpine with overhangs and caves |
+  |---|---|---|
+  | Window made before the frames | 0.54 s | 5.5 s |
+  | On the GPU | 103 MB | 204 MB |
+  | Columns a frame at most | 16 | 2 |
+  | Flying at 10 m/s: frames making columns | 66 of 540 | 367 of 540 |
+  | Making, median (least–most) | 1.49 ms (0.24–2.73) | 3.30 ms (1.59–5.57) |
+  | A column | 0.09 ms | 1.65 ms |
+
+  A Volume costs about eighteen times what the height alone does to make, and two columns a frame barely keep up
+  with flying at 10 m/s. Each column asks about every brick from the floor to its reach, about 3,700, most of them
+  rock or air, each a group of 512 threads. Room for bricks is 768 a column, twice the height's, hence the memory.
+  Next: a coarser pass over each column of bricks first, so bricks of rock and air are never asked about; and
+  solidity worked out once a brick and shared with the bricks beside it, rather than a border each.
+
+![Overhangs and open caves on an Alpine slope](../images/small-voxels/generated-overhangs.webp)
+
+![Inside a cave, looking out](../images/small-voxels/generated-inside-a-cave.webp)
 
 ## Kept elsewhere
 

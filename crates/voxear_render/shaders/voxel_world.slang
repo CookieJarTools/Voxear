@@ -19,6 +19,10 @@
 // generator's height, climate and rock, its graph run a voxel column at a time (generator.slang): grass where the
 // ground would grow it, rock on steep ground and where the generator says, sand along the shore and in hot dry
 // places, snow where it is below freezing, as a world of blocks with no biomes of its own lays them.
+//
+// A generator's Volume (overhangs, tunnels, chambers) runs here too: its columns' program with the height's, what it
+// carries up each column kept beside the heights, and its cells' program once a voxel in the bricks pass, over each
+// brick and a border of one, so a brick keeps only the solid voxels with open air beside them.
 
 #include "generator.slang"
 
@@ -53,6 +57,10 @@ struct WorldMake
     // The generator's program and what the columns pass found of each column's climate, where there is one.
     uint* program;
     uint* grounds;
+    // The Volume's cells' program, and what each column of a job carries up to its cells, `carriedCount` numbers
+    // a column in the order of the heights.
+    uint* volume;
+    uint* carried;
     float height;
     float hills;
     float hillSpacing;
@@ -77,6 +85,18 @@ struct WorldMake
     float atX;
     float atZ;
     float seaLevel;
+    // How many words the Volume's cells' program has (none without one), the slot it leaves a voxel's number in,
+    // how many numbers a column carries up and the columns' program's slots for them, how far over and under a
+    // column's ground the Volume may be solid or hollow in voxels, and its spans: a foot and a top a word, as
+    // places among the carried numbers.
+    uint volumeWords;
+    uint densitySlot;
+    uint carriedCount;
+    uint spanCount;
+    uint4 carriedSlots[2];
+    uint4 spans;
+    float reach;
+    float depth;
     uint pad0;
     WorldJob jobs[MAX_JOBS];
 };
@@ -173,6 +193,25 @@ uint topOf(WorldMake* make, uint job, int x, int z)
     return (columnOf(make, job, x, z) >> 16) & 255u;
 }
 
+// The height of a column's surface, in voxels: with a Volume, its top solid voxel with open air over it near its
+// ground's height, as the tops pass found it; else its ground's height.
+int surfaceOf(WorldMake* make, uint job, int x, int z)
+{
+    int h = heightOf(make, job, x, z);
+    if (!hasVolume(make))
+    {
+        return h;
+    }
+    uint climate = make->grounds[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
+    return h + int(climate >> 17) - 16384;
+}
+
+// Whether a column's top is bare, so nothing grows on it.
+bool bareAt(WorldMake* make, uint job, int x, int z)
+{
+    return (columnOf(make, job, x, z) >> 24) != 0;
+}
+
 // The ground's height and climate at a voxel column from the generator, at its middle in the generator's world.
 Generated generatedAt(WorldMake* make, int x, int z)
 {
@@ -180,6 +219,34 @@ Generated generatedAt(WorldMake* make, int x, int z)
     float gx = (float(x) + 0.5) * v + make->atX;
     float gz = (float(z) + 0.5) * v + make->atZ;
     return runGenerator(make->program, make->programWords, make->outs, gx, gz);
+}
+
+bool hasVolume(WorldMake* make)
+{
+    return make->volumeWords != 0;
+}
+
+uint* carriedOf(WorldMake* make, uint job, int x, int z)
+{
+    return make->carried + (job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)) * make->carriedCount;
+}
+
+// How far into the ground of the Volume a voxel is, in metres (out of it where negative): column (x, z) of a
+// job's column, voxel `y` up, its middle in the generator's world.
+float densityAt(WorldMake* make, uint job, int x, int y, int z)
+{
+    float v = make->voxel;
+    int2 corner = make->jobs[job].column * 64;
+    float gx = (float(corner.x + x) + 0.5) * v + make->atX;
+    float gy = (float(y) + 0.5) * v + make->floor;
+    float gz = (float(corner.y + z) + 0.5) * v + make->atZ;
+    float slots[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        slots[s] = 0.0;
+    }
+    runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carriedOf(make, job, x, z), slots);
+    return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)];
 }
 
 // What the ground is at a column of the generator's: its height and how steep it is round it, and its climate.
@@ -267,11 +334,11 @@ uint flowerAt(WorldMake* make, uint job, int3 p)
             int z = int(floor(az / v));
             // No flower reaches further than two voxels from its stem, which stands on its column's grass.
             int2 foot = int2(x, z) - make->jobs[job].column * 64;
-            if (abs(p.x - x) > 2 || abs(p.z - z) > 2 || topOf(make, job, foot.x, foot.y) != GROUND_GRASS)
+            if (abs(p.x - x) > 2 || abs(p.z - z) > 2 || topOf(make, job, foot.x, foot.y) != GROUND_GRASS || bareAt(make, job, foot.x, foot.y))
             {
                 continue;
             }
-            int base = heightOf(make, job, foot.x, foot.y);
+            int base = surfaceOf(make, job, foot.x, foot.y);
             int stem = int(max((0.3 + unit(hashOf(cx, 5, cz, seed)) * 0.4) / v, 2.0));
             int top = base + stem;
             int ox = p.x - x;
@@ -357,8 +424,25 @@ void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
         make->grounds[job * SIDE * SIDE + id.x] = 128u + (128u << 8);
         return;
     }
-    Generated made = generatedAt(make, x, z);
-    make->heights[job * SIDE * SIDE + id.x] = int(floor((made.height - make->floor) / make->voxel));
+    float v = make->voxel;
+    float slots[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        slots[s] = 0.0;
+    }
+    runSteps(make->program, make->programWords, (float(x) + 0.5) * v + make->atX, 0.0, (float(z) + 0.5) * v + make->atZ, 0.0, make->program, slots);
+    uint4 outs = make->outs;
+    Generated made;
+    made.height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
+    made.warmth = slots[min(outs.y, GENERATOR_SLOTS - 1)];
+    made.wetness = slots[min(outs.z, GENERATOR_SLOTS - 1)];
+    made.rock = outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0;
+    uint* carried = make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount;
+    for (uint c = 0; c < make->carriedCount; c++)
+    {
+        carried[c] = asuint(slots[min(make->carriedSlots[c >> 2][c & 3u], GENERATOR_SLOTS - 1)]);
+    }
+    make->heights[job * SIDE * SIDE + id.x] = int(floor((made.height - make->floor) / v));
     uint warmth = uint(clamp(round(made.warmth) + 128.0, 0.0, 255.0));
     uint wetness = uint(clamp(made.wetness * 255.0, 0.0, 255.0));
     uint rock = made.rock > 0.5 ? 1u : 0u;
@@ -381,15 +465,45 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     int x = corner.x + lx;
     int z = corner.y + lz;
     uint top = make->programWords == 0 ? GROUND_GRASS : groundOf(make, job, lx, lz);
+    // With a Volume, the column's surface is its top solid voxel with open air over it within four metres of its
+    // ground's height, found going down two voxels at a time and then one. Where there is ground over all of that,
+    // or none in it, the column is bare: nothing grows on it, though what the ground is there still colours the
+    // Volume's ground open to the sky.
+    bool bare = false;
+    if (hasVolume(make))
+    {
+        int h = heightOf(make, job, lx, lz);
+        int reach = int(min(4.0 / make->voxel, 1024.0));
+        int y = h;
+        // Mostly the Volume leaves the ground's height where it was: two looks find that.
+        if (!(densityAt(make, job, lx, h, lz) > 0.0 && densityAt(make, job, lx, h + 1, lz) <= 0.0))
+        {
+            y = h + reach;
+            bare = densityAt(make, job, lx, y, lz) > 0.0;
+            while (!bare && y > h - reach && densityAt(make, job, lx, y - 2, lz) <= 0.0)
+            {
+                y -= 2;
+            }
+            y -= 2;
+            if (!bare && densityAt(make, job, lx, y + 1, lz) > 0.0)
+            {
+                y += 1;
+            }
+            bare = bare || y <= h - reach || densityAt(make, job, lx, y, lz) <= 0.0;
+        }
+        uint at = job * SIDE * SIDE + uint((lz + BORDER) * SIDE + lx + BORDER);
+        int offset = bare ? 0 : clamp(y - h, -16000, 16000);
+        make->grounds[at] = (make->grounds[at] & 0x1FFFFu) | (uint(offset + 16384) << 17);
+    }
     uint seed = make->seed + 21;
     uint r = hashOf(x, 0, z, seed);
     uint blade = 0;
-    if (top == GROUND_GRASS && unit(r) < make->grass)
+    if (top == GROUND_GRASS && !bare && unit(r) < make->grass)
     {
         float tallest = max(max(make->grassHeight, 0.0) / make->voxel, 1.0);
         blade = 1 + uint(unit(hashOf(x, 1, z, seed)) * tallest);
     }
-    make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16);
+    make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16) | (bare ? 1u << 24 : 0u);
 }
 
 uint packCandidate(uint job, uint bx, uint bz, uint row)
@@ -427,6 +541,32 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
         highest += int(0.7 / make->voxel) + 4;
     }
     int rows = int(make->tall) * 8;
+    // A Volume reaches over and under its ground as far as it says, and as far as each column's spans say.
+    if (hasVolume(make))
+    {
+        highest += int(min(make->reach, float(rows * 8))) + 1;
+        lowest -= int(min(make->depth, float(rows * 8))) + 1;
+        for (int z = 0; z < 8; z++)
+        {
+            for (int x = 0; x < 8; x++)
+            {
+                uint* carried = carriedOf(make, job, bx * 8 + x, bz * 8 + z);
+                for (uint span = 0; span < make->spanCount; span++)
+                {
+                    uint places = make->spans[span];
+                    float foot = asfloat(carried[places & 255u]);
+                    float top = asfloat(carried[(places >> 8) & 255u]);
+                    if (top > foot)
+                    {
+                        float from = clamp((foot - make->floor) / make->voxel, -1.0, float(rows * 8));
+                        float to = clamp((top - make->floor) / make->voxel, -1.0, float(rows * 8));
+                        lowest = min(lowest, int(floor(from)) - 1);
+                        highest = max(highest, int(ceil(to)) + 1);
+                    }
+                }
+            }
+        }
+    }
     for (int row = max(lowest >> 3, 0); row <= min(highest >> 3, rows - 1); row++)
     {
         uint at;
@@ -452,10 +592,52 @@ void voxelWorldArguments(uint3 id: SV_DispatchThreadID)
 groupshared uint sharedMask[16];
 groupshared uint sharedGroups[2];
 groupshared uint sharedSum[4];
+// With a Volume: which voxels of the brick and a border of one round it are solid, ten a side.
+groupshared uint sharedSolid[32];
+groupshared uint sharedEven;
 groupshared uint sharedSlot;
 groupshared uint sharedOffset;
 groupshared uint sharedCount;
 groupshared uint sharedKept;
+
+// How far into or out of the ground a brick's first look must find every voxel it looks at to take the whole
+// brick as solid or open, in metres.
+static const float VOLUME_EVEN = 0.3;
+
+// Whether the voxel `off` from voxel `l` of the brick is solid, from what the group worked out.
+bool solidNear(int3 l, int3 off)
+{
+    int3 r = l + off + 1;
+    uint at = uint(r.x + 10 * (r.y + 10 * r.z));
+    return ((sharedSolid[at >> 5] >> (at & 31u)) & 1u) != 0;
+}
+
+// The voxel the Volume makes at voxel `l` of the brick, `p` in the world's voxels, whose column's ground is `h`
+// high: nothing where it is open, or solid with no open air beside it, which is never seen. What the column's ground
+// is where it is open to the sky, as a top; the layers under it near the column's ground, in the sides of overhangs
+// and the mouths of caves; rock deeper, in the walls of caves.
+uint volumeVoxel(WorldMake* make, uint job, uint column, int h, int3 l, int3 p)
+{
+    if (!solidNear(l, int3(0, 0, 0)))
+    {
+        return 0;
+    }
+    bool open = !solidNear(l, int3(0, 1, 0));
+    bool seen = open || !solidNear(l, int3(0, -1, 0)) || !solidNear(l, int3(1, 0, 0)) || !solidNear(l, int3(-1, 0, 0))
+        || !solidNear(l, int3(0, 0, 1)) || !solidNear(l, int3(0, 0, -1));
+    if (!seen)
+    {
+        return 0;
+    }
+    uint top = (column >> 16) & 255u;
+    int under = surfaceOf(make, job, p.x - make->jobs[job].column.x * 64, p.z - make->jobs[job].column.y * 64) - p.y;
+    // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not.
+    if (under > 8 || under < -2)
+    {
+        return groundVoxel(make, GROUND_ROCK, under, p);
+    }
+    return groundVoxel(make, top, open ? 0 : max(under, 1), p);
+}
 
 [shader("compute")]
 [numthreads(512, 1, 1)]
@@ -479,6 +661,14 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         sharedSum[index] = 0;
     }
+    if (index < 32)
+    {
+        sharedSolid[index] = 0;
+    }
+    if (index == 0)
+    {
+        sharedEven = 0;
+    }
     GroupMemoryBarrierWithGroupSync();
     uint packed = make->candidates[candidate];
     uint job = packed & 15u;
@@ -495,7 +685,70 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     uint column = columnOf(make, job, px, pz);
     int blade = int(column & 255u);
     uint m = 0;
-    if (h >= 0 && y <= h && y >= max(lowOf(make, job, px, pz), 0))
+    bool volume = hasVolume(make);
+    if (volume)
+    {
+        // First a look at 64 voxels spread through the brick and its border, three voxels apart: where every one is
+        // further into the ground than VOLUME_EVEN metres, the whole is taken as solid, and where every one is
+        // further out of it, as open, without working out the thousand. The Volume's numbers read about as how far
+        // a place is from the ground's surface, and a cave or an overhang is wider than the gap between the looks.
+        if (index < 64)
+        {
+            int3 r = int3(index % 4, (index / 4) % 4, index / 16) * 3 - 1;
+            int3 q = int3(bx * 8, row * 8, bz * 8) + r;
+            float d = q.y <= 0 ? 1.0e9 : (q.y < tall ? densityAt(make, job, q.x, q.y, q.z) : -1.0e9);
+            if (d <= VOLUME_EVEN)
+            {
+                InterlockedOr(sharedEven, 1u);
+            }
+            if (d >= -VOLUME_EVEN)
+            {
+                InterlockedOr(sharedEven, 2u);
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    // 1: not all solid; 2: not all open.
+    uint even = sharedEven;
+    if (volume && (even & 1u) == 0)
+    {
+        if (index < 32)
+        {
+            sharedSolid[index] = 0xFFFFFFFFu;
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    else if (volume && (even & 2u) != 0)
+    {
+        // Each thread works out one or two of the thousand voxels round the brick. The volume's bottom voxels are
+        // solid, so a cave that goes deeper has a floor there, and what is under them is solid too, so the underside
+        // of the floor is never drawn; over the top is open.
+        for (uint at = index; at < 1000; at += 512)
+        {
+            int3 r = int3(at % 10, (at / 10) % 10, at / 100) - 1;
+            int3 q = int3(bx * 8, row * 8, bz * 8) + r;
+            bool solid = q.y <= 0 || (q.y < tall && densityAt(make, job, q.x, q.y, q.z) > 0.0);
+            if (solid)
+            {
+                InterlockedOr(sharedSolid[at >> 5], 1u << (at & 31u));
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (volume)
+    {
+        m = volumeVoxel(make, job, column, h, l, int3(corner.x + px, y, corner.y + pz));
+        int surface = min(surfaceOf(make, job, px, pz), tall - 1);
+        if (m == 0 && y > surface && !solidNear(l, int3(0, 0, 0)))
+        {
+            m = flowerAt(make, job, int3(corner.x + px, y, corner.y + pz));
+            if (m == 0 && surface >= 0 && y <= min(surface + blade, tall - 1))
+            {
+                m = (y == surface + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
+            }
+        }
+    }
+    else if (h >= 0 && y <= h && y >= max(lowOf(make, job, px, pz), 0))
     {
         m = groundVoxel(make, (column >> 16) & 255u, h - y, int3(corner.x + px, y, corner.y + pz));
     }
@@ -680,8 +933,9 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 }
 
 // The generator run at places alone, for checking it against the CPU's: each of `candidateRoom` places, as the bits
-// of its x and z in metres in the generator's world, read from `candidates`, and what is made there written to
-// `loose` as the bits of its height, warmth, wetness and rock.
+// of its x, y and z in metres in the generator's world, read from `candidates`, and what is made there written to
+// `loose`, sixteen words a place: the bits of its height, warmth, wetness and rock, how far into its Volume's ground
+// a cell `voxel` metres across is there (with a Volume), then what its column carries up.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
@@ -691,12 +945,35 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     {
         return;
     }
-    float x = asfloat(make->candidates[id.x * 2]);
-    float z = asfloat(make->candidates[id.x * 2 + 1]);
-    Generated made = runGenerator(make->program, make->programWords, make->outs, x, z);
-    uint* out = make->loose + id.x * 4;
-    out[0] = asuint(made.height);
-    out[1] = asuint(made.warmth);
-    out[2] = asuint(made.wetness);
-    out[3] = asuint(made.rock);
+    float x = asfloat(make->candidates[id.x * 3]);
+    float y = asfloat(make->candidates[id.x * 3 + 1]);
+    float z = asfloat(make->candidates[id.x * 3 + 2]);
+    float slots[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        slots[s] = 0.0;
+    }
+    runSteps(make->program, make->programWords, x, 0.0, z, 0.0, make->program, slots);
+    uint* out = make->loose + id.x * 16;
+    uint4 outs = make->outs;
+    out[0] = asuint(slots[min(outs.x, GENERATOR_SLOTS - 1)]);
+    out[1] = asuint(slots[min(outs.y, GENERATOR_SLOTS - 1)]);
+    out[2] = asuint(slots[min(outs.z, GENERATOR_SLOTS - 1)]);
+    out[3] = asuint(outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0);
+    out[4] = 0;
+    if (make->volumeWords == 0)
+    {
+        return;
+    }
+    for (uint c = 0; c < make->carriedCount; c++)
+    {
+        out[5 + c] = asuint(slots[min(make->carriedSlots[c >> 2][c & 3u], GENERATOR_SLOTS - 1)]);
+    }
+    float cells[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        cells[s] = 0.0;
+    }
+    runSteps(make->volume, make->volumeWords, x, y, z, make->voxel, out + 5, cells);
+    out[4] = asuint(cells[min(make->densitySlot, GENERATOR_SLOTS - 1)]);
 }

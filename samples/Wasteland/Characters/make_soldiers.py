@@ -3,7 +3,7 @@
 
     python3 make_soldiers.py    # writes Rifleman.boxmodel and Scavenger.boxmodel beside this file
 
-Each soldier is a chibi figure 128 cubes and 1.9 m tall: a squat helmeted head wider than it is tall, as wide as the
+Each soldier is a chibi figure 128 cubes and 1.9 m tall: a helmeted head nearly a third of that and as wide as the
 shoulders, large eyes over a mask, a short body in a rig packed with pouches and straps, chunky arms and legs, knee
 pads and big boots, each part built of plates and blocks of their own tones. The bones are named as a humanoid rig
 names them (Hips, Spine, Chest, Neck, Head, LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and
@@ -344,14 +344,14 @@ EYE_COLOURS = {"L": "lash", "I": "iris", "J": "iris_light", "W": "eye_light"}
 
 
 def head_shape(g):
-    g.rounded((0, 13.5, 1), (18.5, 13.5, 15.0), "skin", power=3.0)
+    g.rounded((0, 16, 1), (17.5, 16.0, 15.0), "skin", power=3.0)
 
 
 def face(g, mask):
     """Eyes, cheeks, hair under the helmet, and `mask` over the lower face, flat across its front."""
     for side in (-1, 1):
         for row, line in enumerate(EYE):
-            y = 19 - row
+            y = 22 - row
             for at, mark in enumerate(line):
                 if mark == ".":
                     continue
@@ -360,20 +360,20 @@ def face(g, mask):
                 if spot is not None:
                     g.put((x, y, spot), EYE_COLOURS[mark])
         for x in ((11, 12, 13) if side > 0 else (-12, -13, -14)):
-            spot = front_of(g, x, 12)
+            spot = front_of(g, x, 14)
             if spot is not None:
-                g.put((x, 12, spot), "blush")
-    g.paint(lambda x, y, z: (y > 21.5) | ((np.abs(x) > 14.5) & (y > 10) & (z < 9)) | ((z < 4) & (y > 4)),
-            ((-19, 0, -15), (19, 29, 17)), "hair")
-    for x in range(-18, 18):
-        for y in range(0, 11):
+                g.put((x, 14, spot), "blush")
+    g.paint(lambda x, y, z: (y > 24.5) | ((np.abs(x) > 13.5) & (y > 12) & (z < 9)) | ((z < 4) & (y > 5)),
+            ((-17, 0, -15), (17, 35, 17)), "hair")
+    for x in range(-16, 16):
+        for y in range(0, 14):
             spot = front_of(g, x, y)
             if spot is None:
                 continue
-            front = max(spot, 17 if abs(x) < 13 else spot)
+            front = max(spot, 17 if abs(x) < 12 else spot)
             for z in range(spot, front + 2):
                 g.put((x, y, z), mask, 1 if (y // 3 + x // 6) % 2 else 2)
-    g.paint(lambda x, y, z: y < 11, ((-19, -1, -15), (19, 11, 19)), mask, only=("skin",))
+    g.paint(lambda x, y, z: y < 14, ((-17, -1, -15), (17, 14, 19)), mask, only=("skin",))
 
 
 def goggles(g, y, z0, width=10):
@@ -391,24 +391,24 @@ def rifleman_head(model):
     head_shape(g)
     face(g, "mask")
     # A respirator: a round filter out from the mask, a steel ring and ribs round it, straps back to the sides.
-    g.rod((0, 5.5, 18), (0, 5.5, 23.6), 4.6, "steel", flat=True)
-    g.rod((0, 5.5, 22.6), (0, 5.5, 24.4), 3.3, "blued", flat=True)
+    g.rod((0, 7, 18), (0, 7, 23.6), 5.0, "steel", flat=True)
+    g.rod((0, 7, 22.6), (0, 7, 24.4), 3.6, "blued", flat=True)
     for z in (19.5, 21.5):
-        g.rod((0, 5.5, z), (0, 5.5, z + 0.8), 5.0, "steel", shade=0, flat=True)
+        g.rod((0, 7, z), (0, 7, z + 0.8), 5.4, "steel", shade=0, flat=True)
     for side in (-1, 1):
-        g.path([(side * 5, 7, 18), (side * 12, 9, 12), (side * 16.5, 10, 4)], 0.8, "leather_dark", square=True)
+        g.path([(side * 5, 9, 18), (side * 12, 11, 12), (side * 15.5, 13, 4)], 0.8, "leather_dark", square=True)
     # The dish helmet: a low crown of plates, a wide brim, netting, rags tied in, a band round it.
-    g.rounded((0, 23, 1), (19.4, 10.5, 16.6), "helmet", power=2.4, keep=lambda x, y, z: y > 22)
+    g.rounded((0, 27, 1), (17.4, 12.0, 16.4), "helmet", power=2.4, keep=lambda x, y, z: y > 26)
     for x in range(-25, 25):
         for z in range(-24, 26):
-            d = (abs(x + 0.5) / 25.5) ** 4 + (abs(z + 0.5 - 1) / 24.0) ** 4
+            d = (abs(x + 0.5) / 24.5) ** 4 + (abs(z + 0.5 - 1) / 24.0) ** 4
             if d <= 1:
-                g.put((x, 22 if d < 0.6 else 21, z), "helmet")
+                g.put((x, 26 if d < 0.6 else 25, z), "helmet")
                 if d < 0.6:
-                    g.put((x, 23, z), "helmet")
-    band(g, 24, 27, 18.8, 16.0, "leather_dark", out=0.8)
+                    g.put((x, 27, z), "helmet")
+    band(g, 28, 31, 16.8, 15.8, "leather_dark", out=0.8)
     for (x, y, z), (material, _) in list(g.cells.items()):
-        if material == "helmet" and y > 27 and (x + y + z) % 5 == 0 and (x - y + z) % 5 == 0:
+        if material == "helmet" and y > 31 and (x + y + z) % 5 == 0 and (x - y + z) % 5 == 0:
             g.put((x, y, z), "scrim", 0)
         elif material == "helmet" and hashed(x // 3, y // 2, z // 3, 77) < 0.08:
             g.put((x, y, z), "rust")
@@ -419,9 +419,9 @@ def rifleman_head(model):
         top = max((y for (cx, y, cz) in g.cells if cx == x and cz == z), default=None)
         if top is not None:
             g.box((x - 1, top, z - 1), (x + 2, top + 2, z + 2), "scrim")
-    goggles(g, 27, 15.4)
-    g.path([(-17.6, 21, 4), (-16.6, 7, 7), (-10, 1, 9)], 0.9, "leather")
-    g.path([(17.6, 21, 4), (16.6, 7, 7), (10, 1, 9)], 0.9, "leather")
+    goggles(g, 31, 15.4)
+    g.path([(-16.4, 25, 4), (-15.4, 8, 7), (-10, 1, 9)], 0.9, "leather")
+    g.path([(16.4, 25, 4), (15.4, 8, 7), (10, 1, 9)], 0.9, "leather")
 
 
 def scavenger_head(model):
@@ -430,25 +430,25 @@ def scavenger_head(model):
     face(g, "mask")
     # A steel helmet cut high over the ears, plates and rails on its sides, a headset's big ear cups over it.
     def shell(x, y, z):
-        return (y > 18) & ((np.abs(x) / 20.6) ** 2.6 + (np.abs(y - 18) / 11.5) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6
+        return (y > 22) & ((np.abs(x) / 19.6) ** 2.6 + (np.abs(y - 22) / 13.0) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6
                            <= 1)
-    g.fill(shell, ((-22, 18, -18), (22, 31, 20)), "helmet")
-    g.fill(lambda x, y, z: (y > 11) & (y <= 18) & ((np.abs(x) / 20.6) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6 <= 1) &
-           ~((z > 4) & (np.abs(x) < 17.5)), ((-22, 11, -18), (22, 19, 20)), "helmet")
+    g.fill(shell, ((-21, 22, -18), (21, 36, 20)), "helmet")
+    g.fill(lambda x, y, z: (y > 15) & (y <= 22) & ((np.abs(x) / 19.6) ** 2.6 + (np.abs(z - 1) / 17.8) ** 2.6 <= 1) &
+           ~((z > 4) & (np.abs(x) < 16.5)), ((-21, 15, -18), (21, 23, 20)), "helmet")
     for side in (-1, 1):
-        g.box((side * 19.8 - 1.4, 18, -9), (side * 19.8 + 1.4, 21, 9), "steel", round_edges=0.5)
-        g.box((side * 16 - 3, 23, -6), (side * 16 + 3, 27, 2), "helmet", round_edges=0.6)
-        g.rounded((side * 20.6, 12, 1.5), (3.8, 7.0, 6.8), "steel", power=2.6)
-        g.rounded((side * 23.0, 12, 1.5), (1.8, 5.0, 5.0), "tan_dark", power=2.4)
-        g.rod((side * 20.4, 18, 1.5), (side * 19.4, 24, 1.5), 1.2, "leather_dark")
-    g.box((-16, 28.5, -8), (16, 30.0, 8), "helmet", shade=3)
-    g.path([(18, 9, 5), (15, 7, 12), (8, 5.5, 17.6)], 0.9, "blued")
-    g.ball((7.0, 5.5, 18.0), (1.8, 1.8, 1.8), "blued")
+        g.box((side * 18.8 - 1.4, 22, -9), (side * 18.8 + 1.4, 25, 9), "steel", round_edges=0.5)
+        g.box((side * 15 - 3, 28, -6), (side * 15 + 3, 32, 2), "helmet", round_edges=0.6)
+        g.rounded((side * 19.6, 15, 1.5), (3.8, 7.4, 6.8), "steel", power=2.6)
+        g.rounded((side * 22.0, 15, 1.5), (1.8, 5.4, 5.0), "tan_dark", power=2.4)
+        g.rod((side * 19.4, 21, 1.5), (side * 18.4, 28, 1.5), 1.2, "leather_dark")
+    g.box((-15, 33, -8), (15, 34.6, 8), "helmet", shade=3)
+    g.path([(17, 11, 5), (14, 8, 12), (8, 6, 17.6)], 0.9, "blued")
+    g.ball((7.0, 6.0, 18.0), (1.8, 1.8, 1.8), "blued")
     for (x, y, z), (material, _) in list(g.cells.items()):
         if material == "helmet" and hashed(x // 3, y // 3, z // 3, 41) < 0.07:
             g.put((x, y, z), "rust")
-    goggles(g, 22, 16.2)
-    band(g, 23, 25.5, 20.2, 17.4, "leather_dark", out=0.6)
+    goggles(g, 26, 16.2)
+    band(g, 27, 29.5, 19.2, 17.4, "leather_dark", out=0.6)
 
 
 # Gear on the back ------------------------------------------------------------------------------------------------

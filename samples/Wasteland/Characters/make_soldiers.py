@@ -572,9 +572,9 @@ CARRY = {
     "scavenger": ((-0.65, -0.55, 0.52), (0.15, 1.0, 0.35), (7.0, 22.0, 9.0)),
 }
 # Which way each elbow points, the right's then the left's, at rest and aiming.
-POLES = {"carry": ((0.6, -1.0, -0.8), (-0.4, -1.0, -0.6)), "aim": ((1.0, 0.6, -0.2), (-0.9, -0.7, 0.15))}
+POLES = {"carry": ((0.6, -1.0, -0.8), (-0.4, -1.0, -0.6)), "aim": ((1.0, 0.0, -0.4), (-0.3, -1.0, -0.2))}
 # Aiming: how far the hips turn side on, and where in the chest the stock sits.
-AIM = {"rifleman": (90.0, (13.0, 4.0, 11.0)), "scavenger": (80.0, (13.0, 4.0, 11.0))}
+AIM = {"rifleman": (50.0, (8.5, 3.5, 8.0)), "scavenger": (50.0, (8.5, 3.5, 8.0))}
 
 
 def carry(kind):

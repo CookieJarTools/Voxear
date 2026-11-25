@@ -4,6 +4,7 @@
 //! changing over Size metres. Everything behind the node is worked out at
 //! the moved places, so one warp bends a whole chain of nodes together.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, node_seed};
@@ -106,6 +107,11 @@ struct Bent {
 }
 
 impl Kernel for Bent {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Warp).whole(self.axis as u32).number(self.size).number(self.reach);
+        Some(step.whole(self.octaves).whole(self.seed))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("warp").whole(self.axis as u32).number(self.size).number(self.reach).whole(self.octaves);
         key.whole(self.seed);

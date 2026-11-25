@@ -139,7 +139,10 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
             hit.steps = i;
             return false;
         }
-        int3 c = int3(floor(o + d * t));
+        // A ray going back along an axis is in the cell below a boundary it lies exactly on: else one starting on the
+        // corner of two sectors goes back and forth between them without moving on.
+        float3 p = o + d * t;
+        int3 c = int3(select(d < 0.0, ceil(p) - 1.0, floor(p)));
         if (axis >= 0)
         {
             c[axis] = d[axis] > 0.0 ? boundary : boundary - 1;

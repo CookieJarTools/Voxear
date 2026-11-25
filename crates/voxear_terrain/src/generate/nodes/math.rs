@@ -3,6 +3,7 @@
 //! what is wired in, or the node's own value with no wire. A number
 //! divided by nothing is nothing.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -104,6 +105,18 @@ impl Kind for Math {
 struct Two(Operation);
 
 impl Kernel for Two {
+    fn gpu(&self) -> Option<GpuStep> {
+        let op = match self.0 {
+            Operation::Add => 0,
+            Operation::Subtract => 1,
+            Operation::Multiply => 2,
+            Operation::Min => 3,
+            Operation::Max => 4,
+            Operation::Divide => 5,
+        };
+        Some(GpuStep::new(GpuOp::Math).whole(op))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("math").text(self.0.name());
     }

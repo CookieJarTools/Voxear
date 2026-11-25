@@ -20,6 +20,7 @@
 //! hills the gullies run down: where the slope turns within a gully's
 //! width, its stripes are sheared into arcs.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, around, node_seed};
@@ -119,6 +120,12 @@ impl Kind for Gullies {
 struct Cut(Gullied);
 
 impl Kernel for Cut {
+    fn gpu(&self) -> Option<GpuStep> {
+        let Gullied { erosion, scale, sea_level, seed, joined } = self.0;
+        let step = GpuStep::new(GpuOp::Gullies).number(erosion.strength).number(erosion.spacing).whole(erosion.octaves);
+        Some(step.number(scale).number(sea_level).whole(seed).whole(u32::from(joined)))
+    }
+
     fn key(&self, key: &mut Key) {
         let Gullied { erosion, scale, sea_level, seed, joined } = self.0;
         key.name("gullies").number(erosion.strength).number(erosion.spacing).whole(erosion.octaves);

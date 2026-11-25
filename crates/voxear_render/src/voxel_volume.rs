@@ -18,6 +18,7 @@
 
 pub mod bricks;
 mod endless;
+pub(crate) use endless::generated_at;
 mod ground;
 
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
@@ -56,6 +57,34 @@ pub struct VoxelVolume {
     /// it is, and its stamps are left out.
     pub endless: bool,
     pub reach: f32,
+    /// The world generator an endless volume's ground is made by, in place
+    /// of its own ground's hills: none for those.
+    pub generator: Option<VoxelGenerator>,
+}
+
+/// A world generator an endless Voxel Volume's ground is made by, run on
+/// the GPU a voxel column at a time: the generator, how high its ground is
+/// at the volume's floor, in metres of its world, and where the volume's
+/// corner lies in its world, along X and Z.
+///
+/// Its height, climate and rock decide each column: grass where the ground
+/// would grow it (with the volume's own ground's grass and flowers), rock
+/// where it is steep or the generator says, sand along the shore and in hot
+/// dry places, snow below freezing. Its overhangs and caves, and its rivers,
+/// are left out (see `voxear_terrain::generate::GpuProgram`).
+#[derive(Clone, Debug)]
+pub struct VoxelGenerator {
+    pub world: Arc<voxear_terrain::generate::WorldGen>,
+    pub floor: f32,
+    pub at: [f32; 2],
+}
+
+impl PartialEq for VoxelGenerator {
+    fn eq(&self, other: &Self) -> bool {
+        (Arc::ptr_eq(&self.world, &other.world) || self.world.hash() == other.world.hash())
+            && self.floor == other.floor
+            && self.at == other.at
+    }
 }
 
 impl Default for VoxelVolume {
@@ -68,6 +97,7 @@ impl Default for VoxelVolume {
             stamps: Vec::new(),
             endless: false,
             reach: 64.0,
+            generator: None,
         }
     }
 }
@@ -83,6 +113,7 @@ impl PartialEq for VoxelVolume {
             && self.stamps == other.stamps
             && self.endless == other.endless
             && self.reach == other.reach
+            && self.generator == other.generator
     }
 }
 

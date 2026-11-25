@@ -2,6 +2,7 @@
 //! `generate::landmass` makes them, to the bit. Its values are a landmass's
 //! shape; its seed, scale and sea level are its generator's.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -215,6 +216,23 @@ impl Kind for Land {
 struct Ground(Arc<Landmass>);
 
 impl Kernel for Ground {
+    fn gpu(&self) -> Option<GpuStep> {
+        // Painted maps are read on the CPU alone.
+        let land = &self.0;
+        if land.painted.is_some() {
+            return None;
+        }
+        let mut step = GpuStep::new(GpuOp::Landmass).whole(land.seed).number(land.scale).number(land.sea_level);
+        step = step.number(land.height);
+        for field in [land.continents, land.ruggedness, land.ridges] {
+            step = step.number(field.size).whole(field.octaves);
+        }
+        step = step.number(land.sharpness).number(land.warp.size).number(land.warp.strength).number(land.crags);
+        step = step.number(land.erosion.strength).number(land.erosion.spacing).whole(land.erosion.octaves);
+        step = step.number(land.bumps);
+        Some(step.curve(&land.coast).curve(&land.inland).curve(&land.relief).curve(&land.peaks))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("landmass").text(&self.0.to_text());
         // Painted, it reads its world's maps: known by them, not by what they hold, which changes as they are painted.

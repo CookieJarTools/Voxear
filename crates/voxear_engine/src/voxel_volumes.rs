@@ -10,7 +10,12 @@
 //! ground = { height = 2.0, hills = 1.5, grass = 0.6, flowers = 0.2 }
 //!
 //! An endless one has `endless = true` and how far it reaches round the
-//! camera, `reach = 64.0`.
+//! camera, `reach = 64.0`. Its ground can be a world generator's, run on
+//! the GPU (see `voxear_render::VoxelGenerator`): `generator` names a
+//! `.worldgen` in the project, `generator_floor` how high the generator's
+//! ground is at the volume's floor (left out, a little under its ground at
+//! the volume's corner), and `generator_at` where the volume's corner lies
+//! in the generator's world.
 //!
 //! [[obj.voxel_volume.stamps]]
 //! model = "Plants/Oak.boxmodel"
@@ -23,7 +28,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelGround, VoxelStamp, VoxelVolume};
+use voxear_render::{VoxelGenerator, VoxelGround, VoxelStamp, VoxelVolume};
 
 use crate::content::Content;
 
@@ -44,6 +49,34 @@ pub struct VoxelVolumeData {
     /// as `reach` metres each way.
     pub endless: bool,
     pub reach: f32,
+    /// The world generator an endless volume's ground is made by, a
+    /// reference to a `.worldgen`: none for its own ground.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generator: Option<String>,
+    /// How high the generator's ground is at the volume's floor, in metres
+    /// of its world: none for [`auto_floor`] under its ground at the corner.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generator_floor: Option<f32>,
+    /// Where the volume's corner lies in the generator's world, in metres
+    /// along X and Z.
+    #[serde(skip_serializing_if = "is_origin")]
+    pub generator_at: [f32; 2],
+}
+
+fn is_origin(at: &[f32; 2]) -> bool {
+    *at == [0.0, 0.0]
+}
+
+/// How far under a generator's ground at its corner a volume's floor is
+/// unless it says, as a share of how tall the volume is: its ground stands
+/// two fifths of the way up, with room for hills over it and dales under.
+pub const AUTO_FLOOR: f32 = 0.4;
+
+/// The generator's height at a volume's floor where it does not say: its
+/// ground at the corner, less [`AUTO_FLOOR`] of how tall the volume is.
+pub fn auto_floor(world: &voxear_terrain::generate::WorldGen, data: &VoxelVolumeData) -> f32 {
+    let [x, z] = data.generator_at;
+    world.height_at(x, z) - data.size[1] * AUTO_FLOOR
 }
 
 impl Default for VoxelVolumeData {
@@ -58,6 +91,9 @@ impl Default for VoxelVolumeData {
             stamps: Vec::new(),
             endless: made.endless,
             reach: made.reach,
+            generator: None,
+            generator_floor: None,
+            generator_at: [0.0, 0.0],
         }
     }
 }
@@ -101,6 +137,18 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
             None => tracing::warn!("a Voxel Volume's stamp {} is not a box model in the project", stamp.model),
         }
     }
+    let generator = data.generator.as_deref().and_then(|reference| {
+        let found = content.world_gen(reference);
+        if found.is_none() {
+            tracing::warn!("a Voxel Volume's generator {reference} is not a world generator in the project");
+        }
+        found
+    });
+    let generator = generator.map(|world| VoxelGenerator {
+        floor: data.generator_floor.unwrap_or_else(|| auto_floor(&world, data)),
+        at: data.generator_at,
+        world,
+    });
     VoxelVolume {
         size: Vec3::from(data.size),
         voxels_per_metre: data.voxels_per_metre,
@@ -109,6 +157,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         stamps,
         endless: data.endless,
         reach: data.reach,
+        generator,
     }
 }
 
@@ -118,6 +167,23 @@ pub fn set(content: &mut Content, world: &mut World, entity: Entity, data: Voxel
     let volume = made(content, &data);
     world.insert(entity, volume);
     world.insert(entity, VoxelVolumeSource(data));
+}
+
+/// Makes again every volume whose ground world generator `guid` makes, as
+/// after the generator changed (read again from `content`).
+pub fn regenerate(content: &mut Content, world: &mut World, guid: voxear_assets::AssetGuid) {
+    let using: Vec<(Entity, VoxelVolumeData)> = world
+        .query_ref::<(Entity, &VoxelVolumeSource)>()
+        .into_iter()
+        .filter(|(_, source)| {
+            let reference = source.0.generator.as_deref();
+            reference.and_then(|r| content.parse(r).ok()).and_then(|parsed| parsed.guid()) == Some(guid)
+        })
+        .map(|(entity, source)| (entity, source.0.clone()))
+        .collect();
+    for (entity, data) in using {
+        set(content, world, entity, data);
+    }
 }
 
 /// Takes `entity`'s Voxel Volume away.
@@ -159,5 +225,17 @@ mod tests {
         assert!(short.ground_on, "a volume has its own ground unless it says not");
         assert_eq!(short.voxels_per_metre, 16);
         assert_eq!(short.stamps[0].scale, 1.0);
+        assert_eq!(short.generator, None, "a volume makes its own ground unless it names a generator");
+        let generated = VoxelVolumeData {
+            endless: true,
+            generator: Some("Worlds/Hills.worldgen".into()),
+            generator_floor: Some(40.0),
+            generator_at: [100.0, -20.0],
+            ..VoxelVolumeData::default()
+        };
+        let text = toml::to_string(&generated).unwrap();
+        assert!(text.contains("generator = \"Worlds/Hills.worldgen\""), "{text}");
+        assert_eq!(toml::from_str::<VoxelVolumeData>(&text).unwrap(), generated);
+        assert!(!toml::to_string(&data).unwrap().contains("generator"), "nothing written for none");
     }
 }

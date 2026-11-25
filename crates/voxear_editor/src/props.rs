@@ -653,6 +653,11 @@ pub enum Prop {
     VoxelRoughness,
     VoxelEndless,
     VoxelReach,
+    /// An endless volume's world generator, how high its ground is at the
+    /// volume's floor, and where the volume's corner lies in its world.
+    VoxelGenerator,
+    VoxelGeneratorFloor,
+    VoxelGeneratorAt,
     VoxelGround,
     VoxelGroundHeight,
     VoxelHills,
@@ -1276,6 +1281,9 @@ impl Prop {
             | Prop::VoxelRoughness
             | Prop::VoxelEndless
             | Prop::VoxelReach
+            | Prop::VoxelGenerator
+            | Prop::VoxelGeneratorFloor
+            | Prop::VoxelGeneratorAt
             | Prop::VoxelGround
             | Prop::VoxelGroundHeight
             | Prop::VoxelHills
@@ -1707,6 +1715,9 @@ impl Prop {
             Prop::VoxelRoughness => "roughness",
             Prop::VoxelEndless => "endless",
             Prop::VoxelReach => "reach",
+            Prop::VoxelGenerator => "generator",
+            Prop::VoxelGeneratorFloor => "generator_floor",
+            Prop::VoxelGeneratorAt => "generator_at",
             Prop::VoxelGround => "ground",
             Prop::VoxelGroundHeight => "ground_height",
             Prop::VoxelHills => "hills",
@@ -2379,21 +2390,21 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity);
             let ground = source.is_some_and(|source| source.0.ground_on);
             let endless = source.is_some_and(|source| source.0.endless);
+            let generated = endless && source.is_some_and(|source| source.0.generator.is_some());
             let mut props = vec![Prop::VoxelSize, Prop::VoxelsPerMetre, Prop::VoxelRoughness, Prop::VoxelEndless];
             if endless {
-                props.push(Prop::VoxelReach);
+                props.extend([Prop::VoxelReach, Prop::VoxelGenerator]);
+            }
+            if generated {
+                props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt]);
             }
             props.push(Prop::VoxelGround);
+            // A generator's ground has its own hills: the volume's ground gives it grass and flowers.
+            if ground && !generated {
+                props.extend([Prop::VoxelGroundHeight, Prop::VoxelHills, Prop::VoxelHillSpacing]);
+            }
             if ground {
-                props.extend([
-                    Prop::VoxelGroundHeight,
-                    Prop::VoxelHills,
-                    Prop::VoxelHillSpacing,
-                    Prop::VoxelGrass,
-                    Prop::VoxelGrassHeight,
-                    Prop::VoxelFlowers,
-                    Prop::VoxelSeed,
-                ]);
+                props.extend([Prop::VoxelGrass, Prop::VoxelGrassHeight, Prop::VoxelFlowers, Prop::VoxelSeed]);
             }
             // An endless volume's ground has no stamps yet.
             if !endless {
@@ -3024,6 +3035,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelRoughness => "Roughness",
         Prop::VoxelEndless => "Endless",
         Prop::VoxelReach => "Reach",
+        Prop::VoxelGenerator => "Generator",
+        Prop::VoxelGeneratorFloor => "Floor",
+        Prop::VoxelGeneratorAt => "Offset",
         Prop::VoxelGround => "Ground",
         Prop::VoxelGroundHeight => "Ground Height",
         Prop::VoxelHills => "Hills",
@@ -4202,6 +4216,22 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelStamps => {
             voxel_value(&world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?.0, prop)?
         }
+        Prop::VoxelGenerator => {
+            let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
+            let reference = source.0.generator.as_deref();
+            Value::Asset(guid_label(game, reference.and_then(|r| game.content.parse(r).ok()?.guid())))
+        }
+        // The floor the volume is made with: the one it says, or the one worked out from its generator.
+        Prop::VoxelGeneratorFloor => {
+            let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
+            let made =
+                world.get::<voxear_render::VoxelVolume>(entity).and_then(|v| v.generator.as_ref().map(|g| g.floor));
+            Value::Number(source.0.generator_floor.or(made).unwrap_or(0.0))
+        }
+        Prop::VoxelGeneratorAt => {
+            let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
+            Value::Vector(source.0.generator_at.to_vec())
+        }
         Prop::MistEmitting
         | Prop::MistWidth
         | Prop::MistDensity
@@ -4913,6 +4943,32 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.mesh = mesh)
         }
+        (Prop::VoxelGenerator, Pick::Asset(choice)) => {
+            // One of the project's world generators, or none for the volume's own ground.
+            use voxear_engine::voxel_volumes::VoxelVolumeSource;
+            let generator = match choice {
+                None => None,
+                Some(path) => {
+                    let guid = game.content.parse(path).ok().and_then(|reference| reference.guid());
+                    let kind = guid.and_then(|guid| game.content.db().get(guid)).map(|entry| entry.kind);
+                    if kind != Some(AssetKind::WorldGen) {
+                        return false;
+                    }
+                    Some(path.clone())
+                }
+            };
+            let world = &mut game.engine.world;
+            let Some(mut data) = world.get::<VoxelVolumeSource>(entity).map(|source| source.0.clone()) else {
+                return false;
+            };
+            // A generator of its own is laid where its ground stands: its floor worked out again.
+            if generator != data.generator {
+                data.generator_floor = None;
+            }
+            data.generator = generator;
+            voxear_engine::voxel_volumes::set(&mut game.content, &mut game.engine.world, entity, data);
+            true
+        }
         (Prop::ParticleGraph, Pick::Asset(choice)) => {
             // One of the project's particle graphs, not a shader or a sub-graph.
             let graph = match choice {
@@ -5280,6 +5336,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return found;
         }
         Prop::ParticleLightMap => return fields::assets_of(game, Some(AssetKind::Texture)),
+        Prop::VoxelGenerator => return fields::assets_of(game, Some(AssetKind::WorldGen)),
         Prop::ParticleGraph => {
             // None, then the project's particle graphs by their paths.
             let mut paths: Vec<String> =
@@ -6229,6 +6286,10 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         (Prop::VoxelRoughness, Value::Number(n)) => data.roughness = n.clamp(0.0, 1.0),
         (Prop::VoxelEndless, Value::Toggle(on)) => data.endless = on,
         (Prop::VoxelReach, Value::Number(n)) => data.reach = n.clamp(4.0, 512.0),
+        (Prop::VoxelGeneratorFloor, Value::Number(n)) => data.generator_floor = Some(n.clamp(-100_000.0, 100_000.0)),
+        (Prop::VoxelGeneratorAt, Value::Vector(v)) if v.len() == 2 => {
+            data.generator_at = [v[0], v[1]].map(|metres| metres.clamp(-1.0e7, 1.0e7));
+        }
         (Prop::VoxelGround, Value::Toggle(on)) => data.ground_on = on,
         (Prop::VoxelGroundHeight, Value::Number(n)) => ground.height = n.clamp(-1024.0, 1024.0),
         (Prop::VoxelHills, Value::Number(n)) => ground.hills = n.clamp(0.0, 1024.0),
@@ -6247,6 +6308,10 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.ground = data.ground_on.then_some(data.ground);
         volume.endless = data.endless;
         volume.reach = data.reach;
+        if let Some(generator) = &mut volume.generator {
+            generator.at = data.generator_at;
+            generator.floor = data.generator_floor.unwrap_or(generator.floor);
+        }
     })
 }
 
@@ -7030,6 +7095,18 @@ mod tests {
         let shown = props(&world, volume, &Part::VoxelVolume, &types);
         assert!(shown.contains(&Prop::VoxelReach) && !shown.contains(&Prop::VoxelStamps), "{shown:?}");
         assert!(world.get::<voxear_render::VoxelVolume>(volume).unwrap().endless);
+        // It may name a generator; with one, its floor and offset show, and its own hills do not.
+        assert!(shown.contains(&Prop::VoxelGenerator) && !shown.contains(&Prop::VoxelGeneratorFloor), "{shown:?}");
+        world.get_mut::<VoxelVolumeSource>(volume).unwrap().0.generator = Some("Worlds/Hills.worldgen".into());
+        let shown = props(&world, volume, &Part::VoxelVolume, &types);
+        assert!(shown.contains(&Prop::VoxelGeneratorFloor) && shown.contains(&Prop::VoxelGeneratorAt), "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelGround, Value::Toggle(true)));
+        let shown = props(&world, volume, &Part::VoxelVolume, &types);
+        assert!(!shown.contains(&Prop::VoxelHills) && shown.contains(&Prop::VoxelGrass), "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelGeneratorFloor, Value::Number(42.0)));
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelGeneratorAt, Value::Vector(vec![10.0, -5.0])));
+        let data = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
+        assert_eq!((data.generator_floor, data.generator_at), (Some(42.0), [10.0, -5.0]));
     }
 
     /// A Camera shows its projection, then its field of view while it is

@@ -4524,7 +4524,21 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     Reach, in a wrapping window of 4 m columns, 16 a frame, the nearest first.
   - The ground is the Voxel Volume's own, to the voxel.
   - Measured at reach 64 m: 100 MB, made in 0.8 s; flying at 10 m/s, 0.8 ms on one frame in eight.
-  - Not yet: generator graphs compiled to the GPU, stamps and trees in endless ground, coarser rings.
+- **Stage 2, generator graphs on the GPU (2026-11-25).**
+  - An endless Voxel Volume takes its ground from a project's world generator: **Generator** in the Inspector (a
+    pick of `.worldgen` assets), `generator` in the scene, set by `vox editor call field.set`, with its Floor and
+    Offset in the generator's world.
+  - The graph's compiled steps become words a generic shader runs a voxel column at a time
+    (`generate/gpu.rs`, `shaders/generator.slang`). Noise, Math, Curve, Warp, Gullies, Clamp, Blend, Terrace, Height
+    Mask, Cells, Falloff, Landmass and Climate run there: the five flat starters and plain landmasses.
+  - Each column's ground is laid as a world of blocks with no biomes lays it: grass where it grows, rock on steep
+    ground, sand by the sea and in hot dry places, snow below freezing, each patterned.
+  - Its heights are the CPU's to a millimetre at 98–100% of places (a test of six generators).
+  - A ray starting on the corner of two sectors no longer loses a quarter of the view.
+  - Measured at reach 64 m: the window made in 0.52 s; flying at 10 m/s, 0.083 ms a column against 0.045 ms for
+    the volume's own ground.
+  - Not yet: rivers, water, overhangs and caves on the GPU; Plateaus, Peaks, Spires and the other tall nodes;
+    stamps and trees in endless ground; coarser rings.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

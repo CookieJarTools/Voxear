@@ -14,6 +14,7 @@
 //! - **Value**: a number of its cell's own, the same all over the cell.
 //!   Each cell is a step of its own height: mesas, fields, paving.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, node_seed};
@@ -99,6 +100,11 @@ struct Scatter {
 }
 
 impl Kernel for Scatter {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Cells).whole(self.what as u32).number(self.size).number(self.jitter);
+        Some(step.whole(self.seed))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("cells").whole(self.what as u32).number(self.size).number(self.jitter).whole(self.seed);
     }

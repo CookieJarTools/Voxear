@@ -59,6 +59,7 @@
 //! It is sums, products, square roots and `floor`, so every machine makes
 //! the same rivers.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -1543,6 +1544,17 @@ struct Ran {
 }
 
 impl Kernel for Ran {
+    fn gpu(&self) -> Option<GpuStep> {
+        // The rivers are found over a grid of points round each place, on the CPU alone: on the GPU the ground
+        // runs on as it was, with no water.
+        let step = match usize::from(self.what) {
+            Rivers::HEIGHT => GpuStep::new(GpuOp::Copy).whole(2),
+            Rivers::WATER => GpuStep::new(GpuOp::Constant).number(NO_WATER),
+            _ => GpuStep::new(GpuOp::Constant).number(0.0),
+        };
+        Some(step.leaving_out("rivers"))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("rivers ran").whole(self.finder.id as u32).whole((self.finder.id >> 32) as u32);
         key.whole(u32::from(self.what));

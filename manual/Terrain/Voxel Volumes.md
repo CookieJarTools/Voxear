@@ -20,6 +20,42 @@ With **Endless** on, the volume's own ground goes on without end. It is made on 
 
 A reach of 64 m at 16 voxels a metre keeps about 100 MB on the GPU. The ground round a camera standing still is made in under a second. Flying at 10 m/s, new columns 4 m a side are made on about one frame in eight, for about 0.8 ms of the GPU's time each.
 
+## Ground from a world generator
+
+An endless volume can take its ground from one of the project's [[Generator Graphs|world generators]]: pick it as its **Generator**. The generator's graph runs on the GPU, a voxel column at a time, and the volume shows that graph's land in small voxels, its hills, valleys and gullies to the voxel. The generator's ground at a place is the CPU's to within a millimetre or so.
+
+- **Floor**: how high the generator's ground is at the volume's floor, in metres of the generator's world. Until it is set, it is worked out from the generator: the ground at the volume's corner stands two fifths of the way up the volume.
+- **Offset**: where the volume's corner lies in the generator's world, in metres along X and Z.
+
+Each column's ground is what a world of blocks with no biomes of its own would lay there, from the generator's height and climate:
+
+- grass where the ground would grow it, with the volume's **Grass** and **Flowers** on it;
+- rock where the ground is steeper than 45°, or where the generator's Rock says;
+- sand along the shore and in hot dry places, gravel under the sea;
+- snow where it is below freezing.
+
+Each has a pattern of its own in a few shades, as a block's face has. The volume's **Ground Height**, **Hills** and **Hill Spacing** are not used then: the hills are the generator's.
+
+Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies, Clamp, Blend, Terrace, Height Mask, Cells, Falloff, Landmass and Climate, which covers the Battlefield Plains, Rolling Hills, Alpine, Archipelago and Canyons starters. Some are left out there:
+
+- **Rivers** pass the ground through without cutting rivers into it, and there is no water.
+- A generator's **Volume** (overhangs, caves, arches) is left out: the ground is its height made solid.
+- A graph with a node that cannot run on the GPU (Plateaus, Peaks, Raised Land, Spires, Fins, Chasms, Slope Mask, a painted map) makes the volume's own ground instead, and the Console names the node.
+
+Running the graph about doubles what making a column costs: with Rolling Hills, about 0.08 ms of the GPU's time a column against 0.045 ms for the volume's own ground, at a reach of 64 m on an RTX 3070.
+
+`vox editor call field.set` sets the generator as the Inspector does, by its path: `{"obj": "Ground", "component": "voxel_volume", "field": "generator", "value": "Worlds/Hills.worldgen"}`, and `generator_floor` and `generator_at` the same way. In the scene:
+
+```toml
+[obj.voxel_volume]
+size = [16.0, 48.0, 16.0]
+endless = true
+reach = 64.0
+generator = "Worlds/Hills.worldgen"
+generator_floor = 40.0
+generator_at = [1200.0, -300.0]
+```
+
 ## Its own ground
 
 With **Ground** on, the volume has rolling ground of its own voxels, grass on it and flowers here and there:
@@ -62,4 +98,5 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - Its voxels cast no shadow onto meshes, blocks or terrain.
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
+- An endless one made by a generator has no rivers, water, caves or overhangs yet.
 - Its voxels can't be changed one by one from the editor or from scripts yet.

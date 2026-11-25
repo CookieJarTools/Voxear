@@ -451,11 +451,87 @@ A Voxel Volume with **Endless** on has ground without end. It is made on the GPU
 
 Not done in stage 2:
 
-- Generator graphs are not compiled to the GPU yet. The endless ground is the Voxel Volume's own (rolling hills,
-  grass and flowers).
+- Generator graphs were not compiled to the GPU yet: done since, below.
 - There are no stamps, trees or structures in endless ground (stage 3), and no coarser rings past the reach
   (stage 5).
 - Columns are not kept on the CPU for collision (stage 7).
+
+## Stage 2, generator graphs on the GPU (2026-11-25)
+
+An endless Voxel Volume can be pointed at a project's world generator (**Generator**, a typed pick of
+`.worldgen` assets, `generator` in the scene). Its ground is then that generator's land, its graph run on the GPU a
+voxel column at a time.
+
+- **How a graph runs there.** A graph is already compiled into steps, each a kernel filling one row of numbers from
+  others (`generate/compile.rs`). Each kernel now also says how it runs on the GPU (`Kernel::gpu`): one of twenty
+  operations and its numbers, seeds and curves worked out on the CPU. The height's, climate's and rock's programs
+  are joined into one list of words, the climate's reading the height made first (`generate/gpu.rs`), and a
+  generic shader runs it (`shaders/generator.slang`). Interpreted rather than compiled to a shader of its own, a
+  changed graph needs no pipeline built, and the cost per column is the steps' own.
+- **Slots.** Each step's row is kept in a slot, used again once nothing after reads it. The starters' 65–99 steps
+  run in 12–16 slots of 48.
+- **What runs per column, and what per voxel.** Everything a graph's height, climate and rock read runs per voxel
+  column: Noise, Math, Curve, Warp (its moved places), Gullies (its four places a step off), Clamp, Blend, Terrace,
+  Height Mask, Cells, Falloff, Landmass (warp, fields, ridges, curves, its own gullies and bumps) and Climate. That
+  covers the Battlefield Plains, Rolling Hills, Alpine, Archipelago and Canyons starters, and the landmass a plain
+  generator is. Per voxel there is nothing yet:
+  - A **Volume** (overhangs, caves, arches) is asked a cell at a time on the CPU, with rows carried up each column
+    and spans for where ground stands apart; the GPU's ground is the height made solid. Its cells' program is made
+    of the same kind of steps, so the next step is to run it per voxel in the bricks pass, with the carried rows
+    from the columns pass.
+  - A **Rivers** node finds its rivers over a grid of points round each place, with their drainage, on the CPU; on
+    the GPU it passes its ground through. Kept on the CPU, rivers could be laid into the columns as a height to cut
+    to, as streamed worlds lay them.
+  - **Plateaus, Peaks, Raised Land, Spires, Fins, Chasms, Slope Mask, Roof** and **painted maps** are not ported
+    yet. A graph with one makes the volume's own ground, and a warning names the node.
+- **Blocks into voxels.** Each column's ground is what a world of blocks with no biomes lays, from the generator's
+  height, climate and rock, in a pass of its own after the heights (`voxelWorldTops`): grass and its dirt where the
+  ground grows grass, with the volume's grass and flowers on it; rock where the ground is steeper than 45° (measured
+  four voxels across) or the Rock mask says; sand within a metre of the sea and where it is hot and dry; gravel under
+  the sea; snow below freezing. Each takes its shades in a pattern of two voxels, as a block's face is patterned.
+  Heights are kept with a border of four voxels round each column, so its slope and the flowers standing on the
+  next column are found without asking the graph again.
+- **The same ground as the CPU's.** A test runs six generators at 8,192 places on the GPU and the CPU
+  (`a_generators_ground_and_climate_on_the_gpu_are_the_cpus`):
+
+  | Generator | Heights | Same to the bit | Within 1 mm (or 1/100,000) | Furthest apart |
+  |---|---|---|---|---|
+  | Rolling Hills | 3–111 m | 385 | all | 0.2 mm |
+  | Battlefield Plains | 2–35 m | 448 | all | 0.07 mm |
+  | Alpine | −170–849 m | 185 | 99.5% | 3.4 mm |
+  | Archipelago | −45–120 m | 672 | all | 0.6 mm |
+  | Canyons | 26–220 m | 5,456 | 98.7% | 11 mm |
+  | Alpine landmass | −233–998 m | 185 | 97.8% | 0.60 m |
+
+  The GPU rounds sums of products its own way, so few heights are the same to the bit. Canyons' terraces stretch a
+  rounding into a centimetre on their risers. A plain landmass's own gullies are not joined, so each octave turns
+  where the one before has a floor and its ground steps there: a rounding either side of a floor lands on the other
+  side of a step. Temperature and humidity agree to 0.01 °C and 0.001.
+- **A bug found on the way.** A ray starting exactly on the corner of two sectors, going back along both, went back
+  and forth between them without moving on, and a quarter of the view was empty: a camera at 8 m over a window
+  whose corner is at −40 m is on such a corner. A ray going back along an axis now takes the cell below a boundary
+  it lies on (`voxelTrace`).
+
+- **Measured** (reach 64 m, 16 voxels a metre, 1920×1080, the GPU shared at about 28% by another session), against
+  the same volume with its own ground:
+
+  | | Its own ground | Rolling Hills |
+  |---|---|---|
+  | Window made before the frames | 0.48 s | 0.52 s |
+  | On the GPU | 102 MB | 103 MB |
+  | Flying at 10 m/s: frames making columns | 66 of 540 | 66 of 540 |
+  | Making, median (least–most) | 0.72 ms (0.07–1.29) | 1.33 ms (0.22–2.88) |
+  | A column, at 16 a frame | 0.045 ms | 0.083 ms |
+  | Still view, least of 60: frame | 5.8 ms | 9.2 ms |
+  | Depth / opaque (voxels) | 2.3 / 2.6 ms | 3.1 / 4.8 ms |
+
+  Running the graph about doubles a column's making: 78 steps of noise, warp and gullies for each of its 5,184
+  voxel columns. The still views differ in what they show, a hillside in the sun against level meadow, more than
+  in how the ground was made: the drawing passes read the same bricks either way.
+
+![An endless volume made by the Rolling Hills generator](../images/small-voxels/generated-hills.webp)
+
+![Rock on an Alpine mountainside](../images/small-voxels/generated-mountainside.webp)
 
 ## Kept elsewhere
 

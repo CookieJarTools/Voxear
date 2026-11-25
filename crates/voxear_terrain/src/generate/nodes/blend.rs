@@ -2,6 +2,7 @@
 //! of the two between. Each is what is wired in, or the node's own value
 //! with no wire.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -89,6 +90,10 @@ impl Kind for Blend {
 struct Mixed;
 
 impl Kernel for Mixed {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Blend))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("blend exact");
     }

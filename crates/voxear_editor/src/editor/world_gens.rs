@@ -22,6 +22,8 @@ impl Editor {
         {
             crate::terrain_props::regenerate(&mut self.game, guid);
             crate::block_props::regenerate(&mut self.game, guid);
+            let game = &mut self.game;
+            voxear_engine::voxel_volumes::regenerate(&mut game.content, &mut game.engine.world, guid);
         }
     }
 }

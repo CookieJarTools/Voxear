@@ -3,6 +3,7 @@
 //! wired in (metres, for a height), so a sea bed held level or a plateau
 //! cut flat has no crease round it.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -123,6 +124,10 @@ impl Held {
 }
 
 impl Kernel for Held {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Clamp).number(self.min).number(self.max).number(self.smooth))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("clamp").number(self.min).number(self.max).number(self.smooth);
     }

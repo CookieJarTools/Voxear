@@ -2,6 +2,7 @@
 //! least to High where it is most. Each node's noise is its own, from its
 //! generator's seed and the node's number.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, node_seed};
@@ -100,6 +101,12 @@ struct Fractal {
 }
 
 impl Kernel for Fractal {
+    fn gpu(&self) -> Option<GpuStep> {
+        let style = NoiseStyle::ALL.iter().position(|&style| style == self.style).unwrap_or(0) as u32;
+        let step = GpuStep::new(GpuOp::Noise).whole(style).number(self.size).whole(self.octaves).whole(self.seed);
+        Some(step.number(self.low).number(self.span))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("fractal").text(self.style.name()).number(self.size).whole(self.octaves).whole(self.seed);
         key.number(self.low).number(self.span);

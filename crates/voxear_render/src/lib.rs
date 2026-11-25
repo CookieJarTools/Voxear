@@ -170,8 +170,8 @@ pub use lightmaps::{
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
 pub use voxel_volume::{
-    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelGround, VoxelStamp,
-    VoxelVolume,
+    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelGenerator,
+    VoxelGround, VoxelStamp, VoxelVolume,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
@@ -1046,6 +1046,19 @@ impl Renderer {
     /// their own; the last made of it is drawn until they are.
     pub fn voxel_volumes_making(&self) -> bool {
         self.voxels.making()
+    }
+
+    /// What world generator `world` makes at each of `places`, `[x, z]` in
+    /// metres in its world, run on the GPU as an endless Voxel Volume runs
+    /// it: the ground's height in metres, how warm it is in °C, how wet
+    /// from 0 to 1, and its rock mask. An error where its graph cannot run
+    /// on the GPU.
+    pub fn generated_on_gpu(
+        &self,
+        world: &voxear_terrain::generate::WorldGen,
+        places: &[[f32; 2]],
+    ) -> Result<Vec<[f32; 4]>> {
+        voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, places)
     }
 
     /// Makes every Voxel Volume in `world` and brings it up, waiting at most

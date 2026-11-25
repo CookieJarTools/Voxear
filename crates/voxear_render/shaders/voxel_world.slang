@@ -3,17 +3,24 @@
 // a slot of the window by where it is, wrapping. As the camera moves, the columns coming into the window are made,
 // the nearest first and a few each frame, over the columns that left.
 //
-// Each column made goes through four passes, as the small-voxels research's generator did:
+// Each column made goes through five passes, as the small-voxels research's generator did:
 //
-// 1. voxelWorldColumns: the ground's height in each of its voxel columns, with a border of one, and its grass.
-// 2. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass and flowers could reach.
-// 3. voxelWorldBricks: one group a listed brick, a thread a voxel, works out each voxel, and keeps the brick in its
+// 1. voxelWorldColumns: the ground's height in each of its voxel columns, with a border of four, and its climate.
+// 2. voxelWorldTops: what the ground is at each column, with a border of two (grass, rock, sand, snow or gravel),
+//    and its grass.
+// 3. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass and flowers could reach.
+// 4. voxelWorldBricks: one group a listed brick, a thread a voxel, works out each voxel, and keeps the brick in its
 //    job's own list if anything is in it, its materials in the column's slot in the order of its bits.
-// 4. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
+// 5. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
 //    of its bits, and writes the sector's entry: where it is in the world, its bits and where its bricks start.
 //
 // The ground is the one a Voxel Volume's own ground is (src/voxel_volume/ground.rs), to the voxel: the same hashes,
-// noise and rules, worked out from the voxel's place in the world.
+// noise and rules, worked out from the voxel's place in the world. Or, for a volume made by a world generator, the
+// generator's height, climate and rock, its graph run a voxel column at a time (generator.slang): grass where the
+// ground would grow it, rock on steep ground and where the generator says, sand along the shore and in hot dry
+// places, snow where it is below freezing, as a world of blocks with no biomes of its own lays them.
+
+#include "generator.slang"
 
 static const uint MAX_JOBS = 16;
 static const uint ENTRY_WORDS = 28;
@@ -43,6 +50,9 @@ struct WorldMake
     uint* loose;
     uint* counters;
     uint* candidates;
+    // The generator's program and what the columns pass found of each column's climate, where there is one.
+    uint* program;
+    uint* grounds;
     float height;
     float hills;
     float hillSpacing;
@@ -59,8 +69,15 @@ struct WorldMake
     uint materialRoom;
     uint jobCount;
     uint candidateRoom;
+    // How many words the program has (none for the volume's own ground), the slots of its height, warmth, wetness
+    // and rock, the generator's height at the volume's floor, where the volume's corner is in its world, and its sea.
+    uint programWords;
+    uint4 outs;
+    float floor;
+    float atX;
+    float atZ;
+    float seaLevel;
     uint pad0;
-    uint pad1;
     WorldJob jobs[MAX_JOBS];
 };
 
@@ -127,9 +144,101 @@ int heightAt(WorldMake* make, int x, int z)
     return int(floor(metres / v));
 }
 
+// Each column's height is kept with a border of four round the column made, so its slope and the flowers from the
+// columns beside it are found; what it is, and its grass, with a border of two.
+static const int BORDER = 4;
+static const int SIDE = 64 + 2 * BORDER;
+static const int TOP_BORDER = 2;
+static const int TOPS = 64 + 2 * TOP_BORDER;
+
+// What the ground is at a column, as tops pack it.
+static const uint GROUND_GRASS = 0;
+static const uint GROUND_ROCK = 1;
+static const uint GROUND_SAND = 2;
+static const uint GROUND_SNOW = 3;
+static const uint GROUND_GRAVEL = 4;
+
+int heightOf(WorldMake* make, uint job, int x, int z)
+{
+    return make->heights[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
+}
+
+uint columnOf(WorldMake* make, uint job, int x, int z)
+{
+    return make->columns[job * TOPS * TOPS + uint((z + TOP_BORDER) * TOPS + x + TOP_BORDER)];
+}
+
+uint topOf(WorldMake* make, uint job, int x, int z)
+{
+    return (columnOf(make, job, x, z) >> 16) & 255u;
+}
+
+// The ground's height and climate at a voxel column from the generator, at its middle in the generator's world.
+Generated generatedAt(WorldMake* make, int x, int z)
+{
+    float v = make->voxel;
+    float gx = (float(x) + 0.5) * v + make->atX;
+    float gz = (float(z) + 0.5) * v + make->atZ;
+    return runGenerator(make->program, make->programWords, make->outs, gx, gz);
+}
+
+// What the ground is at a column of the generator's: its height and how steep it is round it, and its climate.
+uint groundOf(WorldMake* make, uint job, int x, int z)
+{
+    int h = heightOf(make, job, x, z);
+    int across = max(abs(heightOf(make, job, x + 2, z) - heightOf(make, job, x - 2, z)), abs(heightOf(make, job, x, z + 2) - heightOf(make, job, x, z - 2)));
+    float slope = float(across) / 4.0;
+    uint climate = make->grounds[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
+    float warmth = float(climate & 255u) - 128.0;
+    float wetness = float((climate >> 8) & 255u) / 255.0;
+    bool rock = ((climate >> 16) & 1u) != 0;
+    float above = float(h) * make->voxel + make->floor - make->seaLevel;
+    if (rock || slope > 1.0)
+    {
+        return GROUND_ROCK;
+    }
+    if (above < -0.5)
+    {
+        return GROUND_GRAVEL;
+    }
+    if (above < 1.0)
+    {
+        return GROUND_SAND;
+    }
+    if (warmth < 0.0)
+    {
+        return GROUND_SNOW;
+    }
+    if (wetness < 0.12 && warmth > 18.0)
+    {
+        return GROUND_SAND;
+    }
+    return GROUND_GRASS;
+}
+
+// The voxel of ground `top` is at `p`, `under` voxels under its column's top: its shades in a pattern of two
+// voxels across, as a block's face has a pattern. Grass and its dirt are the volume's own ground's colours.
+uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
+{
+    float grain = unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 31));
+    switch (top)
+    {
+    case GROUND_ROCK:
+        return grain < 0.5 ? 15u : (grain < 0.8 ? 14u : 16u);
+    case GROUND_SAND:
+        return grain < 0.65 ? 17u : 18u;
+    case GROUND_SNOW:
+        return under <= 2 ? (grain < 0.75 ? 19u : 20u) : 15u;
+    case GROUND_GRAVEL:
+        return grain < 0.5 ? 21u : 22u;
+    default:
+        return under == 0 ? 1u : 2u;
+    }
+}
+
 // The voxel of a flower at `p` (in the world's voxels), or 0: each flower in a cell half a metre across, as
 // VoxelGround::flowers_into places them; a voxel looks in its own cell and those round it.
-uint flowerAt(WorldMake* make, int3 p)
+uint flowerAt(WorldMake* make, uint job, int3 p)
 {
     if (make->flowers <= 0.0)
     {
@@ -156,7 +265,13 @@ uint flowerAt(WorldMake* make, int3 p)
             float az = (float(cz) + unit(hashOf(cx, 2, cz, seed))) * cell;
             int x = int(floor(ax / v));
             int z = int(floor(az / v));
-            int base = heightAt(make, x, z);
+            // No flower reaches further than two voxels from its stem, which stands on its column's grass.
+            int2 foot = int2(x, z) - make->jobs[job].column * 64;
+            if (abs(p.x - x) > 2 || abs(p.z - z) > 2 || topOf(make, job, foot.x, foot.y) != GROUND_GRASS)
+            {
+                continue;
+            }
+            int base = heightOf(make, job, foot.x, foot.y);
             int stem = int(max((0.3 + unit(hashOf(cx, 5, cz, seed)) * 0.4) / v, 2.0));
             int top = base + stem;
             int ox = p.x - x;
@@ -215,12 +330,6 @@ uint flowerAt(WorldMake* make, int3 p)
     return found;
 }
 
-static const int SIDE = 66;
-
-int heightOf(WorldMake* make, uint job, int x, int z)
-{
-    return make->heights[job * SIDE * SIDE + uint((z + 1) * SIDE + x + 1)];
-}
 
 int lowOf(WorldMake* make, uint job, int x, int z)
 {
@@ -239,25 +348,48 @@ void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
     {
         return;
     }
-    int lx = int(id.x % SIDE) - 1;
-    int lz = int(id.x / SIDE) - 1;
     int2 corner = make->jobs[job].column * 64;
-    int x = corner.x + lx;
-    int z = corner.y + lz;
-    make->heights[job * SIDE * SIDE + id.x] = heightAt(make, x, z);
-    if (lx < 0 || lz < 0 || lx >= 64 || lz >= 64)
+    int x = corner.x + int(id.x % SIDE) - BORDER;
+    int z = corner.y + int(id.x / SIDE) - BORDER;
+    if (make->programWords == 0)
+    {
+        make->heights[job * SIDE * SIDE + id.x] = heightAt(make, x, z);
+        make->grounds[job * SIDE * SIDE + id.x] = 128u + (128u << 8);
+        return;
+    }
+    Generated made = generatedAt(make, x, z);
+    make->heights[job * SIDE * SIDE + id.x] = int(floor((made.height - make->floor) / make->voxel));
+    uint warmth = uint(clamp(round(made.warmth) + 128.0, 0.0, 255.0));
+    uint wetness = uint(clamp(made.wetness * 255.0, 0.0, 255.0));
+    uint rock = made.rock > 0.5 ? 1u : 0u;
+    make->grounds[job * SIDE * SIDE + id.x] = warmth | (wetness << 8) | (rock << 16);
+}
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldTops(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint job = id.y;
+    if (job >= make->jobCount || id.x >= uint(TOPS * TOPS))
     {
         return;
     }
+    int lx = int(id.x % TOPS) - TOP_BORDER;
+    int lz = int(id.x / TOPS) - TOP_BORDER;
+    int2 corner = make->jobs[job].column * 64;
+    int x = corner.x + lx;
+    int z = corner.y + lz;
+    uint top = make->programWords == 0 ? GROUND_GRASS : groundOf(make, job, lx, lz);
     uint seed = make->seed + 21;
     uint r = hashOf(x, 0, z, seed);
     uint blade = 0;
-    if (unit(r) < make->grass)
+    if (top == GROUND_GRASS && unit(r) < make->grass)
     {
         float tallest = max(max(make->grassHeight, 0.0) / make->voxel, 1.0);
         blade = 1 + uint(unit(hashOf(x, 1, z, seed)) * tallest);
     }
-    make->columns[job * 4096 + uint(lz * 64 + lx)] = blade | ((3 + (r & 3u)) << 8);
+    make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16);
 }
 
 uint packCandidate(uint job, uint bx, uint bz, uint row)
@@ -286,7 +418,7 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
             int cx = bx * 8 + x;
             int cz = bz * 8 + z;
             lowest = min(lowest, lowOf(make, job, cx, cz));
-            highest = max(highest, heightOf(make, job, cx, cz) + int(make->columns[job * 4096 + uint(cz * 64 + cx)] & 255u));
+            highest = max(highest, heightOf(make, job, cx, cz) + int(columnOf(make, job, cx, cz) & 255u));
         }
     }
     // Flowers stand over the grass: their stems and heads, at most.
@@ -360,17 +492,17 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     int2 corner = make->jobs[job].column * 64;
     int tall = int(make->tall) * 64;
     int h = min(heightOf(make, job, px, pz), tall - 1);
-    uint column = make->columns[job * 4096 + uint(pz * 64 + px)];
+    uint column = columnOf(make, job, px, pz);
     int blade = int(column & 255u);
     uint m = 0;
     if (h >= 0 && y <= h && y >= max(lowOf(make, job, px, pz), 0))
     {
-        m = y == h ? 1u : 2u;
+        m = groundVoxel(make, (column >> 16) & 255u, h - y, int3(corner.x + px, y, corner.y + pz));
     }
     else if (y > h)
     {
         // Flowers over the grass, as they are set after it.
-        m = flowerAt(make, int3(corner.x + px, y, corner.y + pz));
+        m = flowerAt(make, job, int3(corner.x + px, y, corner.y + pz));
         if (m == 0 && h >= 0 && y <= min(h + blade, tall - 1))
         {
             m = (y == h + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
@@ -545,4 +677,26 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             to[k] = from[k];
         }
     }
+}
+
+// The generator run at places alone, for checking it against the CPU's: each of `candidateRoom` places, as the bits
+// of its x and z in metres in the generator's world, read from `candidates`, and what is made there written to
+// `loose` as the bits of its height, warmth, wetness and rock.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    if (id.x >= make->candidateRoom)
+    {
+        return;
+    }
+    float x = asfloat(make->candidates[id.x * 2]);
+    float z = asfloat(make->candidates[id.x * 2 + 1]);
+    Generated made = runGenerator(make->program, make->programWords, make->outs, x, z);
+    uint* out = make->loose + id.x * 4;
+    out[0] = asuint(made.height);
+    out[1] = asuint(made.warmth);
+    out[2] = asuint(made.wetness);
+    out[3] = asuint(made.rock);
 }

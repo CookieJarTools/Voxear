@@ -3,6 +3,7 @@
 //! other, as a terrain layer's mask does. It says where something belongs
 //! by how high the ground is: snow above a line, sand along a shore.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, around};
@@ -87,6 +88,10 @@ struct Between {
 }
 
 impl Kernel for Between {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::HeightMask).number(self.min).number(self.max).number(self.feather))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("height mask").number(self.min).number(self.max).number(self.feather);
     }

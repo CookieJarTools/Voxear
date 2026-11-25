@@ -3,6 +3,7 @@
 //! what comes out, passing through its keys smoothly and never past them
 //! (see `landmass::smooth`).
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 use voxear_core::curve::Curve;
 
@@ -88,6 +89,10 @@ struct Through {
 }
 
 impl Kernel for Through {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Curve).number(self.low).number(self.span).curve(&self.curve))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("curve").number(self.low).number(self.span).whole(self.curve.keys().len() as u32);
         for [place, value] in self.curve.keys() {

@@ -9,6 +9,10 @@ use crate::generate::{
     graph::NodeId,
     landmass::{Climate, Spot},
 };
+use crate::generate::{
+    gpu::{GpuOp, GpuStep},
+    landmass::seed_of,
+};
 
 const VALUES: &[ValueSpec] = &[
     ValueSpec::number("temperature", "Temperature", -100.0, f32::MAX, "°C"),
@@ -109,6 +113,18 @@ struct Warmth {
 }
 
 impl Kernel for Warmth {
+    fn gpu(&self) -> Option<GpuStep> {
+        let World { seed, scale, sea_level } = self.world;
+        let size = (self.climate.size * scale.max(0.01)).max(1.0);
+        let step = GpuStep::new(GpuOp::Warmth).number(size).whole(seed_of(seed, 8));
+        Some(
+            step.number(self.climate.temperature)
+                .number(self.climate.temperature_range)
+                .number(self.climate.cooling)
+                .number(sea_level),
+        )
+    }
+
     fn key(&self, key: &mut Key) {
         key_of(key, "warmth", &self.climate, self.world);
     }
@@ -130,6 +146,13 @@ struct Wetness {
 }
 
 impl Kernel for Wetness {
+    fn gpu(&self) -> Option<GpuStep> {
+        let World { seed, scale, .. } = self.world;
+        let size = (self.climate.size * scale.max(0.01)).max(1.0);
+        let step = GpuStep::new(GpuOp::Wetness).number(size).whole(seed_of(seed, 9));
+        Some(step.number(self.climate.humidity).number(self.climate.humidity_range))
+    }
+
     fn key(&self, key: &mut Key) {
         key_of(key, "wetness", &self.climate, self.world);
     }

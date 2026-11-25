@@ -5,6 +5,7 @@
 //! few places round each one, along x and z.
 
 use super::STEEPEST;
+use crate::generate::gpu::{GpuOp, GpuStep};
 use crate::{
     generate::compile::{Compiler, Kernel, Key, Places, V},
     layers::smoothstep,
@@ -30,6 +31,10 @@ fn shifted(cx: &mut Compiler, row: V, by: f32) -> V {
 struct Shift(f32);
 
 impl Kernel for Shift {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Shift).number(self.0))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("shift").number(self.0);
     }

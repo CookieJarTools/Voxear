@@ -7,6 +7,7 @@
 //! at 0, 20 and 40. Add something to the height before it and take it away
 //! after to move them.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -86,6 +87,10 @@ struct Steps {
 }
 
 impl Kernel for Steps {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Terrace).number(self.step).number(self.riser))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("terrace").number(self.step).number(self.riser);
     }

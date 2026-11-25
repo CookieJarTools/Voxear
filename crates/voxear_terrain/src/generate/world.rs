@@ -512,6 +512,11 @@ impl WorldGen {
         self
     }
 
+    /// Its graph compiled.
+    pub(crate) fn compiled(&self) -> &compile::Compiled {
+        &self.made.compiled
+    }
+
     pub fn seed(&self) -> u32 {
         self.seed
     }

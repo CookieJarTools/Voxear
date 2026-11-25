@@ -32,6 +32,7 @@ use std::{collections::HashMap, fmt, sync::Arc};
 use super::{
     caves::Network,
     eval::{Given, MOST_INPUTS, Program, Step},
+    gpu::{GpuOp, GpuStep},
     graph::{Graph, NodeId},
     nodes::{Output, PortKind},
 };
@@ -88,6 +89,12 @@ pub(crate) trait Kernel: fmt::Debug + Send + Sync {
     /// program makes the input it passes through and not the other, nor
     /// anything only the other reads (see `Program::run`).
     fn passes(&self) -> Option<Pass> {
+        None
+    }
+
+    /// How it runs on the GPU, a column at a time (see `gpu`): none where it
+    /// cannot.
+    fn gpu(&self) -> Option<super::gpu::GpuStep> {
         None
     }
 }
@@ -840,6 +847,10 @@ impl Kernel for Constant {
     fn run(&self, _: &[&[f32]], out: &mut [f32]) {
         out.fill(self.0);
     }
+
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Constant).number(self.0))
+    }
 }
 
 /// How warm it is with no climate wired in: 15 °C at nothing high, cooling
@@ -856,6 +867,10 @@ impl Kernel for Mild {
         for (out, height) in out.iter_mut().zip(inputs[0]) {
             *out = 15.0 - 6.5 * height / 1000.0;
         }
+    }
+
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Mild))
     }
 }
 

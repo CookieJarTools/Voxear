@@ -7,9 +7,14 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
-    Renderer, RendererSettings, Sky, VoxelGround, VoxelStamp, VoxelVolume, Voxels,
+    Renderer, RendererSettings, Sky, VoxelGenerator, VoxelGround, VoxelStamp, VoxelVolume, Voxels,
 };
 use voxear_scene::Transform;
+use voxear_terrain::generate::{
+    Landmass, Preset, WorldGen,
+    nodes::{Output, Rivers},
+    starters,
+};
 
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 360;
@@ -236,4 +241,218 @@ fn an_endless_volume_makes_its_ground_round_the_camera_wherever_it_goes() {
     let all = (HEIGHT / 8 * WIDTH / 8) as usize;
     assert!(sky * 100 < all, "ground under all of the view: {sky} of {all} pixels are sky");
     assert!(renderer.stats().voxels.bytes > 0);
+}
+
+/// `world` with its Rivers node taken out, its ground wired straight into
+/// its Output: the ground the GPU makes of it, which runs no rivers.
+fn without_rivers(world: &WorldGen) -> WorldGen {
+    let mut graph = world.graph().clone();
+    let output = graph.output().expect("an output").id;
+    let rivers = graph.link_into(output, Output::HEIGHT).expect("its ground").from;
+    if let Some(ground) = graph.link_into(rivers, Rivers::GROUND).copied() {
+        assert!(graph.connect(ground.from, ground.output, output, Output::HEIGHT));
+        graph.disconnect(output, Output::WATER);
+        graph.disconnect(output, Output::FALLS);
+    }
+    WorldGen::new(world.seed(), world.scale(), world.sea_level(), graph)
+}
+
+fn starter(name: &str) -> WorldGen {
+    let found = starters().into_iter().find(|starter| starter.name == name).expect("a starter of that name");
+    found.world(7, 1.0)
+}
+
+#[test]
+fn a_generators_ground_and_climate_on_the_gpu_are_the_cpus() {
+    let Some(renderer) = renderer() else { return };
+    let worlds = [
+        ("Rolling Hills", without_rivers(&starter("Rolling Hills"))),
+        ("Battlefield Plains", without_rivers(&starter("Battlefield Plains"))),
+        ("Alpine", without_rivers(&starter("Alpine"))),
+        ("Archipelago", without_rivers(&starter("Archipelago"))),
+        ("Canyons", without_rivers(&starter("Canyons"))),
+        ("an Alpine landmass", WorldGen::from(Landmass { seed: 3, ..Preset::Alpine.landmass() })),
+    ];
+    // A landmass's own gullies are not joined: each octave turns where the one before has a floor, so its ground
+    // steps there, and a rounding either side of a floor lands on the other side of the step.
+    let stepped = |name: &str| name.contains("landmass");
+    // Places a voxel apart in a patch of ground, and others kilometres apart.
+    let mut places: Vec<[f32; 2]> =
+        (0..64 * 64).map(|i| [(i % 64) as f32 / 16.0 + 100.0, (i / 64) as f32 / 16.0 - 40.0]).collect();
+    places.extend((0..4096).map(|i| [(i % 64) as f32 * 157.3 - 5000.0, (i / 64) as f32 * 149.1 - 4700.0]));
+    for (name, world) in &worlds {
+        let made = renderer.generated_on_gpu(world, &places).expect("the generator runs on the GPU");
+        let xs: Vec<f32> = places.iter().map(|place| place[0]).collect();
+        let zs: Vec<f32> = places.iter().map(|place| place[1]).collect();
+        let mut heights = vec![0.0; places.len()];
+        world.heights(&xs, &zs, &mut heights);
+        let (mut warmth, mut wetness) = (vec![0.0; places.len()], vec![0.0; places.len()]);
+        world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
+        let (mut furthest, mut same, mut near, mut low, mut high) = (0.0f32, 0, 0, f32::MAX, f32::MIN);
+        for (at, gpu) in made.iter().enumerate() {
+            let apart = (gpu[0] - heights[at]).abs();
+            furthest = furthest.max(apart);
+            same += usize::from(gpu[0] == heights[at]);
+            near += usize::from(apart < (heights[at].abs() * 1e-5).max(0.001));
+            (low, high) = (low.min(heights[at]), high.max(heights[at]));
+            assert!((gpu[1] - warmth[at]).abs() < 0.01, "{name}: {} °C on the GPU, {} on the CPU", gpu[1], warmth[at]);
+            assert!(
+                (gpu[2] - wetness[at]).abs() < 0.001,
+                "{name}: {} wet on the GPU, {} on the CPU",
+                gpu[2],
+                wetness[at]
+            );
+        }
+        eprintln!(
+            "{name}: heights {low:.1} to {high:.1} m, {same} of {} the same to the bit, {near} within a millimetre, at most {furthest} m apart",
+            places.len()
+        );
+        assert!(high - low > 5.0, "{name}: the ground rises and falls");
+        // Each rounding the GPU does its own way moves a height by a hair; a terrace or a steep curve can make a
+        // centimetre of it, a sixth of a voxel at 16 a metre.
+        let (most, share) = if stepped(name) { (1.0, 970) } else { (0.02, 985) };
+        assert!(furthest < most, "{name}: the GPU's heights are as much as {furthest} m from the CPU's");
+        assert!(
+            near * 1000 >= places.len() * share,
+            "{name}: {near} of {} heights within a millimetre, or a hundred-thousandth of their height",
+            places.len()
+        );
+    }
+}
+
+/// An endless volume made by a starter generator, seen from `height` metres
+/// over its ground at `(x, z)` and looking down at `pitch` degrees.
+fn generated_view(world: Arc<WorldGen>, x: f32, z: f32, height: f32, pitch: f32) -> World {
+    let ground = world.height_at(x, z);
+    let mut scene = World::new();
+    let volume = VoxelVolume {
+        size: Vec3::new(16.0, 48.0, 16.0),
+        ground: Some(VoxelGround { grass: 0.5, flowers: 0.2, ..VoxelGround::default() }),
+        endless: true,
+        reach: 48.0,
+        generator: Some(VoxelGenerator { world, floor: ground - 24.0, at: [0.0, 0.0] }),
+        ..VoxelVolume::default()
+    };
+    scene.spawn((volume, Transform::default()));
+    let look = Quat::from_rotation_x(pitch.to_radians());
+    scene.spawn((Camera::default(), Transform::new(Vec3::new(x, 24.0 + height, z), look, Vec3::ONE)));
+    let towards_sun = Vec3::new(-35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.3).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    scene
+}
+
+#[test]
+fn an_endless_volume_made_by_a_starter_generator_shows_its_ground() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(starter("Rolling Hills"));
+    // Straight down from 14 m: the generator's ground under all of the view, grass on it.
+    let pixels = render(&mut renderer, &generated_view(hills.clone(), 8.0, 8.0, 14.0, 90.0), 3);
+    keep_image("generated ground from above.png", &pixels);
+    let (mut green, mut sky, mut all) = (0, 0, 0);
+    for y in (0..HEIGHT).step_by(4) {
+        for x in (0..WIDTH).step_by(4) {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            green += usize::from(g > r + 8 && g > b + 8);
+            sky += usize::from((r - g).abs() < 10 && (g - b).abs() < 10 && (100..180).contains(&r));
+            all += 1;
+        }
+    }
+    assert!(sky * 100 < all, "ground under all of the view: {sky} of {all} are sky");
+    assert!(green * 2 > all, "grass over most of it: {green} of {all} green");
+    assert!(renderer.stats().voxels.bytes > 0);
+    // Across the hills from 3 m over the ground: ground to the horizon of the reach, and sky over it.
+    let pixels = render(&mut renderer, &generated_view(hills, 8.0, 8.0, 3.0, 12.0), 3);
+    keep_image("generated ground across.png", &pixels);
+    let [r, g, b] = rgb_at(&pixels, WIDTH / 2, HEIGHT - 10);
+    assert!(g > r && g > b, "grass at the foot of the view: {r} {g} {b}");
+    // Alpine where its ground is steep: rock on the slopes, grey, among the grass.
+    let alpine = Arc::new(starter("Alpine"));
+    let steep = (0..4000)
+        .map(|i| [(i % 64) as f32 * 23.0 + 300.0, (i / 64) as f32 * 23.0 + 300.0])
+        .find(|&[x, z]| (alpine.height_at(x + 2.0, z) - alpine.height_at(x - 2.0, z)).abs() > 5.0)
+        .expect("steep ground in the mountains");
+    let pixels = render(&mut renderer, &generated_view(alpine, steep[0], steep[1], 10.0, 60.0), 3);
+    keep_image("generated mountainside.png", &pixels);
+    let grey = (0..HEIGHT)
+        .step_by(4)
+        .flat_map(|y| (0..WIDTH).step_by(4).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            (r - g).abs() < 12 && (g - b).abs() < 12 && r > 40 && r < 200
+        })
+        .count();
+    assert!(grey * 10 > 14400, "rock on the mountainside: {grey} of 14400 grey");
+}
+
+/// Measures an endless volume made by a generator against one of its own
+/// ground, at 1920×1080: the window made before the frames, the columns
+/// made while flying, and a still view's passes, the least of 60 frames.
+/// Run by hand: `cargo test -p voxear_render --test voxels measure -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn measure_an_endless_volume_made_by_a_generator() {
+    let Ok(mut renderer) = Renderer::new_offscreen(1920, 1080, &RendererSettings::default()) else { return };
+    let hills = Arc::new(starter("Rolling Hills"));
+    for generated in [false, true] {
+        let mut scene = generated_view(hills.clone(), 8.0, 8.0, 2.0, 8.0);
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.reach = 64.0;
+            if !generated {
+                volume.generator = None;
+                volume.size.y = 16.0;
+            }
+        }
+        if !generated {
+            let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+            camera.position.y = 6.0;
+        }
+        let name = if generated { "Rolling Hills" } else { "its own ground" };
+        let started = std::time::Instant::now();
+        renderer.render(&scene, 0.0).unwrap();
+        assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(60)).unwrap());
+        let window = started.elapsed().as_secs_f32();
+        // A still view: the least of 60 frames for each voxel pass and the whole frame.
+        let mut least: std::collections::BTreeMap<String, f32> = Default::default();
+        let mut frame = f32::MAX;
+        for i in 0..90 {
+            renderer.render(&scene, i as f32 / 60.0).unwrap();
+            if i >= 30 {
+                for (pass, ms) in renderer.timings() {
+                    if pass.contains("oxel") {
+                        let kept = least.entry(pass.clone()).or_insert(f32::MAX);
+                        *kept = kept.min(*ms);
+                    }
+                }
+                frame = frame.min(renderer.gpu_frame_ms());
+            }
+        }
+        eprintln!("{name}: window made in {window:.2} s, {} MB", renderer.stats().voxels.bytes / 1_000_000);
+        eprintln!("{name}: still view, least of 60: frame {frame:.2} ms, {least:?}");
+        // Flying along x at 10 m/s for nine seconds: the making pass on the frames that make columns.
+        let mut making = Vec::new();
+        for i in 0..540 {
+            let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+            camera.position.x += 10.0 / 60.0;
+            renderer.render(&scene, 2.0 + i as f32 / 60.0).unwrap();
+            if let Some((_, ms)) = renderer.timings().iter().find(|(pass, _)| pass == "Voxel world making") {
+                making.push(*ms);
+            }
+        }
+        making.sort_by(f32::total_cmp);
+        if !making.is_empty() {
+            let median = making[making.len() / 2];
+            eprintln!(
+                "{name}: flying, making on {} of 540 frames: median {median:.2} ms, least {:.2}, most {:.2}; {:.3} ms a column at {} a frame",
+                making.len(),
+                making[0],
+                making[making.len() - 1],
+                median / 16.0,
+                16
+            );
+        }
+    }
 }

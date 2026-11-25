@@ -8,12 +8,19 @@
 //! needs nothing freed. As the camera moves, the columns that come into the
 //! window are made, the nearest first, [`MAX_JOBS`] a frame; until then the
 //! walk finds its slot's entry names another column and takes it as empty.
+//!
+//! Its ground is its own (rolling hills with grass and flowers), or a world
+//! generator's ([`VoxelGenerator`]): the generator's graph compiled to a
+//! program the GPU runs a voxel column at a time (`shaders/generator.slang`).
+//! A graph with a node the GPU cannot run makes the volume's own ground,
+//! with a warning naming the node.
 
 use anyhow::Result;
 use voxear_core::math::Vec3;
 use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
+use voxear_terrain::generate::{GpuProgram, WorldGen};
 
-use super::{GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelGround, VoxelVolume};
+use super::{GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelGenerator, VoxelGround, VoxelVolume};
 use crate::pipelines::Pipelines;
 
 /// How many columns are made a frame at most.
@@ -24,10 +31,28 @@ const BRICK_ROOM: u32 = 384;
 const MATERIAL_ROOM: u32 = BRICK_ROOM * 160;
 const ENTRY_WORDS: u64 = 28;
 const BRICK_BYTES: u64 = 80;
-const SIDE: u64 = 66;
+/// How many voxel columns a column's heights and its tops are kept for a
+/// side: a border of four, and of two.
+const SIDE: u64 = 72;
+const TOPS: u64 = 68;
 const COUNTERS: u64 = 4;
 /// The most voxel columns a window is across: 256 sector columns.
 const LARGEST_WINDOW: u32 = 256;
+
+/// The colours of the ground a generator makes, as sRGB, in the palette
+/// after the volume's own ground's: rock in three shades, sand, snow and
+/// gravel in two.
+pub(crate) const GENERATED_COLORS: [[u8; 4]; 9] = [
+    [118, 117, 112, 255], // 13 rock
+    [132, 130, 125, 255],
+    [100, 99, 96, 255],
+    [214, 196, 148, 255], // 16 sand
+    [198, 178, 128, 255],
+    [236, 240, 246, 255], // 18 snow
+    [218, 226, 236, 255],
+    [128, 120, 108, 255], // 20 gravel
+    [104, 98, 90, 255],
+];
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -51,6 +76,8 @@ struct GpuWorldMake {
     loose: u64,
     counters: u64,
     candidates: u64,
+    program: u64,
+    grounds: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -65,7 +92,12 @@ struct GpuWorldMake {
     material_room: u32,
     job_count: u32,
     candidate_room: u32,
-    pad: [u32; 2],
+    program_words: u32,
+    outs: [u32; 4],
+    floor: f32,
+    at: [f32; 2],
+    sea_level: f32,
+    pad: u32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -93,6 +125,10 @@ pub(crate) struct Endless {
     loose: Buffer,
     counters: Buffer,
     candidates: Buffer,
+    /// What each column's climate is, as the columns pass found it.
+    grounds: Buffer,
+    /// Its generator's program, where it has one the GPU can run.
+    program: Option<(Buffer, GpuProgram)>,
     /// The passes' records: one a frame in flight, and one for making
     /// columns before the frames start.
     makes: Vec<Buffer>,
@@ -119,6 +155,44 @@ pub(crate) fn same_ground(a: &VoxelVolume, b: &VoxelVolume) -> bool {
         && a.size.y == b.size.y
         && a.ground == b.ground
         && a.roughness == b.roughness
+        && a.generator == b.generator
+}
+
+/// The program `generator` runs on the GPU, if its graph can run there:
+/// else a warning naming the nodes that cannot.
+fn program_of(generator: &VoxelGenerator) -> Option<GpuProgram> {
+    match generator.world.gpu_program() {
+        Ok(program) => {
+            if !program.left_out.is_empty() {
+                tracing::info!(
+                    "a Voxel Volume's generator runs on the GPU without its {}",
+                    program.left_out.join(" or ")
+                );
+            }
+            Some(program)
+        }
+        Err(names) => {
+            tracing::warn!(
+                "a Voxel Volume's generator cannot run on the GPU ({}): it makes its own ground",
+                names.join(", ")
+            );
+            None
+        }
+    }
+}
+
+/// A program's words in a buffer the GPU reads.
+fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
+    let buffer = gpu.create_buffer(
+        "voxel world program",
+        (program.words.len() as u64 * 4).max(16),
+        vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        MemoryLocation::GpuOnly,
+    )?;
+    gpu.upload_buffer(&buffer, 0, bytemuck::cast_slice(&program.words))?;
+    Ok(buffer)
 }
 
 impl Endless {
@@ -140,16 +214,21 @@ impl Endless {
         let table = make("table", slots_in * u64::from(tall) * ENTRY_WORDS * 4, none)?;
         let bricks = make("bricks", slots_in * u64::from(BRICK_ROOM) * BRICK_BYTES, none)?;
         let materials = make("materials", slots_in * u64::from(MATERIAL_ROOM), none)?;
-        let palette = make("palette", GROUND_COLORS.len() as u64 * 4, none)?;
-        let colours: Vec<u32> =
-            GROUND_COLORS.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+        let all = GROUND_COLORS.iter().chain(&GENERATED_COLORS);
+        let colours: Vec<u32> = all.map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+        let palette = make("palette", colours.len() as u64 * 4, none)?;
         gpu.upload_buffer(&palette, 0, bytemuck::cast_slice(&colours))?;
         let empty = make("empty sector", 25 * 4, none)?;
         let mut nothing = [0u32; 25];
         nothing[24] = u32::MAX;
         gpu.upload_buffer(&empty, 0, bytemuck::cast_slice(&nothing))?;
         let heights = make("heights", jobs * SIDE * SIDE * 4, none)?;
-        let columns = make("columns", jobs * 4096 * 4, none)?;
+        let columns = make("columns", jobs * TOPS * TOPS * 4, none)?;
+        let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
+        let program = match volume.generator.as_ref().and_then(program_of) {
+            Some(program) => Some((program_buffer(gpu, &program)?, program)),
+            None => None,
+        };
         let slots = make("slots", jobs * 64 * rows * 4, none)?;
         let loose = make("loose bricks", jobs * u64::from(BRICK_ROOM) * BRICK_BYTES, none)?;
         let counters = make("counters", (jobs * COUNTERS + 4) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
@@ -180,6 +259,8 @@ impl Endless {
             loose,
             counters,
             candidates,
+            grounds,
+            program,
             makes,
             made: vec![None; (window * window) as usize],
             jobs: Vec::new(),
@@ -190,10 +271,19 @@ impl Endless {
 
     /// Its size on the GPU, in bytes.
     pub fn bytes(&self) -> u64 {
-        [&self.table, &self.bricks, &self.materials, &self.heights, &self.columns, &self.slots, &self.loose]
-            .iter()
-            .map(|buffer| buffer.size)
-            .sum()
+        [
+            &self.table,
+            &self.bricks,
+            &self.materials,
+            &self.heights,
+            &self.columns,
+            &self.slots,
+            &self.loose,
+            &self.grounds,
+        ]
+        .iter()
+        .map(|buffer| buffer.size)
+        .sum()
     }
 
     /// Moves the window round `camera`, the volume's corner at `corner`, and
@@ -275,6 +365,12 @@ impl Endless {
             *job = GpuWorldJob { column: *column, slot: *place, pad: 0 };
         }
         let rows = u64::from(self.tall * 8);
+        let generator = self.from.generator.as_ref();
+        let no_program = GpuProgram::default();
+        let (program, words) = match &self.program {
+            Some((buffer, program)) => (buffer.address, program),
+            None => (0, &no_program),
+        };
         let make = GpuWorldMake {
             table: self.table.address,
             bricks: self.bricks.address,
@@ -286,6 +382,8 @@ impl Endless {
             loose: self.loose.address,
             counters: self.counters.address,
             candidates: self.candidates.address,
+            program,
+            grounds: self.grounds.address,
             height: ground.height,
             hills: ground.hills,
             hill_spacing: ground.hill_spacing,
@@ -300,7 +398,12 @@ impl Endless {
             material_room: MATERIAL_ROOM,
             job_count: self.jobs.len() as u32,
             candidate_room: (MAX_JOBS as u64 * 64 * rows) as u32,
-            pad: [0; 2],
+            program_words: if program == 0 { 0 } else { words.words.len() as u32 },
+            outs: [words.height, words.warmth, words.wetness, words.rock],
+            floor: generator.map_or(0.0, |generator| generator.floor),
+            at: generator.map_or([0.0; 2], |generator| generator.at),
+            sea_level: generator.map_or(0.0, |generator| generator.world.sea_level()),
+            pad: 0,
             jobs,
         };
         let buffer = &self.makes[slot.min(self.makes.len() - 1)];
@@ -362,6 +465,8 @@ impl Recording {
         };
         run(pipelines.voxel_world_columns, [((SIDE * SIDE) as u32).div_ceil(64), jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
+        run(pipelines.voxel_world_tops, [((TOPS * TOPS) as u32).div_ceil(64), jobs, 1]);
+        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_candidates, [1, jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_arguments, [1, 1, 1]);
@@ -401,8 +506,50 @@ impl Endless {
             self.loose,
             self.counters,
             self.candidates,
+            self.grounds,
         ];
+        all.extend(self.program.map(|(buffer, _)| buffer));
         all.extend(self.makes);
         all
     }
+}
+
+/// What `world` makes at each of `places`, `[x, z]` in metres in its world,
+/// run on the GPU as an endless volume's columns run it: the height in
+/// metres, how warm it is, how wet, and its rock mask. For checking the GPU
+/// against the CPU.
+pub(crate) fn generated_at(
+    gpu: &Gpu,
+    (pipelines, bindless): (&Pipelines, &Bindless),
+    world: &WorldGen,
+    places: &[[f32; 2]],
+) -> Result<Vec<[f32; 4]>> {
+    let program = world.gpu_program().map_err(|names| anyhow::anyhow!("not on the GPU: {}", names.join(", ")))?;
+    let code = program_buffer(gpu, &program)?;
+    let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+    let count = places.len().max(1) as u64;
+    let asked = gpu.create_buffer("generator places", count * 8, usage, MemoryLocation::CpuToGpu)?;
+    asked.write(0, places);
+    let made = gpu.create_buffer("generator made", count * 16, usage, MemoryLocation::GpuToCpu)?;
+    let record =
+        gpu.create_buffer("generator record", size_of::<GpuWorldMake>() as u64, usage, MemoryLocation::CpuToGpu)?;
+    let mut make: GpuWorldMake = bytemuck::Zeroable::zeroed();
+    make.program = code.address;
+    make.program_words = program.words.len() as u32;
+    make.outs = [program.height, program.warmth, program.wetness, program.rock];
+    make.candidates = asked.address;
+    make.loose = made.address;
+    make.candidate_room = places.len() as u32;
+    record.write(0, std::slice::from_ref(&make));
+    let push = WorldPush { make: record.address };
+    gpu.immediate(|cmd| unsafe {
+        gpu.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipelines.voxel_world_places);
+        bindless.push(gpu, cmd, &push);
+        gpu.device.cmd_dispatch(cmd, (places.len() as u32).div_ceil(64), 1, 1);
+    })?;
+    let out: Vec<[f32; 4]> = bytemuck::cast_slice::<u8, [f32; 4]>(&made.read()[..places.len() * 16]).to_vec();
+    for buffer in [code, asked, made, record] {
+        gpu.destroy_buffer(buffer);
+    }
+    Ok(out)
 }

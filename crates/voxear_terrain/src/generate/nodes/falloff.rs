@@ -4,6 +4,7 @@
 //! ground sinking into the sea at its edges; through a curve it is a
 //! volcano's cone or a crater's bowl.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -140,6 +141,11 @@ impl Fall {
 }
 
 impl Kernel for Fall {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Falloff).whole(u32::from(self.square)).number(self.middle[0]);
+        Some(step.number(self.middle[1]).number(self.radius).number(self.feather))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("falloff").whole(u32::from(self.square)).number(self.middle[0]).number(self.middle[1]);
         key.number(self.radius).number(self.feather);

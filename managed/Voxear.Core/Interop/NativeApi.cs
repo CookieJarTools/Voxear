@@ -224,4 +224,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<FarFigureData*, int, int> FarFigures;
 	public delegate* unmanaged[Cdecl]<Vector3*, float, int> GroundMade;
 	public delegate* unmanaged[Cdecl]<ulong, Vector4*, byte*, int, int> TownsInfo;
+	public delegate* unmanaged[Cdecl]<Vector3*, float, int, int> VoxelEdit;
 }

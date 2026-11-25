@@ -302,6 +302,7 @@ impl Editor {
             "view.set" => self.view_set(args),
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
+            "voxels.carve" | "voxels.fill" => self.voxels_edit(call, args),
             "blocks.restore" => self.blocks_restore(args),
             "blocks.bake_far" => {
                 let world = match args.get("obj").filter(|obj| !obj.is_null()) {
@@ -2479,6 +2480,46 @@ impl Editor {
         // A block a world did not hold is drawn as its file says from this frame.
         voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
         done(json!({ "changed": changed }))
+    }
+
+    fn voxels_edit(&mut self, call: &str, args: &Json) -> Called {
+        use voxear_render::{VoxelMaterial, VoxelVolume};
+        let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+        let radius = need(args, "radius")?.as_f64().ok_or_else(|| bad("`radius` is a number of metres"))? as f32;
+        let fill = match call {
+            "voxels.fill" => {
+                let name = need(args, "material")?.as_str().unwrap_or_default();
+                let material = VoxelMaterial::named(name).ok_or_else(|| {
+                    refuse(
+                        ErrorKind::WrongValue,
+                        format!("{name} is not a ground: dirt, grass, rock, sand, snow or gravel"),
+                    )
+                })?;
+                Some(material)
+            }
+            _ => None,
+        };
+        let only = match args.get("obj") {
+            Some(obj) => Some(link::resolve_obj(&self.game, obj)?),
+            None => None,
+        };
+        let world = &mut self.game.engine.world;
+        let volumes: Vec<Entity> = world
+            .query_ref::<(Entity, &VoxelVolume)>()
+            .into_iter()
+            .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        let mut reached = 0;
+        for entity in volumes {
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            let world = &mut self.game.engine.world;
+            if voxear_engine::voxel_volumes::edit(world, at, radius, fill, Some(entity)) > 0 {
+                reached += 1;
+                self.record_change(entity, before);
+            }
+        }
+        done(json!({ "reached": reached }))
     }
 
     fn paint_map(&mut self, args: &Json) -> Called {

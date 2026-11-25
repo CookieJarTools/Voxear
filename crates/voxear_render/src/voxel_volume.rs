@@ -64,6 +64,58 @@ pub struct VoxelVolume {
     /// The trees scattered through an endless volume's ground, each kind as
     /// many to a hectare as it says, where the ground grows grass.
     pub trees: Vec<VoxelTrees>,
+    /// The changes made to an endless volume, in the order they were made:
+    /// balls carved out of it or filled with ground, a later one over an
+    /// earlier. Each column is made with those that reach it.
+    pub edits: Arc<Vec<VoxelEdit>>,
+}
+
+/// A change made to an endless Voxel Volume: a ball carved out of it, or
+/// filled with ground, its voxels' middles within the radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxelEdit {
+    /// The ball's middle, in metres from the volume's corner.
+    pub at: Vec3,
+    /// Its radius, in metres.
+    pub radius: f32,
+    /// What fills it: none for air, carved out.
+    pub fill: Option<VoxelMaterial>,
+}
+
+/// The ground an edit fills a ball with, its voxels in the shades the
+/// volume's own ground or a generator's has: dirt; grass, its top the
+/// grass's green; rock; sand; snow; or gravel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelMaterial {
+    #[default]
+    Dirt,
+    Grass,
+    Rock,
+    Sand,
+    Snow,
+    Gravel,
+}
+
+impl VoxelMaterial {
+    pub const ALL: [Self; 6] = [Self::Dirt, Self::Grass, Self::Rock, Self::Sand, Self::Snow, Self::Gravel];
+
+    /// As the editor and scenes name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dirt => "Dirt",
+            Self::Grass => "Grass",
+            Self::Rock => "Rock",
+            Self::Sand => "Sand",
+            Self::Snow => "Snow",
+            Self::Gravel => "Gravel",
+        }
+    }
+
+    /// The one named so, as [`name`](Self::name) gives it.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|material| material.name().eq_ignore_ascii_case(name))
+    }
 }
 
 /// A kind of tree scattered through an endless Voxel Volume's ground: a
@@ -118,6 +170,7 @@ impl Default for VoxelVolume {
             reach: 64.0,
             generator: None,
             trees: Vec::new(),
+            edits: Arc::default(),
         }
     }
 }
@@ -135,6 +188,7 @@ impl PartialEq for VoxelVolume {
             && self.reach == other.reach
             && self.generator == other.generator
             && self.trees == other.trees
+            && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
     }
 }
 
@@ -377,6 +431,10 @@ impl VoxelVolumes {
                 }
                 let made = self.endless.get_mut(&entity).expect("made above");
                 made.from.roughness = volume.roughness;
+                // New edits make the columns they reach again.
+                for buffer in made.set_edits(gpu, &volume.edits)? {
+                    frames.retire(Retired::Buffer(buffer));
+                }
                 made.follow(corner, camera.unwrap_or(corner));
                 self.drawn.push(made.drawn());
                 continue;

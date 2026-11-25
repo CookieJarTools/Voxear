@@ -805,6 +805,27 @@ faster.
 So only bricks that sway are walked whole. A shadow ray's level is tied to the camera ray's by step counts, which
 any faster walk has to keep the same.
 
+## Stage 4 begun: carving and filling (2026-11-25)
+
+An endless volume's ground is never kept on the CPU: it is made on the GPU as columns come into view, and made
+again after they leave. So its changes are kept as what was done, not as voxels: balls carved out or filled with a
+ground, in order (`VoxelVolume::edits`), as the plan has edits go out over the network.
+
+- **On the GPU.** Every column made takes the edits that reach it (a pass lists them, up to 1,024), and every brick
+  those with its border of one (up to 128, in order). In a brick an edit reaches, each of its voxels and its border's
+  is solid as the ground or the Volume makes it, then each edit over it in turn; a voxel is kept where open air is
+  beside it, so a pit opens walls of the layers under the grass, in the ground's own shades, and a fill is drawn in
+  its ground's. Grass and flowers go where the ground's top under them was carved or filled, trees where they were
+  carved. A column's candidate bricks reach as high and as low as its edits do, and the coarse pass keeps them.
+- **Made again.** A changed list makes again the columns its changed edits reach, a frame or two later.
+- **From scripts and tools.** `Voxels.Carve` and `Voxels.Fill` in C#, and `voxels.carve` and `voxels.fill` in
+  `vox editor call`, reach every endless volume the ball falls in. The scene saves the list.
+- **Not yet.** Changed bricks in region files, so a long list of edits needn't be played again; sending edits over
+  the network; a brush in the Scene view; `Voxels.Raycast` and picking; setting one voxel; volumes of a set size;
+  collision.
+
+![A pit carved out and a ball of rock filled, a bite carved out of the rock after](../images/small-voxels/edits-from-above.webp)
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

@@ -35,6 +35,7 @@ mod text;
 mod trees;
 mod ui;
 mod ui_rows;
+mod voxels;
 mod windows;
 
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
@@ -57,6 +58,7 @@ pub use post::{
 };
 pub use plants::{FoliageCall, set_foliage_call};
 pub use columns::{ColumnEventData, GroundMade, set_ground_made};
+pub use voxels::{VoxelEdits, set_voxel_edits};
 pub use crowds::{CrowdRecordsState, FarFigureData, FarFiguresSet, set_crowd_records, set_far_figures};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};

@@ -827,6 +827,41 @@ fn a_maps_open_action_is_set_from_its_menu() {
 }
 
 #[test]
+fn a_tool_carves_and_fills_an_endless_voxel_volume_each_one_step_to_undo() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let made = done(
+        &mut editor,
+        &mut renderer,
+        "obj.create",
+        json!({ "kind": "Empty", "name": "Voxels", "position": [0, 0, 0] }),
+    );
+    let volume = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": volume, "component": "voxel_volume" }));
+    let endless = json!({ "obj": volume, "component": "voxel_volume", "field": "endless", "value": true });
+    done(&mut editor, &mut renderer, "field.set", endless);
+    let carved = done(&mut editor, &mut renderer, "voxels.carve", json!({ "at": [4.0, 3.0, 4.0], "radius": 1.5 }));
+    assert_eq!(carved["reached"], 1);
+    let filled = json!({ "at": [6.0, 3.0, 4.0], "radius": 1.0, "material": "rock", "obj": volume });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.fill", filled)["reached"], 1);
+    let wrong = json!({ "at": [6.0, 3.0, 4.0], "radius": 1.0, "material": "lava" });
+    let refused = ask(&mut editor, &mut renderer, "voxels.fill", wrong).unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::WrongValue, "{refused}");
+    let entity = link::resolve_obj(&editor.game, &volume).unwrap();
+    let edits =
+        |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
+    let both = edits(&editor);
+    assert_eq!(both.len(), 2);
+    assert_eq!(both[1].fill, Some(voxear_render::VoxelMaterial::Rock));
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(edits(&editor).len(), 1, "the fill taken back alone");
+    frames(&mut editor, &mut renderer, 5);
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let scene = std::fs::read_to_string(dir.path().join(saved["saved"][0].as_str().unwrap())).unwrap();
+    assert!(scene.contains("radius = 1.5") && !scene.contains("fill = \"rock\""), "the carve saved alone:\n{scene}");
+}
+
+#[test]
 fn a_block_world_takes_blocks_from_a_tool_and_its_file_from_disk() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

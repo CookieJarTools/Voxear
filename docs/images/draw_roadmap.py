@@ -31,7 +31,7 @@ MILESTONES = [
     ("M11", "Modding and platform services", "Content and script mods, Steam, the Workshop", "planned"),
     ("M12", "Ship it", "Builds end to end, crash reports, store uploads", "planned"),
     ("", "Shader packs", "A player's own passes, lighting, tonemap, sky, shadows and menu", "done"),
-    ("", "Small voxels", "Voxel Volumes traced on the GPU; endless ground and trees from generator graphs", "now"),
+    ("", "Small voxels", "Traced Voxel Volumes: endless ground, trees in the wind, carving", "now"),
     ("M13", "Virtualised geometry", "Clusters of triangles, streamed and rasterised on the GPU", "planned"),
 ]
 

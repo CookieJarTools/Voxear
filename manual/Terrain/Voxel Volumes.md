@@ -112,6 +112,40 @@ at = [12.0, 2.0, 9.0]
 turn = 30.0
 ```
 
+## Carving and filling
+
+An endless volume's ground can be changed: a ball carved out of it, or filled with a ground (dirt, grass, rock, sand, snow or gravel), its voxels' middles within the ball's radius. A carve takes the ground, its grass and flowers and its trees with it, and opens walls of the layers under the grass. A change goes over the ones before it, so a ball carved into rock just filled takes a bite out of it. The columns a change reaches are made again within a frame or two.
+
+From a script, every endless volume the ball falls in is changed:
+
+```csharp
+// A crater where a shell lands, and a heap of rock where a wall is raised.
+Voxels.Carve(landed, 1.5f);
+Voxels.Fill(wall, 1f, VoxelMaterial.Rock);
+```
+
+`vox editor call voxels.carve` and `voxels.fill` change them as scripts do, or one Obj's volume alone, each one step to undo:
+
+```
+vox editor call voxels.carve '{ "at": [12, 24, 9], "radius": 1.5 }'
+vox editor call voxels.fill '{ "at": [14, 24, 9], "radius": 1, "material": "rock" }'
+```
+
+The volume keeps its changes in order, and its scene saves them, each its middle in metres from the volume's corner:
+
+```toml
+[[obj.voxel_volume.edits]]
+at = [12.0, 24.0, 9.0]
+radius = 1.5
+
+[[obj.voxel_volume.edits]]
+at = [14.0, 24.0, 9.0]
+radius = 1.0
+fill = "rock"
+```
+
+A column takes up to 1,024 changes that reach it, and a half-metre brick 128; past those the latest are left out.
+
 ## How it is drawn
 
 A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog. Its voxels shadow each other, traced through the volume towards the sun.
@@ -127,4 +161,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no rivers or water, and no Cave Network halls, yet.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
-- Its voxels can't be changed one by one from the editor or from scripts yet.
+- A volume of a set size can't be changed yet, only an endless one, and only by balls: not a voxel at a time, by a brush in the Scene view, or over the network. Scripts can't yet ask which voxel a ray meets.

@@ -27,13 +27,28 @@
 //! at = [12.0, 2.0, 9.0]
 //! turn = 30.0
 //! ```
+//!
+//! An endless one keeps what was changed in it, in order: balls carved out
+//! of it, and filled with a ground (`dirt`, `grass`, `rock`, `sand`, `snow`
+//! or `gravel`), each its middle in metres from the volume's corner:
+//!
+//! ```toml
+//! [[obj.voxel_volume.edits]]
+//! at = [12.0, 24.0, 9.0]
+//! radius = 1.5
+//!
+//! [[obj.voxel_volume.edits]]
+//! at = [14.0, 24.0, 9.0]
+//! radius = 1.0
+//! fill = "rock"
+//! ```
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelGenerator, VoxelGround, VoxelStamp, VoxelTrees, VoxelVolume};
+use voxear_render::{VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume};
 
 use crate::content::Content;
 
@@ -69,6 +84,32 @@ pub struct VoxelVolumeData {
     /// The kinds of tree scattered through an endless volume's ground.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trees: Vec<VoxelTreesData>,
+    /// What was changed in an endless volume, in the order it was changed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<VoxelEditData>,
+}
+
+/// A change to an endless volume as a scene writes it: a ball, its middle
+/// in metres from the volume's corner, carved out or filled with a ground.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxelEditData {
+    pub at: [f32; 3],
+    pub radius: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill: Option<VoxelMaterial>,
+}
+
+impl Default for VoxelEditData {
+    fn default() -> Self {
+        Self { at: [0.0; 3], radius: 1.0, fill: None }
+    }
+}
+
+impl From<VoxelEditData> for VoxelEdit {
+    fn from(data: VoxelEditData) -> Self {
+        Self { at: Vec3::from(data.at), radius: data.radius.max(0.0), fill: data.fill }
+    }
 }
 
 /// A kind of tree scattered through an endless volume's ground, as a scene
@@ -118,6 +159,7 @@ impl Default for VoxelVolumeData {
             generator_floor: None,
             generator_at: [0.0, 0.0],
             trees: Vec::new(),
+            edits: Vec::new(),
         }
     }
 }
@@ -184,7 +226,56 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         reach: data.reach,
         generator,
         trees,
+        edits: Arc::new(data.edits.iter().map(|&edit| edit.into()).collect()),
     }
+}
+
+/// Sets what answers `Voxels.Carve` and `Voxels.Fill` in scripts.
+pub(crate) fn register() {
+    voxear_scripting::set_voxel_edits(from_script);
+}
+
+/// A script's carve (`fill` -1) or fill with the ground numbered as
+/// `VoxelMaterial` in Voxear.Core numbers it: how many volumes it reached,
+/// or -1 for a ground there is none of.
+fn from_script(world: &mut World, at: [f32; 3], radius: f32, fill: i32) -> i32 {
+    let fill = match fill {
+        -1 => None,
+        number => match VoxelMaterial::ALL.get(number as usize) {
+            Some(&material) => Some(material),
+            None => return -1,
+        },
+    };
+    edit(world, Vec3::from(at), radius, fill, None) as i32
+}
+
+/// Carves a ball of `radius` metres round `at` in the world out of every
+/// endless Voxel Volume it reaches, or fills it with `fill`; or out of
+/// `only`'s alone. Each keeps it after what was changed in it before, as
+/// its scene writes it, and makes again the columns it reaches. Gives how
+/// many volumes it reached.
+pub fn edit(world: &mut World, at: Vec3, radius: f32, fill: Option<VoxelMaterial>, only: Option<Entity>) -> usize {
+    let radius = radius.max(0.0);
+    let reached: Vec<(Entity, VoxelEditData)> = world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .filter_map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            // Endless across the ground, as tall as the volume.
+            let inside = at.y + radius >= corner.y && at.y - radius <= corner.y + volume.size.y;
+            inside.then_some((entity, VoxelEditData { at: (at - corner).to_array(), radius, fill }))
+        })
+        .collect();
+    for &(entity, data) in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            Arc::make_mut(&mut volume.edits).push(data.into());
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.edits.push(data);
+        }
+    }
+    reached.len()
 }
 
 /// A kind of tree as the renderer draws it, its plant read from `content`
@@ -281,5 +372,36 @@ mod tests {
         assert!(text.contains("generator = \"Worlds/Hills.worldgen\""), "{text}");
         assert_eq!(toml::from_str::<VoxelVolumeData>(&text).unwrap(), generated);
         assert!(!toml::to_string(&data).unwrap().contains("generator"), "nothing written for none");
+    }
+
+    #[test]
+    fn edits_are_kept_in_order_written_and_read_back_and_reach_only_the_endless_volumes_a_ball_falls_in() {
+        let data = VoxelVolumeData {
+            endless: true,
+            size: [16.0, 40.0, 16.0],
+            edits: vec![
+                VoxelEditData { at: [1.0, 20.0, 2.0], radius: 1.5, fill: None },
+                VoxelEditData { at: [3.0, 21.0, 2.0], radius: 1.0, fill: Some(VoxelMaterial::Rock) },
+            ],
+            ..VoxelVolumeData::default()
+        };
+        let text = toml::to_string(&data).unwrap();
+        assert!(text.contains("fill = \"rock\""), "{text}");
+        assert_eq!(toml::from_str::<VoxelVolumeData>(&text).unwrap(), data);
+        let mut world = World::new();
+        let at = voxear_scene::Transform::from_position(Vec3::new(100.0, -10.0, 0.0));
+        let volume = VoxelVolume { endless: true, size: Vec3::new(16.0, 40.0, 16.0), ..VoxelVolume::default() };
+        let endless = world.spawn((volume.clone(), VoxelVolumeSource(data.clone()), at));
+        let plain = world.spawn((VoxelVolume::default(), voxear_scene::Transform::default()));
+        // In the endless volume, however far across; over its top, in none.
+        assert_eq!(edit(&mut world, Vec3::new(5000.0, 5.0, -300.0), 2.0, Some(VoxelMaterial::Sand), None), 1);
+        assert_eq!(edit(&mut world, Vec3::new(0.0, 40.0, 0.0), 2.0, None, None), 0, "over the volume's top");
+        let made = world.get::<VoxelVolume>(endless).unwrap();
+        assert_eq!(made.edits.len(), 1);
+        assert_eq!(made.edits[0].at, Vec3::new(4900.0, 15.0, -300.0), "from the volume's corner");
+        let source = &world.get::<VoxelVolumeSource>(endless).unwrap().0;
+        assert_eq!(source.edits.len(), 3, "after the two it was written with");
+        assert_eq!(source.edits[2].fill, Some(VoxelMaterial::Sand));
+        assert!(world.get::<VoxelVolume>(plain).unwrap().edits.is_empty(), "a volume of a set size is not edited");
     }
 }

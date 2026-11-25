@@ -171,8 +171,8 @@ pub use lightmaps::{
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
 pub use voxel_volume::{
-    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelGenerator,
-    VoxelGround, VoxelStamp, VoxelTrees, VoxelVolume,
+    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelEdit, VoxelGenerator,
+    VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;

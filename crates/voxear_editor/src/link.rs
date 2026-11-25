@@ -452,6 +452,33 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "voxels.carve",
+        about: "Carves a ball round a point of the world, in metres, out of every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Carve does: its ground, grass, flowers and trees. The volume keeps it after what was changed in it before, and its scene saves it. One step to undo.",
+        args: &[
+            arg("at", ArgKind::Vector, "The ball's middle, in metres, in the world."),
+            arg("radius", ArgKind::Number, "Its radius, in metres."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached }",
+    },
+    CallInfo {
+        name: "voxels.fill",
+        about: "Fills a ball round a point of the world, in metres, with a ground in every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Fill does. One step to undo.",
+        args: &[
+            arg("at", ArgKind::Vector, "The ball's middle, in metres, in the world."),
+            arg("radius", ArgKind::Number, "Its radius, in metres."),
+            arg(
+                "material",
+                ArgKind::Choice(&["dirt", "grass", "rock", "sand", "snow", "gravel"]),
+                "The ground it is filled with.",
+            ),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached }",
+    },
+    CallInfo {
         name: "graph.comments",
         about: "The comments of a graph, a generator (.worldgen) or a VoxShade shader (.voxshade): each its number, its top left corner and size on the canvas, its title and its text.",
         args: &[arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade.")],

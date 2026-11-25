@@ -96,6 +96,7 @@ impl Engine {
         crate::lights::register();
         crate::particles::register();
         crate::smoke::register();
+        crate::voxel_volumes::register();
         crate::mist::register();
         crate::cameras::register();
         crate::portals::register();

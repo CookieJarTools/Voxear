@@ -7,8 +7,8 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
-    Renderer, RendererSettings, Sky, VoxelGenerator, VoxelGround, VoxelStamp, VoxelTrees, VoxelVolume, Voxels,
-    WindZone,
+    Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees,
+    VoxelVolume, Voxels, WindZone,
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
@@ -594,6 +594,59 @@ fn an_endless_volumes_leaves_and_grass_move_in_the_wind() {
     eprintln!("{moving} pixels change in a breeze, {resting} in still air");
     assert!(moving > 2000, "leaves and grass move in the wind: {moving} pixels change");
     assert!(resting * 20 < moving, "and keep still without it: {resting} pixels change");
+}
+
+#[test]
+fn an_endless_volumes_edits_carve_its_ground_and_fill_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    // Straight down from 14 m over the hills, where their ground is 24 m up the volume.
+    let mut scene = generated_view(hills, 8.0, 8.0, 14.0, 90.0);
+    let bare = render(&mut renderer, &scene, 3);
+    let edits = vec![
+        VoxelEdit { at: Vec3::new(5.0, 24.0, 8.0), radius: 2.0, fill: None },
+        VoxelEdit { at: Vec3::new(11.0, 24.0, 8.0), radius: 1.5, fill: Some(VoxelMaterial::Rock) },
+        // A ball carved into the rock just filled, later, takes a bite out of it.
+        VoxelEdit { at: Vec3::new(12.5, 25.0, 8.0), radius: 0.8, fill: None },
+    ];
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(edits);
+    let edited = render(&mut renderer, &scene, 3);
+    keep_image("edits from above.png", &edited);
+    // Averaged over a few pixels round a point of the ground, as the camera sees it straight down.
+    let around = |pixels: &[u8], x: f32, z: f32| {
+        let (px, py) = from_above(14.0, x, z);
+        let mut sum = [0; 3];
+        for dy in 0..5 {
+            for dx in 0..5 {
+                let c = rgb_at(pixels, px + dx - 2, py + dy - 2);
+                (0..3).for_each(|i| sum[i] += c[i]);
+            }
+        }
+        sum.map(|v| v / 25)
+    };
+    // Into the pit: its floor and walls, the dirt under the grass, brown, not the grass's green.
+    let (grass, pit) = (around(&bare, 5.0, 8.0), around(&edited, 5.0, 8.0));
+    assert!(grass[1] > grass[0] + 20, "grass before: {grass:?}");
+    assert!(pit[0] > pit[1] && pit[1] < grass[1] - 15, "the pit: {pit:?} against {grass:?}");
+    // The rock filled over the ground: grey.
+    let [r, g, b] = around(&edited, 10.5, 8.0);
+    assert!((r - g).abs() < 20 && (g - b).abs() < 20 && r > 50, "rock: {r} {g} {b}");
+    // Untouched ground away from both stays as it was, but for its grass swaying in the fair day's wind.
+    let (before, after) = (around(&bare, 8.0, 3.0), around(&edited, 8.0, 3.0));
+    assert!((0..3).all(|i| (before[i] - after[i]).abs() < 12), "the ground between: {after:?} against {before:?}");
+    // The same through a generator's Volume, its overhangs and caves: a shaft of balls carved down into the
+    // mountains shows, wherever their ground is under the camera.
+    let mut scene = generated_view(Arc::new(caved_alpine()), 8.0, 8.0, 14.0, 90.0);
+    let bare = render(&mut renderer, &scene, 3);
+    let shaft = (0..8).map(|i| VoxelEdit { at: Vec3::new(8.0, 20.0 + 2.0 * i as f32, 8.0), radius: 2.5, fill: None });
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(shaft.collect());
+    let edited = render(&mut renderer, &scene, 3);
+    keep_image("edits in the mountains.png", &edited);
+    let (before, after) = (around(&bare, 8.0, 8.0), around(&edited, 8.0, 8.0));
+    assert!(
+        (0..3).map(|i| (before[i] - after[i]).abs()).sum::<i32>() > 30,
+        "a pit in the mountains: {after:?} against {before:?}"
+    );
 }
 
 fn with_trees(mut scene: World) -> World {

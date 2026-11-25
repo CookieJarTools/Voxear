@@ -15,13 +15,16 @@
 //! A graph with a node the GPU cannot run makes the volume's own ground,
 //! with a warning naming the node.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use voxear_core::math::Vec3;
 use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelGenerator, VoxelGround, VoxelTrees, VoxelVolume, trees,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelTrees,
+    VoxelVolume, trees,
 };
 use crate::pipelines::Pipelines;
 
@@ -70,6 +73,9 @@ const COUNTERS: u64 = 4;
 /// The most trees placed round a column, and the numbers each takes.
 const MAX_TREES: u64 = 32;
 const TREE_WORDS: u64 = 8;
+/// The most edits that reach a column being made (`MOST_COLUMN_EDITS` in
+/// `shaders/voxel_world.slang`).
+const MOST_COLUMN_EDITS: u64 = 1024;
 /// The most voxel columns a window is across: 256 sector columns.
 const LARGEST_WINDOW: u32 = 256;
 
@@ -125,6 +131,8 @@ struct GpuWorldMake {
     staging: u64,
     placed: u64,
     models: u64,
+    edits: u64,
+    job_edits: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -155,6 +163,8 @@ struct GpuWorldMake {
     tree_kinds: u32,
     tree_reach: f32,
     brick_pages: u32,
+    edit_count: u32,
+    edit_pad: u32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -200,6 +210,11 @@ pub(crate) struct Endless {
     /// trees: their records and sectors, their bricks and materials being
     /// kept at the start of the volume's own, in pages no column is given.
     models: Option<Buffer>,
+    /// The edits its columns are made with, as the GPU reads them, with room
+    /// for more; and the edits that reach each column being made.
+    edits: Arc<Vec<VoxelEdit>>,
+    edit_buffer: Option<Buffer>,
+    job_edits: Buffer,
     /// The shared room: how many pages of bricks and of materials it has,
     /// each slot's pages of each and how many, the pages free, how many are
     /// free and whether any ran short (read on the CPU), and each job's
@@ -495,7 +510,8 @@ impl Endless {
         let slots = make("slots", jobs * 64 * rows * 4, none)?;
         let loose = make("loose bricks", jobs * JOB_BRICKS * BRICK_BYTES, none)?;
         let counters =
-            make("counters", (jobs * COUNTERS + 8 + jobs + jobs * 32) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
+            make("counters", (jobs * COUNTERS + 8 + jobs + jobs * 33) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
+        let job_edits = make("job edits", jobs * MOST_COLUMN_EDITS * 4, none)?;
         // The candidate bricks, and after them those the coarse pass leaves.
         let candidates = make("candidates", 2 * jobs * 64 * rows * 4, none)?;
         let mut makes = Vec::new();
@@ -512,7 +528,7 @@ impl Endless {
             gpu.device.cmd_fill_buffer(cmd, table.handle, 0, vk::WHOLE_SIZE, 0x8000_0000);
             gpu.device.cmd_fill_buffer(cmd, slot_counts.handle, 0, vk::WHOLE_SIZE, 0);
         })?;
-        Ok(Self {
+        let mut endless = Self {
             from: volume.clone(),
             window,
             tall,
@@ -534,6 +550,9 @@ impl Endless {
             trees,
             tree_carried,
             models,
+            edits: Arc::default(),
+            edit_buffer: None,
+            job_edits,
             room,
             grow,
             pages,
@@ -548,7 +567,62 @@ impl Endless {
             jobs: Vec::new(),
             window_sector: [0; 3],
             corner: Vec3::ZERO,
-        })
+        };
+        // No column is made yet: the buffer the edits had of none is the only one to let go, and there is none.
+        let none = endless.set_edits(gpu, &volume.edits)?;
+        debug_assert!(none.is_empty());
+        Ok(endless)
+    }
+
+    /// Takes `edits` as what its columns are made with: those that differ
+    /// from the edits it had, from the first that does, have the columns
+    /// they reach made again. Gives back a buffer let go, where the edits
+    /// outgrew theirs.
+    pub fn set_edits(&mut self, gpu: &Gpu, edits: &Arc<Vec<VoxelEdit>>) -> Result<Vec<Buffer>> {
+        if Arc::ptr_eq(&self.edits, edits) || self.edits == *edits {
+            self.edits = edits.clone();
+            return Ok(Vec::new());
+        }
+        let same = self.edits.iter().zip(edits.iter()).take_while(|(a, b)| a == b).count();
+        let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
+        for edit in self.edits[same..].iter().chain(&edits[same..]) {
+            // The columns the ball reaches, with a voxel's border, are made again.
+            let low = ((edit.at - edit.radius) / voxel - 1.0) / 64.0;
+            let high = ((edit.at + edit.radius) / voxel + 1.0) / 64.0;
+            for z in low.z.floor() as i32..=high.z.floor() as i32 {
+                for x in low.x.floor() as i32..=high.x.floor() as i32 {
+                    let slot = self.slot_of([x, z]) as usize;
+                    if self.made[slot] == Some([x, z]) {
+                        self.made[slot] = None;
+                    }
+                }
+            }
+        }
+        let words: Vec<u32> = edits
+            .iter()
+            .flat_map(|edit| {
+                let middle = edit.at / voxel;
+                let fill = edit.fill.map_or(0, |material| material as u32 + 1);
+                let radius = (edit.radius / voxel).max(0.0);
+                [middle.x.to_bits(), middle.y.to_bits(), middle.z.to_bits(), radius.to_bits(), fill, 0, 0, 0]
+            })
+            .collect();
+        let mut gone = Vec::new();
+        let bytes = (words.len() as u64 * 4).max(16);
+        if self.edit_buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {
+            // Room for half as many again, so a script carving a tunnel grows it seldom.
+            let room = bytes + bytes / 2;
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+            let buffer = gpu.create_buffer("voxel world edits", room, usage, MemoryLocation::GpuOnly)?;
+            gone.extend(self.edit_buffer.replace(buffer));
+        }
+        if let Some(buffer) = &self.edit_buffer {
+            gpu.upload_buffer(buffer, 0, bytemuck::cast_slice(&words))?;
+        }
+        self.edits = edits.clone();
+        Ok(gone)
     }
 
     /// Makes `volume`'s ground in the buffers it has, where they fit it: its
@@ -760,6 +834,10 @@ impl Endless {
             staging: self.staging.address,
             placed: self.placed.address,
             models: self.models.as_ref().map_or(0, |models| models.address),
+            edits: self.edit_buffer.as_ref().map_or(0, |buffer| buffer.address),
+            job_edits: self.job_edits.address,
+            edit_count: self.edits.len() as u32,
+            edit_pad: 0,
             brick_pages: self.room.brick_pages,
             jobs,
         };
@@ -828,6 +906,7 @@ impl Recording {
         run(pipelines.voxel_world_tops, [((TOPS * TOPS) as u32).div_ceil(64), jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_trees, [1, jobs, 1]);
+        run(pipelines.voxel_world_edits, [1, jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_candidates, [1, jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
@@ -893,6 +972,8 @@ impl Endless {
         ];
         all.extend(self.forest.map(|(buffer, _, _)| buffer));
         all.extend(self.models);
+        all.extend(self.edit_buffer);
+        all.push(self.job_edits);
         all.extend(self.program.map(|(buffer, _)| buffer));
         all.extend(self.volume.into_iter().flat_map(|(words, carried)| [words, carried]));
         all.extend(self.makes);

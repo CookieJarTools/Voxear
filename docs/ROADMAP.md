@@ -4494,7 +4494,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 begun)
+## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stage 4 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4597,6 +4597,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   swaying brick is looked up once and not at each voxel: a wood's depth and lit voxels 4.0 + 3.7 ms against
   5.2 + 6.3. Blades in the brick with their soil keep still. Walking every brick whole was tried and left out: the depth pass
   got faster but its shadows' levels went out of step, and kept in step the lit pass got slower.
+- **Stage 4 begun (2026-11-25): carving and filling.** An endless Voxel Volume keeps what was changed in it as balls
+  carved out or filled with a ground (dirt, grass, rock, sand, snow, gravel), in order, and its columns are made on
+  the GPU with them: pits open walls of the layers under the grass, fills in their ground's shades, a later edit over
+  an earlier. `Voxels.Carve` and `Voxels.Fill` in C#, `voxels.carve` and `voxels.fill` in `vox editor call` (one
+  step to undo each), saved with the scene as `[[obj.voxel_volume.edits]]`. Next: changed bricks in region files,
+  edits over the network, a brush, `Voxels.Raycast`.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

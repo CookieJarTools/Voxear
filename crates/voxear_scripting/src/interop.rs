@@ -623,6 +623,9 @@ pub(crate) struct NativeApi {
     pub ground_made: unsafe extern "C" fn(at: *const [f32; 3], radius: f32) -> i32,
     /// The towns of a world of blocks near a place, as JSON for `Towns`.
     pub towns_info: unsafe extern "C" fn(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
+    /// `Voxels.Carve` and `Voxels.Fill`: a ball carved out of every endless Voxel Volume it reaches (`fill` -1) or
+    /// filled with a ground; how many it reached.
+    pub voxel_edit: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, fill: i32) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2372,6 +2375,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         far_figures: crate::crowds::far_figures,
         ground_made: crate::columns::ground_made,
         towns_info: crate::services::towns_info,
+        voxel_edit: crate::voxels::voxel_edit,
     }
 }
 

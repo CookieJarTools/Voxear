@@ -21,7 +21,7 @@ The Inspector shows its size in voxels and in metres, how many voxels are solid,
 
 The settings change nothing until **Make Again**, which makes the print from its model as they say. Every volume printing it shows it as it is now.
 
-A print's file is small: its palette and how it was made, then each brick of eight voxels a side as one byte where it is empty or all one colour, the rest packed with zstd. A wooden crate a metre across at 16 voxels a metre is about 9 KB. Printing one adds only its name, place and turn to the scene, which is all that goes over the network to a player who joins.
+A print's file is small: its palette and how it was made, then each brick of eight voxels a side as one byte where it is empty or all one colour, the rest packed with zstd. A sandbag barrier 3.5 m long at 16 voxels a metre is under 2 KB, a timber wall 2 m by 1.7 m about the same. Printing one adds only its name, place and turn to the scene, which is all that goes over the network to a player who joins.
 
 ## Printing one
 
@@ -63,4 +63,4 @@ rotation = [0.0, 30.0, 0.0]
 - A print is printed whole where it is placed: it doesn't fit itself to the ground, and grass and trees aren't cleared from inside it, so a tree may grow through an open hut.
 - Turned other than by quarter turns, a print's voxels are those whose middles fall in the print's, so a wall one voxel thick may show gaps; make thin pieces at more voxels a metre than the volume.
 - A volume of a set size can't take prints, only an endless one.
-- Making a print reads the whole model, on the editor's own thread: a scan of a million triangles takes a few seconds, the editor waiting.
+- Making a print reads the whole model on the editor's own thread: a scanned piece whose file is 100 MB takes about five seconds, the editor waiting.

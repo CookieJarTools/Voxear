@@ -4625,7 +4625,18 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   where a ray meets an endless volume's ground, worked out on the CPU as the GPU makes it, edits and all: 0.09 ms
   down the hills, 0.46 ms into mountains with caves. A brush in the Scene view carves or fills balls where the
   pointer meets the ground of a selected volume (its Inspector's Brush, Brush Size and Brush Ground), Shift for the
-  other, one step to undo a stroke. Next: changed bricks in region files, edits over the network, collision.
+  other, one step to undo a stroke.
+- **Voxel Prints (2026-11-25).** A model (`.gltf`, `.glb`, `.fbx`, `.boxmodel`) made into a `.voxprint`: each
+  triangle fills the voxels its box test finds it in, coloured from its picture where it is nearest each voxel's
+  middle; the inside filled (Solid, Sealed for open scans, or Shell), each voxel the colour of the skin nearest it;
+  every colour the nearest of up to 64. Its file is a byte a brick where empty or of one colour, the rest bits and
+  bytes, packed with zstd: scanned trench pieces of 100 MB files print at 16 voxels a metre in about 5 s each into
+  files of 0.6–1.8 KB. A print is an edit like a ball, kept in order with them and saved with the scene; the GPU's
+  bricks pass looks each voxel up in the print, turned any way, so a ball carved later finds it solid inside, and
+  the CPU's ray meets it too. Making the window's columns with ten prints in view takes the 0.3 s it took without,
+  and drawing costs what it did on master to the hundredth of a millisecond. Made with **Make Voxel Print** on a
+  model, its Inspector's **Make Again**, `voxel_prints.make`; printed with the brush's Print mode, `Voxels.Print` in
+  C# and `voxels.print`. Next: changed bricks in region files, edits over the network, collision.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

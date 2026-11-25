@@ -979,7 +979,10 @@ fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_
     done(&mut editor, &mut renderer, "voxel_prints.make", args);
     for (field, value) in [("brush", json!("Print")), ("brush_print", json!("Models/Pyramid.voxprint")), ("brush_turn", json!(30.0))] {
         let set = json!({ "obj": volume, "component": "voxel_volume", "field": field, "value": value });
-        assert_eq!(done(&mut editor, &mut renderer, "field.set", set)["changed"], true, "{field}");
+        // The brush is the editor's own setting, not the scene's: it shows what it was set to.
+        let answer = done(&mut editor, &mut renderer, "field.set", set);
+        let shown = answer["value"].get("path").unwrap_or(&answer["value"]);
+        assert_eq!(*shown, value, "{field}: {answer}");
     }
     editor.select(Some(entity));
     pointer_to(&mut editor, from);

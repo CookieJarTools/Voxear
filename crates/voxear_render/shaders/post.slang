@@ -842,13 +842,49 @@ float4 finishFragment(PostOut input) : SV_Target
 // pixel a square block of whole screen pixels, nearest, never blurred. push.textures: the small picture, then the
 // size of a drawn pixel in screen pixels, and where the view's first pixel falls in the small picture, in its pixels,
 // as float bits: the snapped camera's remainder moves it by part of a drawn pixel.
+//
+// A camera drawn over what is under it (src/camera.rs) is laid the same way, at a size of 1 where it is not drawn in
+// pixels, push.level its depth's texture plus one: where it drew nothing, at depth 0, what is under it shows.
 [shader("fragment")]
 float4 enlargeFragment(PostOut input) : SV_Target
 {
     float size = asfloat(push.textures.y);
     float2 start = float2(asfloat(push.textures.z), asfloat(push.textures.w));
     float2 at = (float2(viewPixel(input)) + 0.5) / size + start;
+    if (push.level != 0)
+    {
+        uint depth = push.level - 1;
+        float2 share = at / float2(sizeOf(push.textures.x));
+        if (load(depth, int2(floor(share * float2(sizeOf(depth))))).r <= 0.0)
+        {
+            discard;
+        }
+    }
     return float4(load(push.textures.x, int2(floor(at))).rgb, 1.0);
+}
+
+// ---------------------------------------------------------------- A camera's own finish
+
+// A camera's background of one colour (src/camera.rs Background::Color), where it sees nothing: push.textures.x the
+// depth, y to w the colour as light, float bits.
+[shader("fragment")]
+float4 backgroundFragment(PostOut input) : SV_Target
+{
+    if (load(push.textures.x, int2(input.position.xy)).r > 0.0)
+    {
+        discard;
+    }
+    // As bright on screen as the colour says, before the tonemap, whatever the camera's exposure.
+    float3 color = float3(asfloat(push.textures.y), asfloat(push.textures.z), asfloat(push.textures.w));
+    return float4(color / max(push.frame->exposure, 1e-6), 1.0);
+}
+
+// A camera without HDR: the light cut at what shows as white, drawn with the least of it and what is there.
+[shader("fragment")]
+float4 clampFragment(PostOut input) : SV_Target
+{
+    float white = 1.0 / max(push.frame->exposure, 1e-6);
+    return float4(white, white, white, 1.0);
 }
 
 // ---------------------------------------------------------------- FSR

@@ -67,7 +67,7 @@ pub struct Pixels {
 
 impl Default for Pixels {
     fn default() -> Self {
-        Self { enabled: false, size: 4, height: 0, snap: true }
+        Self { enabled: false, size: 4, height: 0, snap: false }
     }
 }
 

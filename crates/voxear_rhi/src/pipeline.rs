@@ -41,6 +41,8 @@ pub enum Blend {
     Filter,
     /// The greater of what is drawn and what is there, in each channel.
     Max,
+    /// The lesser of what is drawn and what is there, in each channel.
+    Min,
 }
 
 pub struct GraphicsPipelineDesc<'a> {
@@ -261,6 +263,14 @@ fn blend_state(blend: Blend) -> vk::PipelineColorBlendAttachmentState {
             .src_alpha_blend_factor(vk::BlendFactor::ONE)
             .dst_alpha_blend_factor(vk::BlendFactor::ONE)
             .alpha_blend_op(vk::BlendOp::MAX),
+        Blend::Min => state
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ONE)
+            .color_blend_op(vk::BlendOp::MIN)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+            .alpha_blend_op(vk::BlendOp::MIN),
     }
 }
 

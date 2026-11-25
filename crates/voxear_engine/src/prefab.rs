@@ -293,6 +293,12 @@ pub(crate) fn map_obj_refs(data: &mut ObjData, f: &dyn Fn(&ObjPath) -> ObjPath) 
     if let Some(follows) = &mut data.camera_follows {
         *follows = crate::lod_groups::FileRef::new(&f(&follows.path()?));
     }
+    if let Some(over) = &mut data.camera_over {
+        *over = crate::lod_groups::FileRef::new(&f(&over.path()?));
+    }
+    if let Some(screen) = &mut data.camera_screen {
+        screen.camera = crate::lod_groups::FileRef::new(&f(&screen.camera.path()?));
+    }
     match &mut data.lod_group {
         Some(lod) => lod.map_refs(f),
         None => Ok(()),
@@ -492,6 +498,12 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.camera_follows.is_some() {
         root.camera_follows = instance.camera_follows.clone();
     }
+    if instance.camera_over.is_some() {
+        root.camera_over = instance.camera_over.clone();
+    }
+    if instance.camera_screen.is_some() {
+        root.camera_screen = instance.camera_screen.clone();
+    }
     root.collider2d = instance.collider2d.or(root.collider2d);
     root.rigidbody2d = instance.rigidbody2d.or(root.rigidbody2d);
     root.vehicle = instance.vehicle.or(root.vehicle);
@@ -609,6 +621,8 @@ pub struct TemplateObj {
     /// when spawned.
     pub portal: Option<crate::portals::PortalData>,
     pub camera_follows: Option<crate::lod_groups::FileRef>,
+    pub camera_over: Option<crate::lod_groups::FileRef>,
+    pub camera_screen: Option<crate::scene_file::CameraScreenData>,
     pub collider2d: Option<Collider2D>,
     pub rigidbody2d: Option<Rigidbody2D>,
     pub vehicle: Option<Vehicle>,
@@ -1003,6 +1017,16 @@ impl Template {
             if let Some(follows) = follows {
                 world.insert(entity, voxear_render::CameraFollows(follows));
             }
+            let over = obj.camera_over.as_ref().and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path));
+            if let Some(over) = over {
+                world.insert(entity, voxear_render::CameraOver(over));
+            }
+            if let Some(screen) = &obj.camera_screen {
+                let camera = screen.camera.path().ok().and_then(|path| lookup(&path));
+                if let Some(camera) = camera {
+                    world.insert(entity, voxear_render::CameraScreen { camera, brightness: screen.brightness });
+                }
+            }
         }
         link_instances(world, &self.objs, &entities);
         entities
@@ -1035,6 +1059,16 @@ fn check_refs(obj: &FlatObj, index: &HashMap<&ObjPath, usize>) -> Result<()> {
         && !index.contains_key(&follows.path()?)
     {
         bail!("its camera follows Obj {}, which is not in the same file", follows.path()?);
+    }
+    if let Some(over) = &obj.data.camera_over
+        && !index.contains_key(&over.path()?)
+    {
+        bail!("its camera is drawn over Obj {}'s, which is not in the same file", over.path()?);
+    }
+    if let Some(screen) = &obj.data.camera_screen
+        && !index.contains_key(&screen.camera.path()?)
+    {
+        bail!("its screen shows Obj {}'s camera, which is not in the same file", screen.camera.path()?);
     }
     Ok(())
 }
@@ -1542,6 +1576,8 @@ pub(crate) fn resolve_obj(
         joint: data.joint.clone(),
         portal: data.portal.clone(),
         camera_follows: data.camera_follows.clone(),
+        camera_over: data.camera_over.clone(),
+        camera_screen: data.camera_screen.clone(),
         collider2d: data.collider2d,
         rigidbody2d: data.rigidbody2d,
         vehicle: data.vehicle,

@@ -399,7 +399,8 @@ VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instance
     VertexOut o;
     o.position = transform(frame->viewProj, float4(now, 1.0));
     o.worldPosition = now;
-    o.cut = cutAt(push.frame, o.worldPosition);
+    o.cuts[0] = cutAt(push.frame, o.worldPosition);
+    o.cuts[1] = clipAt(push.frame, o.worldPosition);
     o.normal = normal;
     o.tangent = float4(mul(turn, grassLaid(v.tangent.xyz, over)), v.tangent.w);
     o.uv = v.uv;

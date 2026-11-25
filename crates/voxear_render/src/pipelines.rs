@@ -287,6 +287,10 @@ pub struct Pipelines {
     /// A picture drawn at a few pixels to the screen's many, enlarged to the
     /// view nearest, each drawn pixel a block of screen pixels (see `pixels`).
     pub enlarge: vk::Pipeline,
+    /// A camera's background of one colour, and its light cut at white
+    /// without HDR (see `camera`).
+    pub background: vk::Pipeline,
+    pub clamp_light: vk::Pipeline,
     /// The frame debugger's view of an image.
     pub frame_debug: vk::Pipeline,
     /// A display image fitted to a window (see `display`), one for each
@@ -1166,6 +1170,8 @@ impl Pipelines {
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
             enlarge: fullscreen("Enlarge", c"enlargeFragment", output, Blend::Opaque)?,
+            background: fullscreen("Background", c"backgroundFragment", hdr, Blend::Opaque)?,
+            clamp_light: fullscreen("Cut at white", c"clampFragment", hdr, Blend::Min)?,
             frame_debug: fullscreen("Frame debugger view", c"frameDebugFragment", hdr, Blend::Opaque)?,
             // Made on a thread of their own while the rest are made (see `new_showing`).
             fsr3: None,
@@ -1465,6 +1471,8 @@ impl Pipelines {
             self.composite,
             self.finish,
             self.enlarge,
+            self.background,
+            self.clamp_light,
             self.frame_debug,
             self.ui,
             self.ui_panel,

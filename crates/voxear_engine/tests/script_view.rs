@@ -31,6 +31,15 @@ public sealed class Looker : SystemBase
 		Log.Info($"projection {camera.Projection} {camera.Size}");
 		camera.MakeOrthographic(6f);
 		Log.Info($"projection {camera.Projection} {camera.Size}");
+		camera.Viewport = new Vector4(0f, 0f, 0.5f, 1f);
+		camera.Priority = 2;
+		camera.Far = 100f;
+		camera.FocalLength = 35f;
+		camera.BackgroundColor = new Color(0f, 0f, 1f);
+		camera.Hdr = false;
+		camera.Layers = new LayerMask(5);
+		camera.AntiAliasing = AntiAliasingMode.Fxaa;
+		Log.Info($"more {camera.Viewport.Z} {camera.Priority} {camera.Far} {camera.IsPhysical} {camera.FocalLength} {camera.Background} {camera.Hdr} {camera.Layers.Value} {camera.AntiAliasing}");
 	}
 
 	protected override void Update()
@@ -63,6 +72,7 @@ fn a_script_gives_an_obj_a_first_person_view_and_sets_its_camera() {
     assert!(lines.iter().any(|l| l == "fov 50 True False"), "{lines:#?}");
     assert!(lines.iter().any(|l| l == "projection Perspective 5"), "perspective at first: {lines:#?}");
     assert!(lines.iter().any(|l| l == "projection Orthographic 6"), "then orthographic: {lines:#?}");
+    assert!(lines.iter().any(|l| l == "more 0.5 2 100 True 35 Color False 5 Fxaa"), "the rest of its settings: {lines:#?}");
     let world = &game.engine.world;
     let views: Vec<FirstPersonView> = world.query_ref::<&FirstPersonView>().into_iter().cloned().collect();
     assert_eq!(views.len(), 1);
@@ -72,6 +82,11 @@ fn a_script_gives_an_obj_a_first_person_view_and_sets_its_camera() {
     let lenses: Vec<(voxear_render::Projection, f32)> =
         world.query_ref::<&Camera>().into_iter().map(|c| (c.projection, c.size)).collect();
     assert_eq!(lenses, [(voxear_render::Projection::Orthographic, 6.0)]);
+    let camera = *world.query_ref::<&Camera>().into_iter().next().unwrap();
+    assert_eq!((camera.viewport, camera.priority, camera.far, camera.layers), ([0.0, 0.0, 0.5, 1.0], 2, Some(100.0), 5));
+    assert_eq!(camera.physical.map(|lens| lens.focal_length), Some(35.0));
+    assert_eq!(camera.background, voxear_render::Background::Color { color: [0.0, 0.0, 1.0] });
+    assert!(!camera.finish.hdr);
 }
 
 /// A copy of Hello, inside the repository, where its scripts find the

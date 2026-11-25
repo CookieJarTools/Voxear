@@ -7,7 +7,7 @@ pub mod audio;
 pub mod block_mob;
 pub mod block_tints;
 pub mod build_profile;
-mod cameras;
+pub mod cameras;
 pub mod caves;
 pub mod dungeons;
 pub mod towns;

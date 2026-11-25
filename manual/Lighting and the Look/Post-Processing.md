@@ -287,8 +287,10 @@ To compare, `vox render --render-scale 0.67` draws one picture at a given scale.
 enabled = true
 size = 4        # screen pixels each drawn pixel covers, across and down, 1 to 32
 height = 0      # or about how many rows to draw, 270 say, in place of size: the nearest whole pixel size that gives them
-snap = true     # keep an orthographic camera on the grid of its pixels
+snap = true     # keep an orthographic camera on the grid of its pixels; off unless set
 ```
+
+Drawing in pixels, an orthographic camera and snapping are each off until switched on, and each switched on alone. Off, they add no pass and draw nothing more: the scene is drawn at the screen's size, and the shaders only read one number of the frame to know the camera is a perspective one.
 
 `size` keeps the pixels the same on every screen, more of them on a bigger one; `height` keeps about as many rows of pixels on every screen, the pixels bigger on a bigger one. Either way a drawn pixel covers a whole number of screen pixels, so none is wider than another.
 

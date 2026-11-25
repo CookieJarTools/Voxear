@@ -1177,6 +1177,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         if capture {
             renderer.start_capture();
         }
+        // Through every camera as the game draws them, unless one was named to look through.
+        if looking_through.is_none() {
+            voxear_engine::cameras::look_through(&mut game.engine.world, &mut renderer, options)?;
+        }
         let rendering = std::time::Instant::now();
         renderer.render(&game.engine.world, game.engine.time().elapsed as f32)?;
         let render_ms = rendering.elapsed().as_secs_f32() * 1000.0;

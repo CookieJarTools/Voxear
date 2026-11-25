@@ -317,6 +317,8 @@ impl App {
             self.game.ui.draw(renderer, delta, [0, 0, size.width, size.height], scale)?;
             self.overlay.show_debug_texts(&self.game.engine.world, (size.width, size.height), scale);
             self.overlay.draw(renderer, (size.width, size.height), scale)?;
+            let base = ViewOptions { debug_view: self.debug_view, ..ViewOptions::default() };
+            crate::cameras::look_through(&mut self.game.engine.world, renderer, base)?;
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
         }
         if let Some(link) = &mut self.link {

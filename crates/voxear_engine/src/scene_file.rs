@@ -601,6 +601,14 @@ pub struct ObjData {
     /// camera's view is carried through a Portal that lies between them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera_follows: Option<crate::lod_groups::FileRef>,
+    /// The camera its camera is drawn over, stacked, by its place in the
+    /// same file (see `voxear_render::CameraOver`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_over: Option<crate::lod_groups::FileRef>,
+    /// The camera whose picture its mesh shows (see
+    /// `voxear_render::CameraScreen`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_screen: Option<CameraScreenData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider2d: Option<Collider2D>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -711,6 +719,8 @@ impl ObjData {
             joint: None,
             portal: None,
             camera_follows: None,
+            camera_over: None,
+            camera_screen: None,
             collider2d: None,
             rigidbody2d: None,
             vehicle: None,
@@ -765,17 +775,152 @@ pub struct CameraData {
     /// With an orthographic projection, half the height it sees, in metres.
     #[serde(default = "default_ortho_size", skip_serializing_if = "is_default_ortho_size")]
     pub size: f32,
+    /// `vertical` or `horizontal`: which way `fov` is measured.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub fov_axis: voxear_render::FovAxis,
+    /// A physical camera's lens: `{ focal_length = 35, sensor = [36, 24], gate_fit = "fill", shift = [0, 0] }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical: Option<voxear_render::PhysicalLens>,
+    /// How far it sees, in metres; left out, as far as there is anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub far: Option<f32>,
+    /// Where on the screen it draws: left, bottom, width and height from 0 to 1.
+    #[serde(default = "whole_viewport", skip_serializing_if = "is_whole_viewport")]
+    pub viewport: [f32; 4],
+    /// The lowest draws first, the highest on top.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub priority: i32,
+    /// The layers it sees, a bit each; left out, every one.
+    #[serde(default = "every_layer", skip_serializing_if = "is_every_layer")]
+    pub layers: u32,
+    /// `{ kind = "display", display = 1 }`, or `{ kind = "picture", width = 512, height = 512 }`.
+    #[serde(default = "first_display", skip_serializing_if = "is_first_display")]
+    pub target: voxear_render::CameraTarget,
+    /// `{ kind = "sky" }`, `{ kind = "color", color = [r, g, b] }` or `{ kind = "nothing" }`.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub background: voxear_render::Background,
+    /// `{ post = true, anti_aliasing = "taa", hdr = true, occlusion_culling = true }`.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub finish: voxear_render::CameraFinish,
+    /// An oblique near plane, `[nx, ny, nz, d]`, what is behind it not drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_plane: Option<[f32; 4]>,
+}
+
+/// A camera's picture on an Obj's mesh, as a scene writes it:
+/// `camera_screen = { camera = "Security Camera", brightness = 1.0 }`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CameraScreenData {
+    pub camera: crate::lod_groups::FileRef,
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub brightness: f32,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+fn whole_viewport() -> [f32; 4] {
+    [0.0, 0.0, 1.0, 1.0]
+}
+
+fn is_whole_viewport(viewport: &[f32; 4]) -> bool {
+    *viewport == whole_viewport()
+}
+
+fn every_layer() -> u32 {
+    voxear_render::EVERY_LAYER
+}
+
+fn is_every_layer(layers: &u32) -> bool {
+    *layers == every_layer()
+}
+
+fn first_display() -> voxear_render::CameraTarget {
+    voxear_render::CameraTarget::Display { display: 0 }
+}
+
+fn is_first_display(target: &voxear_render::CameraTarget) -> bool {
+    *target == first_display()
 }
 
 impl CameraData {
     pub fn of(camera: &Camera) -> Self {
-        let Camera { fov_y_degrees: fov, exposure, near, projection, size } = *camera;
-        Self { fov, exposure, near, projection, size }
+        let Camera {
+            fov_y_degrees: fov,
+            exposure,
+            near,
+            projection,
+            size,
+            fov_axis,
+            physical,
+            far,
+            viewport,
+            priority,
+            layers,
+            target,
+            background,
+            finish,
+            custom_projection: _,
+            clip_plane,
+        } = *camera;
+        Self {
+            fov,
+            exposure,
+            near,
+            projection,
+            size,
+            fov_axis,
+            physical,
+            far,
+            viewport,
+            priority,
+            layers,
+            target,
+            background,
+            finish,
+            clip_plane,
+        }
     }
 
+    /// The camera it makes; a projection of its own is a script's alone.
     pub fn camera(&self) -> Camera {
-        let Self { fov, exposure, near, projection, size } = *self;
-        Camera { fov_y_degrees: fov, exposure, near, projection, size }
+        let Self {
+            fov,
+            exposure,
+            near,
+            projection,
+            size,
+            fov_axis,
+            physical,
+            far,
+            viewport,
+            priority,
+            layers,
+            target,
+            background,
+            finish,
+            clip_plane,
+        } = *self;
+        Camera {
+            fov_y_degrees: fov,
+            exposure,
+            near,
+            projection,
+            size,
+            fov_axis,
+            physical,
+            far,
+            viewport,
+            priority,
+            layers,
+            target,
+            background,
+            finish,
+            custom_projection: None,
+            clip_plane,
+        }
     }
 }
 
@@ -2591,6 +2736,12 @@ fn capture_instance(
     if root.camera_follows.is_some() && root.camera_follows != prefab_root.camera_follows {
         instance.camera_follows = root.camera_follows.clone();
     }
+    if root.camera_over.is_some() && root.camera_over != prefab_root.camera_over {
+        instance.camera_over = root.camera_over.clone();
+    }
+    if root.camera_screen.is_some() && root.camera_screen != prefab_root.camera_screen {
+        instance.camera_screen = root.camera_screen.clone();
+    }
     if root.collider2d.is_some() && root.collider2d != prefab_root.collider2d {
         instance.collider2d = root.collider2d;
     }
@@ -2900,6 +3051,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(follows) = actual.camera_follows.as_ref().filter(|f| Some(*f) != expected.camera_follows.as_ref()) {
         put("camera_follows", toml::Value::try_from(follows)?);
+    }
+    if let Some(over) = actual.camera_over.as_ref().filter(|f| Some(*f) != expected.camera_over.as_ref()) {
+        put("camera_over", toml::Value::try_from(over)?);
+    }
+    if let Some(screen) = actual.camera_screen.as_ref().filter(|s| Some(*s) != expected.camera_screen.as_ref()) {
+        put("camera_screen", toml::Value::try_from(screen)?);
     }
     if let Some(collider) = actual.collider2d.filter(|c| Some(*c) != expected.collider2d) {
         put("collider2d", whole(&collider, &Collider2D::default())?);
@@ -3249,6 +3406,12 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     });
     let follows = world.get::<voxear_render::CameraFollows>(entity).and_then(|follows| file_path(world, ids, follows.0));
     obj.camera_follows = follows.map(|path| crate::lod_groups::FileRef::new(&path));
+    let over = world.get::<voxear_render::CameraOver>(entity).and_then(|over| file_path(world, ids, over.0));
+    obj.camera_over = over.map(|path| crate::lod_groups::FileRef::new(&path));
+    obj.camera_screen = world.get::<voxear_render::CameraScreen>(entity).and_then(|screen| {
+        let camera = crate::lod_groups::FileRef::new(&file_path(world, ids, screen.camera)?);
+        Some(CameraScreenData { camera, brightness: screen.brightness })
+    });
     obj.collider2d = world.get::<Collider2D>(entity).copied();
     obj.rigidbody2d = world.get::<Rigidbody2D>(entity).copied();
     // What drives a Vehicle and how it goes are the game's, not the scene's.
@@ -3558,6 +3721,30 @@ fn default_outer() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cameras_settings_are_written_only_where_they_differ_and_read_back() {
+        let plain = toml::to_string(&CameraData::of(&Camera::default())).unwrap();
+        assert_eq!(plain.trim(), "fov = 60.0", "a plain camera writes its field of view alone: {plain}");
+        let camera = Camera {
+            projection: voxear_render::Projection::Orthographic,
+            size: 3.0,
+            fov_axis: voxear_render::FovAxis::Horizontal,
+            physical: Some(voxear_render::PhysicalLens { focal_length: 35.0, ..Default::default() }),
+            far: Some(80.0),
+            viewport: [0.5, 0.0, 0.5, 1.0],
+            priority: 3,
+            layers: 0b1011,
+            target: voxear_render::CameraTarget::Picture { width: 256, height: 128 },
+            background: voxear_render::Background::Color { color: [0.1, 0.2, 0.3] },
+            finish: voxear_render::CameraFinish { post: false, hdr: false, ..Default::default() },
+            clip_plane: Some([0.0, 1.0, 0.0, -2.0]),
+            ..Camera::default()
+        };
+        let text = toml::to_string(&CameraData::of(&camera)).unwrap();
+        let read: CameraData = toml::from_str(&text).unwrap();
+        assert_eq!(read.camera(), camera, "{text}");
+    }
 
     #[test]
     fn a_sky_names_its_picture_by_id_and_keeps_it_through_a_save() {

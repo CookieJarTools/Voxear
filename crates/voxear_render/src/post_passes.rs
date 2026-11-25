@@ -81,6 +81,11 @@ pub struct PostInput {
     /// A worn shader pack's passes after the fog, after TAA and over the
     /// finished picture.
     pub pack: Option<crate::shader_packs::PackRecorder>,
+    /// The camera's background of one colour, as light, where it sees
+    /// nothing (see `camera::Background`).
+    pub background: Option<[f32; 3]>,
+    /// The camera's light cut at white, for a camera without HDR.
+    pub cut_at_white: bool,
 }
 
 /// What FSR 3.1 needs of a view beyond the post-processing's own inputs.
@@ -129,6 +134,19 @@ pub fn record(
         let push = Push { textures: [depth_texture, 0, 0, 0], ..push };
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
+    }
+    // A camera's own background, where it sees nothing, over the sky and unfogged; and without HDR, its light cut at
+    // white before anything spreads it.
+    if let Some(color) = input.background {
+        let textures = [depth_texture, color[0].to_bits(), color[1].to_bits(), color[2].to_bits()];
+        let push = Push { textures, ..push };
+        let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
+        fg.add_pass("Background", &images, &[], move |ctx| draw(ctx, pipelines.background, &push, hdr, true));
+    }
+    if input.cut_at_white {
+        fg.add_pass("Cut at white", &[(hdr, ImageAccess::ColorAttachment)], &[], move |ctx| {
+            draw(ctx, pipelines.clamp_light, &push, hdr, true)
+        });
     }
     if let Some(pack) = &input.pack {
         pack.record(fg, PackPoint::AfterFog, hdr, (None, None));
@@ -299,7 +317,9 @@ pub fn record(
 /// The picture drawn in pixels, `small`, enlarged into `output`, or into
 /// part of it with what lies outside cleared to a colour: each drawn pixel
 /// a block of `size` screen pixels, the view's first falling at `start` in
-/// the small picture's pixels (see `pixels::PixelGrid::start`).
+/// the small picture's pixels (see `pixels::PixelGrid::start`). With
+/// `covered_by`, the view's depth, it is laid over what is there, which
+/// shows wherever the view drew nothing.
 pub fn enlarge(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
@@ -307,15 +327,19 @@ pub fn enlarge(
     (rect, clear_outside): (Option<vk::Rect2D>, Option<[f32; 4]>),
     size: u32,
     start: [f32; 2],
+    covered_by: Option<ImageId>,
 ) {
     if let (Some(_), Some(color)) = (rect, clear_outside) {
         fg.add_pass("Clear output", &[(output, ImageAccess::ColorAttachment)], &[], move |ctx| clear(ctx, output, color));
     }
     let origin = rect.map_or([0, 0], |r| [r.offset.x as u32, r.offset.y as u32]);
     let textures = [fg.texture(small).0, (size as f32).to_bits(), start[0].to_bits(), start[1].to_bits()];
-    let push = Push { textures, size: origin, ..push };
-    let images = [(small, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
-    fg.add_pass("Enlarge", &images, &[], move |ctx| draw_into(ctx, pipelines.enlarge, &push, output, rect));
+    let level = covered_by.map_or(0, |depth| fg.texture(depth).0 + 1);
+    let push = Push { textures, size: origin, level, ..push };
+    let mut images = vec![(small, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
+    images.extend(covered_by.map(|depth| (depth, ImageAccess::Sampled)));
+    let name = if covered_by.is_some() { "Lay over" } else { "Enlarge" };
+    fg.add_pass(name, &images, &[], move |ctx| draw_into(ctx, pipelines.enlarge, &push, output, rect));
 }
 
 /// AMD FSR 3.1 in TAA's place: the frame's exposure as FSR reads it, then

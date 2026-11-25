@@ -42,7 +42,7 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Plateaus, Peaks, Raised Land, Spires, Fins, Chasms, Slope Mask, a painted map) makes the volume's own ground instead, and the Console names the node.
 
-Overhangs and caves cost far more: every brick from the volume's floor up is asked about. An Alpine slope with a world's own overhangs, tunnels and chambers takes about 1.6 ms a column, two columns a frame, and about 200 MB at a reach of 64 m; the ground round a camera standing still is made in about five and a half seconds.
+Overhangs and caves cost more: every brick from the volume's floor up is asked about, though most are passed over as solid rock or open air at a look at their corners. An Alpine slope with a world's own overhangs, tunnels and chambers takes about 0.5 ms a column, four columns a frame, and about 165 MB at a reach of 64 m; the ground round a camera standing still is made in about two and a half seconds.
 
 Running the graph about doubles what making a column costs: with Rolling Hills, about 0.08 ms of the GPU's time a column against 0.045 ms for the volume's own ground, at a reach of 64 m on an RTX 3070.
 

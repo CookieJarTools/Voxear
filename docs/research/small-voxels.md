@@ -585,6 +585,48 @@ A generator's **Volume**, the ground in three dimensions, now runs on the GPU to
 
 ![Inside a cave, looking out](../images/small-voxels/generated-inside-a-cave.webp)
 
+## Stage 2, caves made faster (2026-11-25)
+
+Making a column of Alpine with overhangs and caves now costs a third of what it did, and the window loads in half
+the time.
+
+- **A coarse pass before the bricks.** Between the candidates and the bricks, one thread a candidate brick asks
+  the Volume at the eight corners of the brick and its border. Where all eight are more than 24 voxels (1.5 m at
+  16 a metre) into the ground, or out of it, the brick is dropped before a group of 512 is spent on it; the rest
+  go on in a list of their own. With caves, 1,900 candidates a column come down to about 270. Bricks where the
+  column's grass and flowers may grow are always kept, as those are not the Volume's.
+- **How far the margin must be.** A voxel of the brick and its border is at most 7 voxels from a corner, so a
+  Volume whose numbers were true distances would need a margin of 7. Asked with the CPU at 600,000 places within
+  3 m of the surface, the numbers change by 1.0 m a metre at the median, 3.2 at the 99th percentile and up to 48
+  where a chamber or tunnel changes cell, a jump of about 3 m between voxels. The margin of 24 covers three times
+  a distance; at 8, 24 and 48 voxels the test views were the same to the pixel.
+- **A faster surface search.** The tops pass went down through the air two voxels at a time, up to 64 looks a
+  column. It now steps by half as far as the Volume says the ground is, at least two voxels, and halves the last
+  step: 1.0 ms of the 1.6 ms a two-column frame took came down to 0.36 ms, with the same pictures.
+- **Room that fits.** Counted on the GPU over 1,087 columns of the measured flight, a cave column keeps 36 bricks
+  at the median, 548 at the 99th percentile and up to 775: over the room of 768 there was, so the fullest columns
+  lost bricks, out of sight while the bricks were placed in row order. Their materials take at most 32 KB, 41 bytes
+  a brick, of the 123 KB set aside. A column with a Volume now has room for 1,024 bricks and 64 material bytes a
+  brick: a third more bricks in less memory.
+- **Four columns a frame.** With the bricks cheap, the columns pass (the graph's height, climate and what the
+  Volume carries up, 72 by 72 a column) is the most of what is left, and two columns leave the GPU half idle.
+
+  | Alpine with overhangs and caves | Before | Now |
+  |---|---|---|
+  | Window made before the frames | 5.6 s | 2.6 s |
+  | On the GPU | 204 MB | 164 MB |
+  | Columns a frame at most | 2 | 4 |
+  | Flying at 10 m/s: frames making columns | 367 of 540 | 198 of 540 |
+  | Making, median (least–most) | 3.37 ms (1.62–6.68) | 1.99 ms (1.38–4.59) |
+  | A column | 1.68 ms | 0.50 ms |
+
+  Rolling Hills, with no Volume, is as it was: 0.095 ms a column. What a column costs now is mostly its columns
+  pass, the graph interpreted a step at a time; compiling each graph into a shader of its own is next for that.
+- **Fields changed in the Inspector.** An endless volume was made from scratch, buffers and all, whenever a field
+  that changes its ground changed: each frame of a drag on its generator's floor or a ground field, up to 200 MB a
+  frame. Where its window, height and room stay the same it now keeps its buffers, makes its generator's program
+  again and makes each column over, showing what it held until then. Its roughness changes how it is drawn alone.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

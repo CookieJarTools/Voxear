@@ -330,14 +330,23 @@ impl VoxelVolumes {
         for (entity, volume, corner) in found {
             seen.push(entity);
             if volume.endless {
-                let fits = self.endless.get(&entity).is_some_and(|made| endless::same_ground(&made.from, &volume));
-                if !fits {
-                    let made = endless::Endless::new(gpu, &volume)?;
-                    if let Some(old) = self.endless.insert(entity, made) {
-                        old.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
+                let fits = self.endless.get(&entity).map(|made| endless::same_ground(&made.from, &volume));
+                let refitted = match (fits, self.endless.get_mut(&entity)) {
+                    (Some(false), Some(made)) => made.refit(gpu, &volume)?,
+                    _ => None,
+                };
+                match refitted {
+                    Some(gone) => gone.into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer))),
+                    None if fits != Some(true) => {
+                        let made = endless::Endless::new(gpu, &volume)?;
+                        if let Some(old) = self.endless.insert(entity, made) {
+                            old.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
+                        }
                     }
+                    None => {}
                 }
                 let made = self.endless.get_mut(&entity).expect("made above");
+                made.from.roughness = volume.roughness;
                 made.follow(corner, camera.unwrap_or(corner));
                 self.drawn.push(made.drawn());
                 continue;

@@ -4556,7 +4556,15 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Its numbers are the CPU's: 27,647 of 27,648 cells on the same side of the ground.
   - Measured: 1.65 ms a column, two a frame, 204 MB at reach 64 m; bricks of rock and air are still asked about.
   - Not yet: rivers, water and Cave Network halls on the GPU; Plateaus, Peaks, Spires and the other tall nodes;
-    making a Volume cheaper; stamps and trees in endless ground; coarser rings.
+    stamps and trees in endless ground; coarser rings.
+- **Stage 2, caves made faster (2026-11-25).**
+  - A coarse pass drops the bricks a Volume leaves solid rock or open air at their corners before the bricks pass:
+    270 bricks a column are worked out of 1,900. The surface search strides by how far the Volume says the ground is.
+  - A cave column has room for 1,024 bricks, a third more, in less memory; the fullest kept 775 and lost some before.
+  - Measured: 0.50 ms a column against 1.68, four a frame, 164 MB; the window made in 2.6 s against 5.6.
+  - Changing an endless volume's generator or ground in the Inspector keeps its buffers: a drag no longer makes
+    200 MB of them a frame.
+  - Next: each graph compiled into a shader of its own, as the columns pass is now most of the cost.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

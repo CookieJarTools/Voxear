@@ -3,15 +3,17 @@
 // a slot of the window by where it is, wrapping. As the camera moves, the columns coming into the window are made,
 // the nearest first and a few each frame, over the columns that left.
 //
-// Each column made goes through five passes, as the small-voxels research's generator did:
+// Each column made goes through six passes, as the small-voxels research's generator did:
 //
 // 1. voxelWorldColumns: the ground's height in each of its voxel columns, with a border of four, and its climate.
 // 2. voxelWorldTops: what the ground is at each column, with a border of two (grass, rock, sand, snow or gravel),
 //    and its grass.
 // 3. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass and flowers could reach.
-// 4. voxelWorldBricks: one group a listed brick, a thread a voxel, works out each voxel, and keeps the brick in its
+// 4. voxelWorldCoarse: with a Volume, a thread a listed brick passes over those solid or open through and through,
+//    by the Volume at the brick's corners, which with caves are most of them.
+// 5. voxelWorldBricks: one group a brick left, a thread a voxel, works out each voxel, and keeps the brick in its
 //    job's own list if anything is in it, its materials in the column's slot in the order of its bits.
-// 5. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
+// 6. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
 //    of its bits, and writes the sector's entry: where it is in the world, its bits and where its bricks start.
 //
 // The ground is the one a Voxel Volume's own ground is (src/voxel_volume/ground.rs), to the voxel: the same hashes,
@@ -32,6 +34,8 @@ static const uint BRICK_WORDS = 20;
 static const uint EMPTY = 0xFFFFFFFFu;
 static const uint ROW = 1024;
 // Each job's counters: bricks kept, material bytes taken, bricks placed, bricks that did not fit.
+// After them: how many candidate bricks there are and the coarse pass's groups, then how many of them it leaves for
+// the bricks pass and that pass's groups.
 static const uint COUNTERS = 4;
 
 struct WorldJob
@@ -466,9 +470,9 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     int z = corner.y + lz;
     uint top = make->programWords == 0 ? GROUND_GRASS : groundOf(make, job, lx, lz);
     // With a Volume, the column's surface is its top solid voxel with open air over it within four metres of its
-    // ground's height, found going down two voxels at a time and then one. Where there is ground over all of that,
-    // or none in it, the column is bare: nothing grows on it, though what the ground is there still colours the
-    // Volume's ground open to the sky.
+    // ground's height, found going down through the air by half as far as the Volume says the ground is, two voxels
+    // at least, and then halving the last step. Where there is ground over all of that, or none in it, the column is
+    // bare: nothing grows on it, though what the ground is there still colours the Volume's ground open to the sky.
     bool bare = false;
     if (hasVolume(make))
     {
@@ -478,18 +482,41 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
         // Mostly the Volume leaves the ground's height where it was: two looks find that.
         if (!(densityAt(make, job, lx, h, lz) > 0.0 && densityAt(make, job, lx, h + 1, lz) <= 0.0))
         {
+            int lowest = h - reach;
             y = h + reach;
-            bare = densityAt(make, job, lx, y, lz) > 0.0;
-            while (!bare && y > h - reach && densityAt(make, job, lx, y - 2, lz) <= 0.0)
+            float d = densityAt(make, job, lx, y, lz);
+            bare = d > 0.0;
+            bool found = false;
+            while (!bare && !found && y > lowest)
             {
-                y -= 2;
+                int stride = clamp(int(-d * 0.5 / make->voxel), 2, y - lowest);
+                float below = densityAt(make, job, lx, y - stride, lz);
+                if (below > 0.0)
+                {
+                    int open = y;
+                    int solid = y - stride;
+                    while (open - solid > 1)
+                    {
+                        int middle = (open + solid) / 2;
+                        if (densityAt(make, job, lx, middle, lz) > 0.0)
+                        {
+                            solid = middle;
+                        }
+                        else
+                        {
+                            open = middle;
+                        }
+                    }
+                    y = solid;
+                    found = true;
+                }
+                else
+                {
+                    y -= stride;
+                    d = below;
+                }
             }
-            y -= 2;
-            if (!bare && densityAt(make, job, lx, y + 1, lz) > 0.0)
-            {
-                y += 1;
-            }
-            bare = bare || y <= h - reach || densityAt(make, job, lx, y, lz) <= 0.0;
+            bare = bare || !found;
         }
         uint at = job * SIDE * SIDE + uint((lz + BORDER) * SIDE + lx + BORDER);
         int offset = bare ? 0 : clamp(y - h, -16000, 16000);
@@ -505,6 +532,9 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     }
     make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16) | (bare ? 1u << 24 : 0u);
 }
+
+// A candidate brick's mark where grass or flowers may grow in it.
+static const uint GROWN = 1u << 31;
 
 uint packCandidate(uint job, uint bx, uint bz, uint row)
 {
@@ -525,24 +555,37 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
     int bz = int(id.x / 8);
     int lowest = 0x7FFFFFFF;
     int highest = -0x7FFFFFFF;
+    // With a Volume, from under its lowest surface to over the tallest grass on it: the bricks there are kept
+    // whatever the coarse pass finds of the Volume, as the grass and flowers are not its.
+    int lowSurface = 0x7FFFFFFF;
+    int highGrowth = -0x7FFFFFFF;
+    bool volume = hasVolume(make);
     for (int z = 0; z < 8; z++)
     {
         for (int x = 0; x < 8; x++)
         {
             int cx = bx * 8 + x;
             int cz = bz * 8 + z;
+            int blade = int(columnOf(make, job, cx, cz) & 255u);
             lowest = min(lowest, lowOf(make, job, cx, cz));
-            highest = max(highest, heightOf(make, job, cx, cz) + int(columnOf(make, job, cx, cz) & 255u));
+            highest = max(highest, heightOf(make, job, cx, cz) + blade);
+            if (volume)
+            {
+                int surface = surfaceOf(make, job, cx, cz);
+                lowSurface = min(lowSurface, surface);
+                highGrowth = max(highGrowth, surface + blade);
+            }
         }
     }
     // Flowers stand over the grass: their stems and heads, at most.
     if (make->flowers > 0.0)
     {
         highest += int(0.7 / make->voxel) + 4;
+        highGrowth += int(0.7 / make->voxel) + 4;
     }
     int rows = int(make->tall) * 8;
     // A Volume reaches over and under its ground as far as it says, and as far as each column's spans say.
-    if (hasVolume(make))
+    if (volume)
     {
         highest += int(min(make->reach, float(rows * 8))) + 1;
         lowest -= int(min(make->depth, float(rows * 8))) + 1;
@@ -571,9 +614,10 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
     {
         uint at;
         InterlockedAdd(make->counters[MAX_JOBS * COUNTERS], 1u, at);
+        bool grown = row * 8 + 8 >= lowSurface - 1 && row * 8 - 1 <= highGrowth;
         if (at < make->candidateRoom)
         {
-            make->candidates[at] = packCandidate(job, uint(bx), uint(bz), uint(row));
+            make->candidates[at] = packCandidate(job, uint(bx), uint(bz), uint(row)) | (grown ? GROWN : 0u);
         }
     }
 }
@@ -584,9 +628,69 @@ void voxelWorldArguments(uint3 id: SV_DispatchThreadID)
 {
     WorldMake* make = push.make;
     uint count = min(make->counters[MAX_JOBS * COUNTERS], make->candidateRoom);
-    make->counters[MAX_JOBS * COUNTERS + 1] = ROW;
-    make->counters[MAX_JOBS * COUNTERS + 2] = (count + ROW - 1) / ROW;
+    make->counters[MAX_JOBS * COUNTERS + 1] = (count + 63) / 64;
+    make->counters[MAX_JOBS * COUNTERS + 2] = 1;
     make->counters[MAX_JOBS * COUNTERS + 3] = 1;
+}
+
+// How far into or out of the ground, in voxels, the corners of a brick and its border must all be for the brick to be
+// taken as solid or open through and through. A voxel of the ten a side is at most seven voxels from a corner. The
+// Volume's numbers read about as how far a place is from the ground's surface, but near caves they change up to three
+// times as fast, and now and then faster: three times seven, and a little over.
+static const float COARSE_EVEN = 24.0;
+
+// Whether a candidate brick of a Volume is solid or open through and through, by the eight corners of the brick and
+// its border of one: such a brick has no voxel to keep.
+bool evenThrough(WorldMake* make, uint packed)
+{
+    uint job = packed & 15u;
+    int3 brick = int3(int((packed >> 4) & 7u), int((packed & ~GROWN) >> 10), int((packed >> 7) & 7u)) * 8;
+    int tall = int(make->tall) * 64;
+    float even = COARSE_EVEN * make->voxel;
+    bool solid = true;
+    bool open = true;
+    for (uint c = 0; c < 8 && (solid || open); c++)
+    {
+        int3 q = brick + int3(int(c & 1u), int((c >> 1) & 1u), int(c >> 2)) * 9 - 1;
+        // Under the volume's bottom voxels is solid, and over its top open, as the bricks pass takes them.
+        float d = q.y <= 0 ? 1.0e9 : (q.y < tall ? densityAt(make, job, q.x, q.y, q.z) : -1.0e9);
+        solid = solid && d > even;
+        open = open && d < -even;
+    }
+    return solid || open;
+}
+
+// Passes over the candidate bricks a Volume leaves solid or open through and through, before a group of 512 works
+// out each one's thousand voxels: the rest go on, in the second half of the candidates, to the bricks pass.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldCoarse(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint count = min(make->counters[MAX_JOBS * COUNTERS], make->candidateRoom);
+    if (id.x >= count)
+    {
+        return;
+    }
+    uint packed = make->candidates[id.x];
+    if (hasVolume(make) && (packed & GROWN) == 0 && evenThrough(make, packed))
+    {
+        return;
+    }
+    uint at;
+    InterlockedAdd(make->counters[MAX_JOBS * COUNTERS + 4], 1u, at);
+    make->candidates[make->candidateRoom + at] = packed;
+}
+
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void voxelWorldBrickArguments(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint count = make->counters[MAX_JOBS * COUNTERS + 4];
+    make->counters[MAX_JOBS * COUNTERS + 5] = ROW;
+    make->counters[MAX_JOBS * COUNTERS + 6] = (count + ROW - 1) / ROW;
+    make->counters[MAX_JOBS * COUNTERS + 7] = 1;
 }
 
 groupshared uint sharedMask[16];
@@ -645,7 +749,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
     WorldMake* make = push.make;
     uint candidate = group.y * ROW + group.x;
-    if (candidate >= min(make->counters[MAX_JOBS * COUNTERS], make->candidateRoom))
+    if (candidate >= make->counters[MAX_JOBS * COUNTERS + 4])
     {
         return;
     }
@@ -670,11 +774,11 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedEven = 0;
     }
     GroupMemoryBarrierWithGroupSync();
-    uint packed = make->candidates[candidate];
+    uint packed = make->candidates[make->candidateRoom + candidate];
     uint job = packed & 15u;
     int bx = int((packed >> 4) & 7u);
     int bz = int((packed >> 7) & 7u);
-    int row = int(packed >> 10);
+    int row = int((packed & ~GROWN) >> 10);
     int3 l = int3(index & 7u, (index >> 3) & 7u, index >> 6);
     int px = bx * 8 + l.x;
     int pz = bz * 8 + l.z;

@@ -457,11 +457,46 @@ fn measure_an_endless_volume_made_by_a_generator() {
                 making.len(),
                 making[0],
                 making[making.len() - 1],
-                median / if caves { 2.0 } else { 16.0 },
-                if caves { 2 } else { 16 }
+                median / if caves { 4.0 } else { 16.0 },
+                if caves { 4 } else { 16 }
             );
         }
     }
+}
+
+/// A volume's generator changed under it, as dragging a field in the
+/// Inspector does, makes its ground again in the buffers it has: what it
+/// shows then is what a volume made with that generator from the first
+/// shows.
+#[test]
+fn an_endless_volume_given_another_generator_shows_its_ground() {
+    let Some(mut changing) = renderer() else { return };
+    let plains = Arc::new(starter("Battlefield Plains"));
+    let mut scene = generated_view(Arc::new(starter("Rolling Hills")), 8.0, 8.0, 3.0, 12.0);
+    render(&mut changing, &scene, 3);
+    let bytes = changing.stats().voxels.bytes;
+    let wanted = generated_view(plains, 8.0, 8.0, 3.0, 12.0);
+    let generator = wanted.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.clone();
+    let camera = wanted.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.clone();
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().generator = generator;
+    *scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1 = camera;
+    let changed = render(&mut changing, &scene, 3);
+    assert_eq!(changing.stats().voxels.bytes, bytes, "the same buffers");
+    drop(changing);
+    let Some(mut fresh) = renderer() else { return };
+    let made = render(&mut fresh, &wanted, 3);
+    keep_image("generator changed.png", &changed);
+    keep_image("generator from the first.png", &made);
+    let differ = (0..HEIGHT)
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let (a, b) = (rgb_at(&changed, x, y), rgb_at(&made, x, y));
+            (0..3).any(|i| (a[i] - b[i]).abs() > 8)
+        })
+        .count();
+    // A renderer that has drawn more frames draws a few blades of grass a little otherwise, 0.7% of the pixels here;
+    // a column left over from the hills is ground at another height.
+    assert!(differ * 100 < (WIDTH * HEIGHT) as usize, "{differ} pixels differ from the volume made with it");
 }
 
 /// Alpine without its rivers, with a world of blocks' own overhangs, tunnels

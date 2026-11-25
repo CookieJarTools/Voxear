@@ -4306,6 +4306,7 @@ dependencies = [
  "voxear_scene",
  "voxear_terrain",
  "voxear_ui",
+ "zstd",
 ]
 
 [[package]]

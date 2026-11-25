@@ -2,7 +2,7 @@
 //! CPU as the GPU makes it (`shaders/voxel_world.slang`), to the voxel: its
 //! own ground's hills, or its generator's height, or its generator's Volume
 //! with its overhangs and caves; the floor solid; and its edits over that,
-//! in order. Its grass, flowers and trees are not met, as the CPU does not
+//! in order, the Voxel Prints printed into it with them. Its grass, flowers and trees are not met, as the CPU does not
 //! make them. Every machine finds the same, as an edit sent over the network
 //! wants.
 //!
@@ -101,20 +101,27 @@ impl Ground<'_> {
         }
     }
 
-    /// Whether voxel `c` is solid, its edits over the ground in order.
+    /// Whether voxel `c` is solid, its edits over the ground in order: a
+    /// print's solid voxels and a ball filled are solid, a ball carved out
+    /// is not.
     fn solid(&mut self, c: IVec3) -> bool {
         let mut solid = self.made(c);
         let middle = (c.as_vec3() + 0.5) * self.voxel;
         for edit in self.volume.edits.iter() {
-            if middle.distance_squared(edit.at) <= edit.radius * edit.radius {
-                solid = edit.fill.is_some();
+            // Only those near enough are worked out.
+            if middle.distance_squared(edit.at) > (edit.radius + self.voxel) * (edit.radius + self.voxel) {
+                continue;
+            }
+            if edit.holds(c, self.voxel) != 0 {
+                solid = edit.print.is_some() || edit.fill.is_some();
             }
         }
         solid
     }
 
     /// How far point `p` (in voxels) surely is from anything solid, in
-    /// voxels: over the ground and out of every ball filled, by how far.
+    /// voxels: over the ground and out of every ball filled and every
+    /// print's reach, by how far.
     fn clear(&mut self, p: Vec3) -> f32 {
         let c = p.floor().as_ivec3();
         let ground = match self.density(c) {
@@ -122,7 +129,7 @@ impl Ground<'_> {
             None => (p.y - (self.height(c.x, c.z) + 1) as f32) * HEIGHT_STEP,
         };
         let world = p * self.voxel;
-        let fills = self.volume.edits.iter().filter(|edit| edit.fill.is_some());
+        let fills = self.volume.edits.iter().filter(|edit| edit.fill.is_some() || edit.print.is_some());
         let near = fills.map(|edit| (world.distance(edit.at) - edit.radius) / self.voxel).fold(f32::MAX, f32::min);
         ground.min(near - 1.0).min(p.y)
     }
@@ -207,6 +214,8 @@ pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3
 mod tests {
     use std::sync::Arc;
 
+    use voxear_core::math::Quat;
+
     use super::*;
     use crate::{VoxelEdit, VoxelGround, VoxelMaterial};
 
@@ -230,8 +239,8 @@ mod tests {
         assert!(raycast(&volume, corner, from, Vec3::new(1.0, 0.2, 0.0), 1000.0).is_none(), "upwards");
         assert!(raycast(&volume, corner, from, down, 3.0).is_none(), "out of reach");
         // A pit carved where the ray comes down, and a ball of rock filled further along over the ground.
-        let pit = VoxelEdit { at: Vec3::new(3.0, 2.0, 3.0), radius: 1.0, fill: None };
-        let rock = VoxelEdit { at: Vec3::new(9.0, 4.0, 3.0), radius: 0.5, fill: Some(VoxelMaterial::Rock) };
+        let pit = VoxelEdit::ball(Vec3::new(3.0, 2.0, 3.0), 1.0, None);
+        let rock = VoxelEdit::ball(Vec3::new(9.0, 4.0, 3.0), 0.5, Some(VoxelMaterial::Rock));
         volume.edits = Arc::new(vec![pit, rock]);
         let deeper = raycast(&volume, corner, from, down, 100.0).expect("the pit's floor");
         assert!(deeper.point.y < corner.y + 1.1 && deeper.point.y > corner.y + 0.9, "{deeper:?}");
@@ -255,5 +264,41 @@ mod tests {
             });
             assert!((hit.distance - walked.unwrap()).abs() < 0.02, "{slope}: {hit:?} against {walked:?}");
         }
+    }
+
+    #[test]
+    fn a_ray_meets_a_print_where_its_voxels_are_turned_with_it_and_a_carve_after_it_cuts_it() {
+        use crate::{VoxelPrint, VoxelPrintSettings};
+        // A wall 2 m long, 1 m tall and a quarter thick, its origin at the middle of its foot.
+        let print = VoxelPrint::from_voxels(
+            [32, 16, 4],
+            16,
+            Vec3::new(16.0, 0.0, 2.0),
+            vec![[120, 100, 80, 255]],
+            VoxelPrintSettings::default(),
+            |_| 1,
+        );
+        let print = Arc::new(print);
+        let mut volume = flat();
+        let foot = Vec3::new(8.0, 2.0 + 1.0 / 16.0, 8.0);
+        volume.edits = Arc::new(vec![VoxelEdit::printed(print.clone(), foot, Quat::IDENTITY)]);
+        // Along Z, through it: its face an eighth of a metre before its middle.
+        let from = Vec3::new(8.5, 2.5, 0.0);
+        let hit = raycast(&volume, Vec3::ZERO, from, Vec3::Z, 100.0).expect("the wall");
+        assert!((hit.point.z - (8.0 - 0.125)).abs() < 1e-3 && hit.normal == -Vec3::Z, "{hit:?}");
+        // Down onto its top.
+        let top = raycast(&volume, Vec3::ZERO, Vec3::new(8.5, 6.0, 8.0), -Vec3::Y, 100.0).expect("its top");
+        assert!((top.point.y - (foot.y + 1.0)).abs() < 1e-3, "{top:?}");
+        // Turned a quarter, it runs along Z: a ray along Z through it meets its end, a metre before its middle.
+        let turned = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        volume.edits = Arc::new(vec![VoxelEdit::printed(print.clone(), foot, turned)]);
+        let from = Vec3::new(8.03, 2.5, 0.0);
+        let hit = raycast(&volume, Vec3::ZERO, from, Vec3::Z, 100.0).expect("its end");
+        assert!((hit.point.z - 7.0).abs() < 1e-3, "{hit:?}");
+        // A ball carved out after it cuts through it.
+        let carve = VoxelEdit::ball(Vec3::new(8.03, 2.5, 7.0), 0.4, None);
+        volume.edits = Arc::new(vec![VoxelEdit::printed(print, foot, turned), carve]);
+        let hit = raycast(&volume, Vec3::ZERO, from, Vec3::Z, 100.0).expect("further in");
+        assert!(hit.point.z > 7.3, "{hit:?}");
     }
 }

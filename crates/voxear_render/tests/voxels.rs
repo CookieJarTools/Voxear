@@ -7,8 +7,8 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
-    Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees,
-    VoxelVolume, Voxels, WindZone,
+    Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint,
+    VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
@@ -604,10 +604,10 @@ fn an_endless_volumes_edits_carve_its_ground_and_fill_it() {
     let mut scene = generated_view(hills, 8.0, 8.0, 14.0, 90.0);
     let bare = render(&mut renderer, &scene, 3);
     let edits = vec![
-        VoxelEdit { at: Vec3::new(5.0, 24.0, 8.0), radius: 2.0, fill: None },
-        VoxelEdit { at: Vec3::new(11.0, 24.0, 8.0), radius: 1.5, fill: Some(VoxelMaterial::Rock) },
+        VoxelEdit::ball(Vec3::new(5.0, 24.0, 8.0), 2.0, None),
+        VoxelEdit::ball(Vec3::new(11.0, 24.0, 8.0), 1.5, Some(VoxelMaterial::Rock)),
         // A ball carved into the rock just filled, later, takes a bite out of it.
-        VoxelEdit { at: Vec3::new(12.5, 25.0, 8.0), radius: 0.8, fill: None },
+        VoxelEdit::ball(Vec3::new(12.5, 25.0, 8.0), 0.8, None),
     ];
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(edits);
     let edited = render(&mut renderer, &scene, 3);
@@ -638,7 +638,7 @@ fn an_endless_volumes_edits_carve_its_ground_and_fill_it() {
     // mountains shows, wherever their ground is under the camera.
     let mut scene = generated_view(Arc::new(caved_alpine()), 8.0, 8.0, 14.0, 90.0);
     let bare = render(&mut renderer, &scene, 3);
-    let shaft = (0..8).map(|i| VoxelEdit { at: Vec3::new(8.0, 20.0 + 2.0 * i as f32, 8.0), radius: 2.5, fill: None });
+    let shaft = (0..8).map(|i| VoxelEdit::ball(Vec3::new(8.0, 20.0 + 2.0 * i as f32, 8.0), 2.5, None));
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(shaft.collect());
     let edited = render(&mut renderer, &scene, 3);
     keep_image("edits in the mountains.png", &edited);
@@ -647,6 +647,61 @@ fn an_endless_volumes_edits_carve_its_ground_and_fill_it() {
         (0..3).map(|i| (before[i] - after[i]).abs()).sum::<i32>() > 30,
         "a pit in the mountains: {after:?} against {before:?}"
     );
+}
+
+#[test]
+fn an_endless_volume_prints_a_voxel_print_turned_where_it_is_placed_and_a_carve_finds_it_solid() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = generated_view(hills, 8.0, 8.0, 14.0, 90.0);
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let ground = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(8.0, 40.0, 8.0), -Vec3::Y, 100.0)
+        .expect("the ground");
+    // A crate 2 m long, a metre wide and tall, red with a white lid, its origin at the middle of its foot.
+    let palette = vec![[200, 40, 30, 255], [235, 235, 235, 255]];
+    let settings = VoxelPrintSettings::default();
+    let print = VoxelPrint::from_voxels([32, 16, 16], 16, Vec3::new(16.0, 0.0, 8.0), palette, settings, |c| {
+        if c[1] == 15 { 2 } else { 1 }
+    });
+    let print = Arc::new(print);
+    let turned = Quat::from_rotation_y(30f32.to_radians());
+    let crate_at = VoxelEdit::printed(print.clone(), ground.point, turned);
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(vec![crate_at.clone()]);
+    let printed = render(&mut renderer, &scene, 3);
+    keep_image("print from above.png", &printed);
+    let around = |pixels: &[u8], x: f32, z: f32| {
+        let (px, py) = from_above(14.0, x, z);
+        let mut sum = [0; 3];
+        for dy in 0..3 {
+            for dx in 0..3 {
+                let c = rgb_at(pixels, px + dx - 1, py + dy - 1);
+                (0..3).for_each(|i| sum[i] += c[i]);
+            }
+        }
+        sum.map(|v| v / 9)
+    };
+    // Its white lid over its foot, and along its length as it is turned: 0.8 m along its X.
+    let along = turned * Vec3::X;
+    for (name, at) in [("middle", Vec3::new(8.0, 0.0, 8.0)), ("along", Vec3::new(8.0, 0.0, 8.0) + along * 0.8)] {
+        let [r, g, b] = around(&printed, at.x, at.z);
+        assert!(r > 120 && (r - g).abs() < 30 && (g - b).abs() < 30, "the lid at its {name}: {r} {g} {b}");
+    }
+    // Across it, 0.8 m along its Z, is past its side: the ground, not the lid.
+    let past = Vec3::new(8.0, 0.0, 8.0) + (turned * Vec3::Z) * 0.8;
+    let [r, g, b] = around(&printed, past.x, past.z);
+    assert!(!(r > 120 && (r - g).abs() < 30 && (g - b).abs() < 30), "past its side: {r} {g} {b}");
+    // The CPU's ray meets its lid, a metre over the ground.
+    let edited = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let lid = voxear_render::voxel_raycast(&edited, Vec3::ZERO, Vec3::new(8.0, 40.0, 8.0), -Vec3::Y, 100.0)
+        .expect("the lid");
+    assert!((lid.point.y - (ground.point.y + 1.0)).abs() < 0.07, "{lid:?} over {ground:?}");
+    // A ball carved into its lid, later, finds it solid inside: red, not the ground's colours, and not hollow.
+    let pit = VoxelEdit::ball(ground.point + Vec3::Y * 1.0, 0.4, None);
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(vec![crate_at, pit]);
+    let carved = render(&mut renderer, &scene, 3);
+    keep_image("print carved from above.png", &carved);
+    let [r, g, b] = around(&carved, 8.0, 8.0);
+    assert!(r > g + 40 && r > b + 40, "inside the crate: {r} {g} {b}");
 }
 
 #[test]
@@ -667,7 +722,7 @@ fn a_ray_worked_out_on_the_cpu_meets_the_ground_the_gpu_draws() {
         let took = started.elapsed();
         eprintln!("{name}: met at {:.2} m, {:?}, in {took:?}", hit.distance, hit.normal);
         // A small ball carved there opens a pit in the middle of the picture.
-        let pit = VoxelEdit { at: hit.point, radius: 0.8, fill: None };
+        let pit = VoxelEdit::ball(hit.point, 0.8, None);
         scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(vec![pit]);
         let carved = render(&mut renderer, &scene, 3);
         keep_image(&format!("ray into the {name}.png"), &carved);

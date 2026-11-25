@@ -20,8 +20,10 @@ pub mod bricks;
 mod endless;
 pub(crate) use endless::generated_at;
 mod ground;
+pub mod print;
 mod ray;
 mod trees;
+mod voxelize;
 
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
@@ -31,7 +33,9 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
 pub use ground::{GROUND_COLORS, VoxelGround};
+pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
+pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;
 use bricks::{Builder, Packed};
@@ -67,21 +71,88 @@ pub struct VoxelVolume {
     /// many to a hectare as it says, where the ground grows grass.
     pub trees: Vec<VoxelTrees>,
     /// The changes made to an endless volume, in the order they were made:
-    /// balls carved out of it or filled with ground, a later one over an
-    /// earlier. Each column is made with those that reach it.
+    /// balls carved out of it or filled with ground, and Voxel Prints
+    /// printed into it, a later one over an earlier. Each column is made
+    /// with those that reach it.
     pub edits: Arc<Vec<VoxelEdit>>,
 }
 
 /// A change made to an endless Voxel Volume: a ball carved out of it, or
-/// filled with ground, its voxels' middles within the radius.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// filled with ground, its voxels' middles within the radius; or a Voxel
+/// Print printed into it, its model's origin at `at`.
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoxelEdit {
-    /// The ball's middle, in metres from the volume's corner.
+    /// The ball's middle, or where the print's origin is, in metres from
+    /// the volume's corner.
     pub at: Vec3,
-    /// Its radius, in metres.
+    /// Its radius, in metres; for a print, how far its box reaches from
+    /// `at`.
     pub radius: f32,
     /// What fills it: none for air, carved out.
     pub fill: Option<VoxelMaterial>,
+    /// The print printed there in place of a ball, and how it is turned.
+    pub print: Option<VoxelPrinted>,
+}
+
+/// A Voxel Print as an edit prints it: the print, and how it is turned
+/// about its origin.
+#[derive(Clone, Debug)]
+pub struct VoxelPrinted {
+    pub print: Arc<VoxelPrint>,
+    pub rotation: Quat,
+}
+
+impl PartialEq for VoxelPrinted {
+    fn eq(&self, other: &Self) -> bool {
+        (Arc::ptr_eq(&self.print, &other.print) || self.print == other.print) && self.rotation == other.rotation
+    }
+}
+
+impl VoxelEdit {
+    /// A ball `radius` metres round `at`, carved out, or filled with `fill`.
+    pub fn ball(at: Vec3, radius: f32, fill: Option<VoxelMaterial>) -> Self {
+        Self { at, radius: radius.max(0.0), fill, print: None }
+    }
+
+    /// `print` printed with its origin at `at`, turned `rotation`.
+    pub fn printed(print: Arc<VoxelPrint>, at: Vec3, rotation: Quat) -> Self {
+        let (low, high) = print.bounds();
+        let corner = |i: usize| {
+            Vec3::new([low.x, high.x][i & 1], [low.y, high.y][(i >> 1) & 1], [low.z, high.z][i >> 2]).length()
+        };
+        let radius = (0..8).map(corner).fold(0.0, f32::max);
+        Self { at, radius, fill: None, print: Some(VoxelPrinted { print, rotation: rotation.normalize() }) }
+    }
+
+    /// The box it reaches, least and most corners, in metres from the
+    /// volume's corner.
+    pub fn reach(&self) -> (Vec3, Vec3) {
+        match &self.print {
+            Some(printed) => printed.print.placed_bounds(self.at, printed.rotation),
+            None => (self.at - self.radius, self.at + self.radius),
+        }
+    }
+
+    /// Whether voxel `cell` of a volume of voxels `voxel` metres across
+    /// is in it, worked out as the GPU works it (`editHeld` in
+    /// `shaders/voxel_world.slang`): 0 for not, else for a print its colour
+    /// there as a place in the print's palette and one, and 1 for a ball.
+    pub fn holds(&self, cell: voxear_core::math::IVec3, voxel: f32) -> u8 {
+        let middle = cell.as_vec3() + 0.5;
+        match &self.print {
+            Some(printed) => {
+                let print = &printed.print;
+                let scale = print.voxels_per_metre as f32 * voxel;
+                let local = printed.rotation.inverse() * (middle - self.at / voxel) * scale + print.origin;
+                print.get(local.floor().as_ivec3().to_array())
+            }
+            None => {
+                let off = middle - self.at / voxel;
+                let radius = self.radius / voxel;
+                u8::from(off.dot(off) <= radius * radius)
+            }
+        }
+    }
 }
 
 /// The ground an edit fills a ball with, its voxels in the shades the

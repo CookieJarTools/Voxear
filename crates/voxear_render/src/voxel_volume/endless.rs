@@ -23,8 +23,8 @@ use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelTrees,
-    VoxelVolume, trees,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint,
+    VoxelTrees, VoxelVolume, print, trees,
 };
 use crate::pipelines::Pipelines;
 
@@ -78,6 +78,16 @@ const TREE_WORDS: u64 = 8;
 const MOST_COLUMN_EDITS: u64 = 1024;
 /// The most voxel columns a window is across: 256 sector columns.
 const LARGEST_WINDOW: u32 = 256;
+/// The words an edit takes as the GPU reads it (`EDIT_WORDS` in
+/// `shaders/voxel_world.slang`), and the mark over a print's number in
+/// place of a ball's fill.
+const EDIT_WORDS: usize = 16;
+const PRINT_EDIT: u32 = 1 << 31;
+/// Where the prints' records start in their words, and the words each takes.
+const PRINTS_AT: usize = 4;
+const PRINT_WORDS: usize = 12;
+/// The most colours a volume's palette holds: a material is a byte.
+const MOST_COLOURS: usize = 256;
 
 /// The colours of the ground a generator makes, as sRGB, in the palette
 /// after the volume's own ground's: rock in three shades, sand, snow and
@@ -133,6 +143,7 @@ struct GpuWorldMake {
     models: u64,
     edits: u64,
     job_edits: u64,
+    prints: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -215,6 +226,14 @@ pub(crate) struct Endless {
     edits: Arc<Vec<VoxelEdit>>,
     edit_buffer: Option<Buffer>,
     job_edits: Buffer,
+    /// Every print its edits have printed, in the order first printed, and
+    /// where each one's colours are in the palette; their voxels as the GPU
+    /// reads them; and the palette's colours before theirs. Prints and
+    /// colours are only ever added, so the columns made keep theirs.
+    prints: Vec<(Arc<VoxelPrint>, Vec<u8>)>,
+    print_buffer: Option<Buffer>,
+    colours: Vec<[u8; 4]>,
+    base_colours: usize,
     /// The shared room: how many pages of bricks and of materials it has,
     /// each slot's pages of each and how many, the pages free, how many are
     /// free and whether any ran short (read on the CPU), and each job's
@@ -361,7 +380,19 @@ fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow:
     Room { brick_pages: brick_pages.ceil() as u32, material_pages: material_pages.ceil() as u32 }
 }
 
-/// An endless volume's palette, its own ground's colours, a generator's
+/// A palette's colours in a buffer the GPU reads.
+fn palette_buffer(gpu: &Gpu, colours: &[[u8; 4]]) -> Result<Buffer> {
+    let words: Vec<u32> =
+        colours.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+    let usage = vk::BufferUsageFlags::STORAGE_BUFFER
+        | vk::BufferUsageFlags::TRANSFER_DST
+        | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+    let palette = gpu.create_buffer("voxel world palette", (words.len() as u64 * 4).max(16), usage, MemoryLocation::GpuOnly)?;
+    gpu.upload_buffer(&palette, 0, bytemuck::cast_slice(&words))?;
+    Ok(palette)
+}
+
+/// An endless volume's palette's colours, its own ground's, a generator's
 /// and its trees', and its trees as the GPU reads them, where it has any;
 /// with their plants' voxels too, with `models`.
 #[allow(clippy::type_complexity)]
@@ -369,18 +400,14 @@ fn forest_buffers(
     gpu: &Gpu,
     volume: &VoxelVolume,
     models: bool,
-) -> Result<(Buffer, Option<(Buffer, u32, f32)>, Option<trees::Models>)> {
+) -> Result<(Vec<[u8; 4]>, Option<(Buffer, u32, f32)>, Option<trees::Models>)> {
     let first = (GROUND_COLORS.len() + GENERATED_COLORS.len()) as u32;
     let forest = trees::forest(&volume.trees, first);
     let tree_colors = forest.as_ref().map(|forest| forest.colors.clone()).unwrap_or_default();
     let all: Vec<[u8; 4]> = GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&tree_colors).copied().collect();
-    let colours: Vec<u32> =
-        all.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
-    let palette = gpu.create_buffer("voxel world palette", colours.len() as u64 * 4, usage, MemoryLocation::GpuOnly)?;
-    gpu.upload_buffer(&palette, 0, bytemuck::cast_slice(&colours))?;
     let block = volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
     let made = forest.as_ref().filter(|_| models).map(|forest| trees::models(forest, block, &all));
     let forest = match forest {
@@ -392,7 +419,7 @@ fn forest_buffers(
         }
         None => None,
     };
-    Ok((palette, forest, made))
+    Ok((all, forest, made))
 }
 
 /// What a volume's trees' plants' voxels are made from: its kinds that grow,
@@ -453,7 +480,8 @@ impl Endless {
         let none = vk::BufferUsageFlags::empty();
         let jobs = MAX_JOBS as u64;
         let table = make("table", slots_in * u64::from(tall) * ENTRY_WORDS * 4, none)?;
-        let (palette, forest, made) = forest_buffers(gpu, volume, true)?;
+        let (colours, forest, made) = forest_buffers(gpu, volume, true)?;
+        let palette = palette_buffer(gpu, &colours)?;
         let trees = make("trees", jobs * MAX_TREES * TREE_WORDS * 4, none)?;
         let tree_carried = make("tree carried", jobs * 64 * MOST_CARRIED as u64 * 4, none)?;
         let empty = make("empty sector", 25 * 4, none)?;
@@ -553,6 +581,10 @@ impl Endless {
             edits: Arc::default(),
             edit_buffer: None,
             job_edits,
+            prints: Vec::new(),
+            print_buffer: None,
+            base_colours: colours.len(),
+            colours,
             room,
             grow,
             pages,
@@ -568,16 +600,17 @@ impl Endless {
             window_sector: [0; 3],
             corner: Vec3::ZERO,
         };
-        // No column is made yet: the buffer the edits had of none is the only one to let go, and there is none.
-        let none = endless.set_edits(gpu, &volume.edits)?;
-        debug_assert!(none.is_empty());
+        // No column is made yet, and no frame reads what the edits' buffers took the place of.
+        for buffer in endless.set_edits(gpu, &volume.edits)? {
+            gpu.destroy_buffer(buffer);
+        }
         Ok(endless)
     }
 
     /// Takes `edits` as what its columns are made with: those that differ
     /// from the edits it had, from the first that does, have the columns
-    /// they reach made again. Gives back a buffer let go, where the edits
-    /// outgrew theirs.
+    /// they reach made again. Gives back the buffers let go, where the
+    /// edits outgrew theirs or printed prints it had none of.
     pub fn set_edits(&mut self, gpu: &Gpu, edits: &Arc<Vec<VoxelEdit>>) -> Result<Vec<Buffer>> {
         if Arc::ptr_eq(&self.edits, edits) || self.edits == *edits {
             self.edits = edits.clone();
@@ -586,9 +619,10 @@ impl Endless {
         let same = self.edits.iter().zip(edits.iter()).take_while(|(a, b)| a == b).count();
         let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
         for edit in self.edits[same..].iter().chain(&edits[same..]) {
-            // The columns the ball reaches, with a voxel's border, are made again.
-            let low = ((edit.at - edit.radius) / voxel - 1.0) / 64.0;
-            let high = ((edit.at + edit.radius) / voxel + 1.0) / 64.0;
+            // The columns the edit reaches, with a voxel's border, are made again.
+            let (low, high) = edit.reach();
+            let low = (low / voxel - 1.0) / 64.0;
+            let high = (high / voxel + 1.0) / 64.0;
             for z in low.z.floor() as i32..=high.z.floor() as i32 {
                 for x in low.x.floor() as i32..=high.x.floor() as i32 {
                     let slot = self.slot_of([x, z]) as usize;
@@ -598,16 +632,8 @@ impl Endless {
                 }
             }
         }
-        let words: Vec<u32> = edits
-            .iter()
-            .flat_map(|edit| {
-                let middle = edit.at / voxel;
-                let fill = edit.fill.map_or(0, |material| material as u32 + 1);
-                let radius = (edit.radius / voxel).max(0.0);
-                [middle.x.to_bits(), middle.y.to_bits(), middle.z.to_bits(), radius.to_bits(), fill, 0, 0, 0]
-            })
-            .collect();
-        let mut gone = Vec::new();
+        let mut gone = self.add_prints(gpu, edits)?;
+        let words: Vec<u32> = edits.iter().flat_map(|edit| self.edit_words(edit, voxel)).collect();
         let bytes = (words.len() as u64 * 4).max(16);
         if self.edit_buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {
             // Room for half as many again, so a script carving a tunnel grows it seldom.
@@ -622,6 +648,65 @@ impl Endless {
             gpu.upload_buffer(buffer, 0, bytemuck::cast_slice(&words))?;
         }
         self.edits = edits.clone();
+        Ok(gone)
+    }
+
+    /// An edit as the GPU reads it (`EDIT_WORDS` in `shaders/voxel_world.slang`),
+    /// in the world's voxels: where its ball's middle is or its print's
+    /// origin, how far it reaches from there, and its fill or its print;
+    /// for a print, how many of its voxels a voxel of the world is, the box
+    /// it reaches, and how it is turned back.
+    fn edit_words(&self, edit: &VoxelEdit, voxel: f32) -> [u32; EDIT_WORDS] {
+        let middle = edit.at / voxel;
+        let radius = (edit.radius / voxel).max(0.0);
+        let mut words = [0u32; EDIT_WORDS];
+        words[..4].copy_from_slice(&[middle.x.to_bits(), middle.y.to_bits(), middle.z.to_bits(), radius.to_bits()]);
+        match &edit.print {
+            Some(printed) => {
+                let index = self.prints.iter().position(|(print, _)| print.id == printed.print.id).unwrap_or(0);
+                words[4] = PRINT_EDIT | index as u32;
+                words[5] = (printed.print.voxels_per_metre as f32 * voxel).to_bits();
+                let (low, high) = edit.reach();
+                let (low, high) = (low / voxel, high / voxel);
+                for (i, v) in [low.x, low.y, low.z, high.x, high.y, high.z].into_iter().enumerate() {
+                    words[6 + i] = v.to_bits();
+                }
+                let back = printed.rotation.inverse();
+                for (i, v) in [back.x, back.y, back.z, back.w].into_iter().enumerate() {
+                    words[12 + i] = v.to_bits();
+                }
+            }
+            None => words[4] = edit.fill.map_or(0, |material| material as u32 + 1),
+        }
+        words
+    }
+
+    /// Takes in the prints `edits` print that it has none of yet: their
+    /// colours added to the palette, the nearest it has where it is full,
+    /// and their voxels to the prints' buffer. Gives back the buffers let go.
+    fn add_prints(&mut self, gpu: &Gpu, edits: &[VoxelEdit]) -> Result<Vec<Buffer>> {
+        let mut added = false;
+        for printed in edits.iter().filter_map(|edit| edit.print.as_ref()) {
+            if self.prints.iter().any(|(print, _)| print.id == printed.print.id) {
+                continue;
+            }
+            let places = printed.print.palette.iter().map(|&colour| place_in(&mut self.colours, colour)).collect();
+            self.prints.push((printed.print.clone(), places));
+            added = true;
+        }
+        if !added {
+            return Ok(Vec::new());
+        }
+        let mut gone = vec![std::mem::replace(&mut self.palette, palette_buffer(gpu, &self.colours)?)];
+        let words = prints_words(&self.prints);
+        let usage = vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        let buffer = gpu.create_buffer("voxel world prints", words.len() as u64 * 4, usage, MemoryLocation::GpuOnly)?;
+        for (i, piece) in bytemuck::cast_slice::<u32, u8>(&words).chunks(64 << 20).enumerate() {
+            gpu.upload_buffer(&buffer, (i * (64 << 20)) as u64, piece)?;
+        }
+        gone.extend(self.print_buffer.replace(buffer));
         Ok(gone)
     }
 
@@ -645,7 +730,11 @@ impl Endless {
             return Ok(None);
         }
         let (program, caves) = program_buffers(gpu, program)?;
-        let (palette, forest, _) = forest_buffers(gpu, volume, false)?;
+        let (mut colours, forest, _) = forest_buffers(gpu, volume, false)?;
+        // The prints' colours after the ground's and the trees', where they were.
+        colours.extend_from_slice(&self.colours[self.base_colours.min(self.colours.len())..]);
+        let palette = palette_buffer(gpu, &colours)?;
+        self.colours = colours;
         let mut gone: Vec<Buffer> =
             std::mem::replace(&mut self.program, program).map(|(buffer, _)| buffer).into_iter().collect();
         gone.extend(
@@ -678,6 +767,7 @@ impl Endless {
         .map(|buffer| buffer.size)
         .sum::<u64>()
             + self.models.as_ref().map_or(0, |models| models.size)
+            + self.print_buffer.as_ref().map_or(0, |prints| prints.size)
     }
 
     /// Moves the window round `camera`, the volume's corner at `corner`, and
@@ -836,6 +926,7 @@ impl Endless {
             models: self.models.as_ref().map_or(0, |models| models.address),
             edits: self.edit_buffer.as_ref().map_or(0, |buffer| buffer.address),
             job_edits: self.job_edits.address,
+            prints: self.print_buffer.as_ref().map_or(0, |buffer| buffer.address),
             edit_count: self.edits.len() as u32,
             edit_pad: 0,
             brick_pages: self.room.brick_pages,
@@ -973,12 +1064,69 @@ impl Endless {
         all.extend(self.forest.map(|(buffer, _, _)| buffer));
         all.extend(self.models);
         all.extend(self.edit_buffer);
+        all.extend(self.print_buffer);
         all.push(self.job_edits);
         all.extend(self.program.map(|(buffer, _)| buffer));
         all.extend(self.volume.into_iter().flat_map(|(words, carried)| [words, carried]));
         all.extend(self.makes);
         all
     }
+}
+
+/// The place of `colour` in a palette, added where there is room, else the
+/// nearest the palette has.
+fn place_in(colours: &mut Vec<[u8; 4]>, colour: [u8; 4]) -> u8 {
+    if let Some(at) = colours.iter().position(|c| c[..3] == colour[..3]) {
+        return at as u8;
+    }
+    if colours.len() < MOST_COLOURS {
+        colours.push(colour);
+        return (colours.len() - 1) as u8;
+    }
+    let distance = |c: &[u8; 4]| (0..3).map(|i| (i32::from(c[i]) - i32::from(colour[i])).pow(2)).sum::<i32>();
+    colours.iter().enumerate().min_by_key(|(_, c)| distance(c)).map_or(0, |(i, _)| i as u8)
+}
+
+/// Prints as the GPU reads them (`PRINTS_AT` in `shaders/voxel_world.slang`):
+/// how many, then for each its bricks along X, Y and Z, where its grid, its
+/// bricks and its materials start among the words, its size in voxels and
+/// where its origin is; then each one's grid, bricks and materials, these
+/// four to a word, as places in the volume's palette.
+fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
+    let mut words = vec![0u32; PRINTS_AT + prints.len() * PRINT_WORDS];
+    words[0] = prints.len() as u32;
+    for (i, (print, places)) in prints.iter().enumerate() {
+        let across = print.bricks_across();
+        let grid = words.len() as u32;
+        words.extend_from_slice(&print.grid);
+        let bricks = words.len() as u32;
+        words.extend_from_slice(&print.bricks);
+        let materials = words.len() as u32;
+        let bytes: Vec<u8> = print.materials.iter().map(|&m| places.get(usize::from(m)).copied().unwrap_or(0)).collect();
+        words.extend(bytes.chunks(4).map(|four| {
+            let mut word = [0u8; 4];
+            word[..four.len()].copy_from_slice(four);
+            u32::from_le_bytes(word)
+        }));
+        let at = PRINTS_AT + i * PRINT_WORDS;
+        let o = print.origin;
+        words[at..at + PRINT_WORDS].copy_from_slice(&[
+            across[0],
+            across[1],
+            across[2],
+            grid,
+            bricks,
+            materials,
+            print.size[0],
+            print.size[1],
+            print.size[2],
+            o.x.to_bits(),
+            o.y.to_bits(),
+            o.z.to_bits(),
+        ]);
+    }
+    debug_assert_eq!(print::BRICK_WORDS, 17);
+    words
 }
 
 /// What `world` makes at each of `places`, `[x, y, z]` in metres in its

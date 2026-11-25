@@ -9,7 +9,8 @@
 // 2. voxelWorldTops: what the ground is at each column, with a border of two (grass, rock, sand, snow or gravel),
 //    and its grass.
 // 3. voxelWorldTrees: the trees that may reach the column, placed by hash where the ground grows grass; and
-//    voxelWorldEdits: the edits made to the volume (balls carved out or filled) that reach the column.
+//    voxelWorldEdits: the edits made to the volume (balls carved out or filled, Voxel Prints printed) that reach the
+//    column.
 // 4. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass, flowers and trees could reach.
 // 5. voxelWorldCoarse: a thread a listed brick passes over those a Volume leaves solid or open through and through,
 //    by the Volume at the brick's corners, which with caves are most of them, and those in a tree's box where its
@@ -52,8 +53,16 @@ static const uint MOST_COLUMN_EDITS = 1024;
 static const uint MOST_BRICK_EDITS = 128;
 // An edit: where its ball's middle is, in voxels from the volume's floor at the world's middle, its radius in voxels,
 // and what fills it: 0 for air, carved out, else what ground it is and one (VoxelMaterial in src/voxel_volume.rs:
-// dirt, grass, rock, sand, snow or gravel).
-static const uint EDIT_WORDS = 8;
+// dirt, grass, rock, sand, snow or gravel). Or a Voxel Print printed (src/voxel_volume/print.rs): where its origin is
+// and how far its box reaches from there, its number among the prints marked with PRINT_EDIT, how many of its voxels
+// a voxel of the world is, the box it reaches (least corner, then most), and how it is turned back, a quaternion.
+static const uint EDIT_WORDS = 16;
+static const uint PRINT_EDIT = 0x80000000u;
+// The prints (src/voxel_volume/endless.rs): how many, then for each its bricks along X, Y and Z, where its grid, its
+// bricks and its materials start among the words, its size in voxels and where its origin is in them.
+static const uint PRINTS_AT = 4;
+static const uint PRINT_WORDS = 12;
+static const uint PRINT_BRICK_WORDS = 17;
 // A brick that is a tree's alone, in a job's list of its column's bricks: the plant's brick it is, marked.
 static const uint TREE_BRICK = 0x80000000u;
 // How many plants' bricks a word each a brick of room names: those of a slot's trees follow its own bricks.
@@ -120,9 +129,11 @@ struct WorldMake
     // corner of its box from the least corner of its trunk's foot block; their bricks and materials are the first of
     // the shared room's.
     uint* models;
-    // The volume's edits in the order they were made, and the edits that reach each job's column.
+    // The volume's edits in the order they were made, the edits that reach each job's column, and the prints they
+    // print.
     uint* edits;
     uint* jobEdits;
+    uint* prints;
     float height;
     float hills;
     float hillSpacing;
@@ -849,19 +860,91 @@ uint fillVoxel(WorldMake* make, uint fill, bool open, int3 p)
     }
 }
 
-// Whether an edit's ball reaches the box of voxels from `low` to `high` of the world.
-bool editReaches(float4 ball, int3 low, int3 high)
+// Whether edit `e` is a print.
+bool editPrints(WorldMake* make, uint e)
 {
-    float3 nearest = clamp(ball.xyz, float3(low), float3(high + 1));
-    float3 off = nearest - ball.xyz;
-    return dot(off, off) <= ball.w * ball.w;
+    return (editFill(make, e) & PRINT_EDIT) != 0u;
 }
 
-// Whether voxel `p` of the world is in an edit's ball: its middle within the radius.
-bool editHolds(float4 ball, int3 p)
+// The rows of voxels edit `e` reaches, from its lowest to its highest, with a border of one.
+int2 editRows(WorldMake* make, uint e)
 {
-    float3 off = float3(p) + 0.5 - ball.xyz;
-    return dot(off, off) <= ball.w * ball.w;
+    uint* edit = make->edits + e * EDIT_WORDS;
+    if (editPrints(make, e))
+    {
+        return int2(int(floor(asfloat(edit[7]))) - 1, int(ceil(asfloat(edit[10]))) + 1);
+    }
+    float4 ball = editBall(make, e);
+    return int2(int(floor(ball.y - ball.w)) - 1, int(ceil(ball.y + ball.w)) + 1);
+}
+
+// Whether edit `e` reaches the box of voxels from `low` to `high` of the world: a ball, or a print's box.
+bool editReaches(WorldMake* make, uint e, int3 low, int3 high)
+{
+    float4 ball = editBall(make, e);
+    float3 nearest = clamp(ball.xyz, float3(low), float3(high + 1));
+    float3 off = nearest - ball.xyz;
+    if (dot(off, off) > ball.w * ball.w)
+    {
+        return false;
+    }
+    if (!editPrints(make, e))
+    {
+        return true;
+    }
+    uint* edit = make->edits + e * EDIT_WORDS;
+    float3 least = float3(asfloat(edit[6]), asfloat(edit[7]), asfloat(edit[8]));
+    float3 most = float3(asfloat(edit[9]), asfloat(edit[10]), asfloat(edit[11]));
+    return all(float3(high + 1) >= least) && all(float3(low) <= most);
+}
+
+// `v` turned by the quaternion `q`, as the CPU turns it (glam's Quat * Vec3).
+float3 turnedBy(float4 q, float3 v)
+{
+    float3 b = q.xyz;
+    return v * (q.w * q.w - dot(b, b)) + b * (dot(v, b) * 2.0) + cross(b, v) * (q.w * 2.0);
+}
+
+// What edit `e` holds at voxel `p` of the world, its middle within the ball or in a solid voxel of the print: 0 for
+// nothing, 1 for a ball, and for a print its voxel's place in the palette and one (VoxelEdit::holds on the CPU).
+uint editHeld(WorldMake* make, uint e, int3 p)
+{
+    uint* edit = make->edits + e * EDIT_WORDS;
+    float3 off = float3(p) + 0.5 - float3(asfloat(edit[0]), asfloat(edit[1]), asfloat(edit[2]));
+    if ((edit[4] & PRINT_EDIT) == 0u)
+    {
+        float radius = asfloat(edit[3]);
+        return dot(off, off) <= radius * radius ? 1u : 0u;
+    }
+    uint* r = make->prints + PRINTS_AT + (edit[4] & ~PRINT_EDIT) * PRINT_WORDS;
+    float4 back = float4(asfloat(edit[12]), asfloat(edit[13]), asfloat(edit[14]), asfloat(edit[15]));
+    float3 local = turnedBy(back, off) * asfloat(edit[5]) + float3(asfloat(r[9]), asfloat(r[10]), asfloat(r[11]));
+    int3 c = int3(floor(local));
+    if (any(c < 0) || any(c >= int3(int(r[6]), int(r[7]), int(r[8]))))
+    {
+        return 0;
+    }
+    int3 b = c >> 3;
+    uint brick = make->prints[r[3] + uint(b.x + int(r[0]) * (b.y + int(r[1]) * b.z))];
+    if (brick == EMPTY)
+    {
+        return 0;
+    }
+    uint* bits = make->prints + r[4] + brick * PRINT_BRICK_WORDS;
+    int3 l = c & 7;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint word = bits[index >> 5];
+    if (((word >> (index & 31u)) & 1u) == 0u)
+    {
+        return 0;
+    }
+    uint before = countbits(word & ((1u << (index & 31u)) - 1u));
+    for (uint k = 0; k < (index >> 5); k++)
+    {
+        before += countbits(bits[k]);
+    }
+    uint at = r[5] * 4u + bits[16] + before;
+    return ((make->prints[at >> 2] >> ((at & 3u) * 8u)) & 255u) + 1u;
 }
 
 // Lists the edits that reach each job's column: a thread a share of them.
@@ -880,7 +963,7 @@ void voxelWorldEdits(uint3 id: SV_DispatchThreadID)
     int3 high = int3(corner.x + 63, int(make->tall) * 64, corner.y + 63);
     for (uint e = id.x; e < make->editCount; e += 64)
     {
-        if (editReaches(editBall(make, e), low - 1, high + 1))
+        if (editReaches(make, e, low - 1, high + 1))
         {
             uint at;
             InterlockedAdd(make->counters[EDIT_COUNTS + job], 1u, at);
@@ -982,11 +1065,12 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
     int editHigh = -0x7FFFFFFF;
     for (uint k = 0; k < columnEdits(make, job); k++)
     {
-        float4 ball = editBall(make, make->jobEdits[job * MOST_COLUMN_EDITS + k]);
-        if (editReaches(ball, low - 1, high + 1))
+        uint e = make->jobEdits[job * MOST_COLUMN_EDITS + k];
+        if (editReaches(make, e, low - 1, high + 1))
         {
-            editLow = min(editLow, int(floor(ball.y - ball.w)) - 1);
-            editHigh = max(editHigh, int(ceil(ball.y + ball.w)) + 1);
+            int2 rows = editRows(make, e);
+            editLow = min(editLow, rows.x);
+            editHigh = max(editHigh, rows.y);
         }
     }
     lowest = min(lowest, editLow);
@@ -1265,7 +1349,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         for (uint k = index; k < columnEdits(make, job); k += 512)
         {
             uint e = make->jobEdits[job * MOST_COLUMN_EDITS + k];
-            if (editReaches(editBall(make, e), low - 1, low + 8))
+            if (editReaches(make, e, low - 1, low + 8))
             {
                 uint at;
                 InterlockedAdd(sharedEditCount, 1u, at);
@@ -1344,7 +1428,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             for (uint k = 0; k < editCount; k++)
             {
                 uint e = sharedEdits[k];
-                if (editHolds(editBall(make, e), w))
+                if (editHeld(make, e, w) != 0u)
                 {
                     solid = editFill(make, e) != 0u;
                 }
@@ -1358,9 +1442,11 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     // What the voxel is to the wind: ground, which keeps still; grass or a flower; or leaves.
     uint moves = SWAY_STILL;
-    // The last edit whose ball holds the voxel, and the one under the column's ground's top, for its grass: none for -1.
+    // The last edit that holds the voxel and what it holds there, and the one that holds the column's ground's top, for
+    // its grass: none for -1.
     int3 here = int3(corner.x + px, y, corner.y + pz);
     int lastEdit = -1;
+    uint lastHeld = 0;
     int underEdit = -1;
     if (edited)
     {
@@ -1368,9 +1454,10 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         for (uint k = 0; k < editCount; k++)
         {
             uint e = sharedEdits[k];
-            float4 ball = editBall(make, e);
-            lastEdit = editHolds(ball, here) ? int(e) : lastEdit;
-            underEdit = editHolds(ball, int3(here.x, top, here.z)) ? int(e) : underEdit;
+            uint held = editHeld(make, e, here);
+            lastEdit = held != 0u ? int(e) : lastEdit;
+            lastHeld = held != 0u ? held : lastHeld;
+            underEdit = editHeld(make, e, int3(here.x, top, here.z)) != 0u ? int(e) : underEdit;
         }
     }
     if (edited && !volume)
@@ -1423,11 +1510,19 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             m = (y == h + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
         }
     }
-    // What an edit filled is its fill, where it is seen; what it carved out is air, grass and flowers too.
+    // What an edit filled is its fill, where it is seen, and what a print printed its own colour; what a ball carved out
+    // is air, grass and flowers too.
     if (lastEdit >= 0)
     {
         uint fill = editFill(make, uint(lastEdit));
-        m = fill == 0u ? 0u : (m != 0 && moves == SWAY_STILL ? fillVoxel(make, fill, !solidNear(l, int3(0, 1, 0)), here) : m);
+        if ((fill & PRINT_EDIT) != 0u)
+        {
+            m = m != 0 ? lastHeld : 0u;
+        }
+        else
+        {
+            m = fill == 0u ? 0u : (m != 0 && moves == SWAY_STILL ? fillVoxel(make, fill, !solidNear(l, int3(0, 1, 0)), here) : m);
+        }
     }
     // A brick one tree's alone is its plant's brick: the job's list names it.
     if (sharedTreeCount == 1 && !edited)

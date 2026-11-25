@@ -65,7 +65,7 @@ For a movement Mob Motion does not make, key a clip in the Model window (see **C
 
 ## Characters that hold something
 
-A soldier carrying a rifle should not swing both arms as it walks. Build the arms holding the rifle: turn the arm bones in the Model window until the hands are on it, so that holding it is how the model stands at rest. Put the rifle on a bone of its own under the body, with no role. Give the lower arms no role either, so that only the upper arms move. Then turn **Arm Swing** down to a few degrees. Mob Motion still walks, runs and idles the legs, body and head, and the arms barely move off the rifle.
+A soldier carrying a rifle should not swing both arms as it walks. Build the arms holding the rifle: turn the arm bones in the Model window until the hands are on it, so that holding it is how the model stands at rest. Put the rifle on a bone of its own under the chest, and give the arms and the rifle no role. Mob Motion still walks, runs and idles the legs, body and head, and the hands stay on the rifle as the body bobs and leans.
 
 Aiming and firing are clips in the model, played on the Obj's [[Animator]] while the character stands. Clear the clip and it walks on. `samples/Wasteland` has two soldiers made this way, a rifleman and a scavenger. Each has an **Aim** clip that sways with its breath and a **Fire** clip for the kick of a shot, and `Scripts/Patrol.cs` walks each one round its points, stopping to aim and fire.
 

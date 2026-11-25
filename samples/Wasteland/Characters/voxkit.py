@@ -63,100 +63,154 @@ class Palette:
 
 
 class Grid:
-    """A bone's cubes: a material and a shade at each whole-numbered place, the cube from it to it plus one."""
+    """A bone's cubes: a material and a shade at each whole-numbered place, the cube from it to it plus one.
 
-    def __init__(self, seed=0):
+    Shapes are tested on every cube in their bounds at once: a shape's `inside` takes arrays of the cubes' middles
+    and gives which are in it, so write it with `&`, `|` and `~` rather than `and`, `or` and `not`."""
+
+    def __init__(self, seed=0, patch=3):
         self.cells = {}
         self.seed = seed
+        self.patch = patch
 
     def put(self, cell, material, shade=None):
-        x, y, z = cell
+        x, y, z = (int(math.floor(v)) for v in cell)
+        cell = (x, y, z)
         if shade is None:
             shade = self.shade_at(cell)
         self.cells[(x, y, z)] = (material, shade)
 
     def shade_at(self, cell):
         x, y, z = cell
-        # Patches two cubes across, then a little of each cube's own, so cloth reads as worn and not as noise.
-        patch = hashed(x // 2, y // 2, z // 2, self.seed, 7)
+        # Patches a few cubes across, then a little of each cube's own, so cloth reads as worn and not as noise.
+        p = self.patch
+        patch = hashed(x // p, y // p, z // p, self.seed, 7)
         own = hashed(x, y, z, self.seed)
-        value = patch * 0.65 + own * 0.35
+        value = patch * 0.6 + own * 0.4
         return 0 if value < 0.2 else 1 if value < 0.45 else 2 if value < 0.85 else 3
+
+    def material(self, cell):
+        there = self.cells.get(tuple(cell))
+        return there[0] if there else None
+
+    def _cells(self, inside, bounds):
+        (x0, y0, z0), (x1, y1, z1) = bounds
+        xs = np.arange(math.floor(x0), math.ceil(x1))
+        ys = np.arange(math.floor(y0), math.ceil(y1))
+        zs = np.arange(math.floor(z0), math.ceil(z1))
+        if not (len(xs) and len(ys) and len(zs)):
+            return []
+        x, y, z = np.meshgrid(xs, ys, zs, indexing="ij")
+        hit = np.broadcast_to(inside(x + 0.5, y + 0.5, z + 0.5), x.shape)
+        return zip(x[hit].tolist(), y[hit].tolist(), z[hit].tolist())
 
     def fill(self, inside, bounds, material, shade=None, only=None):
         """Puts `material` in every cube in `bounds` whose middle `inside` takes; with `only`, just over cubes
         already there of those materials (or any, for True)."""
-        (x0, y0, z0), (x1, y1, z1) = bounds
-        for x in range(math.floor(x0), math.ceil(x1)):
-            for y in range(math.floor(y0), math.ceil(y1)):
-                for z in range(math.floor(z0), math.ceil(z1)):
-                    if not inside(x + 0.5, y + 0.5, z + 0.5):
-                        continue
-                    if only is not None:
-                        there = self.cells.get((x, y, z))
-                        if there is None or (only is not True and there[0] not in only):
-                            continue
-                    self.put((x, y, z), material, shade)
+        for cell in self._cells(inside, bounds):
+            if only is not None:
+                there = self.cells.get(cell)
+                if there is None or (only is not True and there[0] not in only):
+                    continue
+            self.put(cell, material, shade)
+
+    def remove(self, inside, bounds):
+        for cell in self._cells(inside, bounds):
+            self.cells.pop(cell, None)
 
     def box(self, lo, hi, material, shade=None, round_edges=0, only=None):
         """A box from `lo` to `hi`, its edges cut back `round_edges` cubes."""
         def inside(x, y, z):
             if round_edges <= 0:
-                return True
-            out = 0
-            for v, a, b in ((x, lo[0], hi[0]), (y, lo[1], hi[1]), (z, lo[2], hi[2])):
-                if v < a + round_edges or v > b - round_edges:
-                    out += 1
+                return np.ones_like(x, bool)
+            out = sum(((v < a + round_edges) | (v > b - round_edges)).astype(int)
+                      for v, a, b in ((x, lo[0], hi[0]), (y, lo[1], hi[1]), (z, lo[2], hi[2])))
             return out < 2
         self.fill(inside, (lo, hi), material, shade, only)
 
-    def ball(self, middle, radii, material, shade=None, only=None, keep=None):
+    def rounded(self, middle, half, material, power=3.0, shade=None, only=None, keep=None):
+        """A box with its corners worn round: |x|^p + |y|^p + |z|^p <= 1 over its half sizes."""
         cx, cy, cz = middle
-        rx, ry, rz = radii
+        hx, hy, hz = half
 
         def inside(x, y, z):
-            if keep is not None and not keep(x, y, z):
-                return False
-            return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 + ((z - cz) / rz) ** 2 <= 1.0
+            made = (np.abs(x - cx) / hx) ** power + (np.abs(y - cy) / hy) ** power + (np.abs(z - cz) / hz) ** power <= 1
+            return made & keep(x, y, z) if keep is not None else made
 
-        self.fill(inside, ((cx - rx, cy - ry, cz - rz), (cx + rx, cy + ry, cz + rz)), material, shade, only)
+        self.fill(inside, ((cx - hx, cy - hy, cz - hz), (cx + hx, cy + hy, cz + hz)), material, shade, only)
 
-    def rod(self, start, end, radius, material, shade=None, only=None, square=False, flat=False):
-        """A rod between two points, round or square across, its ends rounded or, with `flat`, cut flat."""
+    def ball(self, middle, radii, material, shade=None, only=None, keep=None):
+        self.rounded(middle, radii, material, 2.0, shade, only, keep)
+
+    def rod(self, start, end, radius, material, shade=None, only=None, square=False, flat=False, radius2=None):
+        """A rod between two points, round or square across, its ends rounded or, with `flat`, cut flat; with
+        `radius2`, narrowing or widening to it at the end."""
         a = np.array(start, float)
         b = np.array(end, float)
         along = b - a
         length2 = max(float(along @ along), 1e-9)
+        r2 = radius if radius2 is None else radius2
 
         def inside(x, y, z):
-            p = np.array((x, y, z))
-            t = float((p - a) @ along) / length2
-            if flat and not 0.0 <= t <= 1.0:
-                return False
-            t = max(0.0, min(1.0, t))
-            off = p - (a + along * t)
+            px, py, pz = x - a[0], y - a[1], z - a[2]
+            t = (px * along[0] + py * along[1] + pz * along[2]) / length2
+            ok = (t >= 0) & (t <= 1) if flat else np.ones_like(t, bool)
+            t = np.clip(t, 0, 1)
+            ox, oy, oz = px - along[0] * t, py - along[1] * t, pz - along[2] * t
+            r = radius + (r2 - radius) * t
             if square:
-                return max(abs(off)) <= radius
-            return float(off @ off) <= radius * radius
+                return ok & (np.maximum(np.maximum(np.abs(ox), np.abs(oy)), np.abs(oz)) <= r)
+            return ok & (ox * ox + oy * oy + oz * oz <= r * r)
 
-        lo = np.minimum(a, b) - radius - 1
-        hi = np.maximum(a, b) + radius + 1
-        self.fill(inside, (lo, hi), material, shade, only)
+        reach_ = max(radius, r2) + 1
+        self.fill(inside, (np.minimum(a, b) - reach_, np.maximum(a, b) + reach_), material, shade, only)
 
-    def remove(self, inside, bounds):
-        (x0, y0, z0), (x1, y1, z1) = bounds
-        for x in range(math.floor(x0), math.ceil(x1)):
-            for y in range(math.floor(y0), math.ceil(y1)):
-                for z in range(math.floor(z0), math.ceil(z1)):
-                    if inside(x + 0.5, y + 0.5, z + 0.5):
-                        self.cells.pop((x, y, z), None)
+    def path(self, points, radius, material, shade=None, only=None, square=False):
+        """Rods from point to point."""
+        for a, b in zip(points, points[1:]):
+            self.rod(a, b, radius, material, shade, only, square)
+
+    def shell(self, material, out=1, only=None, keep=None):
+        """Cubes of `material` over every face of what is there, `out` deep, where `keep` takes them: a coat over
+        a body, a wrap over a limb."""
+        for _ in range(out):
+            around = set()
+            for (x, y, z), there in self.cells.items():
+                if only is not None and there[0] not in only:
+                    continue
+                for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+                    cell = (x + dx, y + dy, z + dz)
+                    if cell not in self.cells:
+                        around.add(cell)
+            for cell in around:
+                if keep is None or keep(*[c + 0.5 for c in cell]):
+                    self.put(cell, material)
+
+    def paint(self, inside, bounds, material, shade=None, only=True):
+        """Colours cubes already there."""
+        self.fill(inside, bounds, material, shade, only)
+
+    def recolor(self, old, new, chance=1.0, seed=0, keep=None):
+        for cell, (material, _) in list(self.cells.items()):
+            if material == old and hashed(*cell, seed) < chance and (keep is None or keep(*cell)):
+                self.put(cell, new)
+
+    def surface(self, cell):
+        x, y, z = cell
+        return any((x + dx, y + dy, z + dz) not in self.cells
+                   for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)))
 
     def mirrored(self):
         """The grid turned over across X, as the limb on the other side wants."""
-        made = Grid(self.seed + 1)
+        made = Grid(self.seed + 1, self.patch)
         for (x, y, z), value in self.cells.items():
             made.cells[(-x - 1, y, z)] = value
         return made
+
+    def merge(self, other, offset=(0, 0, 0)):
+        ox, oy, oz = offset
+        for (x, y, z), value in other.cells.items():
+            self.cells[(x + ox, y + oy, z + oz)] = value
 
     def bounds(self):
         xs, ys, zs = zip(*self.cells)
@@ -220,6 +274,7 @@ class Bone:
         self.rotation = list(rotation)
         self.role = role
         self.grid = Grid(seed)
+        self.place = np.zeros(3)  # where its pivot is in the model at rest, before any turning
 
 
 class Model:
@@ -244,7 +299,8 @@ class Model:
         made = {}
         for bone in self.bones:
             rotation, move = keys.get(bone.name, ((0, 0, 0), (0, 0, 0)))
-            local_r = turned(bone.rotation) @ turned(rotation)
+            # A turning given whole (a matrix) is the bone's turning as its parent holds it; degrees are from rest.
+            local_r = rotation if isinstance(rotation, np.ndarray) else turned(bone.rotation) @ turned(rotation)
             local_t = bone.pivot + np.array(move, float)
             if bone.parent is None:
                 made[bone.name] = (local_r, local_t)
@@ -264,47 +320,68 @@ class Model:
         return degrees_of(key_r), list(local_t - bone.pivot)
 
 
-# Reaching: an arm of two bones brought to a point by turning them -------------------------------------------------
+# Reaching: an arm of two bones brought exactly to a hand's place and turning ---------------------------------------
 
 
-def reach(model, upper, lower, hand, target, placed, keys, elbow_out, start=None):
-    """Keys for `upper` and `lower` (an elbow turning about its X) that put the point `hand` of the lower bone at
-    `target`, the elbow kept out to the side `elbow_out` points. Searched for, as there are few bones."""
-    target = np.array(target, float)
+def two_bone(model, upper, lower, hand, wrist_r, wrist_t, pole, placed):
+    """Turns for `upper`, `lower` and `hand` (bones built hanging down their -Y) that put the hand turned `wrist_r`
+    with its pivot at `wrist_t` in the model's space, the elbow bending towards `pole`. The lower bone bends about
+    its X only, then twists along itself as far as takes the most turn off the wrist. Gives each bone's turning
+    as its parent holds it, and how far short the hand falls."""
+    up_bone, low_bone = model.by_name(upper), model.by_name(lower)
+    hand_bone = model.by_name(hand)
+    pr, pt = placed[up_bone.parent]
+    shoulder = pt + pr @ up_bone.pivot
+    l1 = float(np.linalg.norm(low_bone.pivot))
+    l2 = float(np.linalg.norm(hand_bone.pivot))
+    to = np.array(wrist_t, float) - shoulder
+    d = float(np.linalg.norm(to))
+    short = max(0.0, d - (l1 + l2 - 0.02))
+    d = min(max(d, abs(l1 - l2) + 0.02), l1 + l2 - 0.02)
+    u = to / max(np.linalg.norm(to), 1e-9)
+    a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+    h = math.sqrt(max(0.0, l1 * l1 - a * a))
+    p = np.array(pole, float)
+    v = p - u * (p @ u)
+    v /= max(np.linalg.norm(v), 1e-9)
+    elbow = shoulder + u * a + v * h
+    wrist = shoulder + u * d
+    # The upper arm: its -Y down to the elbow, its +Z towards where the forearm goes, so the elbow bends about X.
+    y_axis = -(elbow - shoulder) / l1
+    fore = wrist - elbow
+    z_axis = fore - y_axis * (fore @ y_axis)
+    z_axis /= max(np.linalg.norm(z_axis), 1e-9)
+    upper_w = np.column_stack((np.cross(y_axis, z_axis), y_axis, z_axis))
+    # The bone's own pivot offset to the elbow is along its -Y at rest; turn so it lands on the elbow.
+    rest_dir = -low_bone.pivot / l1
+    upper_w = upper_w @ align(np.array((0.0, -1.0, 0.0)), -rest_dir)
+    bend = math.acos(max(-1.0, min(1.0, float((-y_axis) @ (fore / np.linalg.norm(fore))))))
     best = None
+    wrist_r = np.array(wrist_r, float)
+    for twist in np.linspace(-110, 110, 221):
+        lower_w = upper_w @ rot_x(-bend) @ rot_y(math.radians(twist))
+        rel = lower_w.T @ wrist_r
+        angle = math.acos(max(-1.0, min(1.0, (np.trace(rel) - 1) / 2)))
+        if best is None or angle < best[0]:
+            best = (angle, lower_w)
+    lower_w = best[1]
+    return {
+        upper: pr.T @ upper_w,
+        lower: upper_w.T @ lower_w,
+        hand: lower_w.T @ wrist_r,
+    }, short
 
-    def cost(values):
-        trial = dict(keys)
-        trial[upper] = ((values[0], values[1], values[2]), (0, 0, 0))
-        trial[lower] = ((values[3], 0, 0), (0, 0, 0))
-        at = model.placed(trial)
-        r, t = at[lower]
-        point = t + r @ np.array(hand, float)
-        er, et = at[lower]
-        miss = float(np.sum((point - target) ** 2))
-        # Elbows out and down rather than up into the head; a bend that stays a bend.
-        side = float(np.array(elbow_out) @ (et - at[upper][1]))
-        return miss - 0.05 * side + 0.002 * max(0.0, values[3]) ** 2
 
-    values = np.array(start if start is not None else [-40.0, 0.0, 0.0, -60.0])
-    step = 24.0
-    current = cost(values)
-    while step > 0.05:
-        improved = False
-        for axis in range(4):
-            for sign in (1, -1):
-                trial = values.copy()
-                trial[axis] += sign * step
-                c = cost(trial)
-                if c < current:
-                    values, current, improved = trial, c, True
-        if not improved:
-            step *= 0.5
-    best = values
-    keys = dict(keys)
-    keys[upper] = ((round(best[0], 2), round(best[1], 2), round(best[2], 2)), (0, 0, 0))
-    keys[lower] = ((round(best[3], 2), 0, 0), (0, 0, 0))
-    return keys, math.sqrt(max(0.0, current))
+def align(a, b):
+    """The turning that takes direction `a` to direction `b`."""
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v = np.cross(a, b)
+    c = float(a @ b)
+    if np.linalg.norm(v) < 1e-9:
+        return np.eye(3) if c > 0 else rot_z(math.pi)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k * (1 / (1 + c))
 
 
 # Writing -------------------------------------------------------------------------------------------------------
@@ -425,52 +502,24 @@ def write_model(model, path, tints=None):
         out.write("\n".join(lines))
 
 
-# A quick look without the engine --------------------------------------------------------------------------------
+# Checking a pose --------------------------------------------------------------------------------------------------
 
 
-def preview(model, path, keys=None, size=640, yaw=35.0, pitch=20.0, scale=None):
-    """Draws the model's cubes as a picture, lit from above and the front left, to look at while making it."""
-    from PIL import Image, ImageDraw
-
+def cells_placed(model, keys, names):
+    """The middles of the named bones' cubes in the model's space, posed by `keys`, as whole-number places."""
     placed = model.placed(keys)
-    view = rot_x(math.radians(pitch)) @ rot_y(math.radians(-yaw))
-    light = np.array([-0.5, 0.8, 0.6])
-    light /= np.linalg.norm(light)
-    faces = []
-    corners = {
-        (1, 0, 0): [(1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1)],
-        (-1, 0, 0): [(0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0)],
-        (0, 1, 0): [(0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)],
-        (0, -1, 0): [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)],
-        (0, 0, 1): [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)],
-        (0, 0, -1): [(0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0)],
-    }
-    for bone in model.bones:
-        r, t = placed[bone.name]
-        cells = bone.grid.cells
-        for (x, y, z), (material, shade) in cells.items():
-            color = np.array(model.palette.colors[model.palette.cell(material, shade) - 1], float)
-            for normal, quad in corners.items():
-                if (x + normal[0], y + normal[1], z + normal[2]) in cells:
-                    continue
-                n = view @ (r @ np.array(normal, float))
-                if n[2] <= 0:
-                    continue
-                points = [view @ (t + r @ np.array((x + a, y + b, z + c), float)) for a, b, c in quad]
-                lit = 0.45 + 0.6 * max(0.0, float((r @ np.array(normal, float)) @ light))
-                depth = sum(p[2] for p in points) / 4
-                faces.append((depth, points, tuple(int(min(255, c * lit)) for c in color)))
-    faces.sort(key=lambda face: face[0])
-    xs = [p[0] for _, pts, _ in faces for p in pts]
-    ys = [p[1] for _, pts, _ in faces for p in pts]
-    if scale is None:
-        scale = 0.9 * size / max(max(xs) - min(xs), max(ys) - min(ys))
-    mid = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2)
-    image = Image.new("RGB", (size, size), (236, 232, 226))
-    draw = ImageDraw.Draw(image)
-    for _, points, color in faces:
-        draw.polygon(
-            [(size / 2 + (p[0] - mid[0]) * scale, size / 2 - (p[1] - mid[1]) * scale) for p in points], fill=color
-        )
-    image.save(path)
-    return scale
+    made = set()
+    for name in names:
+        bone = model.by_name(name)
+        if not bone.grid.cells:
+            continue
+        r, t = placed[name]
+        middles = np.array(list(bone.grid.cells.keys()), float) + 0.5
+        for p in np.floor(middles @ r.T + t).astype(int):
+            made.add(tuple(p))
+    return made
+
+
+def clipping(model, keys, moving, still):
+    """How many cubes of the `moving` bones lie inside the `still` ones in a pose."""
+    return len(cells_placed(model, keys, moving) & cells_placed(model, keys, still))

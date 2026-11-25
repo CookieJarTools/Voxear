@@ -2255,17 +2255,23 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     - Not done: a sheet's tint mask painted pixel by pixel rather than by colour, glass tinted, and parts that
       follow another skeleton by a rig's parts rather than by name.
   - ~~**Soldiers of cubes (a sample):**~~ done: `samples/Wasteland` has two chibi soldiers with gear from the
-    world wars, worn down by an apocalypse. The **Rifleman** has a dish helmet with rags tied on, a gas mask with
-    round glass eyes and a filter tin, a patched greatcoat, webbing, puttees and a bolt-action rifle. The
-    **Scavenger** has a deep steel helmet with goggles, a check scarf over the face, a trench coat with scrap plates
-    and a pan for a pauldron, a bandolier and a drum-fed submachine gun. Each is one `.boxmodel` of about 13,000
-    cubes at 32 to a block, with a palette of worn shades. `Characters/make_soldiers.py` (with `voxkit.py`) makes
-    them from shapes, and keys their clips by reaching both hands to the gun. Their arms are built holding the gun
-    at rest, so Mob Motion walks, runs and idles them with a small arm swing. **Aim** (a breath's sway) and
-    **Fire** (a shot's kick) are clips in each model. `Scripts/Patrol.cs` walks them round their points, running
-    every other leg, and stops to aim and fire on their Animators. Levels: Wasteland (the patrol) and Lineup (the
-    two standing). Manual: Box Models, Mob Motion. Not done: walking while aiming, since a clip stops Mob Motion
-    until it ends.
+    world wars, worn down by an apocalypse: big heads with large eyes over a mask, helmets with goggles, short
+    bodies packed with webbing and pouches, knee pads and chunky boots. The **Rifleman** has a dish helmet with
+    netting and rags, a respirator with a round filter, an olive tunic, a pack and blanket roll and a bolt-action
+    rifle. The **Scavenger**, a radioman in faded blue, has a deep steel helmet, a headset with a microphone, a
+    radio with two aerials on his back, a bandolier, fingerless gloves and a drum-fed submachine gun. Each is one
+    `.boxmodel` of about 23,000 cubes at 40 to a block, on bones named as a humanoid rig names them (Hips, Spine,
+    Chest, Neck, Head, LeftUpperArm, LeftForearm, LeftHand, LeftThigh, LeftShin, LeftFoot and so on).
+    `Characters/make_soldiers.py` (with `voxkit.py`) makes them from shapes. The hands are sculpted closed round
+    the grips they hold, and each pose puts them there exactly: each arm reaches its wrist to the place and
+    turning its grip asks for, the elbow bending out and the forearm twisting to spare the wrist. The poses were
+    searched for the least clipping: the script counts the cubes of the gun, forearms and hands inside the body,
+    about 100 of 23,000 now where the stock and forearms rest against it, down from 300 to 600. At rest they hold
+    the gun low across the body, and their arms have no role, so Mob Motion walks, runs and idles the body and
+    legs while the hands stay on the gun. **Aim** (a breath's sway) and **Fire** (a shot's kick) are clips in
+    each model. `Scripts/Patrol.cs` walks them round their points, running every other leg, and stops to aim and
+    fire on their Animators. Levels: Wasteland (the patrol) and Lineup (the two standing). Manual: Box Models,
+    Mob Motion. Not done: walking while aiming, since a clip stops Mob Motion until it ends.
 
 ## Gameplay kits: game-ready systems
 

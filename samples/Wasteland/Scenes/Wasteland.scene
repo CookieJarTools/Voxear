@@ -24,9 +24,9 @@ material = { color = [0.47, 0.41, 0.33], roughness = 0.95 }
 [[obj]]
 id = 3
 name = "Main Camera"
-position = [0.1, 1.5, 4.3]
+position = [0.1, 1.7, 6.0]
 rotation = [12.0, 180.0, 0.0]
-camera = { fov = 40.0 }
+camera = { fov = 36.0 }
 
 [[obj]]
 id = 10
@@ -103,7 +103,7 @@ clip = ""
 
 [obj.mob_motion]
 leg_swing = 34.0
-arm_swing = 4.0
+arm_swing = 0.0
 stride = 0.0
 bounce = 1.0
 idle = 1.0
@@ -120,7 +120,7 @@ fire = "Fire"
 [[obj]]
 id = 5
 name = "Scavenger"
-position = [2.2, 0, -0.4]
+position = [2.2, 0, -0.6]
 rotation = [0.0, 0.0, 0.0]
 behaviours = ["Wasteland.Patrol"]
 
@@ -132,7 +132,7 @@ clip = ""
 
 [obj.mob_motion]
 leg_swing = 34.0
-arm_swing = 4.0
+arm_swing = 0.0
 stride = 0.0
 bounce = 1.0
 idle = 1.0
@@ -141,7 +141,7 @@ look_limit = 60.0
 lag = 1.0
 
 [obj.fields."Wasteland.Patrol"]
-points = [[2.2, 0, -0.4], [2.2, 0, 1.6], [-0.6, 0, 1.6], [-0.6, 0, -0.4]]
+points = [[2.2, 0, -0.6], [2.2, 0, 1.2], [-0.2, 0, 1.2], [-0.2, 0, -0.6]]
 target = [-2, 0, 9]
 aim = "Aim"
 fire = "Fire"

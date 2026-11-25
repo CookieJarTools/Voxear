@@ -24,9 +24,9 @@ material = { color = [0.47, 0.41, 0.33], roughness = 0.95 }
 [[obj]]
 id = 3
 name = "Main Camera"
-position = [0.0, 1.05, 3.4]
-rotation = [8.0, 180.0, 0.0]
-camera = { fov = 34.0 }
+position = [0.0, 0.85, 3.6]
+rotation = [4.0, 180.0, 0.0]
+camera = { fov = 32.0 }
 
 [[obj]]
 id = 10
@@ -102,7 +102,7 @@ clip = ""
 
 [obj.mob_motion]
 leg_swing = 34.0
-arm_swing = 4.0
+arm_swing = 0.0
 stride = 0.0
 bounce = 1.0
 idle = 1.0
@@ -124,7 +124,7 @@ clip = ""
 
 [obj.mob_motion]
 leg_swing = 34.0
-arm_swing = 4.0
+arm_swing = 0.0
 stride = 0.0
 bounce = 1.0
 idle = 1.0

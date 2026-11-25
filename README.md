@@ -117,6 +117,7 @@ More samples:
 - `samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.
 - `samples/Lights` has 256 coloured point lights at night, for clustered lighting.
 - `samples/Effects` has Particle Systems in a wind: a campfire, sparks with tails, dust, a ribbon, tumbling rubble, explosions played from a script, and a million simulated sparks.
+- `samples/Wasteland` has two chibi soldiers built of small cubes, who patrol, run, aim and fire: Mob Motion moves them, and clips in their box models aim.
 
 `--debug-view` takes `lod`, `cascades`, `lights` or `normals`.
 

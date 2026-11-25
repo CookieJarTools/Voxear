@@ -50,7 +50,7 @@ Done so far:
   window).
 - **Samples:** `samples/Stress` (1,600 spheres and a wall) for culling and LOD, `samples/Lights` (256 point lights
   at night) for clustered lighting, and `samples/Effects` (Particle Systems in a wind, a million sparks among
-  them).
+  them), and `samples/Wasteland` (two chibi soldiers of cubes, walking, running, aiming and firing).
 - **Clustered lighting:** a 16×9×24 froxel grid whose light lists are built on the GPU each frame. 256 lights shade a
   1280×720 frame in about 0.3 ms on an RTX 3070.
 - **Dithered LOD cross-fades:** when an instance changes LOD, both LODs draw for a quarter of a second with
@@ -2254,6 +2254,18 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
       Scripts, Bone Attachments, Materials, Your First Menu, Driving the Editor from a Terminal.
     - Not done: a sheet's tint mask painted pixel by pixel rather than by colour, glass tinted, and parts that
       follow another skeleton by a rig's parts rather than by name.
+  - ~~**Soldiers of cubes (a sample):**~~ done: `samples/Wasteland` has two chibi soldiers with gear from the
+    world wars, worn down by an apocalypse. The **Rifleman** has a dish helmet with rags tied on, a gas mask with
+    round glass eyes and a filter tin, a patched greatcoat, webbing, puttees and a bolt-action rifle. The
+    **Scavenger** has a deep steel helmet with goggles, a check scarf over the face, a trench coat with scrap plates
+    and a pan for a pauldron, a bandolier and a drum-fed submachine gun. Each is one `.boxmodel` of about 13,000
+    cubes at 32 to a block, with a palette of worn shades. `Characters/make_soldiers.py` (with `voxkit.py`) makes
+    them from shapes, and keys their clips by reaching both hands to the gun. Their arms are built holding the gun
+    at rest, so Mob Motion walks, runs and idles them with a small arm swing. **Aim** (a breath's sway) and
+    **Fire** (a shot's kick) are clips in each model. `Scripts/Patrol.cs` walks them round their points, running
+    every other leg, and stops to aim and fire on their Animators. Levels: Wasteland (the patrol) and Lineup (the
+    two standing). Manual: Box Models, Mob Motion. Not done: walking while aiming, since a clip stops Mob Motion
+    until it ends.
 
 ## Gameplay kits: game-ready systems
 

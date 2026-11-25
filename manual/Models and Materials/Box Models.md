@@ -135,6 +135,8 @@ A box of cubes has no faces on the sheet and no raised layer. **Mirror**, **Dupl
 
 A good way to build a creature in this style is one box of cubes for each part that moves: head, body, each arm and leg. Then **Make Bones** hangs each from its own bone.
 
+Characters read best with small cubes, 32 to a block, and a few shades of each colour picked here and there, so cloth and metal look worn rather than flat. `samples/Wasteland` has two chibi soldiers built this way: big helmeted heads, short bodies in coats, webbing and pouches, stubby arms and chunky boots, about 13,000 cubes each. They are made by `Characters/make_soldiers.py`, a script that adds cubes in shapes (boxes, balls and rods) and writes the `.boxmodel` files, so they can be made again with changes. They can still be changed by hand in the Model window afterwards, though running the script again replaces those changes. See [[Mob Motion#Characters that hold something]] for how they hold and aim their guns.
+
 ### Plants and trees
 
 Flowers, bushes, mushrooms and trees are box models too. Sculpt one, usually on a single bone, and use it like any model:

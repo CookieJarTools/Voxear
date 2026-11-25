@@ -63,6 +63,12 @@ To have a creature walk about by itself in a Block World, add a [[Block Mobs|Blo
 
 For a movement Mob Motion does not make, key a clip in the Model window (see **Clips made with keys** in [[Box Models]]) and add an [[Animator]] to the same Obj. While the Animator has a clip, the clip poses the model and Mob Motion waits. Clear the Animator's clip and Mob Motion carries on from standing.
 
+## Characters that hold something
+
+A soldier carrying a rifle should not swing both arms as it walks. Build the arms holding the rifle: turn the arm bones in the Model window until the hands are on it, so that holding it is how the model stands at rest. Put the rifle on a bone of its own under the body, with no role. Give the lower arms no role either, so that only the upper arms move. Then turn **Arm Swing** down to a few degrees. Mob Motion still walks, runs and idles the legs, body and head, and the arms barely move off the rifle.
+
+Aiming and firing are clips in the model, played on the Obj's [[Animator]] while the character stands. Clear the clip and it walks on. `samples/Wasteland` has two soldiers made this way, a rifleman and a scavenger. Each has an **Aim** clip that sways with its breath and a **Fire** clip for the kick of a shot, and `Scripts/Patrol.cs` walks each one round its points, stopping to aim and fire.
+
 ## Watching it in the Model window
 
 You can see a model move before it is in a level. Open it in the Model window and click **Motion** in the bar. Pick **Stand**, **Walk** or **Run**, and click **Attack** or **Hurt** to see those. Nothing about the model changes while you watch, and going back to **Shape** puts it at rest.

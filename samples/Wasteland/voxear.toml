@@ -1,0 +1,4 @@
+[project]
+name = "Wasteland"
+scripts = "Scripts/Wasteland.Scripts.csproj"
+start_level = "Levels/Wasteland.level"

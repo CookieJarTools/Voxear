@@ -1,0 +1,5 @@
+# Voxear level
+format = 1
+
+[[scene]]
+scene = "41ebc7db37e24f7b9a388ce71ef27903"  # Scenes/Wasteland.scene

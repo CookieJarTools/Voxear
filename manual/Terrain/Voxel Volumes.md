@@ -68,6 +68,29 @@ With **Ground** on, the volume has rolling ground of its own voxels, grass on it
 - **Flowers**: how many flowers grow, from 0 to 1: red with yellow middles, purple spikes, white tufts, and pink ones with yellow middles.
 - **Seed**: two volumes alike but for their Seed have different ground.
 
+## Trees
+
+An endless volume grows trees where its ground grows grass. Each kind is one of the project's plants (a `.voxplant`, as a world of blocks grows its trees from), picked in a **Trees** row with how many grow **A Hectare**. **Add Tree** adds another kind; picking None for a kind takes it away.
+
+- Each block of the plant is a metre of the volume's voxels. Logs are round, as thick as the plant grows them, so a trunk thins towards its top and branches are thin.
+- Leaves are rounded into clumps: a thin shell of loose cubes over the crown, with nothing inside.
+- Each kind is grown from four seeds and turned four ways, so no two trees side by side are alike. Trees stand at most one in each 5 m square, on grass: not on rock, sand, snow or steep ground, and not where the generator's overhangs or caves have moved the ground.
+- The colours are the plant's wood and leaves blocks' colours.
+
+Trees take room. A wood of 100 oaks and pines a hectare takes about 430 MB at a reach of 64 m, against 100 MB for its ground alone, and its columns cost about 0.33 ms each to make, eight a frame. The crowns' loose cubes add about 2.4 ms a frame to drawing at 1080p on an RTX 3070. Fewer trees take less.
+
+`vox editor call field.set` sets the trees' rows as the Inspector does: `trees` is the first kind's plant, `trees#2` how many of it to a hectare, and so on, then the last to add a kind. In the scene:
+
+```toml
+[[obj.voxel_volume.trees]]
+plant = "Plants/Oak.voxplant"
+per_hectare = 40.0
+
+[[obj.voxel_volume.trees]]
+plant = "Plants/Pine.voxplant"
+per_hectare = 20.0
+```
+
 ## Box models stamped in
 
 A [[Box Models|box model]]'s sculpted cubes can be stamped into a volume, turned into its voxels: a tree sculpted at 16 cubes a metre becomes a tree of the volume's voxels. Each stamp is the model, where its feet stand in metres from the volume's corner, how far it is turned about Y in degrees, and how many times its size it is. A model's cubes larger than the volume's voxels fill all the voxels they cover; smaller ones are rounded to the voxels.
@@ -101,4 +124,5 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no rivers or water, and no Cave Network halls, yet.
+- An endless one's trees don't sway, and can't be felled; every tree of a kind is one of four plants.
 - Its voxels can't be changed one by one from the editor or from scripts yet.

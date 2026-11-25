@@ -3,17 +3,19 @@
 // a slot of the window by where it is, wrapping. As the camera moves, the columns coming into the window are made,
 // the nearest first and a few each frame, over the columns that left.
 //
-// Each column made goes through six passes, as the small-voxels research's generator did:
+// Each column made goes through seven passes, as the small-voxels research's generator did:
 //
 // 1. voxelWorldColumns: the ground's height in each of its voxel columns, with a border of four, and its climate.
 // 2. voxelWorldTops: what the ground is at each column, with a border of two (grass, rock, sand, snow or gravel),
 //    and its grass.
-// 3. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass and flowers could reach.
-// 4. voxelWorldCoarse: with a Volume, a thread a listed brick passes over those solid or open through and through,
-//    by the Volume at the brick's corners, which with caves are most of them.
-// 5. voxelWorldBricks: one group a brick left, a thread a voxel, works out each voxel, and keeps the brick in its
+// 3. voxelWorldTrees: the trees that may reach the column, placed by hash where the ground grows grass.
+// 4. voxelWorldCandidates: each column of bricks lists the bricks the ground, grass, flowers and trees could reach.
+// 5. voxelWorldCoarse: a thread a listed brick passes over those a Volume leaves solid or open through and through,
+//    by the Volume at the brick's corners, which with caves are most of them, and those in a tree's box but none of
+//    its blocks.
+// 6. voxelWorldBricks: one group a brick left, a thread a voxel, works out each voxel, and keeps the brick in its
 //    job's own list if anything is in it, its materials in the column's slot in the order of its bits.
-// 6. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
+// 7. voxelWorldSectors: one group a sector of the column puts its bricks in the slot's room for bricks in the order
 //    of its bits, and writes the sector's entry: where it is in the world, its bits and where its bricks start.
 //
 // The ground is the one a Voxel Volume's own ground is (src/voxel_volume/ground.rs), to the voxel: the same hashes,
@@ -35,7 +37,7 @@ static const uint EMPTY = 0xFFFFFFFFu;
 static const uint ROW = 1024;
 // Each job's counters: bricks kept, material bytes taken, bricks placed, bricks that did not fit.
 // After them: how many candidate bricks there are and the coarse pass's groups, then how many of them it leaves for
-// the bricks pass and that pass's groups.
+// the bricks pass and that pass's groups, then how many trees stand round each job's column.
 static const uint COUNTERS = 4;
 
 struct WorldJob
@@ -65,6 +67,11 @@ struct WorldMake
     // a column in the order of the heights.
     uint* volume;
     uint* carried;
+    // The trees' kinds and plants (src/voxel_volume/trees.rs), the trees placed round each job's column, and room
+    // for what the column under each tree's foot carries up.
+    uint* forest;
+    int* trees;
+    uint* treeCarried;
     float height;
     float hills;
     float hillSpacing;
@@ -101,6 +108,9 @@ struct WorldMake
     uint4 spans;
     float reach;
     float depth;
+    // How many kinds of tree there are, and how far the furthest reaches across from its trunk, in metres.
+    uint treeKinds;
+    float treeReach;
     uint pad0;
     WorldJob jobs[MAX_JOBS];
 };
@@ -235,34 +245,66 @@ uint* carriedOf(WorldMake* make, uint job, int x, int z)
     return make->carried + (job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)) * make->carriedCount;
 }
 
-// How far into the ground of the Volume a voxel is, in metres (out of it where negative): column (x, z) of a
-// job's column, voxel `y` up, its middle in the generator's world.
-float densityAt(WorldMake* make, uint job, int x, int y, int z)
+// How far into the ground of the Volume voxel `p` of the world is, in metres (out of it where negative), its column
+// carrying up `carried`.
+float densityWith(WorldMake* make, int3 p, uint* carried)
 {
     float v = make->voxel;
-    int2 corner = make->jobs[job].column * 64;
-    float gx = (float(corner.x + x) + 0.5) * v + make->atX;
-    float gy = (float(y) + 0.5) * v + make->floor;
-    float gz = (float(corner.y + z) + 0.5) * v + make->atZ;
+    float gx = (float(p.x) + 0.5) * v + make->atX;
+    float gy = (float(p.y) + 0.5) * v + make->floor;
+    float gz = (float(p.z) + 0.5) * v + make->atZ;
     float slots[GENERATOR_SLOTS];
     for (uint s = 0; s < GENERATOR_SLOTS; s++)
     {
         slots[s] = 0.0;
     }
-    runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carriedOf(make, job, x, z), slots);
+    runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carried, slots);
     return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)];
 }
 
-// What the ground is at a column of the generator's: its height and how steep it is round it, and its climate.
-uint groundOf(WorldMake* make, uint job, int x, int z)
+// How far into the ground of the Volume a voxel is, in metres (out of it where negative): column (x, z) of a
+// job's column, voxel `y` up.
+float densityAt(WorldMake* make, uint job, int x, int y, int z)
 {
-    int h = heightOf(make, job, x, z);
-    int across = max(abs(heightOf(make, job, x + 2, z) - heightOf(make, job, x - 2, z)), abs(heightOf(make, job, x, z + 2) - heightOf(make, job, x, z - 2)));
+    int2 corner = make->jobs[job].column * 64;
+    return densityWith(make, int3(corner.x + x, y, corner.y + z), carriedOf(make, job, x, z));
+}
+
+// The generator's program run at voxel column (x, z) of the world: its height, climate and rock, and what the
+// column carries up to its Volume's cells, kept in `carried`.
+Generated runColumn(WorldMake* make, int x, int z, uint* carried)
+{
+    float v = make->voxel;
+    float slots[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        slots[s] = 0.0;
+    }
+    runSteps(make->program, make->programWords, (float(x) + 0.5) * v + make->atX, 0.0, (float(z) + 0.5) * v + make->atZ, 0.0, make->program, slots);
+    uint4 outs = make->outs;
+    Generated made;
+    made.height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
+    made.warmth = slots[min(outs.y, GENERATOR_SLOTS - 1)];
+    made.wetness = slots[min(outs.z, GENERATOR_SLOTS - 1)];
+    made.rock = outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0;
+    for (uint c = 0; c < make->carriedCount; c++)
+    {
+        carried[c] = asuint(slots[min(make->carriedSlots[c >> 2][c & 3u], GENERATOR_SLOTS - 1)]);
+    }
+    return made;
+}
+
+// A height the generator made, in the volume's voxels from its floor.
+int voxelsUp(WorldMake* make, float height)
+{
+    return int(floor((height - make->floor) / make->voxel));
+}
+
+// What the ground is where it is `h` voxels high and its height changes by `across` voxels over four, as warm, wet
+// and rocky as the generator says.
+uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness, bool rock)
+{
     float slope = float(across) / 4.0;
-    uint climate = make->grounds[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
-    float warmth = float(climate & 255u) - 128.0;
-    float wetness = float((climate >> 8) & 255u) / 255.0;
-    bool rock = ((climate >> 16) & 1u) != 0;
     float above = float(h) * make->voxel + make->floor - make->seaLevel;
     if (rock || slope > 1.0)
     {
@@ -287,8 +329,17 @@ uint groundOf(WorldMake* make, uint job, int x, int z)
     return GROUND_GRASS;
 }
 
-// The voxel of ground `top` is at `p`, `under` voxels under its column's top: its shades in a pattern of two
-// voxels across, as a block's face has a pattern. Grass and its dirt are the volume's own ground's colours.
+// What the ground is at a column of the generator's: its height and how steep it is round it, and its climate.
+uint groundOf(WorldMake* make, uint job, int x, int z)
+{
+    int h = heightOf(make, job, x, z);
+    int across = max(abs(heightOf(make, job, x + 2, z) - heightOf(make, job, x - 2, z)), abs(heightOf(make, job, x, z + 2) - heightOf(make, job, x, z - 2)));
+    uint climate = make->grounds[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
+    float warmth = float(climate & 255u) - 128.0;
+    float wetness = float((climate >> 8) & 255u) / 255.0;
+    return groundKind(make, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0);
+}
+
 uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
 {
     float grain = unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 31));
@@ -428,25 +479,8 @@ void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
         make->grounds[job * SIDE * SIDE + id.x] = 128u + (128u << 8);
         return;
     }
-    float v = make->voxel;
-    float slots[GENERATOR_SLOTS];
-    for (uint s = 0; s < GENERATOR_SLOTS; s++)
-    {
-        slots[s] = 0.0;
-    }
-    runSteps(make->program, make->programWords, (float(x) + 0.5) * v + make->atX, 0.0, (float(z) + 0.5) * v + make->atZ, 0.0, make->program, slots);
-    uint4 outs = make->outs;
-    Generated made;
-    made.height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
-    made.warmth = slots[min(outs.y, GENERATOR_SLOTS - 1)];
-    made.wetness = slots[min(outs.z, GENERATOR_SLOTS - 1)];
-    made.rock = outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0;
-    uint* carried = make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount;
-    for (uint c = 0; c < make->carriedCount; c++)
-    {
-        carried[c] = asuint(slots[min(make->carriedSlots[c >> 2][c & 3u], GENERATOR_SLOTS - 1)]);
-    }
-    make->heights[job * SIDE * SIDE + id.x] = int(floor((made.height - make->floor) / v));
+    Generated made = runColumn(make, x, z, make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount);
+    make->heights[job * SIDE * SIDE + id.x] = voxelsUp(make, made.height);
     uint warmth = uint(clamp(round(made.warmth) + 128.0, 0.0, 255.0));
     uint wetness = uint(clamp(made.wetness * 255.0, 0.0, 255.0));
     uint rock = made.rock > 0.5 ? 1u : 0u;
@@ -533,8 +567,267 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16) | (bare ? 1u << 24 : 0u);
 }
 
-// A candidate brick's mark where grass or flowers may grow in it.
+// Trees (src/voxel_volume/trees.rs): each kind grown as a few plants, each plant a grid of its blocks, a byte a block,
+// each block a metre of voxels. A trees pass places them round each job's column, at most one in each cell
+// TREE_CELL metres square, by hash, where the ground grows grass; the bricks they reach are listed with the ground's,
+// and a brick works out which of its voxels each tree near it fills.
+static const uint MAX_TREES = 32;
+static const uint TREE_WORDS = 8;
+static const uint TREE_VARIANTS = 4;
+static const float TREE_CELL = 5.0;
+static const uint TREE_KINDS_AT = 4;
+static const uint TREE_PLANTS_AT = TREE_KINDS_AT + 8 * 4;
+static const uint TREE_PLANT_WORDS = 8;
+static const uint MOST_CARRIED_HERE = 8;
+static const uint TREE_WOOD = 0x80u;
+static const uint TREE_LEAVES = 0x40u;
+
+// How many trees stand round a job's column.
+uint treeCount(WorldMake* make, uint job)
+{
+    return min(make->counters[MAX_JOBS * COUNTERS + 8 + job], MAX_TREES);
+}
+
+// A tree placed round a job's column: the least corner of its trunk's foot block in the world's voxels, which of
+// the plants it is, how many quarter turns it is turned, how far it reaches across from the middle of its trunk in
+// voxels, and its lowest and highest voxel.
+int* treeOf(WorldMake* make, uint job, uint t)
+{
+    return make->trees + (job * MAX_TREES + t) * TREE_WORDS;
+}
+
+// How many voxels a block of a tree is a side: a metre's.
+int blockVoxels(WorldMake* make)
+{
+    return max(int(round(1.0 / make->voxel)), 1);
+}
+
+int floorDivide(int a, int b)
+{
+    return a >= 0 ? a / b : -((-a + b - 1) / b);
+}
+
+uint forestByte(WorldMake* make, uint at)
+{
+    return (make->forest[at >> 2] >> ((at & 3u) * 8u)) & 255u;
+}
+
+// Where voxel `p` of the world is in a tree's plant, in voxels from the least corner of its trunk's foot block, the
+// tree's turn undone.
+int3 inTree(WorldMake* make, int* tree, int3 p)
+{
+    int b = blockVoxels(make);
+    // Doubled, from the middle of the trunk's foot, so a quarter turn keeps to whole numbers.
+    int2 d = int2(2 * (p.x - tree[0]) + 1 - b, 2 * (p.z - tree[2]) + 1 - b);
+    for (int i = 0; i < tree[4]; i++)
+    {
+        d = int2(d.y, -d.x);
+    }
+    return int3((d.x + b - 1) / 2, p.y - tree[1], (d.y + b - 1) / 2);
+}
+
+// The byte of the block at `block` of a tree's plant, from the foot of its trunk: none outside it.
+uint treeBlock(WorldMake* make, uint* plant, int3 block)
+{
+    int3 at = block - int3(int(plant[0]), int(plant[1]), int(plant[2]));
+    int3 size = int3(int(plant[3]), int(plant[4]), int(plant[5]));
+    if (any(at < 0) || any(at >= size))
+    {
+        return 0;
+    }
+    return forestByte(make, plant[6] + uint(at.x + size.x * (at.y + size.y * at.z)));
+}
+
+// How much of the leaves of a tree's plant are round point `g`, in blocks from the middle of its trunk's foot block:
+// from 0 for none to 1 for all, the eight blocks round it blended, so a crown of blocks is rounded into clumps. Wood
+// beside leaves counts as leaves, so a branch inside the crown leaves no hollow in it.
+float leavesAt(WorldMake* make, uint* plant, float3 g)
+{
+    int3 base = int3(floor(g));
+    float3 t = g - float3(base);
+    float sum = 0.0;
+    for (uint c = 0; c < 8; c++)
+    {
+        int3 corner = int3(int(c & 1u), int((c >> 1) & 1u), int(c >> 2));
+        if ((treeBlock(make, plant, base + corner) & TREE_LEAVES) != 0)
+        {
+            float3 w = select(corner == int3(1, 1, 1), t, 1.0 - t);
+            sum += w.x * w.y * w.z;
+        }
+    }
+    return sum;
+}
+
+// What a tree has at voxel `p` of the world: one of its colours, or nothing. A log is round, as thick as its byte
+// says. Leaves are a shell a few voxels deep where the blended leaves cross a half, the half moved a little by hash
+// at each voxel so their edge is ragged, loosely filled: clumps of loose cubes with nothing inside.
+uint treeVoxel(WorldMake* make, int* tree, int3 p)
+{
+    int b = blockVoxels(make);
+    int3 l = inTree(make, tree, p);
+    int3 block = int3(floorDivide(l.x, b), floorDivide(l.y, b), floorDivide(l.z, b));
+    uint* plant = make->forest + TREE_PLANTS_AT + uint(tree[3]) * TREE_PLANT_WORDS;
+    uint byte = treeBlock(make, plant, block);
+    uint colours = make->forest[TREE_KINDS_AT + uint(tree[3]) / TREE_VARIANTS * 4 + 3];
+    uint h = hashOf(p.x, p.y, p.z, make->seed + 41);
+    if ((byte & TREE_WOOD) != 0)
+    {
+        int3 f = l - block * b;
+        uint axis = byte & 3u;
+        float thick = float((byte >> 2) & 15u) / 8.0;
+        int2 across = axis == 0 ? f.yz : (axis == 1 ? f.xz : f.xy);
+        float2 c = float2(across) + 0.5 - float(b) * 0.5;
+        float r = thick * float(b) * 0.5;
+        if (thick < 1.0 && dot(c, c) > r * r)
+        {
+            return 0;
+        }
+        return colours + 1 + (h & 1u);
+    }
+    float leaves = leavesAt(make, plant, (float3(l) + 0.5) / float(b) - 0.5);
+    float edge = 0.5 + (unit(hashOf(p.x, p.y, p.z, make->seed + 43)) - 0.5) * 0.3;
+    float shell = max(2.0, float(b) * 2.0 / 16.0) / float(b);
+    if (leaves < edge || leaves > edge + shell || unit(h) > 0.6)
+    {
+        return 0;
+    }
+    return colours + 3 + (h >> 8) % 3u;
+}
+
+// Whether any block of a tree's plant is in the box of voxels from `low` to `high` of the world.
+bool treeIn(WorldMake* make, int* tree, int3 low, int3 high)
+{
+    int b = blockVoxels(make);
+    int3 a = inTree(make, tree, low);
+    int3 c = inTree(make, tree, high);
+    int3 from = int3(floorDivide(min(a.x, c.x), b), floorDivide(a.y, b), floorDivide(min(a.z, c.z), b));
+    int3 to = int3(floorDivide(max(a.x, c.x), b), floorDivide(c.y, b), floorDivide(max(a.z, c.z), b));
+    uint* plant = make->forest + TREE_PLANTS_AT + uint(tree[3]) * TREE_PLANT_WORDS;
+    // Leaves round over into the blocks beside them.
+    from -= 1;
+    to += 1;
+    for (int z = from.z; z <= to.z; z++)
+    {
+        for (int y = from.y; y <= to.y; y++)
+        {
+            for (int x = from.x; x <= to.x; x++)
+            {
+                if (treeBlock(make, plant, int3(x, y, z)) != 0)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Whether a tree's box reaches the box of voxels from `low` to `high` of the world.
+bool treeReaches(WorldMake* make, int* tree, int3 low, int3 high)
+{
+    int middle = 2 * tree[0] + blockVoxels(make);
+    int middleZ = 2 * tree[2] + blockVoxels(make);
+    int r = 2 * tree[5];
+    return 2 * high.x + 1 >= middle - r && 2 * low.x <= middle + r && 2 * high.z + 1 >= middleZ - r
+        && 2 * low.z <= middleZ + r && high.y >= tree[6] && low.y <= tree[7];
+}
+
+// Whether the ground at voxel column `foot` of the world grows grass, and how high it is there: worked out afresh,
+// as a tree's foot may be outside the job's columns. `carried` is room for what the column carries up.
+bool grassAt(WorldMake* make, int2 foot, uint* carried, out int h)
+{
+    int tall = int(make->tall) * 64;
+    if (make->programWords == 0)
+    {
+        h = heightAt(make, foot.x, foot.y);
+        return h >= 0 && h < tall - 1;
+    }
+    int east = voxelsUp(make, runColumn(make, foot.x + 2, foot.y, carried).height);
+    int west = voxelsUp(make, runColumn(make, foot.x - 2, foot.y, carried).height);
+    int north = voxelsUp(make, runColumn(make, foot.x, foot.y + 2, carried).height);
+    int south = voxelsUp(make, runColumn(make, foot.x, foot.y - 2, carried).height);
+    Generated made = runColumn(make, foot.x, foot.y, carried);
+    h = voxelsUp(make, made.height);
+    if (h < 0 || h >= tall - 1)
+    {
+        return false;
+    }
+    int across = max(abs(east - west), abs(north - south));
+    if (groundKind(make, h, across, made.warmth, made.wetness, made.rock > 0.5) != GROUND_GRASS)
+    {
+        return false;
+    }
+    // Where the Volume moved the ground, or hollowed it under the foot, nothing is planted.
+    return !hasVolume(make) || (densityWith(make, int3(foot.x, h, foot.y), carried) > 0.0 && densityWith(make, int3(foot.x, h + 1, foot.y), carried) <= 0.0);
+}
+
+// Places the trees that may reach each job's column: a thread a cell round it.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint job = id.y;
+    if (job >= make->jobCount || make->treeKinds == 0)
+    {
+        return;
+    }
+    float v = make->voxel;
+    int2 corner = make->jobs[job].column * 64;
+    int2 first = int2(floor((float2(corner) * v - make->treeReach) / TREE_CELL));
+    int2 last = int2(floor((float2(corner + 64) * v + make->treeReach) / TREE_CELL));
+    int2 cells = last - first + 1;
+    uint seed = make->seed + 91;
+    uint* carried = make->treeCarried + (job * 64 + id.x) * MOST_CARRIED_HERE;
+    for (uint i = id.x; i < uint(cells.x * cells.y); i += 64)
+    {
+        int2 cell = first + int2(int(i % uint(cells.x)), int(i / uint(cells.x)));
+        float chance = unit(hashOf(cell.x, 7, cell.y, seed));
+        uint kind = 0;
+        while (kind < make->treeKinds && chance >= asfloat(make->forest[TREE_KINDS_AT + kind * 4]))
+        {
+            kind++;
+        }
+        if (kind == make->treeKinds)
+        {
+            continue;
+        }
+        float2 within = float2(unit(hashOf(cell.x, 8, cell.y, seed)), unit(hashOf(cell.x, 9, cell.y, seed)));
+        int2 foot = int2(floor((float2(cell) + 0.15 + 0.7 * within) * TREE_CELL / v));
+        int h;
+        if (!grassAt(make, foot, carried, h))
+        {
+            continue;
+        }
+        uint pick = hashOf(cell.x, 10, cell.y, seed);
+        uint* kindOf = make->forest + TREE_KINDS_AT + kind * 4;
+        uint plantIndex = kindOf[1] + pick % max(kindOf[2], 1u);
+        uint* plant = make->forest + TREE_PLANTS_AT + plantIndex * TREE_PLANT_WORDS;
+        int b = blockVoxels(make);
+        int foot0 = h + 1;
+        uint t;
+        InterlockedAdd(make->counters[MAX_JOBS * COUNTERS + 8 + job], 1u, t);
+        if (t >= MAX_TREES)
+        {
+            continue;
+        }
+        int* tree = treeOf(make, job, t);
+        tree[0] = foot.x - b / 2;
+        tree[1] = foot0;
+        tree[2] = foot.y - b / 2;
+        tree[3] = int(plantIndex);
+        tree[4] = int((pick >> 8) & 3u);
+        tree[5] = int(ceil(asfloat(plant[7]) * float(b))) + 1;
+        tree[6] = foot0 + int(plant[1]) * b;
+        tree[7] = foot0 + (int(plant[1]) + int(plant[4])) * b - 1;
+    }
+}
+
+// A candidate brick's marks: where the ground, its grass or its flowers may be in it, which is kept whatever the
+// coarse pass finds of a Volume; and where a tree's box reaches it.
 static const uint GROWN = 1u << 31;
+static const uint TREED = 1u << 30;
+static const uint MARKS = GROWN | TREED;
 
 uint packCandidate(uint job, uint bx, uint bz, uint row)
 {
@@ -584,6 +877,29 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
         highGrowth += int(0.7 / make->voxel) + 4;
     }
     int rows = int(make->tall) * 8;
+    // Without a Volume, the ground, its grass and its flowers are in these rows alone.
+    if (!volume)
+    {
+        lowSurface = lowest + 1;
+        highGrowth = highest;
+    }
+    // The trees whose boxes reach this column of bricks.
+    int2 corner = make->jobs[job].column * 64;
+    int3 low = int3(corner.x + bx * 8, 0, corner.y + bz * 8);
+    int3 high = int3(low.x + 7, rows * 8 - 1, low.z + 7);
+    int treeLow = 0x7FFFFFFF;
+    int treeHigh = -0x7FFFFFFF;
+    for (uint t = 0; t < treeCount(make, job); t++)
+    {
+        int* tree = treeOf(make, job, t);
+        if (treeReaches(make, tree, low, high))
+        {
+            treeLow = min(treeLow, tree[6]);
+            treeHigh = max(treeHigh, tree[7]);
+        }
+    }
+    lowest = min(lowest, treeLow);
+    highest = max(highest, treeHigh);
     // A Volume reaches over and under its ground as far as it says, and as far as each column's spans say.
     if (volume)
     {
@@ -615,9 +931,10 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
         uint at;
         InterlockedAdd(make->counters[MAX_JOBS * COUNTERS], 1u, at);
         bool grown = row * 8 + 8 >= lowSurface - 1 && row * 8 - 1 <= highGrowth;
+        bool treed = row * 8 + 7 >= treeLow && row * 8 <= treeHigh;
         if (at < make->candidateRoom)
         {
-            make->candidates[at] = packCandidate(job, uint(bx), uint(bz), uint(row)) | (grown ? GROWN : 0u);
+            make->candidates[at] = packCandidate(job, uint(bx), uint(bz), uint(row)) | (grown ? GROWN : 0u) | (treed ? TREED : 0u);
         }
     }
 }
@@ -644,7 +961,7 @@ static const float COARSE_EVEN = 24.0;
 bool evenThrough(WorldMake* make, uint packed)
 {
     uint job = packed & 15u;
-    int3 brick = int3(int((packed >> 4) & 7u), int((packed & ~GROWN) >> 10), int((packed >> 7) & 7u)) * 8;
+    int3 brick = int3(int((packed >> 4) & 7u), int((packed & ~MARKS) >> 10), int((packed >> 7) & 7u)) * 8;
     int tall = int(make->tall) * 64;
     float even = COARSE_EVEN * make->voxel;
     bool solid = true;
@@ -660,8 +977,31 @@ bool evenThrough(WorldMake* make, uint packed)
     return solid || open;
 }
 
-// Passes over the candidate bricks a Volume leaves solid or open through and through, before a group of 512 works
-// out each one's thousand voxels: the rest go on, in the second half of the candidates, to the bricks pass.
+// Whether a block of any tree whose box reaches a candidate brick is in it.
+bool treesIn(WorldMake* make, uint packed)
+{
+    if ((packed & TREED) == 0)
+    {
+        return false;
+    }
+    uint job = packed & 15u;
+    int2 corner = make->jobs[job].column * 64;
+    int3 low = int3(corner.x, 0, corner.y) + int3(int((packed >> 4) & 7u), int((packed & ~MARKS) >> 10), int((packed >> 7) & 7u)) * 8;
+    int3 high = low + 7;
+    for (uint t = 0; t < treeCount(make, job); t++)
+    {
+        int* tree = treeOf(make, job, t);
+        if (treeReaches(make, tree, low, high) && treeIn(make, tree, low, high))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Passes over the candidate bricks a Volume leaves solid or open through and through, and those listed for a tree's
+// box that none of its blocks is in, before a group of 512 works out each one's voxels: the rest go on, in the second
+// half of the candidates, to the bricks pass. Without a Volume, the ground's own bricks all go on.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void voxelWorldCoarse(uint3 id: SV_DispatchThreadID)
@@ -673,7 +1013,7 @@ void voxelWorldCoarse(uint3 id: SV_DispatchThreadID)
         return;
     }
     uint packed = make->candidates[id.x];
-    if (hasVolume(make) && (packed & GROWN) == 0 && evenThrough(make, packed))
+    if ((packed & GROWN) == 0 && !(hasVolume(make) && !evenThrough(make, packed)) && !treesIn(make, packed))
     {
         return;
     }
@@ -703,6 +1043,9 @@ groupshared uint sharedSlot;
 groupshared uint sharedOffset;
 groupshared uint sharedCount;
 groupshared uint sharedKept;
+// The trees whose boxes reach the brick.
+groupshared uint sharedTrees[MAX_TREES];
+groupshared uint sharedTreeCount;
 
 // How far into or out of the ground a brick's first look must find every voxel it looks at to take the whole
 // brick as solid or open, in metres.
@@ -772,13 +1115,14 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (index == 0)
     {
         sharedEven = 0;
+        sharedTreeCount = 0;
     }
     GroupMemoryBarrierWithGroupSync();
     uint packed = make->candidates[make->candidateRoom + candidate];
     uint job = packed & 15u;
     int bx = int((packed >> 4) & 7u);
     int bz = int((packed >> 7) & 7u);
-    int row = int((packed & ~GROWN) >> 10);
+    int row = int((packed & ~MARKS) >> 10);
     int3 l = int3(index & 7u, (index >> 3) & 7u, index >> 6);
     int px = bx * 8 + l.x;
     int pz = bz * 8 + l.z;
@@ -789,6 +1133,17 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     uint column = columnOf(make, job, px, pz);
     int blade = int(column & 255u);
     uint m = 0;
+    if ((packed & TREED) != 0)
+    {
+        int3 low = int3(corner.x + bx * 8, row * 8, corner.y + bz * 8);
+        if (index < treeCount(make, job) && treeReaches(make, treeOf(make, job, index), low, low + 7))
+        {
+            uint at;
+            InterlockedAdd(sharedTreeCount, 1u, at);
+            sharedTrees[at] = index;
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
     bool volume = hasVolume(make);
     if (volume)
     {
@@ -863,6 +1218,17 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         if (m == 0 && h >= 0 && y <= min(h + blade, tall - 1))
         {
             m = (y == h + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
+        }
+    }
+    // A tree's voxel where the ground leaves none, and over its grass and flowers, in its order.
+    int ground = volume ? min(surfaceOf(make, job, px, pz), tall - 1) : h;
+    for (uint t = 0; t < sharedTreeCount && (m == 0 || y > ground); t++)
+    {
+        uint filled = treeVoxel(make, treeOf(make, job, sharedTrees[t]), int3(corner.x + px, y, corner.y + pz));
+        if (filled != 0)
+        {
+            m = filled;
+            break;
         }
     }
     if (m != 0)

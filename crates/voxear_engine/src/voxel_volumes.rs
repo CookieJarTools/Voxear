@@ -15,7 +15,12 @@
 //! `.worldgen` in the project, `generator_floor` how high the generator's
 //! ground is at the volume's floor (left out, a little under its ground at
 //! the volume's corner), and `generator_at` where the volume's corner lies
-//! in the generator's world.
+//! in the generator's world. Its trees are kinds of `.voxplant`, each as
+//! many to a hectare as it says, scattered where its ground grows grass:
+//!
+//! [[obj.voxel_volume.trees]]
+//! plant = "Plants/Oak.voxplant"
+//! per_hectare = 40.0
 //!
 //! [[obj.voxel_volume.stamps]]
 //! model = "Plants/Oak.boxmodel"
@@ -28,7 +33,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelGenerator, VoxelGround, VoxelStamp, VoxelVolume};
+use voxear_render::{VoxelGenerator, VoxelGround, VoxelStamp, VoxelTrees, VoxelVolume};
 
 use crate::content::Content;
 
@@ -61,6 +66,24 @@ pub struct VoxelVolumeData {
     /// along X and Z.
     #[serde(skip_serializing_if = "is_origin")]
     pub generator_at: [f32; 2],
+    /// The kinds of tree scattered through an endless volume's ground.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub trees: Vec<VoxelTreesData>,
+}
+
+/// A kind of tree scattered through an endless volume's ground, as a scene
+/// writes it: a reference to a `.voxplant`, and how many to a hectare.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxelTreesData {
+    pub plant: String,
+    pub per_hectare: f32,
+}
+
+impl Default for VoxelTreesData {
+    fn default() -> Self {
+        Self { plant: String::new(), per_hectare: 40.0 }
+    }
 }
 
 fn is_origin(at: &[f32; 2]) -> bool {
@@ -94,6 +117,7 @@ impl Default for VoxelVolumeData {
             generator: None,
             generator_floor: None,
             generator_at: [0.0, 0.0],
+            trees: Vec::new(),
         }
     }
 }
@@ -149,6 +173,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         at: data.generator_at,
         world,
     });
+    let trees = data.trees.iter().filter_map(|kind| trees_of(content, kind)).collect();
     VoxelVolume {
         size: Vec3::from(data.size),
         voxels_per_metre: data.voxels_per_metre,
@@ -158,7 +183,26 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         endless: data.endless,
         reach: data.reach,
         generator,
+        trees,
     }
+}
+
+/// A kind of tree as the renderer draws it, its plant read from `content`
+/// and its colours its wood's and its leaves' blocks': none, with a
+/// warning, where its plant cannot be read.
+fn trees_of(content: &mut Content, kind: &VoxelTreesData) -> Option<VoxelTrees> {
+    let Some((_, plant)) = content.plant(&kind.plant) else {
+        tracing::warn!("a Voxel Volume's trees {} are not a plant in the project", kind.plant);
+        return None;
+    };
+    let conifer = plant.kind == voxear_terrain::blocks::plant::PlantKind::Conifer;
+    let mut color = |block: Option<&String>, otherwise: [u8; 3]| {
+        let found = block.and_then(|reference| content.block(reference));
+        found.map_or(otherwise, |(_, block)| block.color.map(|part| (part.clamp(0.0, 1.0) * 255.0).round() as u8))
+    };
+    let wood = color(plant.wood.as_ref(), [104, 78, 56]);
+    let leaves = color(plant.leaves.as_ref(), if conifer { [38, 92, 52] } else { [70, 128, 46] });
+    Some(VoxelTrees { plant, per_hectare: kind.per_hectare.max(0.0), wood, leaves })
 }
 
 /// Gives `entity` the Voxel Volume `data` makes, and keeps `data` as how it

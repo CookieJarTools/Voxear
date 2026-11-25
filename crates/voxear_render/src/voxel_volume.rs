@@ -20,6 +20,7 @@ pub mod bricks;
 mod endless;
 pub(crate) use endless::generated_at;
 mod ground;
+mod trees;
 
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
@@ -60,6 +61,24 @@ pub struct VoxelVolume {
     /// The world generator an endless volume's ground is made by, in place
     /// of its own ground's hills: none for those.
     pub generator: Option<VoxelGenerator>,
+    /// The trees scattered through an endless volume's ground, each kind as
+    /// many to a hectare as it says, where the ground grows grass.
+    pub trees: Vec<VoxelTrees>,
+}
+
+/// A kind of tree scattered through an endless Voxel Volume's ground: a
+/// plant of blocks (a `.voxplant`), each block a metre of the volume's
+/// voxels, grown from a few seeds and turned four ways, so no two trees
+/// side by side are alike. Its logs are round, as thick as the plant grows
+/// them; its leaves a thin shell of loose cubes over its crown.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoxelTrees {
+    pub plant: Arc<voxear_terrain::blocks::plant::PlantDef>,
+    /// How many to a hectare where the ground grows grass.
+    pub per_hectare: f32,
+    /// The colours of its wood and its leaves, as sRGB.
+    pub wood: [u8; 3],
+    pub leaves: [u8; 3],
 }
 
 /// A world generator an endless Voxel Volume's ground is made by, run on
@@ -98,6 +117,7 @@ impl Default for VoxelVolume {
             endless: false,
             reach: 64.0,
             generator: None,
+            trees: Vec::new(),
         }
     }
 }
@@ -114,6 +134,7 @@ impl PartialEq for VoxelVolume {
             && self.endless == other.endless
             && self.reach == other.reach
             && self.generator == other.generator
+            && self.trees == other.trees
     }
 }
 

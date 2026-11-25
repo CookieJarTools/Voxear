@@ -627,6 +627,48 @@ the time.
   frame. Where its window, height and room stay the same it now keeps its buffers, makes its generator's program
   again and makes each column over, showing what it held until then. Its roughness changes how it is drawn alone.
 
+## Stage 3, trees in endless ground (2026-11-25)
+
+An endless Voxel Volume grows trees of a project's `.voxplant` plants, each kind as many to a hectare as it says.
+
+- **Grown on the CPU, placed and filled on the GPU.** Each kind is grown from four seeds, and each plant becomes a
+  grid of its blocks, a byte a block: a log (which way it lies and how thick, in eighths of a block), leaves, or
+  nothing (`voxel_volume/trees.rs`). An oak's grid is about 12 × 14 × 12 bytes. A trees pass places at most one
+  tree in each 5 m cell round the column being made, by hash, turned four ways, where the ground is grass by the
+  tops pass's rules, and the Volume leaves the ground where it was. Its height there is the
+  generator's, run afresh, as a tree's foot may be outside the column. The candidates pass lists the bricks a tree's
+  box reaches; the coarse pass drops those none of its blocks are in; the bricks pass fills the rest.
+- **Leaves as clouds of cubes.** Filling each leaf block's skin left crowns that read as boxes. The leaves of the
+  eight blocks round each voxel are blended instead, and a shell two voxels deep is kept where the blend crosses a
+  half, moved a little by hash at each voxel, 60% filled. A log beside leaves counts as leaves, so a branch inside a
+  crown leaves no hollow, and no hidden shell round it. Logs are round, as thick as the plant grew them.
+
+  ![Oaks and pines on a volume's own ground](../images/small-voxels/endless-trees.webp)
+
+  ![A crown close up, enlarged three times](../images/small-voxels/endless-crowns-close.webp)
+
+- **Room.** A wood of 100 oaks and pines a hectare, counted on the GPU over 1,081 columns: 433 bricks a column at
+  the median, 1,444 at the 99th percentile, 1,696 at most, of 90 to 110 material bytes each; the ground alone keeps
+  170. A crown's shell is thin, but it crosses many half-metre bricks. A thinner shell and no hollows round branches
+  took the most from 1,915 to 1,696. As each column's slot has room of its own, it must fit the fullest: the room
+  grows by 14 bricks a column for each tree to a hectare, in steps of 512 so dragging the number rebuilds rarely.
+- **Measured** (Rolling Hills, reach 64 m, 16 voxels a metre, 1920×1080, the GPU shared):
+
+  | | Rolling Hills | with 100 oaks and pines a hectare |
+  |---|---|---|
+  | Window made before the frames | 0.54 s | 1.42 s |
+  | On the GPU | 103 MB | 426 MB |
+  | Columns a frame at most | 16 | 8 |
+  | Flying at 10 m/s: frames making columns | 66 of 540 | 110 of 540 |
+  | Making, median (least–most) | 1.55 ms (0.25–2.08) | 2.64 ms (0.99–4.53) |
+  | A column | 0.097 ms | 0.33 ms |
+  | Still frame, depth and lit voxels | 3.0 + 5.0 ms | 4.5 + 5.8 ms |
+
+- **Next.** Room shared by the columns rather than kept for the fullest one in each would take the memory to about a
+  third: the median column keeps a quarter of what the fullest does. Then sharing a tree's bricks between all the
+  trees of its plant, which the plan has as stage 3's second step. Crowns' rays cost 1.5 ms of depth: levels of
+  detail for far crowns would take some of that and keep them from shimmering.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

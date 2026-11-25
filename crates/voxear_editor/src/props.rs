@@ -667,6 +667,11 @@ pub enum Prop {
     VoxelFlowers,
     VoxelSeed,
     VoxelStamps,
+    /// An endless volume's kinds of tree: each one's plant, picking none
+    /// taking it away, and how many to a hectare; and a plant to add.
+    VoxelTreePlant(usize),
+    VoxelTreesPerHectare(usize),
+    VoxelTreeAdd,
     /// A Mist's trail: whether it is left now, how wide and thick it is, its
     /// colour, how long it lingers, and which swirls.
     /// When a Reflection Probe is captured: once, or live.
@@ -1301,7 +1306,10 @@ impl Prop {
             | Prop::VoxelGrassHeight
             | Prop::VoxelFlowers
             | Prop::VoxelSeed
-            | Prop::VoxelStamps => Part::VoxelVolume,
+            | Prop::VoxelStamps
+            | Prop::VoxelTreePlant(_)
+            | Prop::VoxelTreesPerHectare(_)
+            | Prop::VoxelTreeAdd => Part::VoxelVolume,
             Prop::MistEmitting
             | Prop::MistWidth
             | Prop::MistDensity
@@ -1736,6 +1744,7 @@ impl Prop {
             Prop::VoxelFlowers => "flowers",
             Prop::VoxelSeed => "seed",
             Prop::VoxelStamps => "stamps",
+            Prop::VoxelTreePlant(_) | Prop::VoxelTreesPerHectare(_) | Prop::VoxelTreeAdd => "trees",
             Prop::MistEmitting => "emitting",
             Prop::NetPriority => "priority",
             Prop::NetRange => "range",
@@ -2412,6 +2421,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if generated {
                 props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt]);
             }
+            if endless {
+                let kinds = source.map_or(0, |source| source.0.trees.len());
+                let rows = (0..kinds).flat_map(|kind| [Prop::VoxelTreePlant(kind), Prop::VoxelTreesPerHectare(kind)]);
+                props.extend(rows);
+                props.push(Prop::VoxelTreeAdd);
+            }
             props.push(Prop::VoxelGround);
             // A generator's ground has its own hills: the volume's ground gives it grass and flowers.
             if ground && !generated {
@@ -3061,6 +3076,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelFlowers => "Flowers",
         Prop::VoxelSeed => "Seed",
         Prop::VoxelStamps => "Stamps",
+        Prop::VoxelTreePlant(0) => "Trees",
+        Prop::VoxelTreePlant(_) => "",
+        Prop::VoxelTreesPerHectare(_) => "A Hectare",
+        Prop::VoxelTreeAdd => "Add Tree",
         Prop::MistEmitting => "Emitting",
         Prop::NetPriority => "Priority",
         Prop::NetRange => "Range",
@@ -4240,6 +4259,19 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let reference = source.0.generator.as_deref();
             Value::Asset(guid_label(game, reference.and_then(|r| game.content.parse(r).ok()?.guid())))
         }
+        Prop::VoxelTreePlant(kind) => {
+            let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
+            let reference = source.0.trees.get(*kind)?.plant.as_str();
+            Value::Asset(guid_label(game, game.content.parse(reference).ok().and_then(|parsed| parsed.guid())))
+        }
+        Prop::VoxelTreesPerHectare(kind) => {
+            let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
+            Value::Number(source.0.trees.get(*kind)?.per_hectare)
+        }
+        Prop::VoxelTreeAdd => {
+            world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
+            Value::Asset("None".into())
+        }
         // The floor the volume is made with: the one it says, or the one worked out from its generator.
         Prop::VoxelGeneratorFloor => {
             let source = world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity)?;
@@ -4756,6 +4788,18 @@ pub fn set(
             let walkable = game.engine.world.get_mut::<voxear_engine::walkable_models::Walkable>(entity);
             walkable.map(|walkable| walkable.door = on).is_some()
         }
+        // How many trees of a kind to a hectare: the volume made again, as its trees are read from the project.
+        (Prop::VoxelTreesPerHectare(kind), Value::Number(n)) => {
+            use voxear_engine::voxel_volumes::VoxelVolumeSource;
+            let world = &mut game.engine.world;
+            let Some(mut data) = world.get::<VoxelVolumeSource>(entity).map(|source| source.0.clone()) else {
+                return false;
+            };
+            let Some(trees) = data.trees.get_mut(*kind) else { return false };
+            trees.per_hectare = n.clamp(0.0, 400.0);
+            voxear_engine::voxel_volumes::set(&mut game.content, &mut game.engine.world, entity, data);
+            true
+        }
         (Prop::Storm(field), value) => crate::storm_props::set(game, entity, *field, value),
         (Prop::Nav(field), value) => crate::nav_props::set(game, entity, *field, value),
         (Prop::NavArea(field), value) => crate::nav_props::area_set(game, entity, *field, value),
@@ -4969,6 +5013,37 @@ pub fn pick(
                 },
             };
             with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.mesh = mesh)
+        }
+        // A plant for a kind of tree, or none to take the kind away; or a plant to add as one more kind.
+        (Prop::VoxelTreePlant(_) | Prop::VoxelTreeAdd, Pick::Asset(choice)) => {
+            use voxear_engine::voxel_volumes::{VoxelTreesData, VoxelVolumeSource};
+            let plant = match choice {
+                None => None,
+                Some(path) => {
+                    let guid = game.content.parse(path).ok().and_then(|reference| reference.guid());
+                    let kind = guid.and_then(|guid| game.content.db().get(guid)).map(|entry| entry.kind);
+                    if kind != Some(AssetKind::Plant) {
+                        return false;
+                    }
+                    Some(path.clone())
+                }
+            };
+            let world = &mut game.engine.world;
+            let Some(mut data) = world.get::<VoxelVolumeSource>(entity).map(|source| source.0.clone()) else {
+                return false;
+            };
+            match (prop, plant) {
+                (Prop::VoxelTreePlant(kind), None) if *kind < data.trees.len() => drop(data.trees.remove(*kind)),
+                (Prop::VoxelTreePlant(kind), Some(plant)) if *kind < data.trees.len() => {
+                    data.trees[*kind].plant = plant
+                }
+                (Prop::VoxelTreeAdd, Some(plant)) => {
+                    data.trees.push(VoxelTreesData { plant, ..VoxelTreesData::default() })
+                }
+                _ => return false,
+            }
+            voxear_engine::voxel_volumes::set(&mut game.content, &mut game.engine.world, entity, data);
+            true
         }
         (Prop::VoxelGenerator, Pick::Asset(choice)) => {
             // One of the project's world generators, or none for the volume's own ground.
@@ -5368,6 +5443,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         }
         Prop::ParticleLightMap => return fields::assets_of(game, Some(AssetKind::Texture)),
         Prop::VoxelGenerator => return fields::assets_of(game, Some(AssetKind::WorldGen)),
+        Prop::VoxelTreePlant(_) | Prop::VoxelTreeAdd => return fields::assets_of(game, Some(AssetKind::Plant)),
         Prop::ParticleGraph => {
             // None, then the project's particle graphs by their paths.
             let mut paths: Vec<String> =
@@ -7150,6 +7226,16 @@ mod tests {
         assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelGeneratorAt, Value::Vector(vec![10.0, -5.0])));
         let data = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
         assert_eq!((data.generator_floor, data.generator_at), (Some(42.0), [10.0, -5.0]));
+        // Its trees: a row of a plant and how many to a hectare for each kind, then one to add another.
+        assert!(shown.contains(&Prop::VoxelTreeAdd) && !shown.contains(&Prop::VoxelTreePlant(0)), "{shown:?}");
+        let oaks =
+            voxear_engine::voxel_volumes::VoxelTreesData { plant: "Plants/Oak.voxplant".into(), per_hectare: 30.0 };
+        world.get_mut::<VoxelVolumeSource>(volume).unwrap().0.trees = vec![oaks.clone(), oaks];
+        let shown = props(&world, volume, &Part::VoxelVolume, &types);
+        let rows = [Prop::VoxelTreePlant(0), Prop::VoxelTreesPerHectare(0), Prop::VoxelTreePlant(1)];
+        let all = rows.iter().all(|row| shown.contains(row)) && shown.contains(&Prop::VoxelTreesPerHectare(1));
+        assert!(all, "{shown:?}");
+        assert_eq!(label(&Prop::VoxelTreePlant(0)), "Trees");
     }
 
     /// A Camera shows its projection, then its field of view while it is

@@ -235,6 +235,7 @@ pub struct Pipelines {
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
     pub voxel_world_columns: vk::Pipeline,
     pub voxel_world_tops: vk::Pipeline,
+    pub voxel_world_trees: vk::Pipeline,
     pub voxel_world_candidates: vk::Pipeline,
     pub voxel_world_arguments: vk::Pipeline,
     pub voxel_world_coarse: vk::Pipeline,
@@ -1035,6 +1036,7 @@ impl Pipelines {
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
+            voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
             voxel_world_candidates: maker.compute("Voxel world candidates", voxel_world, c"voxelWorldCandidates")?,
             voxel_world_arguments: maker.compute("Voxel world arguments", voxel_world, c"voxelWorldArguments")?,
             voxel_world_coarse: maker.compute("Voxel world coarse", voxel_world, c"voxelWorldCoarse")?,
@@ -1447,6 +1449,7 @@ impl Pipelines {
             self.voxel_forward,
             self.voxel_world_columns,
             self.voxel_world_tops,
+            self.voxel_world_trees,
             self.voxel_world_candidates,
             self.voxel_world_arguments,
             self.voxel_world_coarse,

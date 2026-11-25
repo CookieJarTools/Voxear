@@ -4494,7 +4494,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built)
+## Small voxels (in progress: stages 1 and 2 built, stage 3 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4565,6 +4565,16 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Changing an endless volume's generator or ground in the Inspector keeps its buffers: a drag no longer makes
     200 MB of them a frame.
   - Next: each graph compiled into a shader of its own, as the columns pass is now most of the cost.
+- **Stage 3 begun (2026-11-25): trees in endless ground.**
+  - An endless Voxel Volume grows trees of the project's `.voxplant` plants where its ground grows grass: **Trees**
+    rows in the Inspector (a plant and how many a hectare), `[[obj.voxel_volume.trees]]` in the scene, set by
+    `vox editor call field.set`.
+  - Each kind is grown from four seeds on the CPU into a grid of bytes; the GPU places trees by hash, one in each
+    5 m cell at most, turned four ways, and fills their voxels: round logs, leaves rounded into clumps of loose cubes.
+  - Measured with 100 oaks and pines a hectare at reach 64 m: 0.33 ms a column, eight a frame, 426 MB, drawing
+    +2.4 ms at 1080p.
+  - Not yet: room shared between columns (a third of the memory), a tree's bricks shared between trees of one plant,
+    levels of detail for far crowns, swaying, felling, bushes and ground cover.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

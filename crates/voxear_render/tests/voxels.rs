@@ -7,9 +7,10 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
-    Renderer, RendererSettings, Sky, VoxelGenerator, VoxelGround, VoxelStamp, VoxelVolume, Voxels,
+    Renderer, RendererSettings, Sky, VoxelGenerator, VoxelGround, VoxelStamp, VoxelTrees, VoxelVolume, Voxels,
 };
 use voxear_scene::Transform;
+use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
 use voxear_terrain::generate::{
     Cells, Landmass, OwnVoxels, Preset, WorldGen,
     nodes::{NodeKind, Output, Rivers},
@@ -399,11 +400,20 @@ fn measure_an_endless_volume_made_by_a_generator() {
     let Ok(mut renderer) = Renderer::new_offscreen(1920, 1080, &RendererSettings::default()) else { return };
     let hills = Arc::new(starter("Rolling Hills"));
     let caved = Arc::new(caved_alpine());
-    for (generated, world) in [(false, hills.clone()), (true, hills.clone()), (true, caved)] {
+    let cases = [
+        (false, hills.clone(), false),
+        (true, hills.clone(), false),
+        (true, hills.clone(), true),
+        (true, caved, false),
+    ];
+    for (generated, world, trees) in cases {
         let caves = world.volume().is_some();
         let mut scene = generated_view(world, 8.0, 8.0, 2.0, 8.0);
         for volume in scene.query::<&mut VoxelVolume>() {
             volume.reach = 64.0;
+            if trees {
+                volume.trees = oaks_and_pines();
+            }
             if !generated {
                 volume.generator = None;
                 volume.size.y = 16.0;
@@ -413,10 +423,11 @@ fn measure_an_endless_volume_made_by_a_generator() {
             let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
             camera.position.y = 6.0;
         }
-        let name = match (generated, caves) {
-            (false, _) => "its own ground",
-            (true, false) => "Rolling Hills",
-            (true, true) => "Alpine with overhangs and caves",
+        let name = match (generated, caves, trees) {
+            (false, _, _) => "its own ground",
+            (true, false, false) => "Rolling Hills",
+            (true, false, true) => "Rolling Hills with oaks and pines",
+            (true, true, _) => "Alpine with overhangs and caves",
         };
         let started = std::time::Instant::now();
         renderer.render(&scene, 0.0).unwrap();
@@ -450,6 +461,11 @@ fn measure_an_endless_volume_made_by_a_generator() {
             }
         }
         making.sort_by(f32::total_cmp);
+        let most = match (caves, trees) {
+            (true, _) => 4,
+            (false, true) => 8,
+            (false, false) => 16,
+        };
         if !making.is_empty() {
             let median = making[making.len() / 2];
             eprintln!(
@@ -457,8 +473,8 @@ fn measure_an_endless_volume_made_by_a_generator() {
                 making.len(),
                 making[0],
                 making[making.len() - 1],
-                median / if caves { 4.0 } else { 16.0 },
-                if caves { 4 } else { 16 }
+                median / most as f32,
+                most
             );
         }
     }
@@ -477,7 +493,7 @@ fn an_endless_volume_given_another_generator_shows_its_ground() {
     let bytes = changing.stats().voxels.bytes;
     let wanted = generated_view(plains, 8.0, 8.0, 3.0, 12.0);
     let generator = wanted.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.clone();
-    let camera = wanted.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.clone();
+    let camera = *wanted.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1;
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().generator = generator;
     *scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1 = camera;
     let changed = render(&mut changing, &scene, 3);
@@ -497,6 +513,58 @@ fn an_endless_volume_given_another_generator_shows_its_ground() {
     // A renderer that has drawn more frames draws a few blades of grass a little otherwise, 0.7% of the pixels here;
     // a column left over from the hills is ground at another height.
     assert!(differ * 100 < (WIDTH * HEIGHT) as usize, "{differ} pixels differ from the volume made with it");
+}
+
+/// Oaks and pines of blocks, as a world of blocks grows them.
+fn oaks_and_pines() -> Vec<VoxelTrees> {
+    let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
+    let pine = PlantDef {
+        kind: PlantKind::Conifer,
+        height: [12.0, 17.0],
+        trunk: 1.0,
+        crown_width: [5.0, 7.0],
+        crown_height: [9.0, 13.0],
+        ..PlantDef::default()
+    };
+    vec![
+        VoxelTrees { plant: Arc::new(oak), per_hectare: 60.0, wood: [104, 78, 56], leaves: [70, 128, 46] },
+        VoxelTrees { plant: Arc::new(pine), per_hectare: 40.0, wood: [92, 64, 44], leaves: [38, 92, 52] },
+    ]
+}
+
+#[test]
+fn an_endless_volume_grows_trees_where_its_ground_grows_grass() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = generated_view(hills.clone(), 8.0, 8.0, 16.0, 16.0);
+    let bare = render(&mut renderer, &scene, 3);
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = oaks_and_pines();
+    let treed = render(&mut renderer, &scene, 3);
+    keep_image("trees across the hills.png", &treed);
+    let differ = (0..HEIGHT)
+        .step_by(4)
+        .flat_map(|y| (0..WIDTH).step_by(4).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let (a, b) = (rgb_at(&bare, x, y), rgb_at(&treed, x, y));
+            (0..3).any(|i| (a[i] - b[i]).abs() > 30)
+        })
+        .count();
+    assert!(differ * 10 > 14400, "trees change the view: {differ} of 14400 differ");
+    // From above, a wood seen from 30 m.
+    let pixels = render(&mut renderer, &with_trees(generated_view(hills, 8.0, 8.0, 30.0, 60.0)), 3);
+    keep_image("trees from above.png", &pixels);
+    // On the volume's own ground, with no generator, and on mountains with overhangs and caves.
+    let mut own = with_trees(generated_view(Arc::new(starter("Rolling Hills")), 8.0, 8.0, 20.0, 30.0));
+    own.query::<&mut VoxelVolume>().into_iter().next().unwrap().generator = None;
+    let pixels = render(&mut renderer, &own, 3);
+    keep_image("trees on its own ground.png", &pixels);
+    let pixels = render(&mut renderer, &with_trees(generated_view(Arc::new(caved_alpine()), 8.0, 8.0, 20.0, 30.0)), 3);
+    keep_image("trees with caves.png", &pixels);
+}
+
+fn with_trees(mut scene: World) -> World {
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = oaks_and_pines();
+    scene
 }
 
 /// Alpine without its rivers, with a world of blocks' own overhangs, tunnels

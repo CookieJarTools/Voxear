@@ -135,6 +135,19 @@ impl VoxelEdit {
         }
     }
 
+    /// Whether a print is looked at round each voxel's middle too, a
+    /// quarter of a voxel toward its eight corners, in a volume of voxels
+    /// `voxel` metres across: where it is turned off the quarter turns, or
+    /// its voxels are smaller than the volume's, so a wall a voxel thick
+    /// leaves no gap between voxels that meet only at their edges, and a
+    /// thin pole is not missed. A ball never is.
+    pub fn widened(&self, voxel: f32) -> bool {
+        let Some(printed) = &self.print else { return false };
+        let turn = voxear_core::math::Mat3::from_quat(printed.rotation);
+        let quarter = turn.to_cols_array().iter().all(|a| a.abs() < 1e-4 || (a.abs() - 1.0).abs() < 1e-4);
+        !quarter || printed.print.voxels_per_metre as f32 * voxel > 1.001
+    }
+
     /// Whether voxel `cell` of a volume of voxels `voxel` metres across
     /// is in it, worked out as the GPU works it (`editHeld` in
     /// `shaders/voxel_world.slang`): 0 for not, else for a print its colour
@@ -145,8 +158,19 @@ impl VoxelEdit {
             Some(printed) => {
                 let print = &printed.print;
                 let scale = print.voxels_per_metre as f32 * voxel;
-                let local = printed.rotation.inverse() * (middle - self.at / voxel) * scale + print.origin;
-                print.get(local.floor().as_ivec3().to_array())
+                let back = printed.rotation.inverse();
+                let at = |p: Vec3| {
+                    print.get((back * (p - self.at / voxel) * scale + print.origin).floor().as_ivec3().to_array())
+                };
+                let held = at(middle);
+                if held != 0 || !self.widened(voxel) {
+                    return held;
+                }
+                (0..8)
+                    .map(|k| Vec3::new((k & 1) as f32, (k >> 1 & 1) as f32, (k >> 2 & 1) as f32) * 0.5 - 0.25)
+                    .map(|corner| at(middle + corner))
+                    .find(|&held| held != 0)
+                    .unwrap_or(0)
             }
             None => {
                 let off = middle - self.at / voxel;
@@ -742,11 +766,53 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxear_core::math::IVec3;
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
         assert_eq!(size_of::<GpuVoxelVolume>(), 96);
         assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 96 * MAX_VOXEL_VOLUMES);
+    }
+
+    #[test]
+    fn a_print_turned_off_the_quarter_turns_leaves_no_gap_in_a_wall_a_voxel_thick() {
+        // A wall a voxel thick, 4 m long along Z, its origin at its foot's middle.
+        let wall = VoxelPrint::from_voxels(
+            [1, 8, 64],
+            16,
+            Vec3::new(0.5, 0.0, 32.0),
+            vec![[200; 4]],
+            Default::default(),
+            |_| 1,
+        );
+        let wall = Arc::new(wall);
+        let voxel = 1.0 / 16.0;
+        for degrees in [0.0f32, 90.0, 20.0, 30.0, 45.0, 60.0] {
+            let at = Vec3::new(4.03, 0.0, 4.01);
+            let edit = VoxelEdit::printed(wall.clone(), at, Quat::from_rotation_y(degrees.to_radians()));
+            assert_eq!(edit.widened(voxel), degrees % 90.0 != 0.0, "{degrees}°");
+            // A row of voxels a voxel up, every one the wall holds.
+            let held: std::collections::HashSet<(i32, i32)> = (0..128)
+                .flat_map(|z| (0..128).map(move |x| (x, z)))
+                .filter(|&(x, z)| edit.holds(IVec3::new(x, 1, z), voxel) != 0)
+                .collect();
+            // Seen from the side the wall is whole: its voxels all meet face to face, one run end to end.
+            let first = *held.iter().next().expect("the wall");
+            let mut reached = std::collections::HashSet::from([first]);
+            let mut next = vec![first];
+            while let Some((x, z)) = next.pop() {
+                for step in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let near = (x + step.0, z + step.1);
+                    if held.contains(&near) && reached.insert(near) {
+                        next.push(near);
+                    }
+                }
+            }
+            assert_eq!(reached.len(), held.len(), "{degrees}°: the wall's voxels meet face to face");
+            // And it keeps its length, thicker by no more than a voxel or so where turned.
+            let most = if degrees % 90.0 == 0.0 { 64 } else { 64 * 3 };
+            assert!(held.len() >= 60 && held.len() <= most, "{degrees}°: {} voxels", held.len());
+        }
     }
 
     #[test]

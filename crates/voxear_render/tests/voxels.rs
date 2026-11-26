@@ -705,6 +705,52 @@ fn an_endless_volume_prints_a_voxel_print_turned_where_it_is_placed_and_a_carve_
 }
 
 #[test]
+fn no_tree_grass_or_flower_grows_where_a_voxel_print_stands() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let view = || generated_view(hills.clone(), 8.0, 8.0, 30.0, 90.0);
+    let volume = view().query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let ground = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(8.0, 60.0, 8.0), -Vec3::Y, 100.0)
+        .expect("the ground");
+    // An open-topped box 14 m a side and 3 m tall, its floor and walls a voxel thick, its foot's middle on the ground.
+    let palette = vec![[90, 90, 200, 255]];
+    let print =
+        VoxelPrint::from_voxels([224, 48, 224], 16, Vec3::new(112.0, 0.0, 112.0), palette, Default::default(), |c| {
+            u8::from(c[1] == 0 || c[0] == 0 || c[2] == 0 || c[0] == 223 || c[2] == 223)
+        });
+    let boxed = Arc::new(vec![VoxelEdit::printed(Arc::new(print), ground.point, Quat::IDENTITY)]);
+    // The view straight down over the wood at two moments in a breeze, with the box and without it.
+    let mut moments = |edits: Arc<Vec<VoxelEdit>>| {
+        let mut scene = with_trees(view());
+        scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = edits;
+        scene.spawn((WindZone { strength: 2.0, ..WindZone::default() }, Transform::default()));
+        render(&mut renderer, &scene, 0);
+        [2.0, 2.2].map(|time| {
+            renderer.render(&scene, time).expect("frame renders");
+            renderer.read_pixels().expect("pixels").2
+        })
+    };
+    let open = moments(Arc::new(Vec::new()));
+    let inside = moments(boxed);
+    keep_image("wood from above.png", &open[0]);
+    keep_image("wood boxed from above.png", &inside[0]);
+    // Within the box, 4 m in from its walls, as far as crowns outside it lean over them.
+    let (low, high) = (from_above(30.0, 4.0, 12.0), from_above(30.0, 12.0, 4.0));
+    let changing = |[a, b]: &[Vec<u8>; 2]| {
+        (low.1..high.1)
+            .flat_map(|y| (low.0..high.0).map(move |x| (x, y)))
+            .filter(|&(x, y)| (0..3).any(|i| (rgb_at(a, x, y)[i] - rgb_at(b, x, y)[i]).abs() > 12))
+            .count()
+    };
+    let area = ((high.0 - low.0) * (high.1 - low.1)) as usize;
+    let (moving, still) = (changing(&open), changing(&inside));
+    eprintln!("in the box's middle, of {area} pixels: {moving} move without it, {still} with it");
+    // Grass sways and leaves too: in the box, only the ground's top risen over its floor, which keeps still.
+    assert!(moving * 10 > area, "the wood and its grass are there: {moving} pixels move");
+    assert!(still * 100 < area, "nothing grows in the box: {still} of {area} pixels change");
+}
+
+#[test]
 fn a_ray_worked_out_on_the_cpu_meets_the_ground_the_gpu_draws() {
     let Some(mut renderer) = renderer() else { return };
     for (name, world) in [("hills", without_rivers(&starter("Rolling Hills"))), ("mountains", caved_alpine())] {

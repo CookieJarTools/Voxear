@@ -12,6 +12,14 @@ use voxear_render::{Renderer, VoxelPrintSettings};
 use voxear_ui::{DragSource, NodeId};
 
 use super::Editor;
+
+/// A print being made on a thread of its own: where it goes, when it was
+/// started, and what the thread gives back.
+pub(super) struct MakingPrint {
+    pub(super) path: String,
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<anyhow::Result<voxear_render::VoxelPrint>>,
+}
 use crate::{fields::Pick, object_picker::PickFor, project_view::ProjectEvent, voxel_print_inspector::PrintRef};
 
 impl Editor {
@@ -24,25 +32,76 @@ impl Editor {
         self.make_voxel_print(&path, &settings, renderer);
     }
 
-    /// Makes the print at `path` from its model as `settings` say, and
-    /// shows it; every volume printing it prints it as it is now.
-    pub(super) fn make_voxel_print(&mut self, path: &str, settings: &VoxelPrintSettings, renderer: &mut Renderer) {
-        let started = std::time::Instant::now();
-        match voxear_engine::voxel_prints::make_file(&mut self.game.content, path, settings) {
-            Ok((print, guid)) => {
-                let [x, y, z] = print.size;
-                let took = started.elapsed().as_secs_f32();
-                self.notify(&format!("Made {path}: {x} × {y} × {z} voxels in {took:.1} s"));
-                if let Some(guid) = guid {
-                    voxear_engine::voxel_volumes::reprint(&mut self.game.content, &mut self.game.engine.world, guid);
+    /// Starts making the print at `path` from its model as `settings` say,
+    /// on a thread of its own; once made it is written and shown, and every
+    /// volume printing it prints it as it is now.
+    pub(super) fn make_voxel_print(&mut self, path: &str, settings: &VoxelPrintSettings, _renderer: &mut Renderer) {
+        if self.print_jobs.iter().any(|job| job.path == path) {
+            return self.notify(&format!("{path} is being made already"));
+        }
+        match voxear_engine::voxel_prints::PrintJob::new(&self.game.content, settings) {
+            Ok(job) => self.start_print(path, job),
+            Err(error) => self.notify(&format!("Could not make {path}: {error:#}")),
+        }
+    }
+
+    /// Starts `job` on a thread of its own, its print to be written to `path`.
+    pub(super) fn start_print(&mut self, path: &str, job: voxear_engine::voxel_prints::PrintJob) {
+        self.notify(&format!("Making {path} from {}", job.model()));
+        self.print_jobs.push(MakingPrint {
+            path: path.to_string(),
+            started: std::time::Instant::now(),
+            done: job.spawn(),
+        });
+    }
+
+    /// Whether a print is being made.
+    pub fn is_making_prints(&self) -> bool {
+        !self.print_jobs.is_empty()
+    }
+
+    /// Writes and shows the prints whose threads are done.
+    pub(super) fn finish_prints(&mut self, renderer: &mut Renderer) {
+        let mut done = Vec::new();
+        self.print_jobs.retain(|job| match job.done.try_recv() {
+            Ok(made) => {
+                done.push((job.path.clone(), job.started, made));
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                done.push((job.path.clone(), job.started, Err(anyhow::anyhow!("its thread stopped"))));
+                false
+            }
+        });
+        for (path, started, made) in done {
+            let written = made.and_then(|print| {
+                voxear_engine::voxel_prints::write(&mut self.game.content, &path, &print)?;
+                Ok(print)
+            });
+            match written {
+                Ok(print) => {
+                    let [x, y, z] = print.size;
+                    let took = started.elapsed().as_secs_f32();
+                    self.notify(&format!("Made {path}: {x} × {y} × {z} voxels in {took:.1} s"));
+                    if let Some(guid) = self.game.content.db().guid_of(&path) {
+                        voxear_engine::voxel_volumes::reprint(
+                            &mut self.game.content,
+                            &mut self.game.engine.world,
+                            guid,
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.notify(&format!("Could not make {path}: {error:#}"));
+                    continue;
                 }
             }
-            Err(error) => return self.notify(&format!("Could not make {path}: {error:#}")),
-        }
-        self.files_seen();
-        self.project_event(ProjectEvent::Changed { select: Some(path.to_string()), rename: false }, renderer);
-        if let Some(item) = self.project.item(path) {
-            self.inspector.show_asset(&mut self.ui, &self.game, &item);
+            self.files_seen();
+            self.project_event(ProjectEvent::Changed { select: Some(path.clone()), rename: false }, renderer);
+            if let Some(item) = self.project.item(&path) {
+                self.inspector.show_asset(&mut self.ui, &self.game, &item);
+            }
         }
     }
 

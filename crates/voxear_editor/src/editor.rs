@@ -359,6 +359,8 @@ pub struct Editor {
     /// The selected Terrain's brush and layer handles (see `terrain_tools`).
     terrain_tools: crate::terrain_tools::TerrainTools,
     voxel_tools: crate::voxel_brush::VoxelTools,
+    /// Voxel Prints being made on threads of their own (see `voxel_prints`).
+    print_jobs: Vec<voxel_prints::MakingPrint>,
     block_tools: crate::block_tools::BlockTools,
     /// The selected Foliage's brush (see `plants_tools`).
     plants_tools: crate::plants_tools::PlantsTools,
@@ -766,6 +768,7 @@ impl Editor {
             prefab_brushes: prefab_brushes::PrefabBrushes::default(),
             terrain_tools: Default::default(),
             voxel_tools: Default::default(),
+            print_jobs: Vec::new(),
             block_tools: Default::default(),
             plants_tools: Default::default(),
             field_drag_start: None,
@@ -958,6 +961,7 @@ impl Editor {
                 voxear_engine::blocks::tick(&mut self.game.engine.world, &mut self.game.content, delta);
             }
         }
+        self.finish_prints(renderer);
         let views = {
             profile_scope!("Editor");
             self.update_panels(renderer, delta)

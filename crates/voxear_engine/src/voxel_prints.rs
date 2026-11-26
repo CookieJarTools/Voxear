@@ -19,36 +19,80 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use voxear_assets::{Access, AssetGuid, AssetKind};
+use voxear_assets::{Access, AssetGuid, AssetKind, AssetReader};
 use voxear_render::{VoxelPicture, VoxelPrint, VoxelPrintSettings};
 
 use crate::content::Content;
 
+/// What making a print needs, worked out from the project: its model's
+/// path, its pictures' paths by part, and a reader of its files of its own,
+/// so it can be made on another thread while the editor goes on.
+pub struct PrintJob {
+    model: String,
+    pictures: Vec<(String, String)>,
+    settings: VoxelPrintSettings,
+    reader: Box<dyn AssetReader>,
+}
+
+impl PrintJob {
+    /// The job `settings` say, their model and pictures looked up in `content`.
+    pub fn new(content: &Content, settings: &VoxelPrintSettings) -> Result<Self> {
+        let path_of = |reference: &str, kind: AssetKind| {
+            content
+                .parse(reference)
+                .ok()
+                .and_then(|reference| reference.guid())
+                .and_then(|guid| content.db().get(guid).filter(|entry| entry.kind == kind))
+                .map(|entry| entry.path.clone())
+        };
+        let model = path_of(&settings.model, AssetKind::Model)
+            .with_context(|| format!("{} is not a model in the project", settings.model))?;
+        let mut pictures = Vec::new();
+        for given in &settings.pictures {
+            let path = path_of(&given.picture, AssetKind::Texture)
+                .with_context(|| format!("{} is not a picture in the project", given.picture))?;
+            pictures.push((given.part.clone(), path));
+        }
+        Ok(Self { model, pictures, settings: settings.clone(), reader: content.worker_reader() })
+    }
+
+    /// The model it makes a print of.
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Reads the model and pictures and makes the print: seconds for a
+    /// large scan, so best on a thread of its own.
+    pub fn run(mut self) -> Result<VoxelPrint> {
+        let mut pictures = HashMap::new();
+        for (part, path) in &self.pictures {
+            let bytes = self.reader.read(path)?;
+            let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+            pictures.insert(part.clone(), VoxelPicture::new(picture.width(), picture.height(), picture.as_raw()));
+        }
+        let reader = &mut self.reader;
+        let mut read = |path: &str| reader.read(path);
+        voxear_render::voxel_print_model(&self.model, &mut read, &self.settings, pictures)
+            .with_context(|| format!("making a Voxel Print of {}", self.model))
+    }
+
+    /// Runs it on a thread of its own: the print, or why it could not be
+    /// made, comes back through the receiver.
+    pub fn spawn(self) -> std::sync::mpsc::Receiver<Result<VoxelPrint>> {
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("voxel print".into())
+            .spawn(move || {
+                let _ = send.send(self.run());
+            })
+            .expect("a thread for a voxel print");
+        receive
+    }
+}
+
 /// Makes the print `settings` say from their model, read from `content`.
 pub fn make(content: &mut Content, settings: &VoxelPrintSettings) -> Result<VoxelPrint> {
-    let model = content
-        .parse(&settings.model)
-        .ok()
-        .and_then(|reference| reference.guid())
-        .and_then(|guid| content.db().get(guid).filter(|entry| entry.kind == AssetKind::Model))
-        .map(|entry| entry.path.clone())
-        .with_context(|| format!("{} is not a model in the project", settings.model))?;
-    let mut pictures = HashMap::new();
-    for given in &settings.pictures {
-        let path = content
-            .parse(&given.picture)
-            .ok()
-            .and_then(|reference| reference.guid())
-            .and_then(|guid| content.db().get(guid).filter(|entry| entry.kind == AssetKind::Texture))
-            .map(|entry| entry.path.clone())
-            .with_context(|| format!("{} is not a picture in the project", given.picture))?;
-        let bytes = content.read(&path)?;
-        let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
-        pictures.insert(given.part.clone(), VoxelPicture::new(picture.width(), picture.height(), picture.as_raw()));
-    }
-    let mut read = |path: &str| content.read(path);
-    voxear_render::voxel_print_model(&model, &mut read, settings, pictures)
-        .with_context(|| format!("making a Voxel Print of {model}"))
+    PrintJob::new(content, settings)?.run()
 }
 
 /// Makes the print `settings` say and writes it to `path`, a `.voxprint`

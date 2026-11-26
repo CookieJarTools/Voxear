@@ -4639,7 +4639,11 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   the CPU's ray meets it too. Making the window's columns with ten prints in view takes the 0.3 s it took without,
   and drawing costs what it did on master to the hundredth of a millisecond. Made with **Make Voxel Print** on a
   model, its Inspector's **Make Again**, `voxel_prints.make`; printed with the brush's Print mode, `Voxels.Print` in
-  C# and `voxels.print`. Next: changed bricks in region files, edits over the network.
+  C# and `voxels.print`. Since (2026-11-26): made on a thread of their own while the editor goes on (and from
+  `voxel_prints.make` with `"background": true`); no grass, flowers or trees grow where a print stands, by a
+  footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
+  turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
+  stays whole. Next: changed bricks in region files, edits over the network.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A

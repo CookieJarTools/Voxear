@@ -42,6 +42,8 @@ pub(super) struct Ground<'a> {
     cells: HashMap<(i32, i32), Option<Tree>>,
     /// Trees placed kept between one ground and the next of the same volume.
     shared: Option<&'a Mutex<Cells>>,
+    /// The footprints of the prints printed into it, by print.
+    footprints: HashMap<usize, Vec<u32>>,
 }
 
 /// The tree each cell holds, where it has one.
@@ -55,7 +57,19 @@ impl<'a> Ground<'a> {
         let rows = ((volume.size.y.max(sector) / sector).ceil() as i32).clamp(1, 16) * 64;
         let seed = volume.ground.map_or(VoxelGround::default().seed, |ground| ground.seed);
         let (heights, columns, cells) = (HashMap::new(), HashMap::new(), HashMap::new());
-        Self { volume, voxel, tall, woods, rows, seed, heights, columns, cells, shared: None }
+        Self {
+            volume,
+            voxel,
+            tall,
+            woods,
+            rows,
+            seed,
+            heights,
+            columns,
+            cells,
+            shared: None,
+            footprints: HashMap::new(),
+        }
     }
 
     /// The ground's height at voxel column (`x`, `z`), in voxels over the
@@ -243,13 +257,41 @@ impl<'a> Ground<'a> {
         let mut grass = grass.into_iter();
         let mut placed = Vec::with_capacity(held.len());
         for (cell, tree) in held {
-            let tree = tree.and_then(|(model, foot)| Some(woods.stood(model, foot, grass.next().flatten()?)));
+            let tree = tree.and_then(|(model, foot)| {
+                let h = grass.next().flatten()?;
+                self.foot_kept(IVec3::new(foot[0], h, foot[1])).then(|| woods.stood(model, foot, h))
+            });
             placed.push((cell, tree));
         }
         if let Some(shared) = self.shared {
             shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).extend(placed.iter().copied());
         }
         self.cells.extend(placed);
+    }
+
+    /// Whether a tree whose foot is on the ground's top voxel `top` grows,
+    /// for the edits, as the GPU finds it (`footKept`): not where its top
+    /// is carved out (and not filled again after), nor where a print stands
+    /// over it.
+    fn foot_kept(&mut self, top: IVec3) -> bool {
+        let mut ground = true;
+        for e in self.edits_near(top, top + IVec3::Y) {
+            let edit = &self.volume.edits[e];
+            if let Some(printed) = &edit.print {
+                let print = &printed.print;
+                let footprint = self.footprints.entry(Arc::as_ptr(print) as usize).or_insert_with(|| print.footprint());
+                let scale = print.voxels_per_metre as f32 * self.voxel;
+                let off = (top + IVec3::Y).as_vec3() + 0.5 - edit.at / self.voxel;
+                let c = (printed.rotation.inverse() * off * scale + print.origin).floor().as_ivec3();
+                let tall = print.size[1] as i32;
+                if c.y < tall && c.y >= -tall && print.covers(c.x, c.z, footprint) {
+                    return false;
+                }
+            } else if edit.holds(top, self.voxel) != 0 {
+                ground = edit.fill.is_some();
+            }
+        }
+        ground
     }
 
     /// The trees whose boxes reach the box of voxels from `low` to `high`.
@@ -462,11 +504,25 @@ impl VoxelSolids {
     }
 
     /// These, keeping the trees `older` placed where its ground and trees
-    /// are these', as after an edit.
+    /// are these', as after an edit: all but those whose feet the edits
+    /// changed may stand near.
     pub fn keeping(mut self, older: &Self) -> Self {
-        if self.changed_from(older).is_some() {
-            self.placed = older.placed.clone();
-        }
+        let Some(boxes) = self.changed_from(older) else { return self };
+        let v = self.voxel();
+        let cells = older.placed.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let near = |cell: &(i32, i32)| {
+            let (low, high) = (
+                [cell.0, cell.1].map(|c| c as f32 * trees::CELL),
+                [cell.0, cell.1].map(|c| (c + 1) as f32 * trees::CELL),
+            );
+            boxes.iter().any(|(least, most)| {
+                let (least, most) =
+                    ([least[0], least[2]].map(|a| a as f32 * v), [most[0], most[2]].map(|a| (a + 1) as f32 * v));
+                (0..2).all(|a| least[a] <= high[a] && most[a] >= low[a])
+            })
+        };
+        let kept: Cells = cells.iter().filter(|(cell, _)| !near(cell)).map(|(cell, tree)| (*cell, *tree)).collect();
+        self.placed = Arc::new(Mutex::new(kept));
         self
     }
 
@@ -646,5 +702,45 @@ mod tests {
         let bare = VoxelVolume { trees: Vec::new(), ..volume.clone() };
         let under = super::super::raycast(&bare, Vec3::ZERO, from, -Vec3::Y, 100.0).expect("the ground");
         assert!((hit.distance - 40.0 / 16.0).abs() < 0.07 && under.distance > hit.distance + 1.0, "{hit:?} {under:?}");
+    }
+
+    #[test]
+    fn a_tree_whose_foot_is_carved_out_grows_not_and_keeping_forgets_only_the_trees_near_the_carve() {
+        let volume = hills();
+        let solids = VoxelSolids::of(&volume).expect("endless");
+        let woods = solids.woods.as_deref().expect("trees");
+        let mut ground = Ground::new(&volume, Some(woods));
+        let (low, high) = (IVec3::new(-320, 0, -320), IVec3::new(320, 380, 320));
+        let trees = ground.trees_near(low, high);
+        let tree = trees[0];
+        // Its foot: the middle of its lowest logs.
+        let (least, most) = woods.bounds(&tree);
+        let lowest = (least[1]..=most[1])
+            .find(|&y| (least[2]..=most[2]).any(|z| (least[0]..=most[0]).any(|x| woods.at(&tree, [x, y, z]) == LOG)))
+            .expect("a log");
+        let logs: Vec<Vec3> = (least[2]..=most[2])
+            .flat_map(|z| (least[0]..=most[0]).map(move |x| (x, z)))
+            .filter(|&(x, z)| woods.at(&tree, [x, lowest, z]) == LOG)
+            .map(|(x, z)| Vec3::new(x as f32 + 0.5, lowest as f32 + 0.5, z as f32 + 0.5))
+            .collect();
+        let trunk = logs.iter().sum::<Vec3>() / logs.len() as f32 / 16.0;
+        // Where the ground's top is under it, without the trees.
+        let bare = VoxelVolume { trees: Vec::new(), ..volume.clone() };
+        let down =
+            super::super::raycast(&bare, Vec3::ZERO, trunk + Vec3::Y * 20.0, -Vec3::Y, 40.0).expect("the ground");
+        let foot = down.point - Vec3::Y * 0.03;
+        let mut carved = volume.clone();
+        carved.edits = Arc::new(vec![VoxelEdit::ball(foot, 0.5, None)]);
+        let mut fresh = Ground::new(&carved, Some(woods));
+        let left = fresh.trees_near(low, high);
+        assert_eq!(left.len(), trees.len() - 1, "only the tree carved under goes");
+        assert!(!left.contains(&tree));
+        // Kept across the carve, the trees far from it are kept, the one under it forgotten.
+        let at = (foot * 16.0).as_ivec3() - 17;
+        solids.fill(at.to_array(), [34, 34, 34], &mut vec![false; 34 * 34 * 34]);
+        let placed = solids.placed.lock().unwrap().len();
+        let after = VoxelSolids::of(&carved).unwrap().keeping(&solids);
+        let kept = after.placed.lock().unwrap().len();
+        assert!(kept > 0 && kept < placed, "{kept} of {placed} kept");
     }
 }

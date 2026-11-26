@@ -8,9 +8,8 @@
 //! collider boxes of its logs, and its voxels a Voxel Volume of their own
 //! on an Obj under it, which turns with it as it falls. It
 //! hangs where it was cut until the ground's collision round it has been
-//! made again without it, then tips the way it was cut, hinged on its
-//! stump's edge, and lets go of the stump most of the way over, sliding off
-//! it to the ground. Once it has lain still a moment it rests, its leaves
+//! made again without it, then is given a slight push over the edge of
+//! its foot the way it was cut, gravity doing the rest. Once it has lain still a moment it rests, its leaves
 //! pressed against the ground: it stays a body, which can be pushed, or is
 //! stamped back into the volume where it lies, as the cut or the volume's
 //! `felled` says.
@@ -28,21 +27,15 @@ use crate::physics::{Acoustic, Collider, ColliderBoxes, PhysicsScene, Rigidbody}
 const GROW_STEPS: f32 = 16.0;
 /// The most boxes a piece's collider has of its logs.
 const MOST_BOXES: usize = 192;
-/// How far over a piece tips on its stump before it lets go of it, in
-/// radians, and the longest it holds on, in seconds.
-const LET_GO: f32 = 1.15;
-/// How far over a piece is pushed before its weight carries it on, in
-/// radians.
-const WEDGED: f32 = 0.3;
-const LONGEST_HINGED: f32 = 6.0;
 /// How far over the ground a lying crown's leaves are pressed down, in
 /// metres, and to what share of that.
 const PRESSED: f32 = 0.7;
 const PRESSED_TO: f32 = 0.45;
 /// How heavy wood is, in kilograms a cubic metre.
 const WOOD: f32 = 650.0;
-/// How fast a piece tips over the way it was cut, in turns a second.
-const TIP: f32 = 0.35;
+/// How fast a piece is set turning over the way it was cut, in radians a
+/// second: a slight push, gravity doing the rest.
+const PUSH: f32 = 0.6;
 /// How slow a piece must move, in metres and in radians a second, and for
 /// how long, to be at rest; and the longest it falls before it is taken as
 /// at rest all the same.
@@ -139,10 +132,9 @@ pub struct VoxelPieceBody {
     /// How long it has fallen, and lain still, in seconds.
     pub falling: f32,
     pub still: f32,
-    /// The stump's edge it tips over, in the world, and the way across it
-    /// turns about there; and the hinge holding it there while it tips.
-    pub hinge: (Vec3, Vec3),
-    pub joint: Option<voxear_physics::JointId>,
+    /// The edge of its foot it is pushed over, in the world, and the way
+    /// across it turns about there.
+    pub pivot: (Vec3, Vec3),
 }
 
 impl Component for VoxelPieceBody {}
@@ -243,7 +235,7 @@ fn spawn(
     let reach = boxes.iter().map(|(at, half)| at.length() + half.length()).fold(0.0, f32::max);
     let roughness = world.get::<VoxelVolume>(volume).map_or(0.8, |made| made.roughness);
     let toward = toward.normalize();
-    let hinge = (corner + piece.low.as_vec3() * piece.voxel + stump_edge(&piece, toward), Vec3::Y.cross(toward));
+    let pivot = (corner + piece.low.as_vec3() * piece.voxel + stump_edge(&piece, toward), Vec3::Y.cross(toward));
     let piece = Arc::new(piece);
     let entity = world.spawn((Transform::from_position(place), voxear_scene::Name("Felled tree".into())));
     // Its voxels, as a volume of their own as large as its box, its corner the box's, turned with the body.
@@ -257,8 +249,7 @@ fn spawn(
         toward,
         rest: options.rest,
         look,
-        hinge,
-        joint: None,
+        pivot,
         reach,
         fall: PieceFall::Waiting,
         falling: 0.0,
@@ -325,12 +316,11 @@ pub fn fall(world: &mut World, dt: f32) {
                 }
             }
             PieceFall::Tipping => {
-                // Made again as a dynamic body: hinged on its stump's edge, it leans over the way it was cut.
+                // Made again as a dynamic body: a slight push over the edge of its foot the way it was cut, as the
+                // blow that cut it would give, and gravity does the rest.
                 if let Some(id) = physics.body(entity) {
-                    let (point, axis) = body.hinge;
-                    let hinge = voxear_physics::JointKind::Hinge { point, axis, limits: None };
-                    body.joint = physics.world_mut().add_joint(hinge, id, None);
-                    let turn = axis * TIP * std::f32::consts::TAU;
+                    let (point, axis) = body.pivot;
+                    let turn = axis * PUSH;
                     physics.world_mut().set_active(id, true);
                     physics.world_mut().set_velocity(id, turn.cross(place.0 - point), turn);
                     body.fall = PieceFall::Falling;
@@ -338,26 +328,6 @@ pub fn fall(world: &mut World, dt: f32) {
             }
             PieceFall::Falling => {
                 body.falling += dt;
-                // Most of the way over, it lets go of its stump and slides off it to the ground.
-                let tilt = (place.1 * Vec3::Y).angle_between(Vec3::Y);
-                // Over its first few degrees, until its weight is past the stump's edge, it is pushed on over, as a
-                // wedge driven into the cut does.
-                if let Some(id) = physics.body(entity).filter(|_| body.joint.is_some() && tilt < WEDGED) {
-                    let (point, axis) = body.hinge;
-                    let (_, angular) = physics.world().velocity(id);
-                    if angular.dot(axis) < TIP * std::f32::consts::TAU {
-                        // Turning about the stump's edge: its middle moves as the turn carries it, the edge stays.
-                        let turn = axis * TIP * std::f32::consts::TAU;
-                        physics.world_mut().set_active(id, true);
-                        physics.world_mut().set_velocity(id, turn.cross(place.0 - point), turn);
-                    }
-                }
-                // Or caught part way over, on its branches: it slips off its stump then too.
-                let turning = physics.body(entity).map_or(0.0, |id| physics.world().velocity(id).1.length());
-                let caught = tilt > WEDGED * 2.0 && turning < STILL_SPEED;
-                if body.joint.is_some() && (tilt > LET_GO || caught || body.falling > LONGEST_HINGED) {
-                    unhinge(&mut physics, &mut body);
-                }
                 let (linear, angular) =
                     physics.body(entity).map_or((Vec3::ZERO, Vec3::ZERO), |id| physics.world().velocity(id));
                 let asleep = physics.body(entity).is_some_and(|id| !physics.world().is_active(id));
@@ -367,7 +337,6 @@ pub fn fall(world: &mut World, dt: f32) {
                     0.0
                 };
                 if (body.still >= STILL_FOR && body.falling > 0.5) || body.falling > LONGEST_FALL {
-                    unhinge(&mut physics, &mut body);
                     body.fall = PieceFall::Resting;
                     crush.push(entity);
                     let felled = world.get::<VoxelVolume>(body.volume).map(|volume| match volume.felled {
@@ -438,25 +407,6 @@ pub fn piece(world: &World, entity: Entity) -> Option<FelledPiece> {
     let body = world.get::<VoxelPieceBody>(entity)?;
     let place = world.get::<Transform>(entity)?.position;
     Some(FelledPiece::of(Some(entity), place, &body.piece, body.fall == PieceFall::Resting))
-}
-
-/// Lets a piece go of its stump.
-fn unhinge(physics: &mut PhysicsScene, body: &mut VoxelPieceBody) {
-    if let Some(joint) = body.joint.take() {
-        physics.world_mut().remove_joint(joint);
-    }
-}
-
-/// Lets piece `entity` go of its stump, as it is taken away.
-fn unhinge_piece(world: &mut World, entity: Entity) {
-    let Some(mut body) = world.get::<VoxelPieceBody>(entity).cloned() else { return };
-    if let Some(mut physics) = world.remove_resource::<PhysicsScene>() {
-        unhinge(&mut physics, &mut body);
-        world.insert_resource(physics);
-    }
-    if let Some(kept) = world.get_mut::<VoxelPieceBody>(entity) {
-        *kept = body;
-    }
 }
 
 /// Where a piece tips over its stump, in metres from its box's least
@@ -536,7 +486,6 @@ fn crush_leaves(world: &mut World, entity: Entity) {
 /// Stamps felled piece `entity` into its volume where it lies now, whether
 /// at rest or not, and takes its Obj away: whether it was a piece.
 pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
-    unhinge_piece(world, entity);
     let Some(body) = world.get::<VoxelPieceBody>(entity).cloned() else { return false };
     let Some((position, rotation)) = world.get::<Transform>(entity).map(|t| (t.position, t.rotation)) else {
         return false;
@@ -549,7 +498,6 @@ pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
 
 /// Takes felled piece `entity` away: whether it was a piece.
 pub fn remove_piece(world: &mut World, entity: Entity) -> bool {
-    unhinge_piece(world, entity);
     let Some(look) = world.get::<VoxelPieceBody>(entity).map(|body| body.look) else { return false };
     world.despawn(look);
     world.despawn(entity);

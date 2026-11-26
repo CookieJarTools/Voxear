@@ -663,6 +663,10 @@ pub enum Prop {
     VoxelSea,
     /// How an endless volume's rivers and lakes are drawn: smooth, or as voxels.
     VoxelWater,
+    /// What an endless volume's felled trees become at rest: bodies, or stamped back into it.
+    VoxelFelled,
+    /// How many seconds an endless volume's cut grass takes to grow back: none for never.
+    VoxelRegrow,
     VoxelGround,
     VoxelGroundHeight,
     VoxelHills,
@@ -1310,6 +1314,8 @@ impl Prop {
             | Prop::VoxelGeneratorAt
             | Prop::VoxelSea
             | Prop::VoxelWater
+            | Prop::VoxelFelled
+            | Prop::VoxelRegrow
             | Prop::VoxelGround
             | Prop::VoxelGroundHeight
             | Prop::VoxelHills
@@ -1754,6 +1760,8 @@ impl Prop {
             Prop::VoxelGeneratorAt => "generator_at",
             Prop::VoxelSea => "sea",
             Prop::VoxelWater => "water",
+            Prop::VoxelFelled => "felled",
+            Prop::VoxelRegrow => "regrow",
             Prop::VoxelGround => "ground",
             Prop::VoxelGroundHeight => "ground_height",
             Prop::VoxelHills => "hills",
@@ -2447,6 +2455,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                     props.extend(crate::voxel_growth_props::tree_rows(kind).map(Prop::VoxelGrowth));
                 }
                 props.push(Prop::VoxelTreeAdd);
+                props.extend([Prop::VoxelFelled, Prop::VoxelRegrow]);
                 if let Some(source) = source {
                     props.extend(crate::voxel_growth_props::fields(&source.0).into_iter().map(Prop::VoxelGrowth));
                 }
@@ -3097,6 +3106,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelGeneratorAt => "Offset",
         Prop::VoxelSea => "Sea",
         Prop::VoxelWater => "Water",
+        Prop::VoxelFelled => "Felled",
+        Prop::VoxelRegrow => "Regrow",
         Prop::VoxelGround => "Ground",
         Prop::VoxelGroundHeight => "Ground Height",
         Prop::VoxelHills => "Hills",
@@ -4280,6 +4291,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelDistance
         | Prop::VoxelSea
         | Prop::VoxelWater
+        | Prop::VoxelFelled
+        | Prop::VoxelRegrow
         | Prop::VoxelGround
         | Prop::VoxelGroundHeight
         | Prop::VoxelHills
@@ -6448,6 +6461,11 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
             voxear_render::VoxelWaterLook::ALL.iter().position(|&look| look == data.water).unwrap_or(0),
             voxear_render::VoxelWaterLook::ALL.iter().map(|look| look.name().to_string()).collect(),
         ),
+        Prop::VoxelFelled => Value::Choice(
+            voxear_render::VoxelFelled::ALL.iter().position(|&felled| felled == data.felled).unwrap_or(0),
+            voxear_render::VoxelFelled::ALL.iter().map(|felled| felled.name().to_string()).collect(),
+        ),
+        Prop::VoxelRegrow => Value::Number(data.regrow),
         Prop::VoxelGround => Value::Toggle(data.ground_on),
         Prop::VoxelGroundHeight => Value::Number(ground.height),
         Prop::VoxelHills => Value::Number(ground.hills),
@@ -6486,6 +6504,10 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         (Prop::VoxelWater, Value::Choice(index, _)) => {
             data.water = voxear_render::VoxelWaterLook::ALL.get(index).copied().unwrap_or_default();
         }
+        (Prop::VoxelFelled, Value::Choice(index, _)) => {
+            data.felled = voxear_render::VoxelFelled::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::VoxelRegrow, Value::Number(n)) => data.regrow = n.clamp(0.0, 1.0e6),
         (Prop::VoxelGeneratorFloor, Value::Number(n)) => data.generator_floor = Some(n.clamp(-100_000.0, 100_000.0)),
         (Prop::VoxelGeneratorAt, Value::Vector(v)) if v.len() == 2 => {
             data.generator_at = [v[0], v[1]].map(|metres| metres.clamp(-1.0e7, 1.0e7));
@@ -6511,6 +6533,8 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.distance = data.distance;
         volume.sea = data.sea;
         volume.water = data.water;
+        volume.felled = data.felled;
+        volume.regrow = data.regrow;
         if let Some(generator) = &mut volume.generator {
             generator.at = data.generator_at;
             generator.floor = data.generator_floor.unwrap_or(generator.floor);
@@ -7320,6 +7344,12 @@ mod tests {
         assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelWater, Value::Choice(0, Vec::new())));
         let drawn = world.get::<voxear_render::VoxelVolume>(volume).unwrap().water;
         assert_eq!(drawn, voxear_render::VoxelWaterLook::Smooth);
+        // What its felled trees become, bodies until stamped, and its cut grass, never growing back until given a time.
+        assert!(shown.contains(&Prop::VoxelFelled) && shown.contains(&Prop::VoxelRegrow), "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelFelled, Value::Choice(1, Vec::new())));
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelRegrow, Value::Number(120.0)));
+        let made = world.get::<voxear_render::VoxelVolume>(volume).unwrap();
+        assert_eq!((made.felled, made.regrow), (voxear_render::VoxelFelled::Stamped, 120.0));
         // Its trees: a row of a plant and how many to a hectare for each kind, then one to add another.
         assert!(shown.contains(&Prop::VoxelTreeAdd) && !shown.contains(&Prop::VoxelTreePlant(0)), "{shown:?}");
         let oaks =

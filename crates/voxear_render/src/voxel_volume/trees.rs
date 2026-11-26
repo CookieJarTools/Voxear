@@ -268,8 +268,10 @@ struct Model {
     voxels: bricks::Builder,
     low: [i32; 3],
     size: [i32; 3],
-    /// Its logs' voxels, from the least corner of its box.
-    logs: Vec<[i32; 3]>,
+    /// Its logs' voxels, from the least corner of its box, by the brick of
+    /// eight a side they are in from there; and the least and most of them.
+    logs: HashMap<[i32; 3], Vec<[i32; 3]>>,
+    log_box: ([i32; 3], [i32; 3]),
 }
 
 /// What a voxel is to the CPU: open air (or grass and flowers, which
@@ -280,11 +282,36 @@ pub(crate) const LOG: u8 = 2;
 pub(crate) const LEAF: u8 = 3;
 
 /// A tree placed: where its plant's box's least corner is, in voxels from
-/// the volume's corner, on the bricks' grid; and which model it is.
+/// the volume's corner, on the bricks' grid; which model it is; and, where
+/// it was felled, how high its stump stands: nothing of it is left from
+/// `cut` voxels up ([`NOT_CUT`] for a tree standing whole).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Tree {
     pub least: [i32; 3],
     pub model: usize,
+    pub cut: i32,
+    /// The voxel column its foot stands on.
+    pub foot: [i32; 2],
+}
+
+/// A standing tree's [`Tree::cut`].
+pub(crate) const NOT_CUT: i32 = i32::MAX;
+
+/// The colour of voxel material `m` (1 and 2 its wood, 3 to 5 its leaves)
+/// of kind `kind` of `trees`, as the GPU's palette has it (see [`forest`]).
+pub(crate) fn colour_of(trees: &[VoxelTrees], kind: usize, m: u8) -> [u8; 4] {
+    let Some(kind) = trees.iter().filter(|kind| kind.per_hectare > 0.0).take(MOST_KINDS).nth(kind) else {
+        return [128, 128, 128, 255];
+    };
+    let (colour, tone) = match m {
+        1 => (kind.wood, 0.82),
+        2 => (kind.wood, 1.0),
+        3 => (kind.leaves, 0.8),
+        4 => (kind.leaves, 1.0),
+        _ => (kind.leaves, 1.18),
+    };
+    let [r, g, b] = colour.map(|part| (f32::from(part) * tone).round().clamp(0.0, 255.0) as u8);
+    [r, g, b, 255]
 }
 
 impl Woods {
@@ -311,15 +338,24 @@ impl Woods {
         });
         let mut models = Vec::with_capacity(plants * 4);
         for turns in made {
-            let empty = || Model { voxels: bricks::Builder::default(), low: [0; 3], size: [0; 3], logs: Vec::new() };
+            let empty = || Model {
+                voxels: bricks::Builder::default(),
+                low: [0; 3],
+                size: [0; 3],
+                logs: HashMap::new(),
+                log_box: ([0; 3], [-1; 3]),
+            };
             let model = |(voxels, low, size): (bricks::Builder, [i32; 3], [i32; 3])| {
-                let mut logs = Vec::new();
+                let mut logs: HashMap<[i32; 3], Vec<[i32; 3]>> = HashMap::new();
                 voxels.each(|cell, material| {
                     if matches!(material, 1 | 2) {
-                        logs.push(cell);
+                        logs.entry(cell.map(|a| a.div_euclid(8))).or_default().push(cell);
                     }
                 });
-                Model { voxels, low, size, logs }
+                let log_box = logs.values().flatten().fold(([i32::MAX; 3], [i32::MIN; 3]), |(l, m), c| {
+                    ([0, 1, 2].map(|a| l[a].min(c[a])), [0, 1, 2].map(|a| m[a].max(c[a])))
+                });
+                Model { voxels, low, size, logs, log_box }
             };
             let mut turns: Vec<Model> = turns.into_iter().map(model).collect();
             turns.resize_with(4, empty);
@@ -349,7 +385,48 @@ impl Woods {
         let b = self.block;
         let trunk = [foot[0] - b / 2, h + 1, foot[1] - b / 2];
         let low = self.models[model].low;
-        Tree { least: [0, 1, 2].map(|a| (trunk[a] + low[a]) & !7), model }
+        Tree { least: [0, 1, 2].map(|a| (trunk[a] + low[a]) & !7), model, cut: NOT_CUT, foot }
+    }
+
+    /// Which kind of tree model `model` is, among the volume's kinds.
+    pub fn kind_of(model: usize) -> usize {
+        model / (4 * VARIANTS as usize)
+    }
+
+    /// The least and most voxels of tree `tree`'s logs, standing whole.
+    pub fn log_bounds(&self, tree: &Tree) -> ([i32; 3], [i32; 3]) {
+        let (low, high) = self.models[tree.model].log_box;
+        ([0, 1, 2].map(|a| low[a] + tree.least[a]), [0, 1, 2].map(|a| high[a] + tree.least[a]))
+    }
+
+    /// Tree `tree`'s logs left standing, block by block of its plant: each
+    /// block, from the foot of its trunk, the least voxel of its box and its
+    /// logs' voxels, in voxels from the volume's corner.
+    pub fn log_blocks(&self, tree: &Tree) -> HashMap<[i32; 3], ([i32; 3], Vec<[i32; 3]>)> {
+        let model = &self.models[tree.model];
+        let b = self.block;
+        let mut blocks: HashMap<[i32; 3], ([i32; 3], Vec<[i32; 3]>)> = HashMap::new();
+        for log in model.logs.values().flatten() {
+            let c = [0, 1, 2].map(|a| log[a] + tree.least[a]);
+            if c[1] >= tree.cut {
+                continue;
+            }
+            let block = [0, 1, 2].map(|a| (log[a] + model.low[a]).div_euclid(b));
+            let corner = [0, 1, 2].map(|a| tree.least[a] - model.low[a] + block[a] * b);
+            blocks.entry(block).or_insert_with(|| (corner, Vec::new())).1.push(c);
+        }
+        blocks
+    }
+
+    /// Each voxel of tree `tree` left standing, and its material (1 and 2
+    /// its wood, 3 to 5 its leaves).
+    pub fn voxels_of(&self, tree: &Tree, mut each: impl FnMut([i32; 3], u8)) {
+        self.models[tree.model].voxels.each(|cell, material| {
+            let c = [0, 1, 2].map(|a| cell[a] + tree.least[a]);
+            if c[1] < tree.cut && material != 0 {
+                each(c, material);
+            }
+        });
     }
 
     /// The least and most corners of a tree's box, in voxels.
@@ -364,9 +441,19 @@ impl Woods {
         if (0..3).any(|a| most[a] < low[a] || least[a] > high[a]) {
             return;
         }
-        for log in &self.models[tree.model].logs {
+        // Only the bricks of its box the box asked for reaches: the tree's least corner is on the bricks' grid.
+        let model = &self.models[tree.model];
+        let bricks = [0, 1, 2].map(|a| {
+            let (from, to) = ((low[a].max(least[a]) - tree.least[a]) >> 3, (high[a].min(most[a]) - tree.least[a]) >> 3);
+            from..=to
+        });
+        let reached = bricks[2].clone().flat_map(|z| {
+            let xs = bricks[0].clone();
+            bricks[1].clone().flat_map(move |y| xs.clone().map(move |x| [x, y, z]))
+        });
+        for log in reached.filter_map(|brick| model.logs.get(&brick)).flatten() {
             let c = [0, 1, 2].map(|a| log[a] + tree.least[a]);
-            if (0..3).all(|a| c[a] >= low[a] && c[a] <= high[a]) {
+            if c[1] < tree.cut && (0..3).all(|a| c[a] >= low[a] && c[a] <= high[a]) {
                 each(c);
             }
         }
@@ -376,7 +463,7 @@ impl Woods {
     pub fn at(&self, tree: &Tree, c: [i32; 3]) -> u8 {
         let model = &self.models[tree.model];
         let local = [0, 1, 2].map(|a| c[a] - tree.least[a]);
-        if (0..3).any(|a| local[a] < 0 || local[a] >= model.size[a]) {
+        if c[1] >= tree.cut || (0..3).any(|a| local[a] < 0 || local[a] >= model.size[a]) {
             return AIR;
         }
         match model.voxels.get(local) {

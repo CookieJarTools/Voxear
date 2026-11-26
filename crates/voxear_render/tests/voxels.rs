@@ -2870,3 +2870,178 @@ fn an_endless_volumes_ground_far_from_its_obj_is_drawn_as_near_it() {
     assert!(differ * 8 < 576, "{differ} squares of 20 pixels differ from the ground drawn near its Obj");
     assert!(far_runs < near_runs * 1.2, "streaked: {far_runs:.2} pixels the same across for each down, {near_runs:.2} near");
 }
+
+#[test]
+fn trees_felled_are_gone_over_their_stumps_on_the_gpu_as_on_the_cpu_and_cut_grass_fades() {
+    let Some(mut renderer) = renderer() else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut trees = oaks_and_pines();
+    for kind in &mut trees {
+        (kind.wood, kind.leaves) = ([40, 40, 230], [230, 40, 40]);
+    }
+    let mut scene = generated_view(hills, 8.0, 8.0, 20.0, 90.0);
+    {
+        let mut volumes = scene.query::<&mut VoxelVolume>();
+        let volume = volumes.into_iter().next().unwrap();
+        volume.trees = trees;
+        let ground = volume.ground.as_mut().unwrap();
+        (ground.flowers, ground.grass) = (0.0, 1.0);
+    }
+    scene.spawn((WindZone { strength: 0.0, ..WindZone::default() }, Transform::default()));
+    let before = render(&mut renderer, &scene, 3);
+    keep_image("felling before.png", &before);
+    let (entity, volume) = scene
+        .query_ref::<(voxear_ecs::Entity, &VoxelVolume)>()
+        .into_iter()
+        .map(|(entity, volume)| (entity, volume.clone()))
+        .next()
+        .unwrap();
+    // Every tree in view cut through its trunk, a little over the ground.
+    let trunks = voxear_render::voxel_tree_trunks(&volume, Vec3::new(-14.0, 0.0, -4.0), Vec3::new(30.0, 0.0, 20.0));
+    assert!(trunks.len() >= 3, "trees to fell: {}", trunks.len());
+    // And a ball of grass cut beside each, the blades over the ground's top at its middle counted before and after.
+    let solids = voxear_render::VoxelSolids::of(&volume).unwrap();
+    let mown: Vec<Vec3> = trunks
+        .iter()
+        .map(|trunk| {
+            let at = *trunk + Vec3::new(2.5, 0.0, 0.0);
+            let h = solids.heights([(at.x * 16.0).floor() as i32, (at.z * 16.0).floor() as i32], [1, 1])[0];
+            Vec3::new(at.x, (h + 1) as f32 / 16.0, at.z)
+        })
+        .collect();
+    let blades_at = |renderer: &Renderer, solids: &voxear_render::VoxelSolids| {
+        let mut blades = 0;
+        for at in &mown {
+            let c = (*at * 16.0).floor().as_ivec3();
+            for column in [[c.x, c.z], [c.x + 3, c.z], [c.x, c.z + 3], [c.x - 3, c.z - 3]] {
+                let h = solids.heights(column, [1, 1])[0];
+                let cells: Vec<[i32; 3]> = (1..12).map(|dy| [column[0], h + dy, column[1]]).collect();
+                let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+                blades += found.iter().filter(|&&m| m != 0).count();
+            }
+        }
+        blades
+    };
+    let blades_before = blades_at(&renderer, &solids);
+    let mut cut = volume.clone();
+    let mut pieces = 0;
+    let started = std::time::Instant::now();
+    for trunk in &trunks {
+        let (changes, done) = voxear_render::voxel_cut(&cut, &voxear_render::VoxelCut::Ball { at: *trunk + Vec3::Y * 1.2, radius: 0.8 });
+        pieces += done.pieces.len();
+        cut.changes = Arc::new(changes);
+    }
+    let felling = started.elapsed();
+    for at in &mown {
+        let (changes, _) = voxear_render::voxel_cut(&cut, &voxear_render::VoxelCut::Ball { at: *at, radius: 0.6 });
+        cut.changes = Arc::new(changes);
+    }
+    eprintln!("{} trees felled in {pieces} pieces, in {felling:?}", trunks.len());
+    // Where two trees grow into each other, one may hold the other up.
+    assert!(pieces * 10 >= trunks.len() * 8, "most come loose: {pieces} pieces of {} trees", trunks.len());
+    // And a slice a quarter of a metre over the ground beside each, the other way: stubble under it.
+    let stubble: Vec<Vec3> = mown.iter().map(|at| *at - Vec3::new(5.0, 0.0, 0.0)).collect();
+    for at in &stubble {
+        let h = solids.heights([(at.x * 16.0).floor() as i32, (at.z * 16.0).floor() as i32], [1, 1])[0];
+        let slice = voxear_render::VoxelCut::Slice { at: Vec3::new(at.x, (h + 1) as f32 / 16.0 + 0.25, at.z), across: Vec3::Y, radius: 0.6 };
+        let (changes, _) = voxear_render::voxel_cut(&cut, &slice);
+        cut.changes = Arc::new(changes);
+    }
+    *scene.query::<&mut VoxelVolume>().into_iter().next().unwrap() = cut.clone();
+    let after = render(&mut renderer, &scene, 3);
+    keep_image("felling after.png", &after);
+    let leaves = |pixels: &[u8]| {
+        (0..HEIGHT)
+            .step_by(2)
+            .flat_map(|y| (0..WIDTH).step_by(2).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let [r, g, b] = rgb_at(pixels, x, y).map(|c| c as f32);
+                r / (r + g + b).max(1.0) > 0.5
+            })
+            .count()
+    };
+    let (were, are) = (leaves(&before), leaves(&after));
+    eprintln!("leaves at {were} pixels before, {are} after");
+    assert!(are * 2 < were, "the felled trees' crowns are gone: {are} of {were}");
+    // Up each trunk: its stump under the cut on the GPU and the CPU, nothing of it over the cut on either; and the
+    // grass about it, which was cut, is gone.
+    let solids = voxear_render::VoxelSolids::of(&cut).unwrap();
+    let (mut agree, mut all, mut stumps) = (0, 0, 0);
+    for trunk in &trunks {
+        let c = (*trunk * 16.0).floor().as_ivec3();
+        let cells: Vec<[i32; 3]> = (-2..80).map(|dy| [c.x, c.y + dy, c.z]).collect();
+        let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+        let mut solid = vec![false; cells.len()];
+        solids.fill([c.x, c.y - 2, c.z], [1, cells.len() as i32, 1], &mut solid);
+        for (i, (&gpu, &cpu)) in found.iter().zip(&solid).enumerate() {
+            all += 1;
+            agree += usize::from((gpu != 0) == cpu);
+            if i >= 2 && i < 6 && gpu != 0 {
+                stumps += 1;
+            }
+        }
+    }
+    let blades = blades_at(&renderer, &solids);
+    // Under the slice the blades stand four voxels tall at most; nothing over that.
+    let (mut short, mut over) = (0, 0);
+    for at in &stubble {
+        let c = (*at * 16.0).floor().as_ivec3();
+        let h = solids.heights([c.x, c.z], [1, 1])[0];
+        let cells: Vec<[i32; 3]> = (1..12).map(|dy| [c.x, h + dy, c.z]).collect();
+        let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+        short += found[..4].iter().filter(|&&m| m != 0).count();
+        over += found[4..].iter().filter(|&&m| m != 0).count();
+    }
+    eprintln!("stubble: {short} voxels under the slice, {over} over it");
+    assert!(short > 0 && over == 0, "the slice leaves stubble: {short} under, {over} over");
+    eprintln!("{agree} of {all} voxels up the trunks agree; {stumps} stump voxels; {blades_before} blade voxels, {blades} left");
+    assert!(blades_before > mown.len() * 4, "grass grew there: {blades_before}");
+    assert!(agree * 100 >= all * 97, "the GPU's felled trees are the CPU's: {agree} of {all}");
+    assert!(stumps * 2 >= trunks.len() * 4, "the stumps stand: {stumps}");
+    assert_eq!(blades, 0, "the cut grass is gone");
+}
+
+#[test]
+fn a_volume_is_turned_with_its_obj_its_voxels_lit_and_shadowing_as_they_lie() {
+    let Some(mut renderer) = renderer() else { return };
+    // Turned a third of the way round the up axis about its middle: the field from above is the same field, its
+    // pillar's top red where it was and its shadow still to the east, as the sun is where it was.
+    let mut world = field(false);
+    let turn = Quat::from_rotation_y(30f32.to_radians());
+    for (_, place) in world.query::<(&VoxelVolume, &mut Transform)>() {
+        place.rotation = turn;
+        place.position = Vec3::new(8.0, 0.0, 8.0) - turn * Vec3::new(8.0, 0.0, 8.0);
+    }
+    let pixels = render(&mut renderer, &world, 4);
+    keep_image("voxel field turned.png", &pixels);
+    check_field(&pixels);
+    // The volume's square turned too: its corner, unturned on the ground, is sky now, and ground lies past its old side.
+    let at = |x: f32, z: f32| {
+        let (px, py) = from_above(20.0, x, z);
+        rgb_at(&pixels, px.min(WIDTH - 1), py.min(HEIGHT - 1))
+    };
+    let green = |[r, g, b]: [i32; 3]| g > r + 20 && g > b + 20;
+    assert!(!green(at(0.5, 0.5)), "the unturned corner is not ground now: {:?}", at(0.5, 0.5));
+    assert!(green(at(8.0, -1.0)), "the turned square reaches past the old side: {:?}", at(8.0, -1.0));
+
+    // A pillar tipped over onto its side by turning its volume a quarter round Z: red along X, a metre wide.
+    let mut world = field(false);
+    let tipped = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    for (volume, place) in world.query::<(&mut VoxelVolume, &mut Transform)>() {
+        volume.ground = None;
+        place.rotation = tipped;
+        // The pillar's foot (8, 1, 8) of the volume lies at (9, 1, 8) of the world.
+        place.position = Vec3::new(9.0, 1.0, 8.0) - tipped * Vec3::new(8.0, 1.0, 8.0);
+    }
+    let pixels = render(&mut renderer, &world, 4);
+    keep_image("voxel pillar tipped.png", &pixels);
+    let red = |x: f32, z: f32| {
+        let (px, py) = from_above(20.0, x, z);
+        let [r, g, b] = rgb_at(&pixels, px, py);
+        r > g * 2 && r > b * 2 && r > 40
+    };
+    for x in [6.5, 7.5, 8.5] {
+        assert!(red(x, 8.0), "the tipped pillar lies along X at {x}");
+    }
+    assert!(!red(8.0, 6.0) && !red(8.0, 10.0) && !red(4.0, 8.0), "and is a metre wide, three long");
+}

@@ -3,7 +3,8 @@
 //! `Voxels.Ramp`, `Voxels.Area` and `Voxels.Cover` those their shapes
 //! reach, `Voxels.Print` prints a Voxel Print into those its box reaches,
 //! `Voxels.Dig` and `Voxels.Place` set a voxel at a time, `Voxels.Raycast`
-//! finds where a ray meets their ground, `Voxels.WaterAt` the water of
+//! finds where a ray meets their ground, `Voxels.Cut` and `Voxels.Slice`
+//! cut their grass and fell their trees, `Voxels.WaterAt` the water of
 //! their rivers and lakes at a place, and `Voxels.Sea` turns their
 //! generators' seas on and off. The engine answers, as
 //! only it keeps the volumes (see `voxear_engine::voxel_volumes`); a print
@@ -288,5 +289,166 @@ pub(crate) unsafe extern "C" fn voxel_print(
     let (at, rotation) = unsafe { (*at, *rotation) };
     let request = VoxelPrintRequest { print, at, rotation, fit: fit == 1, footing, tint: tint_of(tint) };
     PRINTS.with_borrow_mut(|prints| prints.push(request));
+    1
+}
+
+/// A cut a script asked for (`Voxels.Cut` and `Voxels.Slice`), placed in
+/// the world: at points, each the voxel there; a ball round a place; or a
+/// blade's slice through a place square to a way, as far as a radius in
+/// metres; and which way across what comes loose falls, none for away from
+/// the cut.
+#[derive(Clone, Debug, PartialEq)]
+pub enum VoxelCutRequest {
+    Points(Vec<[f32; 3]>),
+    Ball { at: [f32; 3], radius: f32 },
+    Slice { at: [f32; 3], across: [f32; 3], radius: f32 },
+}
+
+/// A piece of tree a cut took loose, as a script reads it: its Obj while it
+/// is a body, where the middle of its logs is, its size in metres, and how
+/// many voxels of logs and of leaves it has; and whether it is at rest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxelCutPiece {
+    pub obj: Option<Entity>,
+    pub place: [f32; 3],
+    pub size: [f32; 3],
+    pub logs: i32,
+    pub leaves: i32,
+    pub resting: bool,
+}
+
+impl VoxelCutPiece {
+    /// Its numbers as sent: place, size, logs, leaves and 1 at rest.
+    fn numbers(&self) -> [f32; 9] {
+        let [x, y, z] = self.place;
+        let [w, h, d] = self.size;
+        [x, y, z, w, h, d, self.logs as f32, self.leaves as f32, f32::from(u8::from(self.resting))]
+    }
+}
+
+/// What answers `Voxels.Cut` and `Voxels.Slice`: the cut, which way across
+/// what comes loose falls, whether it falls (0) or is taken away at once
+/// (1), and what becomes of it at rest (-1 as its volume says, 0 it stays
+/// a body, 1 it is stamped back, 2 it is taken away). Gives how many
+/// volumes it reached, how many columns' grass and voxels of logs and leaves
+/// it cut, and how many pieces came loose; and the pieces.
+pub type VoxelCuts = fn(&mut World, &VoxelCutRequest, Option<[f32; 3]>, i32, i32) -> ([i32; 4], Vec<VoxelCutPiece>);
+
+static CUTS: OnceLock<VoxelCuts> = OnceLock::new();
+
+/// Sets what answers `Voxels.Cut` and `Voxels.Slice`; the first set is kept.
+pub fn set_voxel_cuts(cuts: VoxelCuts) {
+    let _ = CUTS.set(cuts);
+}
+
+/// `Voxels.Cut` and `Voxels.Slice`: `shape` 0 points (three numbers each),
+/// 1 a ball (where and its radius), 2 a slice (where, the way it is square
+/// to, and its radius); `toward` the way across what comes loose falls, or
+/// null; `pieces` and `rest` as [`VoxelCuts`] takes them. Writes the
+/// columns, the voxels and the pieces cut into `done`, and the first `room`
+/// pieces' numbers into `found` and their Objs into `objs` (0 for one taken
+/// away). Gives how many volumes it reached, or -1.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe extern "C" fn voxel_cut(
+    shape: i32,
+    numbers: *const f32,
+    count: i32,
+    toward: *const [f32; 3],
+    pieces: i32,
+    rest: i32,
+    done: *mut [i32; 3],
+    found: *mut [f32; 9],
+    objs: *mut u64,
+    room: i32,
+) -> i32 {
+    let Some(cuts) = CUTS.get() else { return -1 };
+    if numbers.is_null() || count < 0 || done.is_null() {
+        return -1;
+    }
+    let n = unsafe { std::slice::from_raw_parts(numbers, count as usize) };
+    let request = match (shape, n.len()) {
+        (0, _) => VoxelCutRequest::Points(n.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect()),
+        (1, 4..) => VoxelCutRequest::Ball { at: [n[0], n[1], n[2]], radius: n[3].max(0.0) },
+        (2, 7..) => VoxelCutRequest::Slice { at: [n[0], n[1], n[2]], across: [n[3], n[4], n[5]], radius: n[6].max(0.0) },
+        _ => return -1,
+    };
+    let toward = (!toward.is_null()).then(|| unsafe { *toward });
+    let Some(([reached, columns, voxels, felled], cut)) =
+        with_world(|world| Some(cuts(world, &request, toward, pieces, rest)))
+    else {
+        return -1;
+    };
+    unsafe { *done = [columns, voxels, felled] };
+    if !found.is_null() && !objs.is_null() && room > 0 {
+        for (i, piece) in cut.iter().take(room as usize).enumerate() {
+            unsafe {
+                *found.add(i) = piece.numbers();
+                *objs.add(i) = piece.obj.map_or(0, Entity::to_bits);
+            }
+        }
+    }
+    reached
+}
+
+/// What answers `Voxels.Piece`, `Voxels.Stamp` and `Voxels.Remove`: what
+/// felled piece an Obj is, and with `act` 1 it stamped back where it lies, 2
+/// taken away; none for an Obj that is not one.
+pub type VoxelPieces = fn(&mut World, Entity, i32) -> Option<VoxelCutPiece>;
+
+static PIECES: OnceLock<VoxelPieces> = OnceLock::new();
+
+/// Sets what answers `Voxels.Piece` and the rest; the first set is kept.
+pub fn set_voxel_pieces(pieces: VoxelPieces) {
+    let _ = PIECES.set(pieces);
+}
+
+/// `Voxels.Piece`, `Voxels.Stamp` and `Voxels.Remove`: 1 with the piece's
+/// numbers in `info`, as it was before `act`; 0 for an Obj that is not a
+/// felled piece; -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_piece(obj: u64, act: i32, info: *mut [f32; 9]) -> i32 {
+    let Some(pieces) = PIECES.get() else { return -1 };
+    if info.is_null() {
+        return -1;
+    }
+    let Some(piece) = with_world(|world| pieces(world, Entity::from_bits(obj), act)) else { return 0 };
+    unsafe { *info = piece.numbers() };
+    1
+}
+
+/// What answers `Voxels.Raycast` meeting cover too: as [`VoxelRaycast`],
+/// with what it meets (0 what is solid and the trees' leaves, 1 the grass,
+/// cover and crops too), and whether what it met is cover.
+pub type VoxelRaycastMeeting =
+    fn(&World, [f32; 3], [f32; 3], f32, i32) -> Option<(Entity, [f32; 3], [f32; 3], f32, bool)>;
+
+static RAYCAST_MEETING: OnceLock<VoxelRaycastMeeting> = OnceLock::new();
+
+/// Sets what answers `Voxels.Raycast` meeting cover; the first set is kept.
+pub fn set_voxel_raycast_meeting(raycast: VoxelRaycastMeeting) {
+    let _ = RAYCAST_MEETING.set(raycast);
+}
+
+/// `Voxels.Raycast` with what it meets: 1 with the point, the face's way,
+/// the distance and 1 where it met cover in `hit`, and the volume's Obj in
+/// `obj`; 0 where the ray meets nothing; -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_raycast_meeting(
+    origin: *const [f32; 3],
+    direction: *const [f32; 3],
+    reach: f32,
+    meets: i32,
+    hit: *mut [f32; 8],
+    obj: *mut u64,
+) -> i32 {
+    let Some(raycast) = RAYCAST_MEETING.get() else { return -1 };
+    if origin.is_null() || direction.is_null() || hit.is_null() || obj.is_null() {
+        return -1;
+    }
+    let (origin, direction) = unsafe { (*origin, *direction) };
+    let found = with_world(|world| Some(raycast(world, origin, direction, reach, meets))).unwrap_or(None);
+    let Some((entity, point, normal, distance, cover)) = found else { return 0 };
+    unsafe {
+        *hit = [point[0], point[1], point[2], normal[0], normal[1], normal[2], distance, f32::from(u8::from(cover))];
+        *obj = entity.to_bits();
+    }
     1
 }

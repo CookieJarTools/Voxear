@@ -141,6 +141,7 @@ unsafe extern "C" {
     pub fn vx_shape_sphere(world: *mut VxWorld, radius: f32) -> u32;
     pub fn vx_shape_capsule(world: *mut VxWorld, half_height: f32, radius: f32) -> u32;
     pub fn vx_shape_convex_hull(world: *mut VxWorld, points: *const f32, count: u32) -> u32;
+    pub fn vx_shape_boxes(world: *mut VxWorld, boxes: *const f32, count: u32) -> u32;
     pub fn vx_shape_mesh(
         world: *mut VxWorld,
         vertices: *const f32,

@@ -616,6 +616,8 @@ impl Engine {
         }
         // Endless Voxel Volumes' trees and crops keep to the World Areas as they are now.
         crate::voxel_volumes::sync_areas(&mut self.world);
+        // Their cut grass, cover and crops fade away, and grow back.
+        crate::voxel_felling::tend_cuts(&mut self.world, self.time.delta);
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
         // What cuts the water's surface leaves trails on it.
@@ -855,6 +857,8 @@ impl Engine {
             }
             let events = physics.take_events();
             self.world.insert_resource(physics);
+            // Trees felled in endless Voxel Volumes fall and come to rest.
+            crate::voxel_felling::fall(&mut self.world, dt);
             told.extend(events.iter().flat_map(PhysicsEventData::both));
             self.physics_events.extend(events);
         }

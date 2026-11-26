@@ -24,6 +24,11 @@ internal static class VoxelsTests
 		Check.True(Voxels.Dig(Vector3.Zero) == 0 && Voxels.Place(Vector3.One, VoxelMaterial.Planks, Color.Red) == 0, "no voxel set");
 		Check.True(Voxels.Restore([Vector3.Zero, Vector3.One]) == 0 && Voxels.Dig(ReadOnlySpan<Vector3>.Empty) == 0, "nor let go");
 		Check.True(!Voxels.WaterAt(Vector3.Zero, out var water) && water == default, "no river to find");
+		Check.True(Voxels.Cut(Vector3.Zero, 1f) == default && Voxels.Cut([Vector3.Zero, Vector3.One]) == default, "no grass to cut");
+		Check.True(Voxels.Slice(Vector3.Zero, Vector3.UnitY, 0.8f, fall: Vector3.UnitX, rest: VoxelPieceRest.Stamp).Felled == 0, "no tree to fell");
+		Check.True(Voxels.Cut(Vector3.Zero, 1f, VoxelPieces.Remove).All.IsEmpty, "no piece to take away");
+		Check.True(!Voxels.Piece(default, out var piece) && piece == default && !Voxels.StampPiece(default) && !Voxels.RemovePiece(default), "no felled piece");
+		Check.True(!Voxels.Raycast(Vector3.Zero, -Vector3.UnitY, out _, 10f, VoxelRayMeets.Cover), "no cover to meet");
 		Voxels.Sea = true;
 		Check.True(!Voxels.Sea && float.IsNaN(Voxels.SeaLevel), "no sea");
 		Voxels.WaterLook = VoxelWaterLook.Smooth;

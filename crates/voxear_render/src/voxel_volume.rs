@@ -3,7 +3,9 @@
 //! (`shaders/voxels.slang`), lit as anything else is.
 //!
 //! A Voxel Volume is an Obj's box of voxels, its least corner at the Obj's
-//! place. It is filled from its own ground (grass and flowers of voxels on
+//! place, turned with the Obj about there: each ray is walked in the
+//! volume's own frame, so a felled tree's piece falls and rolls as voxels.
+//! An endless one is never turned. It is filled from its own ground (grass and flowers of voxels on
 //! rolling ground, [`VoxelGround`]) and from box models stamped into it,
 //! their cubes turned into the volume's voxels: a sculpted tree of 1/16 m
 //! cubes becomes a tree of the volume's voxels. Its voxels are made on a
@@ -13,14 +15,14 @@
 //! Its voxels shadow each other, and meshes, blocks, terrain and grass, by
 //! a ray traced towards the sun from each pixel (**Voxel shadows**), and
 //! take the shadows of everything else from the shadow maps. What it does
-//! not do yet (`docs/research/small-voxels.md`): it is not turned or scaled
-//! with its Obj; and it is drawn whole, however far, its far voxels drawn
-//! coarser.
+//! not do yet (`docs/research/small-voxels.md`): it is not scaled with its
+//! Obj; and it is drawn whole, however far, its far voxels drawn coarser.
 
 pub mod bricks;
 mod changes;
 mod edit;
 mod endless;
+mod fell;
 mod growth;
 pub(crate) use endless::generated_at;
 pub(crate) use light::LightView;
@@ -40,13 +42,14 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
-pub use changes::{VoxelChanges, VoxelKind, VoxelSet};
+pub use changes::{CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelFelledTree, VoxelChanges, VoxelKind, VoxelSet};
+pub use fell::{VoxelCut, VoxelCutDone, VoxelPiece, cut as voxel_cut, stamp as voxel_stamp, tree_trunks as voxel_tree_trunks};
 pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
 pub use voxear_terrain::generate::structures::AreaRules as VoxelAreaRules;
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture, VoxelPrintSettings};
-pub use ray::{VoxelRayHit, raycast};
+pub use ray::{VoxelRayHit, VoxelRayMeets, raycast, raycast_meeting};
 pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
 pub use solid::{VoxelSolids, ground_at as voxel_ground_at};
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
@@ -111,6 +114,34 @@ pub struct VoxelVolume {
     /// How an endless volume's rivers and lakes are drawn: as smooth water
     /// over its voxels, or as voxels of water themselves.
     pub water: VoxelWaterLook,
+    /// What a tree felled in an endless volume becomes once it has fallen
+    /// and come to rest.
+    pub felled: VoxelFelled,
+    /// How many seconds an endless volume's cut grass, cover and crops take
+    /// to grow back: none for never.
+    pub regrow: f32,
+}
+
+/// What a tree felled in an endless Voxel Volume becomes once it has
+/// fallen and come to rest: a body of its own, which can be pushed and
+/// rolled; or voxels of the volume again where it lies, solid as the ground.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelFelled {
+    #[default]
+    Body,
+    Stamped,
+}
+
+impl VoxelFelled {
+    pub const ALL: [Self; 2] = [Self::Body, Self::Stamped];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Body => "Body",
+            Self::Stamped => "Stamped",
+        }
+    }
 }
 
 /// How an endless Voxel Volume's rivers and lakes are drawn.
@@ -398,6 +429,8 @@ impl Default for VoxelVolume {
             changes: Arc::default(),
             sea: true,
             water: VoxelWaterLook::Voxels,
+            felled: VoxelFelled::Body,
+            regrow: 0.0,
         }
     }
 }
@@ -420,6 +453,8 @@ impl PartialEq for VoxelVolume {
             && (Arc::ptr_eq(&self.areas, &other.areas) || self.areas == other.areas)
             && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
             && self.water == other.water
+            && self.felled == other.felled
+            && self.regrow == other.regrow
             && (Arc::ptr_eq(&self.changes, &other.changes) || self.changes == other.changes)
     }
 }
@@ -614,6 +649,9 @@ pub(crate) struct GpuVoxelVolume {
     /// made, past which it draws nothing: the hole of the ring round it. In
     /// the same voxels; none where the most is not past the least.
     outer: [f32; 4],
+    /// How it is turned about its corner with its Obj, as a quaternion: all
+    /// 0 for not turned, as an endless volume never is.
+    turn: [f32; 4],
 }
 
 /// A view's volumes (`VoxelVolumes` in shaders/common.slang).
@@ -727,18 +765,25 @@ impl VoxelVolumes {
         voxear_core::profile_scope!("Voxel Volumes");
         self.drawn.clear();
         let mut seen = Vec::new();
-        let found: Vec<(Entity, VoxelVolume, Vec3)> = world
+        let found: Vec<(Entity, VoxelVolume, Vec3, Quat)> = world
             .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
             .without::<voxear_scene::Destroying>()
             .without::<voxear_scene::Hidden>()
             .into_iter()
             .map(|(entity, volume, local, placed)| {
-                (entity, volume.clone(), placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+                let (corner, turn) = match placed {
+                    Some(placed) => {
+                        let (_, turn, at) = placed.0.to_scale_rotation_translation();
+                        (at, turn)
+                    }
+                    None => (local.position, local.rotation),
+                };
+                (entity, volume.clone(), corner, turn)
             })
             .collect();
         let camera = camera_of(world);
         self.camera = camera;
-        for (entity, volume, corner) in found {
+        for (entity, volume, corner, turn) in found {
             seen.push(entity);
             if volume.endless {
                 let rings = rings_of(&volume);
@@ -785,7 +830,10 @@ impl VoxelVolumes {
                 }
             }
             if let Some((_, resident)) = self.resident.get(&entity) {
-                self.drawn.push((resident.record, corner));
+                // Turned with its Obj about its corner; unturned, it keeps the walk it had.
+                let turned = turn.angle_between(Quat::IDENTITY) > 1e-5;
+                let turn = if turned { turn.normalize().to_array() } else { [0.0; 4] };
+                self.drawn.push((GpuVoxelVolume { turn, ..resident.record }, corner));
             }
         }
         let gone: Vec<Entity> = self.endless.keys().filter(|entity| !seen.contains(entity)).copied().collect();
@@ -1218,6 +1266,7 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         pad: 0,
         hole: [0.0; 4],
         outer: [0.0; 4],
+        turn: [0.0; 4],
     };
     Ok(Resident { buffer, record, bytes: total as u64, bricks: packed.brick_count() })
 }
@@ -1229,8 +1278,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 144);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 120 + 144 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 160);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 120 + 160 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

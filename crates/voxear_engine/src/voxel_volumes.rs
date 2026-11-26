@@ -114,7 +114,8 @@ use voxear_ecs::{Entity, World};
 use voxear_assets::AssetGuid;
 use voxear_render::{
     VoxelArea, VoxelAreaRules, VoxelBiomes, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator,
-    VoxelGround, VoxelKind, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
+    VoxelCut, VoxelFelled, VoxelGround, VoxelKind, VoxelMaterial, VoxelRayMeets, VoxelStamp, VoxelTrees, VoxelVolume,
+    VoxelWaterLook,
 };
 
 use crate::content::Content;
@@ -179,6 +180,19 @@ pub struct VoxelVolumeData {
     /// water, or smooth (`water = "smooth"`).
     #[serde(skip_serializing_if = "is_voxels")]
     pub water: VoxelWaterLook,
+    /// What a tree felled in an endless volume becomes once it has fallen
+    /// and come to rest: a body of its own, or stamped back into the volume
+    /// (`felled = "stamped"`).
+    #[serde(skip_serializing_if = "is_body")]
+    pub felled: VoxelFelled,
+    /// How many seconds its cut grass, cover and crops take to grow back:
+    /// never unless written.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub regrow: f32,
+}
+
+fn is_body(felled: &VoxelFelled) -> bool {
+    *felled == VoxelFelled::Body
 }
 
 fn is_on(on: &bool) -> bool {
@@ -506,6 +520,8 @@ impl Default for VoxelVolumeData {
             regions: Vec::new(),
             sea: made.sea,
             water: made.water,
+            felled: made.felled,
+            regrow: made.regrow,
         }
     }
 }
@@ -586,6 +602,8 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         changes: Arc::new(read_changes(content, data)),
         sea: data.sea,
         water: data.water,
+        felled: data.felled,
+        regrow: data.regrow.max(0.0),
     }
 }
 
@@ -777,6 +795,56 @@ pub(crate) fn register() {
         raycast(world, Vec3::from(origin), Vec3::from(direction), reach, None)
             .map(|(entity, hit)| (entity, hit.point.to_array(), hit.normal.to_array(), hit.distance))
     });
+    voxear_scripting::set_voxel_raycast_meeting(|world, origin, direction, reach, meets| {
+        let meets = if meets == 1 { VoxelRayMeets::Cover } else { VoxelRayMeets::Solid };
+        raycast_meeting(world, Vec3::from(origin), Vec3::from(direction), reach, meets, None)
+            .map(|(entity, hit)| (entity, hit.point.to_array(), hit.normal.to_array(), hit.distance, hit.cover))
+    });
+    voxear_scripting::set_voxel_cuts(|world, request, toward, pieces, rest| {
+        use crate::voxel_felling::{CutOptions, CutPieces, PieceRest};
+        use voxear_scripting::VoxelCutRequest;
+        let cut = match request {
+            VoxelCutRequest::Points(points) => VoxelCut::Points(points.iter().map(|p| Vec3::from(*p)).collect()),
+            VoxelCutRequest::Ball { at, radius } => VoxelCut::Ball { at: Vec3::from(*at), radius: *radius },
+            VoxelCutRequest::Slice { at, across, radius } => {
+                VoxelCut::Slice { at: Vec3::from(*at), across: Vec3::from(*across), radius: *radius }
+            }
+        };
+        let options = CutOptions {
+            toward: toward.map(Vec3::from),
+            pieces: if pieces == 1 { CutPieces::Gone } else { CutPieces::Fall },
+            rest: match rest {
+                0 => Some(PieceRest::Stay),
+                1 => Some(PieceRest::Stamp),
+                2 => Some(PieceRest::Remove),
+                _ => None,
+            },
+        };
+        let done = crate::voxel_felling::cut(world, &cut, options, None);
+        let counts = [done.reached, done.columns, done.voxels, done.pieces.len()].map(|n| n.min(i32::MAX as usize) as i32);
+        (counts, done.pieces.iter().map(script_piece).collect())
+    });
+    voxear_scripting::set_voxel_pieces(|world, entity, act| {
+        let piece = crate::voxel_felling::piece(world, entity)?;
+        let _ = match act {
+            1 => crate::voxel_felling::stamp_piece(world, entity),
+            2 => crate::voxel_felling::remove_piece(world, entity),
+            _ => true,
+        };
+        Some(script_piece(&piece))
+    });
+}
+
+/// A felled piece as scripts read it.
+fn script_piece(piece: &crate::voxel_felling::FelledPiece) -> voxear_scripting::VoxelCutPiece {
+    voxear_scripting::VoxelCutPiece {
+        obj: piece.obj,
+        place: piece.place.to_array(),
+        size: piece.size.to_array(),
+        logs: piece.logs.min(i32::MAX as usize) as i32,
+        leaves: piece.leaves.min(i32::MAX as usize) as i32,
+        resting: piece.resting,
+    }
 }
 
 /// Where a ray from `origin` along `direction`, in the world, first meets
@@ -790,13 +858,27 @@ pub fn raycast(
     reach: f32,
     only: Option<Entity>,
 ) -> Option<(Entity, voxear_render::VoxelRayHit)> {
+    raycast_meeting(world, origin, direction, reach, VoxelRayMeets::Solid, only)
+}
+
+/// As [`raycast`], meeting what `meets` says: with
+/// [`VoxelRayMeets::Cover`] the grass, cover and crops too, as a blade
+/// swung through them does.
+pub fn raycast_meeting(
+    world: &World,
+    origin: Vec3,
+    direction: Vec3,
+    reach: f32,
+    meets: VoxelRayMeets,
+    only: Option<Entity>,
+) -> Option<(Entity, voxear_render::VoxelRayHit)> {
     world
         .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
         .into_iter()
         .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
         .filter_map(|(entity, volume, local, placed)| {
             let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
-            voxear_render::voxel_raycast(volume, corner, origin, direction, reach).map(|hit| (entity, hit))
+            voxear_render::voxel_raycast_meeting(volume, corner, origin, direction, reach, meets).map(|hit| (entity, hit))
         })
         .min_by(|a, b| a.1.distance.total_cmp(&b.1.distance))
 }

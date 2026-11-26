@@ -1373,7 +1373,54 @@ An endless volume was at most 16 sectors tall: 64 m at 16 voxels a metre. The Re
 - **Not done:** a column whose ground, trees and buildings rise more than 96 m within its 4 m loses the lowest of
   it. The making passes' lists of bricks by row still go a whole column up.
 
-## Kept elsewhere
+## Stage 7 on: cutting grass and felling trees (2026-11-26)
+
+Cutting for the RPG's world: grass, cover and crops a blade passes through, and trees an axe fells.
+
+- **Cut grass is a byte a column** (`voxel_volume/changes.rs`, `CutColumns`): how much of its blades is left, kept
+  eight by eight columns with a bit each for cut and for still fading. The engine moves them on in eight steps over
+  0.6 s and grows them back in sixteen over the volume's Regrow seconds; each step makes again only those columns,
+  not the trees round them. On the GPU a hash table of sector columns among the edits' words holds 4 KB a sector
+  with any cut, and the tops pass scales each column's blade by what is left (`cutLeft`); rings look up the finest
+  ring's columns. Rays can meet cover (`VoxelRayMeets::Cover`) as the layer it grows in, less what was cut.
+- **What comes loose is found by logs, not by tree** (`voxel_volume/fell.rs`). A plant's logs are round and centred
+  in their 1 m blocks, so logs of blocks that meet only along an edge or turn a corner do not touch as voxels: a
+  first try joining log voxels gave 31 pieces for one cut tree. Joins follow the plant's blocks instead: each block's
+  logs left are split into pieces that touch, a piece joins a neighbour block when it reaches the block's end that
+  way (or its middle, for a block beside it), and logs of different trees join where they touch. What is joined to a
+  log resting on something solid holds; the rest comes loose, with each brick of leaves going with its nearest log,
+  or all the leaves over the stump of a tree cut through its trunk.
+- **A felled tree is a few bytes.** Where everything of a tree over a height comes loose, it is kept as felled by its
+  foot's column with that height (`Felled`); the trees pass gives it its stump's height and the bricks pass leaves out
+  its voxels over that, and stops naming its plant's bricks above the cut. Only the kerf, and what a branch or a tree
+  held by a neighbour loses, is dug a voxel at a time. A trunk cut by a slice: 576 voxels dug, 137 bytes of region
+  file. On the GPU and the CPU the same: 1,148 of 1,148 voxels up 14 felled trunks agree; the crowns' pixels in the
+  view went from 48,535 to 3,064.
+- **Pieces fall as bodies of voxels.** Collision boxes of the logs, joined along X, Z and Y, at most 192, a voxel or
+  two or four at a time (a new compound shape in the physics library). Its voxels are a Voxel Volume of a set size
+  on an Obj under the body, which turns with it: Voxel Volumes now turn with their Obj, each volume's record
+  carrying a quaternion, each walk turning the ray into the volume's own frame and the face met back out (the depth,
+  lit, glass and shadow walks, sway, and the light kept round the camera). Drawn first as box-model cubes, a whole
+  crown a cube a voxel was 809,000 vertices and ran the frame out of mesh space, and looked unlike the ground; as a
+  volume it is the ground's own look. The light kept round the camera took all past a volume's box as solid, which
+  blacked out the wood round a small floating volume: that is now only an endless one's window. A piece waits until
+  collision round it is made again without it (about a second, in the background), then tips about its stump; it
+  rests after a second lying still. A stamped piece's volume lingers a second while the ground is made again.
+- **Falling like a tree.** Pushed over freely, a felled tree rocked back onto its stump and bounced. It is now
+  hinged to the world on its stump's edge the way it falls (a hinge joint, its middle's speed set to match the turn
+  so the hinge does not cancel the push), pushed over its first 0.3 rad as a wedge would, and let go of the stump at
+  1.15 rad or when caught on its branches. A cushion of leaf boxes jammed the crown into its neighbours' branches and
+  held it up: leaves now pass through, and are pressed into a layer against the ground where it rests.
+- **Grass cut, not faded.** A cut column keeps how many voxels of blade are under the cut; the tops pass keeps the
+  blades to that and drops heads and flowers. Clippings (a new built-in effect) are played at a place in each
+  brick's column cut.
+- **Measured** (development build, shared CPU): felling a 10 m oak takes 0.14 s on the CPU, most of it working out
+  its blocks' pieces and leaves; first versions took 0.45 s, before the pieces were found on each block's own grid
+  and trees' logs were looked for only near the cut trees.
+- **Not yet:** felling off the main thread; pieces lying as bodies kept by a save; leaves of a felled piece in the
+  volume's own look while it falls.
+
+
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in
   the shared notes of the sessions that did this research (`small-voxels.md` and its folder).

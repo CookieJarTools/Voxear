@@ -229,8 +229,78 @@ struct WorldMake
     uint riverWindow;
     // Whether the rivers' and lakes' water is made of voxels (src/voxel_volume/rivers.rs).
     uint waterVoxels;
+    // Where among the edits' words the trees felled and the grass cut are kept (felledCut, cutLeft): NO_TABLE for none.
+    uint felledAt;
+    uint cutsAt;
     WorldJob jobs[MAX_JOBS];
 };
+
+// A table among the edits' words that is not there.
+static const uint NO_TABLE = 0xFFFFFFFFu;
+
+// The slot a foot's or a sector column's place hashes to in a table of `mask` and one slots (table_slot in
+// src/voxel_volume/endless.rs).
+uint tableSlot(int x, int z, uint mask)
+{
+    uint h = (uint(x) * 0x8DA6B343u) ^ (uint(z) * 0xD8163841u);
+    return (h ^ (h >> 15)) & mask;
+}
+
+// How high the stump stands of the tree whose foot is on voxel column `foot` of the finest ring's voxels, in those
+// voxels, where it was felled (src/voxel_volume/fell.rs): nothing of it is left from there up. -1 where it was not.
+int felledCut(WorldMake* make, int2 foot)
+{
+    if (make->felledAt == NO_TABLE)
+    {
+        return -1;
+    }
+    uint* table = make->edits + make->felledAt;
+    uint mask = table[0];
+    uint at = tableSlot(foot.x, foot.y, mask);
+    for (uint n = 0; n <= mask; n++)
+    {
+        uint* slot = table + 1 + at * 3;
+        if (slot[2] == 0)
+        {
+            return -1;
+        }
+        if (int(slot[0]) == foot.x && int(slot[1]) == foot.y)
+        {
+            return int(slot[2]) - 1;
+        }
+        at = (at + 1) & mask;
+    }
+    return -1;
+}
+
+// How many voxels of the blades of voxel column (x, z) of the finest ring's voxels are left over its ground where they
+// were cut: 255 where none was cut.
+uint cutLeft(WorldMake* make, int x, int z)
+{
+    if (make->cutsAt == NO_TABLE)
+    {
+        return 255u;
+    }
+    uint* table = make->edits + make->cutsAt;
+    uint mask = table[0];
+    int2 sector = int2(x >> 6, z >> 6);
+    uint at = tableSlot(sector.x, sector.y, mask);
+    for (uint n = 0; n <= mask; n++)
+    {
+        uint* slot = table + 1 + at * 3;
+        if (slot[2] == 0)
+        {
+            return 255u;
+        }
+        if (int(slot[0]) == sector.x && int(slot[1]) == sector.y)
+        {
+            uint index = uint((x & 63) + 64 * (z & 63));
+            return (table[slot[2] - 1 + (index >> 2)] >> ((index & 3u) * 8u)) & 255u;
+        }
+        at = (at + 1) & mask;
+    }
+    return 255u;
+}
 
 // Whether the volume being made is a ring round a finer one, of larger voxels: its grass stands for the finer blades
 // round each of its columns, and its trees are not kept to its bricks' grid, which is too coarse for them.
@@ -1324,6 +1394,20 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
         stem = min((((r >> 4) & 1u) == 0u ? places & 255u : (places >> 8) & 255u) + 1u, 255u);
         head = min((places & 255u) + 1u, 255u);
     }
+    // Grass, cover and crops cut: what was under the cut stays, the tips over it gone, their heads and flowers with
+    // them. The cut is kept in the finest ring's voxels.
+    int2 finest = int2(floor((float2(float(x), float(z)) + 0.5) * make->voxel / make->fine));
+    uint left = cutLeft(make, finest.x, finest.y);
+    if (left < 255u)
+    {
+        uint kept = uint(floor(float(left) * make->fine / make->voxel));
+        if (kept < blade)
+        {
+            blade = kept;
+            headLength = 0u;
+            flowers = false;
+        }
+    }
     make->columnGrounds[job * TOPS * TOPS + id.x] = biomeGround;
     make->columns[job * TOPS * TOPS + id.x] = min(blade, 255u) | (stem << 8) | (top << 16) | (bare ? 1u << 19 : 0u)
         | (min(headLength, 7u) << 20) | (flowers ? 0u : 1u << 23) | (head << 24);
@@ -1522,7 +1606,10 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
         tree[1] = least.y;
         tree[2] = least.z;
         tree[3] = int(model);
-        tree[4] = 0;
+        // Felled, how high its stump stands and one, in this ring's voxels: 0 for a tree standing whole.
+        int2 fineFoot = int2(floor((float2(cell) + 0.15 + 0.7 * within) * TREE_CELL / make->fine));
+        int cut = felledCut(make, fineFoot);
+        tree[4] = cut < 0 ? 0 : int(floor(float(cut) * make->fine / v)) + 1;
         tree[5] = int(r[0]) * 64;
         tree[6] = int(r[1]) * 64;
         tree[7] = int(r[2]) * 64;
@@ -2211,7 +2298,8 @@ bool treesIn(WorldMake* make, uint packed)
     for (uint t = 0; t < treeCount(make, job); t++)
     {
         int* tree = treeOf(make, job, t);
-        if (treeReaches(make, tree, low, high) && (coarseRing(make) || treeBrick(make, tree, low) >= 0))
+        bool under = tree[4] == 0 || tree[4] - 1 > low.y;
+        if (under && treeReaches(make, tree, low, high) && (coarseRing(make) || treeBrick(make, tree, low) >= 0))
         {
             return true;
         }
@@ -2281,6 +2369,9 @@ groupshared uint sharedKept;
 // The bricks of the trees' plants at the brick, or in a ring the trees whose boxes reach it, and whether the ground has
 // anything in it.
 groupshared uint sharedTrees[MAX_TREES];
+// How high each one's stump stands where it was felled, and whether any was felled within the brick.
+groupshared int sharedCuts[MAX_TREES];
+groupshared uint sharedFelled;
 groupshared uint sharedTreeCount;
 groupshared uint sharedOwn;
 
@@ -2359,6 +2450,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         sharedEven = 0;
         sharedTreeCount = 0;
+        sharedFelled = 0;
         sharedOwn = 0;
         sharedTreeVoxels = 0;
         sharedSway = 0;
@@ -2386,15 +2478,24 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     {
         int3 low = int3(corner.x + bx * 8, row * 8, corner.y + bz * 8);
         int brick = -1;
+        int cut = 0x7FFFFFFF;
         if (index < treeCount(make, job) && treeReaches(make, treeOf(make, job, index), low, low + 7))
         {
-            brick = coarseRing(make) ? int(index) : treeBrick(make, treeOf(make, job, index), low);
+            int* tree = treeOf(make, job, index);
+            brick = coarseRing(make) ? int(index) : treeBrick(make, tree, low);
+            cut = tree[4] == 0 ? cut : tree[4] - 1;
         }
-        if (brick >= 0)
+        // A tree felled under the brick has nothing in it.
+        if (brick >= 0 && cut > low.y)
         {
             uint at;
             InterlockedAdd(sharedTreeCount, 1u, at);
             sharedTrees[at] = uint(brick);
+            sharedCuts[at] = cut;
+            if (cut <= low.y + 7)
+            {
+                InterlockedOr(sharedFelled, 1u);
+            }
         }
     }
     if ((packed & EDITED) != 0)
@@ -2599,7 +2700,9 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     // A brick one tree's alone is its plant's brick: the job's list names it.
     bool loose = coarseRing(make);
-    if (sharedTreeCount == 1 && !edited && !loose)
+    // One felled within the brick keeps only what is under its cut.
+    bool whole = sharedFelled == 0;
+    if (sharedTreeCount == 1 && !edited && !loose && whole)
     {
         if (m != 0)
         {
@@ -2607,7 +2710,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         }
         GroupMemoryBarrierWithGroupSync();
     }
-    if (sharedTreeCount == 1 && !edited && !loose && sharedOwn == 0)
+    if (sharedTreeCount == 1 && !edited && !loose && whole && sharedOwn == 0)
     {
         if (index == 0)
         {
@@ -2631,7 +2734,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             plantBrick = treeBrick(make, tree, here);
             within = (here - int3(tree[0], tree[1], tree[2])) & 7;
         }
-        uint filled = plantBrick >= 0 ? treeVoxel(make, plantBrick, within) : 0u;
+        uint filled = plantBrick >= 0 && y < sharedCuts[t] ? treeVoxel(make, plantBrick, within) : 0u;
         if (filled != 0)
         {
             m = filled;

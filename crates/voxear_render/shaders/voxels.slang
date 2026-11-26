@@ -214,7 +214,7 @@ void voxelSwayOf(VoxelVolume volume, int3 b, uint kind, float time, out float3 m
     {
         return;
     }
-    float3 world = levelPosition(frame, volume.corner + (float3(b * 8) + 4.0) * volume.voxel, 4096.0);
+    float3 world = levelPosition(frame, volume.corner + voxelOutOf(volume, (float3(b * 8) + 4.0) * volume.voxel), 4096.0);
     // The gust over it drifting downwind, as windPush's, in one noise; and its pace, drifting slowly over the ground.
     float2 drift = world.xz / wind.gustSize - wind.direction * (time * wind.gustSpeed / wind.gustSize);
     float blow = clamp(wind.strength * (1.0 + wind.gusts * (windNoise(drift) * 2.0 - 0.6)), 0.0, 2.0);
@@ -478,24 +478,26 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
         VoxelVolume volume = volumes->volumes[v];
         // The corner taken from the camera first: far from the world's middle a place along the ray is a few millimetres
         // out, each pixel's its own way.
-        float3 o = (from - volume.corner + d * start) / volume.voxel;
+        // In its own frame, along its grid: a volume of a set size turns with its Obj.
+        float3 dv = voxelInto(volume, d);
+        float3 o = voxelInto(volume, from - volume.corner + d * start) / volume.voxel;
         VoxelHit hit;
         float far = (nearest.metres - start) / volume.voxel;
         // A ring's walk starts on the edge it passes over, so its first cell is the one past it. Worked out here, and
         // again after a hit, so the walk carries nothing more than a volume's.
         int axis;
         float edge;
-        float skip = voxelRingSkip(volume.outer, volume.hole, o, d, far, axis, edge);
+        float skip = voxelRingSkip(volume.outer, volume.hole, o, dv, far, axis, edge);
         if (far <= 0.0)
         {
             continue;
         }
         if (skip > 0.0)
         {
-            o += d * skip;
+            o += dv * skip;
             o[axis] = edge;
         }
-        bool met = voxelTrace(volume, o, d, far - skip, (foot0 + (start + skip * volume.voxel) * footScale) / volume.voxel, footScale, hit);
+        bool met = voxelTrace(volume, o, dv, far - skip, (foot0 + (start + skip * volume.voxel) * footScale) / volume.voxel, footScale, hit);
         nearest.steps += hit.steps;
         if (hit.glassT >= 0.0 && start + (skip + hit.glassT) * volume.voxel < glass.glassMetres)
         {
@@ -510,11 +512,11 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
             float4 outer = volumes->volumes[v].outer;
             float4 hole = volumes->volumes[v].hole;
             float voxel = volumes->volumes[v].voxel;
-            float3 again = (from + d * start - volumes->volumes[v].corner) / voxel;
+            float3 again = voxelInto(volume, from + d * start - volumes->volumes[v].corner) / voxel;
             float most = 1e30;
-            skip = voxelRingSkip(outer, hole, again, d, most, axis, edge);
+            skip = voxelRingSkip(outer, hole, again, dv, most, axis, edge);
             // A voxel met first past an edge was cut by it: it is lit as its top, never as a side the edge made.
-            if (skip > 0.0 && hit.t <= 0.0 && d.y < 0.0)
+            if (skip > 0.0 && hit.t <= 0.0 && dv.y < 0.0)
             {
                 hit.axis = 1;
             }
@@ -567,14 +569,14 @@ bool voxelsPlainTrace(VoxelVolumes* volumes, float3 from, float3 d, float start,
                 begin = max(begin, min(leave.x, leave.y) * volume.voxel);
             }
         }
-        float3 o = (from + d * begin - volume.corner) / volume.voxel;
+        float3 o = voxelInto(volume, from + d * begin - volume.corner) / volume.voxel;
         VoxelHit hit;
         float far = (nearest.metres - begin) / volume.voxel;
         if (far <= 0.0)
         {
             continue;
         }
-        bool met = voxelTrace(volume, o, d, far, (foot0 + begin * footScale) / volume.voxel, footScale, hit);
+        bool met = voxelTrace(volume, o, voxelInto(volume, d), far, (foot0 + begin * footScale) / volume.voxel, footScale, hit);
         nearest.steps += hit.steps;
         if (hit.glassT >= 0.0 && begin + hit.glassT * volume.voxel < glass.glassMetres)
         {
@@ -696,8 +698,9 @@ uint voxelKindAt(VoxelVolume volume, int3 cell)
 // How far along the ray from `from` along `d` it leaves voxel `cell` of `volume`, in metres.
 float voxelLeaves(VoxelVolume volume, int3 cell, float3 from, float3 d)
 {
-    float3 o = (from - volume.corner) / volume.voxel;
-    float3 dd = select(abs(d) < 1e-7, select(d < 0.0, -1e-7, 1e-7), d);
+    float3 o = voxelInto(volume, from - volume.corner) / volume.voxel;
+    float3 dv = voxelInto(volume, d);
+    float3 dd = select(abs(dv) < 1e-7, select(dv < 0.0, -1e-7, 1e-7), dv);
     float3 far = (float3(cell) + select(dd > 0.0, 1.0, 0.0) - o) / dd;
     return min(min(far.x, far.y), far.z) * volume.voxel;
 }
@@ -757,18 +760,23 @@ float voxelWaterNoise(float2 p)
     return lerp(lerp(corners.x, corners.y, f.x), lerp(corners.z, corners.w, f.x), f.y);
 }
 
-float3 voxelNormal(VoxelHit hit, float3 d)
+// The face of a voxel of `volume` met on side `axis` (none for -1, facing back along the ray) by a ray along `d`, in
+// the world: the side is the volume's own, which turns with it.
+float3 voxelFace(VoxelVolume volume, int axis, float3 d)
 {
+    if (axis < 0)
+    {
+        return -d;
+    }
+    float3 dv = voxelInto(volume, d);
     float3 n = float3(0.0);
-    if (hit.axis >= 0)
-    {
-        n[hit.axis] = d[hit.axis] > 0.0 ? -1.0 : 1.0;
-    }
-    else
-    {
-        n = -d;
-    }
-    return n;
+    n[axis] = dv[axis] > 0.0 ? -1.0 : 1.0;
+    return voxelOutOf(volume, n);
+}
+
+float3 voxelNormal(VoxelVolume volume, VoxelHit hit, float3 d)
+{
+    return voxelFace(volume, hit.axis, d);
 }
 
 // The world-space ray through pixel `pixel` (in the drawn image's pixels), as the frame's jittered camera sees it.
@@ -1008,7 +1016,7 @@ VoxelDepthOut voxelDepth(VoxelVertex input)
         discard;
     }
     VoxelVolume volume = volumes->volumes[hit.volume];
-    float3 normal = voxelNormal(hit, d);
+    float3 normal = voxelNormal(volume, hit, d);
     float roughness = smoothedRoughness(frame, normal, volume.roughness);
     if (volumes->seenOn != 0u)
     {
@@ -1047,7 +1055,7 @@ VoxelOut voxelWaterLit(Frame* frame, float2 pixel, float3 d, VoxelHit hit)
     VoxelVolume volume = volumes->volumes[hit.volume];
     float3 from = voxelOrigin(frame, pixel);
     float3 world = from + d * hit.metres;
-    float3 face = voxelNormal(hit, d);
+    float3 face = voxelNormal(volume, hit, d);
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
@@ -1179,7 +1187,7 @@ VoxelOut voxelOpaque(VoxelVertex input)
         return voxelWaterLit(frame, pixel, d, hit);
     }
     float3 world = voxelOrigin(frame, pixel) + d * hit.metres;
-    float3 normal = voxelNormal(hit, d);
+    float3 normal = voxelNormal(volume, hit, d);
     float3 albedo = voxelColour(volume, hit);
     // A voxel that glows, as a lantern's flame does, shines with its own light.
     float glows = 0.0;
@@ -1336,12 +1344,7 @@ VoxelGlassOut voxelGlass(VoxelVertex input)
     uint packed = glass.z;
     float3 d = voxelRay(frame, pixel);
     float3 world = voxelOrigin(frame, pixel) + d * metres;
-    float3 normal = -d;
-    if (axis >= 0)
-    {
-        normal = 0.0;
-        normal[axis] = d[axis] > 0.0 ? -1.0 : 1.0;
-    }
+    float3 normal = voxelFace(volume, axis, d);
     float3 albedo = pow(float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0, 2.2);
     float solid = 1.0 - float(voxelKind(packed).x) / 16.0;
 
@@ -1441,11 +1444,7 @@ bool voxelShadowPixel(Frame* frame, VoxelVolumes* volumes, float2 pixel, out flo
         if (seen.w == frame->frameIndex + 1 && abs(met - metres) < 0.01 * metres + 2.0 * voxel)
         {
             int axis = int((seen.y >> 18) & 3u) - 1;
-            normal = 0.0;
-            if (axis >= 0)
-            {
-                normal[axis] = d[axis] > 0.0 ? -1.0 : 1.0;
-            }
+            normal = axis >= 0 ? voxelFace(volumes->volumes[min(volume, volumes->count - 1)], axis, d) : float3(0.0);
             world = eye + d * met;
             metres = met;
             lift = voxelLift((seen.y >> 16) & 3u) * voxel;
@@ -1619,11 +1618,13 @@ void voxelCellBits(VoxelVolumes* volumes, float3 middle, bool glows, out uint bi
         {
             continue;
         }
-        int3 b = int3(floor((middle - volume.corner) / (volume.voxel * 8.0)));
+        int3 b = int3(floor(voxelInto(volume, middle - volume.corner) / (volume.voxel * 8.0)));
         int brick = voxelBrickAt(volume, b);
         if (brick == -2)
         {
-            under = under || b.y < volume.sectorCount.y * 8;
+            // Past an endless volume's window and under its top is ground it does not keep; past the box of one of a
+            // set size, as a felled tree's piece, is open air.
+            under = under || (volume.windowed != 0u && b.y < volume.sectorCount.y * 8);
             continue;
         }
         inside = true;
@@ -1776,7 +1777,7 @@ void voxelLightCells(uint3 id: SV_DispatchThreadID)
             {
                 continue;
             }
-            int3 b = int3(floor((middle - volume.corner) / (volume.voxel * 8.0)));
+            int3 b = int3(floor(voxelInto(volume, middle - volume.corner) / (volume.voxel * 8.0)));
             // A sector with nothing in it, as all over a column's band of them, passed at a step.
             for (int y = max(b.y + 2, 0); y < volume.sectorCount.y * 8 && sky;)
             {

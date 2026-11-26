@@ -2183,7 +2183,28 @@ struct VoxelVolume
     // A ring's outer box, a square round the camera within what it has made, past which it draws nothing: the hole of
     // the ring round it. In the same voxels; none where the most is not past the least.
     float4 outer;
+    // How it is turned about its corner with its Obj, as a quaternion: all 0 for not turned, as an endless one never is.
+    float4 turn;
 };
+
+// `v` turned by the quaternion `q`; unturned by one of all 0.
+float3 voxelTurned(float4 q, float3 v)
+{
+    float3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
+// A way or a place from the corner of the world, in `volume`'s own frame: what its voxels' grid runs along.
+float3 voxelInto(VoxelVolume volume, float3 v)
+{
+    return voxelTurned(float4(-volume.turn.xyz, volume.turn.w), v);
+}
+
+// A way in `volume`'s own frame, in the world's.
+float3 voxelOutOf(VoxelVolume volume, float3 v)
+{
+    return voxelTurned(volume.turn, v);
+}
 
 struct VoxelVolumes
 {

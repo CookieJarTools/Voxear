@@ -14,6 +14,13 @@
 //! and a byte a voxel set, packed with zstd: a brick dug or built a voxel at
 //! a time costs at most 600 bytes before it is packed, and a region with a
 //! few hundred voxels changed under a kilobyte.
+//!
+//! Beside them they keep what was cut: the voxel columns whose grass, cover
+//! or crops were cut ([`CutColumns`]), a byte each for how many voxels of
+//! their blades are left under the cut, kept eight by eight columns as the
+//! bricks are; and the trees felled ([`Felled`]), each by the voxel column
+//! of its foot, with how high its stump stands. Both go in the same region
+//! files.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -32,7 +39,7 @@ pub const MOST_KINDS: usize = 255;
 
 /// What a region file starts with, and its version.
 const MAGIC: &[u8; 4] = b"VXRG";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// A kind of voxel placed: its ground or paving, and its tint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -74,12 +81,54 @@ impl ChangedBrick {
     }
 }
 
+/// Eight by eight voxel columns whose grass, cover or crops were cut: for
+/// each, how many voxels of its blades are left over its ground, what was
+/// under the cut, from 0 (cut to the ground) to [`FULL`] (not cut).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CutColumns {
+    /// A bit a column cut, X fastest.
+    pub set: u64,
+    pub left: [u8; 64],
+}
+
+impl Default for CutColumns {
+    fn default() -> Self {
+        Self { set: 0, left: [FULL; 64] }
+    }
+}
+
+/// How many voxels of a column's blades are left where none is cut: all.
+pub const FULL: u8 = 255;
+
+/// A tree felled, by the voxel column of its foot: nothing of it is left
+/// from `cut` up (in voxels from the volume's floor), and its box, least
+/// and most corners in voxels, is where it stood.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Felled {
+    pub cut: i32,
+    pub low: [i32; 3],
+    pub high: [i32; 3],
+}
+
 /// The voxels of an endless volume set one at a time: dug out (air) or
-/// placed (a kind), over what its ground and edits make.
+/// placed (a kind), over what its ground and edits make; and its cut grass
+/// and felled trees.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VoxelChanges {
     kinds: Vec<VoxelKind>,
     bricks: BTreeMap<[i32; 3], Arc<ChangedBrick>>,
+    /// Cut columns, by the column of bricks they are in.
+    cuts: BTreeMap<[i32; 2], Arc<CutColumns>>,
+    felled: BTreeMap<[i32; 2], Felled>,
+}
+
+/// What one region file holds: its bricks, its cut columns' bricks and its
+/// felled trees.
+#[derive(Default)]
+struct Region<'a> {
+    bricks: Vec<([i32; 3], &'a ChangedBrick)>,
+    cuts: Vec<([i32; 2], &'a CutColumns)>,
+    felled: Vec<([i32; 2], &'a Felled)>,
 }
 
 /// What a voxel is set to: dug out, or placed.
@@ -87,7 +136,86 @@ pub type VoxelSet = Option<VoxelKind>;
 
 impl VoxelChanges {
     pub fn is_empty(&self) -> bool {
+        self.bricks.is_empty() && self.cuts.is_empty() && self.felled.is_empty()
+    }
+
+    /// Whether no voxel is set one at a time: none dug or placed.
+    pub fn no_voxels(&self) -> bool {
         self.bricks.is_empty()
+    }
+
+    /// How many voxels of the blades of voxel column (`x`, `z`) are left
+    /// over its ground: none where it was never cut, or has grown back.
+    pub fn cut_left(&self, x: i32, z: i32) -> Option<u8> {
+        let (brick, index) = Self::split_column(x, z);
+        let cut = self.cuts.get(&brick)?;
+        (cut.set >> index & 1 != 0).then_some(cut.left[index])
+    }
+
+    /// Each column of bricks with columns cut, in order.
+    pub fn cuts(&self) -> impl Iterator<Item = (&[i32; 2], &Arc<CutColumns>)> {
+        self.cuts.iter()
+    }
+
+    fn split_column(x: i32, z: i32) -> ([i32; 2], usize) {
+        let brick = [x.div_euclid(BRICK), z.div_euclid(BRICK)];
+        (brick, (x.rem_euclid(BRICK) + BRICK * z.rem_euclid(BRICK)) as usize)
+    }
+
+    /// Cuts the grass, cover or crops of voxel column (`x`, `z`) `keep`
+    /// voxels over its ground: what is under that stays, the rest is gone.
+    /// Gives whether that is lower than it was cut before.
+    pub fn cut(&mut self, x: i32, z: i32, keep: u8) -> bool {
+        let (brick, index) = Self::split_column(x, z);
+        let cut = Arc::make_mut(self.cuts.entry(brick).or_default());
+        let before = if cut.set >> index & 1 == 0 { FULL } else { cut.left[index] };
+        cut.set |= 1 << index;
+        cut.left[index] = before.min(keep);
+        keep < before
+    }
+
+    /// Grows the cut columns back by `grow` voxels, letting go of those
+    /// grown to `tallest`, as tall as anything grows there. Gives whether
+    /// any changed.
+    pub fn tend_cuts(&mut self, grow: u8, tallest: u8) -> bool {
+        if grow == 0 {
+            return false;
+        }
+        let changed = !self.cuts.is_empty();
+        self.cuts.retain(|_, cut| {
+            let cut = Arc::make_mut(cut);
+            let set = cut.set;
+            for index in (0..64).filter(|&index| set >> index & 1 != 0) {
+                cut.left[index] = cut.left[index].saturating_add(grow);
+                if cut.left[index] >= tallest {
+                    (cut.set, cut.left[index]) = (cut.set & !(1 << index), FULL);
+                }
+            }
+            cut.set != 0
+        });
+        changed
+    }
+
+    /// Whether any column is cut.
+    pub fn any_cut(&self) -> bool {
+        !self.cuts.is_empty()
+    }
+
+    /// The tree whose foot is on voxel column `foot`, where it was felled.
+    pub fn felled(&self, foot: [i32; 2]) -> Option<Felled> {
+        self.felled.get(&foot).copied()
+    }
+
+    /// Each tree felled, by the column of its foot.
+    pub fn all_felled(&self) -> impl Iterator<Item = (&[i32; 2], &Felled)> {
+        self.felled.iter()
+    }
+
+    /// Fells the tree whose foot is on `foot`: nothing of it left from its
+    /// `cut` up, lower than it was felled before.
+    pub fn fell(&mut self, foot: [i32; 2], felled: Felled) {
+        let kept = self.felled.entry(foot).or_insert(felled);
+        kept.cut = kept.cut.min(felled.cut);
     }
 
     /// Its kinds of placed voxel, a voxel's code less one naming its place.
@@ -212,25 +340,68 @@ impl VoxelChanges {
         for brick in older.bricks.keys().filter(|brick| !self.bricks.contains_key(*brick)) {
             note(brick);
         }
+        // A tree felled, or let stand again: its box.
+        for (foot, felled) in &self.felled {
+            if older.felled.get(foot) != Some(felled) {
+                boxes.push((felled.low, felled.high));
+            }
+        }
+        for (foot, felled) in &older.felled {
+            if !self.felled.contains_key(foot) {
+                boxes.push((felled.low, felled.high));
+            }
+        }
+        boxes
+    }
+
+    /// The columns of bricks, least and most voxel columns along X and Z,
+    /// whose cut grass differs from `older`'s: which leaves every voxel as
+    /// solid as it was.
+    pub fn cuts_changed_from(&self, older: &Self) -> Vec<([i32; 2], [i32; 2])> {
+        let mut boxes = Vec::new();
+        let mut note = |brick: &[i32; 2]| {
+            let low = brick.map(|a| a * BRICK);
+            boxes.push((low, low.map(|a| a + BRICK - 1)));
+        };
+        for (brick, cut) in &self.cuts {
+            if older.cuts.get(brick).is_none_or(|old| !(Arc::ptr_eq(old, cut) || old == cut)) {
+                note(brick);
+            }
+        }
+        for brick in older.cuts.keys().filter(|brick| !self.cuts.contains_key(*brick)) {
+            note(brick);
+        }
         boxes
     }
 
     /// Its bricks by the region file each is kept in: the region's place,
     /// in regions along X and Z, and its file's bytes.
     pub fn regions(&self) -> Vec<([i32; 2], Vec<u8>)> {
-        let mut by: BTreeMap<[i32; 2], Vec<([i32; 3], &ChangedBrick)>> = BTreeMap::new();
+        let mut by: BTreeMap<[i32; 2], Region> = BTreeMap::new();
+        let region_of = |x: i32, z: i32| [x.div_euclid(REGION_BRICKS), z.div_euclid(REGION_BRICKS)];
         for (brick, changed) in &self.bricks {
-            let region = [brick[0].div_euclid(REGION_BRICKS), brick[2].div_euclid(REGION_BRICKS)];
-            by.entry(region).or_default().push((*brick, changed));
+            by.entry(region_of(brick[0], brick[2])).or_default().bricks.push((*brick, changed));
         }
-        by.into_iter().map(|(region, bricks)| (region, self.region_bytes(region, &bricks))).collect()
+        for (brick, cut) in &self.cuts {
+            by.entry(region_of(brick[0], brick[1])).or_default().cuts.push((*brick, cut));
+        }
+        for (foot, felled) in &self.felled {
+            let region = region_of(foot[0].div_euclid(BRICK), foot[1].div_euclid(BRICK));
+            by.entry(region).or_default().felled.push((*foot, felled));
+        }
+        by.into_iter().map(|(region, held)| (region, self.region_bytes(region, &held))).collect()
     }
 
     /// A region file: its magic and version, where it is, its kinds (a
     /// ground or paving a byte, whether tinted, and its tint), how many
     /// bricks, then packed with zstd each brick's place in the region (X and
-    /// Z a byte, Y two), its voxels' bits and the codes of those set.
-    fn region_bytes(&self, region: [i32; 2], bricks: &[([i32; 3], &ChangedBrick)]) -> Vec<u8> {
+    /// Z a byte, Y two), its voxels' bits and the codes of those set; then
+    /// how many columns of bricks with cut grass, each its place (X and Z a
+    /// byte), its bits cut and fading and what is left of each column cut;
+    /// then how many trees felled, each its foot's column and its stump's
+    /// height and box, as whole numbers of four bytes.
+    fn region_bytes(&self, region: [i32; 2], held: &Region) -> Vec<u8> {
+        let bricks = &held.bricks;
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -253,6 +424,20 @@ impl VoxelChanges {
             }
             payload.extend((0..512).filter(|&index| changed.is_set(index)).map(|index| changed.codes[index]));
         }
+        payload.extend_from_slice(&(held.cuts.len() as u32).to_le_bytes());
+        for (brick, cut) in &held.cuts {
+            payload.push((brick[0] - region[0] * REGION_BRICKS) as u8);
+            payload.push((brick[1] - region[1] * REGION_BRICKS) as u8);
+            payload.extend_from_slice(&cut.set.to_le_bytes());
+            // Once which were still fading; kept so files stay as they were.
+            payload.extend_from_slice(&0u64.to_le_bytes());
+            payload.extend((0..64).filter(|&index| cut.set >> index & 1 != 0).map(|index| cut.left[index]));
+        }
+        payload.extend_from_slice(&(held.felled.len() as u32).to_le_bytes());
+        for (foot, felled) in &held.felled {
+            let numbers = [foot[0], foot[1], felled.cut].into_iter().chain(felled.low).chain(felled.high);
+            numbers.for_each(|n| payload.extend_from_slice(&n.to_le_bytes()));
+        }
         out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         out.extend_from_slice(&zstd::bulk::compress(&payload, 3).unwrap_or_default());
         out
@@ -263,8 +448,9 @@ impl VoxelChanges {
     pub fn read_region(&mut self, bytes: &[u8]) -> Result<()> {
         ensure!(bytes.len() >= 21 && &bytes[..4] == MAGIC, "not a region of voxel changes");
         let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"));
-        if word(4) != VERSION {
-            bail!("a region of voxel changes of version {}, which this Voxear cannot read", word(4));
+        let version = word(4);
+        if version == 0 || version > VERSION {
+            bail!("a region of voxel changes of version {version}, which this Voxear cannot read");
         }
         let region = [word(8) as i32, word(12) as i32];
         let kinds = usize::from(bytes[16]);
@@ -305,6 +491,34 @@ impl VoxelChanges {
             if !changed.is_empty() {
                 self.bricks.insert(brick, Arc::new(changed));
             }
+        }
+        // The first version kept no cut grass or felled trees.
+        if version < 2 {
+            return Ok(());
+        }
+        let count = u32::from_le_bytes(take(4)?.try_into()?);
+        for _ in 0..count {
+            let place = take(2)?;
+            let brick = [i32::from(place[0]) + region[0] * REGION_BRICKS, i32::from(place[1]) + region[1] * REGION_BRICKS];
+            let mut cut = CutColumns { set: u64::from_le_bytes(take(8)?.try_into()?), ..CutColumns::default() };
+            // Once which were still fading.
+            take(8)?;
+            let set: Vec<usize> = (0..64).filter(|&index| cut.set >> index & 1 != 0).collect();
+            for (&index, &left) in set.iter().zip(take(set.len())?) {
+                cut.left[index] = left;
+            }
+            if cut.set != 0 {
+                self.cuts.insert(brick, Arc::new(cut));
+            }
+        }
+        let count = u32::from_le_bytes(take(4)?.try_into()?);
+        for _ in 0..count {
+            let mut n = [0i32; 9];
+            for number in &mut n {
+                *number = i32::from_le_bytes(take(4)?.try_into()?);
+            }
+            let felled = Felled { cut: n[2], low: [n[3], n[4], n[5]], high: [n[6], n[7], n[8]] };
+            self.fell([n[0], n[1]], felled);
         }
         Ok(())
     }
@@ -355,5 +569,35 @@ mod tests {
         let changed = fewer.changed_from(&changes);
         // The two bricks the wall was in, which keep the tunnel's voxels.
         assert_eq!(changed, vec![([0, 24, 0], [7, 31, 7]), ([0, 32, 0], [7, 39, 7])]);
+    }
+
+    #[test]
+    fn cut_grass_keeps_what_was_under_the_cut_grows_back_and_is_kept_with_felled_trees_in_the_regions() {
+        let mut changes = VoxelChanges::default();
+        for x in -3..3 {
+            assert!(changes.cut(x, 7, 4));
+        }
+        assert!(!changes.cut(0, 7, 6), "cut lower already");
+        assert!(changes.cut(0, 7, 1), "cut lower now");
+        assert_eq!(changes.cut_left(0, 7), Some(1));
+        assert_eq!(changes.cut_left(1, 7), Some(4));
+        assert_eq!(changes.cut_left(0, 8), None);
+        let felled = Felled { cut: 40, low: [-20, 30, -20], high: [20, 200, 20] };
+        changes.fell([-1, 2], felled);
+        changes.fell([-1, 2], Felled { cut: 60, ..felled });
+        assert_eq!(changes.felled([-1, 2]).map(|f| f.cut), Some(40), "the lower cut is kept");
+        let regions = changes.regions();
+        assert_eq!(regions.len(), 2, "on both sides of X 0");
+        let back = VoxelChanges::from_regions(regions.iter().map(|(_, bytes)| bytes.as_slice())).unwrap();
+        assert_eq!(back, changes);
+        // Growing back a voxel at a time, let go once as tall as anything grows there.
+        let before = changes.clone();
+        assert!(changes.tend_cuts(2, 8));
+        assert_eq!(changes.cut_left(0, 7), Some(3));
+        assert_eq!(changes.cuts_changed_from(&before), vec![([-8, 0], [-1, 7]), ([0, 0], [7, 7])]);
+        assert!(changes.changed_from(&before).is_empty(), "no voxel is any more or less solid");
+        while changes.tend_cuts(2, 8) {}
+        assert_eq!(changes.cut_left(0, 7), None);
+        assert!(!changes.any_cut() && !changes.is_empty(), "the felled tree");
     }
 }

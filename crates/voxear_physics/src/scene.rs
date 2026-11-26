@@ -203,6 +203,18 @@ pub struct ColliderMesh {
 
 impl Component for ColliderMesh {}
 
+/// Boxes a collider takes its shape from in place of its own, in its Obj's
+/// own space, each its middle and half its size: a shape of many boxes, as
+/// a felled tree's logs are, which a dynamic Rigidbody can have too. `key`
+/// names them, so that its body is made again when they change.
+#[derive(Clone, Debug)]
+pub struct ColliderBoxes {
+    pub key: u64,
+    pub boxes: Arc<[(Vec3, Vec3)]>,
+}
+
+impl Component for ColliderBoxes {}
+
 /// Makes physics move its Obj, which needs a Collider beside it. A
 /// kinematic one is moved by the game instead, pushing what is in the way.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -604,6 +616,9 @@ struct JointKey {
     other: Option<BodyId>,
 }
 
+/// Told apart from a mesh's key in a body's key: a collider's boxes.
+const BOXES_KEY: u64 = 0xB0CE_5000_0000_0000;
+
 /// What a body was made from, to make it again when any of it changes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct BodyKey {
@@ -619,6 +634,9 @@ struct Kept {
     body: BodyId,
     shape: ShapeId,
     key: BodyKey,
+    /// How far its shape reaches from its place, for a shape of boxes: the
+    /// voxels it collides with are made as far round it. 0 for others.
+    reach: f32,
     /// Where it was put last, to tell when the game moved it.
     placed: (Vec3, Quat),
     /// Where a kinematic body was before it was brought to its Obj ahead of
@@ -1646,7 +1664,14 @@ impl PhysicsScene {
         let rigidbody = world.get::<Rigidbody>(entity).copied();
         let layer = layer_in(world, entity, dimension);
         let mesh = world.get::<ColliderMesh>(entity).filter(|_| collider.shape == ColliderShape::Mesh);
-        let key = BodyKey { collider, rigidbody, scale, layer, mesh: mesh.map(|mesh| mesh.key) };
+        let boxes = world.get::<ColliderBoxes>(entity);
+        let key = BodyKey {
+            collider,
+            rigidbody,
+            scale,
+            layer,
+            mesh: mesh.map(|mesh| mesh.key).or(boxes.map(|boxes| boxes.key ^ BOXES_KEY)),
+        };
         // Gone into another dimension, or onto another layer, the body is put there as it is, keeping its speed.
         let only_layer = |kept: &&mut Kept| kept.key.layer != layer && kept.key == BodyKey { layer: kept.key.layer, ..key };
         if let Some(kept) = self.bodies.get_mut(&entity).filter(only_layer) {
@@ -1662,7 +1687,7 @@ impl PhysicsScene {
             if collider.shape == ColliderShape::Mesh && mesh.is_none() {
                 return;
             }
-            self.add(entity, key, mesh.cloned(), position, rotation);
+            self.add(entity, key, (mesh.cloned(), boxes.cloned()), position, rotation);
             if let Some(kept) = self.bodies.get_mut(&entity) {
                 kept.seen = Some(seen);
             }
@@ -1729,13 +1754,32 @@ impl PhysicsScene {
         held
     }
 
-    fn add(&mut self, entity: Entity, key: BodyKey, mesh: Option<ColliderMesh>, position: Vec3, rotation: Quat) {
+    fn add(
+        &mut self,
+        entity: Entity,
+        key: BodyKey,
+        (mesh, boxes): (Option<ColliderMesh>, Option<ColliderBoxes>),
+        position: Vec3,
+        rotation: Quat,
+    ) {
         let motion = match key.rigidbody {
             None => Motion::Static,
             Some(body) if body.kinematic => Motion::Kinematic,
             Some(_) => Motion::Dynamic,
         };
-        let Some(shape) = self.shape(&key.collider, key.scale, mesh.as_ref(), motion == Motion::Dynamic) else {
+        let reach = boxes.as_ref().map_or(0.0, |boxes| {
+            let scale = key.scale.abs().max_element();
+            boxes.boxes.iter().map(|(at, half)| (at.length() + half.length()) * scale).fold(0.0, f32::max)
+        });
+        let made = match &boxes {
+            Some(boxes) => {
+                let scale = key.scale.abs().max(Vec3::splat(1e-4));
+                let scaled: Vec<(Vec3, Vec3)> = boxes.boxes.iter().map(|(at, half)| (*at * scale, *half * scale)).collect();
+                self.world.boxes_shape(&scaled)
+            }
+            None => self.shape(&key.collider, key.scale, mesh.as_ref(), motion == Motion::Dynamic),
+        };
+        let Some(shape) = made else {
             return tracing::warn!("an Obj's mesh has no triangles to collide with; its collider is left out");
         };
         let mut desc = BodyDesc::new(shape, motion).at(position, rotation);
@@ -1755,7 +1799,7 @@ impl PhysicsScene {
             return tracing::warn!("physics is full; an Obj's collider is left out");
         };
         self.owners.insert(body, entity);
-        let kept = Kept { body, shape, key, placed: (position, rotation), swept_from: None, seen: None };
+        let kept = Kept { body, shape, key, reach, placed: (position, rotation), swept_from: None, seen: None };
         self.bodies.insert(entity, kept);
     }
 

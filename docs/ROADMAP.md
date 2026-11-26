@@ -4516,7 +4516,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stage 4 begun)
+## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stages 4 and 7 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4639,7 +4639,14 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   the CPU's ray meets it too. Making the window's columns with ten prints in view takes the 0.3 s it took without,
   and drawing costs what it did on master to the hundredth of a millisecond. Made with **Make Voxel Print** on a
   model, its Inspector's **Make Again**, `voxel_prints.make`; printed with the brush's Print mode, `Voxels.Print` in
-  C# and `voxels.print`. Next: changed bricks in region files, edits over the network, collision.
+  C# and `voxels.print`. Next: changed bricks in region files, edits over the network.
+- **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
+  its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
+  CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A
+  Voxel Collider's solid voxels are made into meshes of their faces in 2 m chunks, only round characters and
+  Rigidbodies and where they will be in half a second, nearest first on workers of their own; a change makes again
+  only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
+  Not yet: volumes of a set size, navigation.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

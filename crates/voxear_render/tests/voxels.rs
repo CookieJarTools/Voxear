@@ -735,6 +735,53 @@ fn a_ray_worked_out_on_the_cpu_meets_the_ground_the_gpu_draws() {
     }
 }
 
+#[test]
+fn the_cpus_trees_stand_where_the_gpu_draws_them() {
+    let Some(mut renderer) = renderer() else { return };
+    // A wood from 20 m over it, straight down, its leaves red and its wood blue, in still air.
+    let mut trees = oaks_and_pines();
+    for kind in &mut trees {
+        (kind.wood, kind.leaves) = ([40, 40, 230], [230, 40, 40]);
+    }
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = generated_view(hills, 8.0, 8.0, 20.0, 90.0);
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = trees;
+    scene.spawn((WindZone { strength: 0.0, ..WindZone::default() }, Transform::default()));
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("cpu trees from above.png", &pixels);
+    let (camera, place) = scene.query::<(&Camera, &Transform)>().into_iter().next().map(|(c, t)| (c.clone(), t.clone())).unwrap();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let bare = VoxelVolume { trees: Vec::new(), ..volume.clone() };
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let tan = (camera.fov_y_for(aspect) * 0.5).tan();
+    let (forward, up) = (place.rotation * Vec3::Z, place.rotation * Vec3::Y);
+    let right = up.cross(forward);
+    let (mut agree, mut all, mut gpu_trees, mut cpu_trees) = (0, 0, 0, 0);
+    let started = std::time::Instant::now();
+    for py in (6..HEIGHT).step_by(12) {
+        for px in (6..WIDTH).step_by(12) {
+            let x = ((px as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0) * tan * aspect;
+            let y = (1.0 - (py as f32 + 0.5) / HEIGHT as f32 * 2.0) * tan;
+            let d = (forward + right * x + up * y).normalize();
+            let ray = |volume: &VoxelVolume| voxear_render::voxel_raycast(volume, Vec3::ZERO, place.position, d, 200.0);
+            let (Some(hit), Some(ground)) = (ray(&volume), ray(&bare)) else { continue };
+            let cpu = hit.distance < ground.distance - 0.1;
+            // Red leaves and blue wood, lit or in shadow: most of the pixel's light red, or blue. Inside the crowns
+            // the shade is black, which the ground in the sun never is.
+            let [r, g, b] = rgb_at(&pixels, px, py).map(|c| c as f32);
+            let sum = (r + g + b).max(1.0);
+            let gpu = sum <= 6.0 || r / sum > 0.5 || b / sum > 0.5;
+            all += 1;
+            agree += usize::from(cpu == gpu);
+            gpu_trees += usize::from(gpu);
+            cpu_trees += usize::from(cpu);
+        }
+    }
+    eprintln!("{agree} of {all} agree; trees at {gpu_trees} on the GPU, {cpu_trees} on the CPU, in {:?}", started.elapsed());
+    assert!(gpu_trees * 4 > all, "the wood covers the view: {gpu_trees} of {all}");
+    assert!(agree * 100 >= all * 95, "the CPU's trees are the GPU's: {agree} of {all} agree");
+}
+
 fn with_trees(mut scene: World) -> World {
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = oaks_and_pines();
     scene

@@ -22,6 +22,7 @@ pub(crate) use endless::generated_at;
 mod ground;
 pub mod print;
 mod ray;
+mod solid;
 mod trees;
 mod voxelize;
 
@@ -35,6 +36,7 @@ use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
+pub use solid::VoxelSolids;
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;

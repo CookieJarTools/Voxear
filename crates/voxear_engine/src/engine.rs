@@ -841,6 +841,7 @@ impl Engine {
             }
             scene
         };
+        crate::voxel_volumes::sync_colliders(&mut self.world);
         let scene = self.world.remove_resource::<PhysicsScene>();
         if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(made)) {
             {

@@ -835,6 +835,42 @@ ground, in order (`VoxelVolume::edits`), as the plan has edits go out over the n
 
 ![A pit carved out and a ball of rock filled, a bite carved out of the rock after](../images/small-voxels/edits-from-above.webp)
 
+## Stage 7 begun: collision (2026-11-26)
+
+Nothing collided with an endless volume: its ground is made on the GPU as columns come into view and never kept on
+the CPU. Physics needs the solid voxels near what moves, and only there.
+
+- **What is solid** (`voxel_volume/solid.rs`). The CPU's ground, worked out as the GPU makes it, was the ray's
+  (`ray.rs`); it now also places the trees, by the GPU's hashes on the same ground: each cell's kind and foot, the
+  ground's height and slope there, the generator's climate and rock, and the Volume's density under the foot, all
+  worked out at once for the cells round a box. Each plant's voxels are made on the CPU in its four turns, as the
+  GPU's are, and kept for every volume with the same trees. A log is solid, leaves are not; where two trees cross, a
+  log wins. A test looking down on a wood with red leaves and blue logs checks the CPU's rays find trees where the
+  picture has them.
+- **Chunks round what moves** (`voxear_physics` `scene/voxels.rs`). An Obj's `VoxelCollider` says which voxels are
+  solid; the engine gives every endless volume one, again whenever it changes. Its voxels are made into a static
+  mesh of their faces in chunks of 32 voxels a side, faces side by side in a plane joined into rectangles. Chunks
+  are wanted within 5 m across and 2 m up and down of each character and Rigidbody, where it is and where it will be
+  in half a second; those within a metre of where it is are made at once if not ready.
+- **What it cost to get there.** Measured walking at 6 m/s for ten seconds, with other sessions' builds keeping the
+  machine busy (load about 20 on 24 threads):
+
+  | Physics step | Median | Most | Over 2 ms |
+  |---|---|---|---|
+  | The volume's own hills | 0.17 ms | 3.0 ms | 1 of 600 |
+  | Rolling Hills | 0.22 ms | 6.3 ms | 13 of 600 |
+
+  - At first, chunks within a metre were made at once 1 to 2 times a second, at 8 to 23 ms each on a generator's
+    ground. A chunk's heights were asked of the generator a column at a time, each tree's foot five times more,
+    and every voxel looked in every tree near it.
+  - Heights asked as one row, trees' feet all at once, a tree's box checked before its voxels, and each plant's log
+    voxels listed and stamped in took a chunk to 2.5 to 5 ms.
+  - The rest was waiting: the workers' queue is first come, first served, and a hundred far chunks stood before the
+    one needed. The chunks now have a queue of their own, sorted nearest first every step, on six workers.
+  - One fault on the way: the chunks wanted at once were measured from where a mover would be in half a second,
+    not from where it was, so they came due as soon as they were asked for.
+- **Not yet.** Volumes of a set size; physics rays meet only the chunks made round what moves; navigation.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

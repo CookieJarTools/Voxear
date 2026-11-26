@@ -48,17 +48,33 @@ static const uint COUNTERS = 4;
 static const uint SECTOR_COUNTS = MAX_JOBS * COUNTERS + 8 + MAX_JOBS;
 static const uint TREE_COUNTS = SECTOR_COUNTS + MAX_JOBS * 16;
 static const uint EDIT_COUNTS = TREE_COUNTS + MAX_JOBS * 16;
-// The most edits that reach a column, and a brick with its border: more are left out, the latest first.
-static const uint MOST_COLUMN_EDITS = 1024;
-static const uint MOST_BRICK_EDITS = 128;
-// An edit: where its ball's middle is, in voxels from the volume's floor at the world's middle, its radius in voxels,
-// and what fills it: 0 for air, carved out, else what ground it is and one (VoxelMaterial in src/voxel_volume.rs:
-// dirt, grass, rock, sand, snow or gravel). Or a Voxel Print printed (src/voxel_volume/print.rs): where its origin is
-// and how far its box reaches from there, its number among the prints marked with PRINT_EDIT, how many of its voxels
-// a voxel of the world is (less than nothing where it is looked at round each voxel's middle too, as `editHeld` says),
-// the box it reaches (least corner, then most), and how it is turned back, a quaternion.
-static const uint EDIT_WORDS = 16;
-static const uint PRINT_EDIT = 0x80000000u;
+// The most edits that reach a column and the trees round it, and a brick with its border: more are left out, the latest
+// first.
+static const uint MOST_COLUMN_EDITS = 4096;
+static const uint MOST_BRICK_EDITS = 256;
+// An edit (src/voxel_volume/endless.rs): where it is placed, in the world's voxels from the volume's floor at the world's
+// middle, and the radius of a ball round there that holds it all; its kind, what fills it and its marks (EDIT_BALL and
+// on); the box it reaches, least corner then most; then its shape in whole numbers (Fixed in src/voxel_volume/edit.rs),
+// sixteenths of a voxel: how it is turned back, its rows in 4096ths (12 to 20); its colour table, where its places in
+// the palette are among these words, none for an untinted fill (21); where it is placed (22 to 24); a ball's radius, a
+// box's or a bank's half width, height and half length, an area's foot and top, or a print's number among the prints
+// and how many of its voxels and of the world's make a metre (25 to 27); what a box, a bank or an area clears over its
+// top (28); and an outline's points among these words and how many (29, 30), or a print's origin among its own voxels
+// (29 to 31). A cover's depth and what it clears are whole voxels (18, 19). The outlines, colour tables and voxels set
+// one at a time follow the edits.
+static const uint EDIT_WORDS = 32;
+// A volume's palette (src/voxel_volume/endless.rs): its first places shared by every brick, the rest in banks of
+// BANK_COLOURS, a brick's materials in its own bank over the shared places; the bank kept over a brick's average colour.
+static const uint SHARED_COLOURS = 128u;
+static const uint BANK_COLOURS = 128u;
+static const uint COLOUR_BANKS = 32u;
+static const uint BANK_SHIFT = 27u;
+
+// The bank palette place `place` (not a shared one) is in.
+uint bankOf(uint place)
+{
+    return place < SHARED_COLOURS + BANK_COLOURS ? 0u : (place - SHARED_COLOURS - BANK_COLOURS) / BANK_COLOURS + 1u;
+}
 // The prints (src/voxel_volume/endless.rs): how many, then for each its bricks along X, Y and Z, where its grid, its
 // bricks and its materials start among the words, its size in voxels, where its origin is in them, and where its
 // footprint starts: a bit for each of its columns, X fastest, set where the column has any solid.
@@ -136,6 +152,16 @@ struct WorldMake
     uint* edits;
     uint* jobEdits;
     uint* prints;
+    // A world of blocks' biomes and the places of their blocks' colours, where the generator has any (biomeOf).
+    uint* biomes;
+    // What each column of a job is made of where it is a biome's ground (GROUND_BIOMES on), else 0, beside its word.
+    uint* columnGrounds;
+    // A generator's rivers, laid in from the CPU (src/voxel_volume/rivers.rs): for each slot of a window of columns
+    // a little wider than the volume's, `riverWindow` a side, the column it holds and its points; none without rivers.
+    uint* rivers;
+    // What grows where (src/voxel_volume/growth.rs): the World Areas the trees and cover keep within or out of, by
+    // their tags, and the kinds of cover.
+    uint* growth;
     float height;
     float hills;
     float hillSpacing;
@@ -181,6 +207,9 @@ struct WorldMake
     // The finest ring's voxel, in metres: `voxel` itself for the finest, larger for a ring round it
     // (src/voxel_volume/endless.rs).
     float fine;
+    uint riverWindow;
+    // Whether the rivers' and lakes' water is made of voxels (src/voxel_volume/rivers.rs).
+    uint waterVoxels;
     WorldJob jobs[MAX_JOBS];
 };
 
@@ -267,6 +296,105 @@ static const uint GROUND_ROCK = 1;
 static const uint GROUND_SAND = 2;
 static const uint GROUND_SNOW = 3;
 static const uint GROUND_GRAVEL = 4;
+static const uint GROUND_DIRT = 5;
+
+// A column's word, as the tops pass packs it: how tall what grows on it is in voxels, its stem's material, what the
+// ground is, whether it is bare, how many voxels at the top are its head, whether cover keeps flowers off it, and its
+// head's material.
+int columnBlade(uint column)
+{
+    return int(column & 255u);
+}
+
+uint columnTop(uint column)
+{
+    return (column >> 16) & 7u;
+}
+
+bool columnBare(uint column)
+{
+    return ((column >> 19) & 1u) != 0;
+}
+
+bool columnCovered(uint column)
+{
+    return ((column >> 23) & 1u) != 0;
+}
+
+// What the ground of column (x, z) of a job is made of, its word `column`: its biome's ground where it has one.
+uint groundTop(WorldMake* make, uint job, int x, int z, uint column)
+{
+    if (make->biomes != nullptr)
+    {
+        uint ground = make->columnGrounds[job * TOPS * TOPS + uint((z + TOP_BORDER) * TOPS + x + TOP_BORDER)];
+        if (ground != 0)
+        {
+            return ground;
+        }
+    }
+    return columnTop(column);
+}
+
+// The voxel `y` up of what grows on a column whose ground's top is `base` voxels high: its head's material at the top,
+// its stem's under it, or 0 over it.
+uint growthVoxel(uint column, int y, int base, int tall)
+{
+    int blade = columnBlade(column);
+    if (base < 0 || y <= base || y > min(base + blade, tall - 1))
+    {
+        return 0;
+    }
+    int head = int((column >> 20) & 7u);
+    return y > base + blade - head ? column >> 24 : (column >> 8) & 255u;
+}
+
+// A generator's rivers (src/voxel_volume/rivers.rs): each column's points RIVER_STEP voxels apart, from one step back
+// of its corner, RIVER_GRID a side; a column's entry holds where it is, whether the rivers change anything there, then
+// how much they raise the ground at each point (cut it down where less than nothing), then how high their water
+// stands there, in metres of the generator's world, then how many metres of a waterfall pour down there.
+static const int RIVER_GRID = 11;
+static const int RIVER_STEP = 8;
+static const uint RIVER_WORDS = 4 + 3 * 11 * 11;
+static const float NO_RIVER_WATER = -1.0e6;
+
+// The point a voxel column `x` of a column lies after along an axis, and how far on to the next, as the CPU reads it.
+int riverBetween(int x, out float f)
+{
+    float u = (float(x) + 0.5) * (1.0 / float(RIVER_STEP)) + 1.0;
+    float i = clamp(floor(u), 0.0, float(RIVER_GRID - 2));
+    f = u - i;
+    return int(i);
+}
+
+// What the rivers make of voxel column (x, z) of the world: in x, how many metres they raise its ground, read between
+// the four points round it as the CPU reads them; in y, how high the highest water among those points stands, or
+// NO_RIVER_WATER where there is none.
+float2 riverAt(WorldMake* make, int x, int z)
+{
+    uint w = make->riverWindow;
+    if (w == 0)
+    {
+        return float2(0.0, NO_RIVER_WATER);
+    }
+    int2 c = int2(x >> 6, z >> 6);
+    uint2 slot = uint2(uint(c.x + int(w) * 65536), uint(c.y + int(w) * 65536)) % w;
+    uint* entry = make->rivers + (slot.y * w + slot.x) * RIVER_WORDS;
+    if (int(entry[0]) != c.x || int(entry[1]) != c.y || entry[2] == 0)
+    {
+        return float2(0.0, NO_RIVER_WATER);
+    }
+    float fx;
+    float fz;
+    int i = riverBetween(x - c.x * 64, fx);
+    int j = riverBetween(z - c.y * 64, fz);
+    uint at = uint(j * RIVER_GRID + i);
+    float* cut = (float*)(entry + 4);
+    float* water = cut + RIVER_GRID * RIVER_GRID;
+    float low = cut[at] + (cut[at + 1] - cut[at]) * fx;
+    float high = cut[at + RIVER_GRID] + (cut[at + RIVER_GRID + 1] - cut[at + RIVER_GRID]) * fx;
+    float wet = max(max(water[at], water[at + 1]), max(water[at + RIVER_GRID], water[at + RIVER_GRID + 1]));
+    return float2(low + (high - low) * fz, wet);
+}
 
 int heightOf(WorldMake* make, uint job, int x, int z)
 {
@@ -280,7 +408,7 @@ uint columnOf(WorldMake* make, uint job, int x, int z)
 
 uint topOf(WorldMake* make, uint job, int x, int z)
 {
-    return (columnOf(make, job, x, z) >> 16) & 255u;
+    return columnTop(columnOf(make, job, x, z));
 }
 
 // The height of a column's surface, in voxels: with a Volume, its top solid voxel with open air over it near its
@@ -299,7 +427,7 @@ int surfaceOf(WorldMake* make, uint job, int x, int z)
 // Whether a column's top is bare, so nothing grows on it.
 bool bareAt(WorldMake* make, uint job, int x, int z)
 {
-    return (columnOf(make, job, x, z) >> 24) != 0;
+    return columnBare(columnOf(make, job, x, z));
 }
 
 // The ground's height and climate at a voxel column from the generator, at its middle in the generator's world.
@@ -335,7 +463,8 @@ float densityWith(WorldMake* make, int3 p, uint* carried)
         slots[s] = 0.0;
     }
     runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carried, slots);
-    return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)];
+    // The rivers' cut moves the ground's surface down by as much, as how far into it a voxel is goes by metres.
+    return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)] + riverAt(make, p.x, p.z).x;
 }
 
 // How far into the ground of the Volume a voxel is, in metres (out of it where negative): column (x, z) of a
@@ -376,15 +505,143 @@ int voxelsUp(WorldMake* make, float height)
     return int(floor((height - make->floor) / make->voxel));
 }
 
+// The rivers' water over voxel column (x, z) of the world: in x, how high it stands, in metres of the generator's
+// world, read between the four points round it where they all have water and else the highest of them, or
+// NO_RIVER_WATER where none has; in y, how many metres of a waterfall pour down there, read between them; in z, the
+// lowest water of those points that have any; in w, 1 where every one of them is a waterfall's.
+float4 riverWaterAt(WorldMake* make, int x, int z)
+{
+    uint w = make->riverWindow;
+    if (w == 0)
+    {
+        return float4(NO_RIVER_WATER, 0.0, NO_RIVER_WATER, 0.0);
+    }
+    int2 c = int2(x >> 6, z >> 6);
+    uint2 slot = uint2(uint(c.x + int(w) * 65536), uint(c.y + int(w) * 65536)) % w;
+    uint* entry = make->rivers + (slot.y * w + slot.x) * RIVER_WORDS;
+    if (int(entry[0]) != c.x || int(entry[1]) != c.y || entry[2] == 0)
+    {
+        return float4(NO_RIVER_WATER, 0.0, NO_RIVER_WATER, 0.0);
+    }
+    float fx;
+    float fz;
+    int i = riverBetween(x - c.x * 64, fx);
+    int j = riverBetween(z - c.y * 64, fz);
+    uint at = uint(j * RIVER_GRID + i);
+    float* water = (float*)(entry + 4) + RIVER_GRID * RIVER_GRID;
+    float* falls = water + RIVER_GRID * RIVER_GRID;
+    float4 four = float4(water[at], water[at + 1], water[at + RIVER_GRID], water[at + RIVER_GRID + 1]);
+    float highest = max(max(four.x, four.y), max(four.z, four.w));
+    float top = highest;
+    if (min(min(four.x, four.y), min(four.z, four.w)) > NO_RIVER_WATER * 0.5)
+    {
+        top = lerp(lerp(four.x, four.y, fx), lerp(four.z, four.w, fx), fz);
+    }
+    float4 drops = float4(falls[at], falls[at + 1], falls[at + RIVER_GRID], falls[at + RIVER_GRID + 1]);
+    float fell = lerp(lerp(drops.x, drops.y, fx), lerp(drops.z, drops.w, fx), fz);
+    float lowest = highest;
+    for (uint k = 0; k < 4; k++)
+    {
+        lowest = four[k] > NO_RIVER_WATER * 0.5 ? min(lowest, four[k]) : lowest;
+    }
+    float falling = min(min(drops.x, drops.y), min(drops.z, drops.w)) > 0.0 ? 1.0 : 0.0;
+    return float4(top, fell, lowest, falling);
+}
+
+// The voxel the top of the rivers' water over voxel column (x, z) is in, counted up from the floor; -1 for none.
+int waterTopAt(WorldMake* make, int x, int z)
+{
+    float4 river = riverWaterAt(make, x, z);
+    if (river.x <= NO_RIVER_WATER * 0.5 || river.w > 0.5 || (river.y > 0.0 && river.z > river.x - 0.5))
+    {
+        return -1;
+    }
+    return voxelsUp(make, river.y > 0.0 ? river.z : river.x);
+}
+
+// What is water at voxel `p` of the world, where it is open, its ground's top `ground` voxels up (src/voxel_volume/
+// rivers.rs): a layer at the top of the rivers' and lakes' water, as deep as its top is over the lowest beside it, so
+// its steps show no gap. Where a waterfall pours, the voxels thrown over its lip are its water: none between its
+// points, and beside them only where a point round has its pool's water, and only as high as that. Its shade goes by how deep the water is
+// over the ground, from shallow, where the sand shows through, to deep; within a metre or so of where a fall lands it
+// is churned white. As a material, or 0.
+static const uint WATER_VOXEL = 43;
+static const uint WATER_SHADES = 8;
+// The two shades of churned water after the eight of depth.
+static const uint CHURNED_VOXEL = WATER_VOXEL + WATER_SHADES;
+// How many metres of water each shade is deeper than the one before.
+static const float WATER_SHADE_DEPTH = 0.3;
+
+uint waterVoxel(WorldMake* make, int3 p, int ground)
+{
+    float4 river = riverWaterAt(make, p.x, p.z);
+    if (river.x <= NO_RIVER_WATER * 0.5 || river.w > 0.5)
+    {
+        return 0;
+    }
+    // Beside a waterfall only where a corner has its pool's water, well under the fall's top.
+    bool byFall = river.y > 0.0;
+    if (byFall && river.z > river.x - 0.5)
+    {
+        return 0;
+    }
+    int top = voxelsUp(make, byFall ? river.z : river.x);
+    if (p.y > top)
+    {
+        return 0;
+    }
+    int lowest = top;
+    for (uint k = 0; k < 4; k++)
+    {
+        int2 o = k == 0 ? int2(1, 0) : (k == 1 ? int2(-1, 0) : (k == 2 ? int2(0, 1) : int2(0, -1)));
+        int beside = waterTopAt(make, p.x + o.x, p.z + o.y);
+        lowest = beside >= 0 ? min(lowest, beside) : lowest;
+    }
+    if (p.y < lowest)
+    {
+        return 0;
+    }
+    // Churned where a fall lands near: a fall's point a grid step or two off, its water over this.
+    int churned = 0;
+    for (uint k = 0; k < 8 && !byFall; k++)
+    {
+        int reach = k < 4 ? 8 : 16;
+        uint way = k & 3u;
+        int2 o = way == 0 ? int2(reach, 0) : (way == 1 ? int2(-reach, 0) : (way == 2 ? int2(0, reach) : int2(0, -reach)));
+        float4 there = riverWaterAt(make, p.x + o.x, p.z + o.y);
+        if (there.y > 0.25 && there.x > river.x + 0.5)
+        {
+            churned = max(churned, k < 4 ? 2 : 1);
+        }
+    }
+    if (byFall || churned == 2)
+    {
+        return CHURNED_VOXEL + (unit(hashOf(p.x, p.y, p.z, make->seed + 73)) < 0.5 ? 0u : 1u);
+    }
+    if (churned == 1 && unit(hashOf(p.x >> 1, p.y, p.z >> 1, make->seed + 74)) < 0.5)
+    {
+        return CHURNED_VOXEL + 1;
+    }
+    float deep = float(top - ground) * make->voxel;
+    uint shade = uint(clamp(deep / WATER_SHADE_DEPTH + (unit(hashOf(p.x, p.y, p.z, make->seed + 71)) - 0.5) * 0.6, 0.0, float(WATER_SHADES - 1)));
+    return WATER_VOXEL + shade;
+}
+
 // What the ground is where it is `h` voxels high and its height changes by `across` voxels over four, as warm, wet
-// and rocky as the generator says.
-uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness, bool rock)
+// and rocky as the generator says, a river's or a lake's water `water` metres high over it (NO_RIVER_WATER for none):
+// gravel under it, and sand along its edge.
+uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness, bool rock, float water)
 {
     float slope = float(across) / 4.0;
-    float above = float(h) * make->voxel + make->floor - make->seaLevel;
+    float top = float(h) * make->voxel + make->floor;
+    float above = top - make->seaLevel;
     if (rock || slope > 1.0)
     {
         return GROUND_ROCK;
+    }
+    if (water > top - 0.1)
+    {
+        return water > top + 0.3 ? GROUND_GRAVEL : GROUND_SAND;
     }
     if (above < -0.5)
     {
@@ -405,6 +662,149 @@ uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness,
     return GROUND_GRASS;
 }
 
+// A world of blocks' biomes (generate/biomes.rs, WorldBiomes::gpu): how many, the header's words, and each biome's
+// record of BIOME_WORDS; a column's ground of a biome is GROUND_BIOMES and four times its biome, and which of its
+// grounds it is: its own, its steep ground's, its shore's or bare rock.
+static const uint BIOME_WORDS = 16;
+static const uint GROUND_BIOMES = 8;
+static const uint BIOME_OWN = 0;
+static const uint BIOME_STEEP = 1;
+static const uint BIOME_SHORE = 2;
+static const uint BIOME_BARE = 3;
+
+// How far a measure lies outside a biome's range, in shares of its spread (BiomeDef::outside).
+float outsideOf(float low, float high, float value, float spread)
+{
+    float under = low - value;
+    float over = value - high;
+    return max(max(under, over), 0.0) / max(spread, 1e-6);
+}
+
+// Which biome the place at (x, z) of the generator's world is, in metres, with its climate there: the one painted
+// nearest a place moved a little by noise, so painted biomes meet with ragged edges; else the one its climate is
+// nearest, read a little off by noise, so borders wander (WorldBiomes::index_at, Biomes::at). -1 for none.
+int biomeOf(WorldMake* make, float x, float z, float warmth, float wetness, float aboveSea)
+{
+    uint* b = make->biomes;
+    uint count = b[0];
+    if (count == 0u)
+    {
+        return -1;
+    }
+    if (b[9] != 0xFFFFFFFFu)
+    {
+        uint* map = b + b[9];
+        float spacing = asfloat(map[0]);
+        float size = spacing * 3.0;
+        float wx = (fractalNoise(0, x / size, z / size, 2, 0x51u) * 2.0 - 1.0) * spacing * 1.5;
+        float wz = (fractalNoise(0, x / size, z / size, 2, 0x7au) * 2.0 - 1.0) * spacing * 1.5;
+        float value;
+        if (map[3] != 0u && paintedPixel(map, int(floor((x + wx) / spacing)), int(floor((z + wz) / spacing)), value))
+        {
+            float index = round(value);
+            if (index >= 0.0 && index < float(count))
+            {
+                return int(index);
+            }
+        }
+    }
+    float wander = asfloat(b[1]);
+    float temperature = warmth;
+    float humidity = wetness;
+    if (wander > 0.0)
+    {
+        float u = x / asfloat(b[2]);
+        float v = z / asfloat(b[2]);
+        uint seed = b[3];
+        float off1 = (gradientNoise(u, v, seed ^ 1u) + 0.4 * gradientNoise(u * 3.7, v * 3.7, seed ^ 1u ^ 0x9E3779B9u)) * wander;
+        float off2 = (gradientNoise(u, v, seed ^ 2u) + 0.4 * gradientNoise(u * 3.7, v * 3.7, seed ^ 2u ^ 0x9E3779B9u)) * wander;
+        temperature += off1 * asfloat(b[4]);
+        humidity += off2 * asfloat(b[5]);
+    }
+    int best = -1;
+    float least = 0.0;
+    float narrowest = 0.0;
+    for (uint i = 0; i < count; i++)
+    {
+        uint* r = b + b[8] + i * BIOME_WORDS;
+        float t = outsideOf(asfloat(r[0]), asfloat(r[1]), temperature, asfloat(b[4]));
+        float h = outsideOf(asfloat(r[2]), asfloat(r[3]), humidity, asfloat(b[5]));
+        float y = outsideOf(asfloat(r[4]), asfloat(r[5]), aboveSea, asfloat(b[6]));
+        float away = t * t + h * h + y * y;
+        float reach = asfloat(r[6]);
+        if (best < 0 || away < least || (away == least && reach < narrowest))
+        {
+            best = int(i);
+            least = away;
+            narrowest = reach;
+        }
+    }
+    return best;
+}
+
+// What the ground is at voxel column `voxel` of the world, `h` voxels high where its height changes by `across`
+// voxels over four, as warm, wet and rocky as the generator says, a river's or lake's water `water` metres high: of its biome's blocks where the generator is a world
+// of blocks' (BiomeBlocks::at), else grass, rock, sand, snow or gravel.
+uint groundAt(WorldMake* make, int2 voxel, int h, int across, float warmth, float wetness, bool rock, float water)
+{
+    // A river's or a lake's bed is its sand or gravel, whatever biome it runs through.
+    if (make->biomes == nullptr || water > float(h) * make->voxel + make->floor - 0.1)
+    {
+        return groundKind(make, h, across, warmth, wetness, rock, water);
+    }
+    float v = make->voxel;
+    float x = (float(voxel.x) + 0.5) * v + make->atX;
+    float z = (float(voxel.y) + 0.5) * v + make->atZ;
+    float above = float(h) * v + make->floor - make->seaLevel;
+    int biome = biomeOf(make, x, z, warmth, wetness, above);
+    if (biome < 0)
+    {
+        return groundKind(make, h, across, warmth, wetness, rock, water);
+    }
+    uint* r = make->biomes + make->biomes[8] + uint(biome) * BIOME_WORDS;
+    uint kind = BIOME_OWN;
+    if (rock)
+    {
+        kind = BIOME_BARE;
+    }
+    else if (r[10] != 0xFFFFFFFFu && float(across) / 4.0 >= asfloat(r[11]))
+    {
+        kind = BIOME_STEEP;
+    }
+    else if (r[12] != 0xFFFFFFFFu && abs(above) <= asfloat(r[13]))
+    {
+        kind = BIOME_SHORE;
+    }
+    return GROUND_BIOMES + uint(biome) * 4u + kind;
+}
+
+// Whether grass, flowers and trees grow on ground `top`: grass, or a biome's own ground of a green block.
+bool growsOn(WorldMake* make, uint top)
+{
+    if (top < GROUND_BIOMES)
+    {
+        return top == GROUND_GRASS;
+    }
+    uint biome = (top - GROUND_BIOMES) >> 2;
+    if (((top - GROUND_BIOMES) & 3u) != BIOME_OWN)
+    {
+        return false;
+    }
+    uint block = make->biomes[make->biomes[8] + biome * BIOME_WORDS + 7];
+    return block != 0xFFFFFFFFu && ((make->biomes[make->biomes[10] + block] >> 16) & 1u) != 0u;
+}
+
+// The colour of a block a biome names, by its place in its blocks, in one of its two shades, or none.
+uint biomeBlock(WorldMake* make, uint block, float grain)
+{
+    if (block == 0xFFFFFFFFu)
+    {
+        return 0u;
+    }
+    uint places = make->biomes[make->biomes[10] + block];
+    return (grain < 0.55 ? places & 255u : (places >> 8) & 255u) + 1u;
+}
+
 // What the ground is at a column of the generator's: its height and how steep it is round it, and its climate.
 uint groundOf(WorldMake* make, uint job, int x, int z)
 {
@@ -413,12 +813,47 @@ uint groundOf(WorldMake* make, uint job, int x, int z)
     uint climate = make->grounds[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
     float warmth = float(climate & 255u) - 128.0;
     float wetness = float((climate >> 8) & 255u) / 255.0;
-    return groundKind(make, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0);
+    int2 voxel = make->jobs[job].column * 64 + int2(x, z);
+    return groundAt(make, voxel, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0, riverAt(make, voxel.x, voxel.y).y);
 }
 
 uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
 {
     float grain = unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 31));
+    if (top >= GROUND_BIOMES && make->biomes != nullptr)
+    {
+        // A biome's blocks down from the top: its top block a block deep, its under block as deep as it says, then
+        // its deep block (generate/blocks columns_at); steep ground its steep block, a shore its shore block, bare
+        // rock its deep block all the way.
+        uint* r = make->biomes + make->biomes[8] + ((top - GROUND_BIOMES) >> 2) * BIOME_WORDS;
+        uint kind = (top - GROUND_BIOMES) & 3u;
+        float block = max(asfloat(make->biomes[11]), make->voxel);
+        float down = float(under) * make->voxel;
+        uint upper = r[7];
+        uint lower = r[8];
+        if (kind == BIOME_STEEP)
+        {
+            upper = r[10];
+            lower = r[10];
+        }
+        else if (kind == BIOME_SHORE)
+        {
+            upper = r[12];
+            lower = r[8] == 0xFFFFFFFFu ? r[12] : r[8];
+        }
+        else if (kind == BIOME_BARE)
+        {
+            upper = r[9];
+            lower = r[9];
+        }
+        uint chosen = down < block ? upper : (down < block + asfloat(r[14]) ? lower : r[9]);
+        uint made = biomeBlock(make, chosen, grain);
+        if (made != 0u)
+        {
+            return made;
+        }
+        top = GROUND_ROCK;
+    }
     switch (top)
     {
     case GROUND_ROCK:
@@ -429,6 +864,8 @@ uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
         return under <= 2 ? (grain < 0.75 ? 19u : 20u) : 15u;
     case GROUND_GRAVEL:
         return grain < 0.5 ? 21u : 22u;
+    case GROUND_DIRT:
+        return 2u;
     default:
         return under == 0 ? 1u : 2u;
     }
@@ -470,7 +907,13 @@ uint flowerAt(WorldMake* make, uint job, int3 p)
             int z = int(floor(az / v));
             // No flower reaches further than two voxels from its stem, which stands on its column's grass.
             int2 foot = int2(x, z) - make->jobs[job].column * 64;
-            if (abs(p.x - x) > 2 || abs(p.z - z) > 2 || topOf(make, job, foot.x, foot.y) != GROUND_GRASS || bareAt(make, job, foot.x, foot.y))
+            // The foot's column is read only once it is near: one further may be out of the job's columns.
+            if (abs(p.x - x) > 2 || abs(p.z - z) > 2)
+            {
+                continue;
+            }
+            uint footColumn = columnOf(make, job, foot.x, foot.y);
+            if (columnTop(footColumn) != GROUND_GRASS || columnBare(footColumn) || columnCovered(footColumn))
             {
                 continue;
             }
@@ -534,6 +977,186 @@ uint flowerAt(WorldMake* make, uint job, int3 p)
 }
 
 
+// What grows where (src/voxel_volume/growth.rs): how many areas and kinds of cover there are and where their records
+// start, then each kind of tree's rules, the tags it keeps within and out of, a bit each. An area: the box its outline
+// lies in, the lowest and highest ground it holds, in voxels, its tags, and where its corners start and how many; the
+// corners X and Z in voxels from the volume's corner. A kind of cover: its rules, the ground it grows on (a bit for
+// each kind of ground), its shape and the ground it turns its own to, how much of the ground grows a stalk, how tall
+// it grows and how far apart its rows are in voxels, and its first colour in the palette.
+static const uint GROWTH_TREES_AT = 4;
+static const uint AREA_WORDS = 9;
+static const uint COVER_WORDS = 8;
+static const uint COVER_MEADOW = 0;
+static const uint COVER_WHEAT = 1;
+static const uint COVER_BARLEY = 2;
+static const uint COVER_FLAX = 3;
+static const uint COVER_CABBAGE = 4;
+
+// Whether `p` lies inside the outline of `count` corners from word `start`, as AreaLayer::holds finds it on the CPU.
+bool insideOutline(WorldMake* make, uint start, uint count, float2 p)
+{
+    bool within = false;
+    for (uint i = 0; i < count; i++)
+    {
+        uint j = i + 1 == count ? 0u : i + 1;
+        float2 a = float2(asfloat(make->growth[start + i * 2]), asfloat(make->growth[start + i * 2 + 1]));
+        float2 b = float2(asfloat(make->growth[start + j * 2]), asfloat(make->growth[start + j * 2 + 1]));
+        if ((a.y > p.y) != (b.y > p.y))
+        {
+            float cross = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
+            if (p.x < cross)
+            {
+                within = !within;
+            }
+        }
+    }
+    return within;
+}
+
+// The tags, a bit each, of the areas holding the middle of voxel column `column` of the world, its ground `h` voxels
+// up.
+uint areaTagsAt(WorldMake* make, int2 column, int h)
+{
+    uint* growth = make->growth;
+    float2 p = float2(column) + 0.5;
+    uint tags = 0;
+    for (uint a = 0; a < growth[0]; a++)
+    {
+        uint* area = growth + growth[2] + a * AREA_WORDS;
+        if ((tags & area[6]) == area[6] || h < int(area[4]) || h > int(area[5]))
+        {
+            continue;
+        }
+        if (p.x < asfloat(area[0]) || p.y < asfloat(area[1]) || p.x > asfloat(area[2]) || p.y > asfloat(area[3]))
+        {
+            continue;
+        }
+        if (insideOutline(make, area[7], area[8], p))
+        {
+            tags |= area[6];
+        }
+    }
+    return tags;
+}
+
+// Whether what keeps within the areas of tags `within` (anywhere for none) and out of those of `never` grows where the
+// areas' tags are `tags`.
+bool rulesAllow(uint within, uint never, uint tags)
+{
+    return (within == 0 || (tags & within) != 0) && (tags & never) == 0;
+}
+
+// Whether kind `kind` of tree grows with its foot at voxel column `foot`, its ground `h` voxels up.
+bool treeAllowed(WorldMake* make, uint kind, int2 foot, int h)
+{
+    uint within = make->growth[GROWTH_TREES_AT + kind * 2];
+    uint never = make->growth[GROWTH_TREES_AT + kind * 2 + 1];
+    return (within == 0 && never == 0) || rulesAllow(within, never, areaTagsAt(make, foot, h));
+}
+
+// What a kind of cover `cover` (its record), its `k`th, grows on voxel column `at` of the world: how tall it stands,
+// its stem's and its head's materials and how long its head is, and whether flowers grow among it.
+void growCover(WorldMake* make, uint* cover, uint k, int2 at, out uint blade, out uint stem, out uint head, out uint headLength, out bool flowers)
+{
+    uint shape = cover[3] & 255u;
+    float density = asfloat(cover[4]);
+    float tall = asfloat(cover[5]);
+    int rows = int(cover[6]);
+    uint first = cover[7] + 1;
+    uint seed = make->seed + 61 + k * 17;
+    uint r = hashOf(at.x, 40, at.y, seed);
+    uint shade = hashOf(at.x, 41, at.y, seed);
+    blade = 0;
+    stem = first + (shade & 1u);
+    head = first + 2 + ((shade >> 1) & 1u);
+    headLength = 0;
+    flowers = shape == COVER_MEADOW;
+    if (shape == COVER_CABBAGE)
+    {
+        // A head in each cell of the rows, most of them, a little off its middle: a dome of pale leaves, ringed by
+        // darker ones spread low.
+        float side = float(max(rows, 2));
+        int2 cell = int2(floor(float2(at) / side));
+        if (unit(hashOf(cell.x, 42, cell.y, seed)) >= density)
+        {
+            return;
+        }
+        float2 off = float2(unit(hashOf(cell.x, 43, cell.y, seed)), unit(hashOf(cell.x, 44, cell.y, seed))) - 0.5;
+        float2 middle = (float2(cell) + 0.5 + off * 0.2) * side;
+        float radius = max(tall * 0.5 * (0.85 + 0.3 * unit(hashOf(cell.x, 45, cell.y, seed))), 1.0);
+        float2 d = float2(at) + 0.5 - middle;
+        float d2 = dot(d, d);
+        if (d2 <= radius * radius)
+        {
+            blade = uint(max(sqrt(radius * radius - d2) * 0.85 + 1.0, 1.0));
+            headLength = d2 < radius * radius * 0.4 ? min(blade, 7u) : 1u;
+        }
+        else if (d2 <= radius * radius * 2.6 && unit(r) < 0.55)
+        {
+            blade = 1 + ((r >> 8) & 1u);
+        }
+        return;
+    }
+    // Stalks, a voxel across, along their rows.
+    bool inRow = rows <= 0 || ((at.y % rows) + rows) % rows == 0;
+    if (!inRow || unit(r) >= density)
+    {
+        return;
+    }
+    float v = make->voxel;
+    blade = uint(clamp(tall * (0.85 + 0.3 * unit(hashOf(at.x, 46, at.y, seed))), 1.0, 255.0));
+    switch (shape)
+    {
+    case COVER_WHEAT:
+        headLength = uint(clamp(0.1 / v, 1.0, 7.0));
+        break;
+    case COVER_BARLEY:
+        headLength = uint(clamp(0.14 / v, 1.0, 7.0));
+        break;
+    case COVER_FLAX:
+        headLength = unit(hashOf(at.x, 47, at.y, seed)) < 0.6 ? 1u : 0u;
+        break;
+    default:
+        // A few of the tallest blades have gone to seed.
+        headLength = float(blade) * v > 0.3 && unit(hashOf(at.x, 47, at.y, seed)) < 0.3 ? uint(clamp(0.06 / v, 1.0, 7.0)) : 0u;
+        break;
+    }
+}
+
+// The first kind of cover that grows on voxel column `at` of the world, its ground of kind `top` `h` voxels up, and
+// what it grows there, its ground turned to the kind's soil: false where none does.
+bool coverAt(WorldMake* make, int2 at, int h, inout uint top, inout uint blade, inout uint stem, inout uint head, inout uint headLength, inout bool flowers)
+{
+    uint* growth = make->growth;
+    bool asked = false;
+    uint tags = 0;
+    for (uint k = 0; k < growth[1]; k++)
+    {
+        uint* cover = growth + growth[3] + k * COVER_WORDS;
+        if ((cover[2] & (1u << top)) == 0)
+        {
+            continue;
+        }
+        if (cover[0] != 0 || cover[1] != 0)
+        {
+            if (!asked)
+            {
+                tags = areaTagsAt(make, at, h);
+                asked = true;
+            }
+            if (!rulesAllow(cover[0], cover[1], tags))
+            {
+                continue;
+            }
+        }
+        uint soil = (cover[3] >> 8) & 255u;
+        top = soil != 0 ? soil - 1 : top;
+        growCover(make, cover, k, at, blade, stem, head, headLength, flowers);
+        return true;
+    }
+    return false;
+}
+
 int lowOf(WorldMake* make, uint job, int x, int z)
 {
     int h = heightOf(make, job, x, z);
@@ -561,7 +1184,8 @@ void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
         return;
     }
     Generated made = runColumn(make, x, z, make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount);
-    make->heights[job * SIDE * SIDE + id.x] = voxelsUp(make, made.height);
+    // The rivers' cut, laid in from the CPU, over the ground the program made without them.
+    make->heights[job * SIDE * SIDE + id.x] = voxelsUp(make, made.height + riverAt(make, x, z).x);
     uint warmth = uint(clamp(round(made.warmth) + 128.0, 0.0, 255.0));
     uint wetness = uint(clamp(made.wetness * 255.0, 0.0, 255.0));
     uint rock = made.rock > 0.5 ? 1u : 0u;
@@ -589,9 +1213,10 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     // at least, and then halving the last step. Where there is ground over all of that, or none in it, the column is
     // bare: nothing grows on it, though what the ground is there still colours the Volume's ground open to the sky.
     bool bare = false;
+    int surface = heightOf(make, job, lx, lz);
     if (hasVolume(make))
     {
-        int h = heightOf(make, job, lx, lz);
+        int h = surface;
         int reach = int(min(4.0 / make->voxel, 1024.0));
         int y = h;
         // Mostly the Volume leaves the ground's height where it was: two looks find that.
@@ -633,6 +1258,7 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
             }
             bare = bare || !found;
         }
+        surface = y;
         uint at = job * SIDE * SIDE + uint((lz + BORDER) * SIDE + lx + BORDER);
         int offset = bare ? 0 : clamp(y - h, -16000, 16000);
         make->grounds[at] = (make->grounds[at] & 0x1FFFFu) | (uint(offset + 16384) << 17);
@@ -640,24 +1266,48 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     uint seed = make->seed + 21;
     uint r = hashOf(x, 0, z, seed);
     uint blade = 0;
-    if (top == GROUND_GRASS && !bare && coarseRing(make))
+    // A biome's ground: the kind its grass, cover and flowers go by is grass where its top block grows grass, else
+    // rock; what it is made of is kept beside the column's word.
+    uint biomeGround = 0;
+    if (top >= GROUND_BIOMES)
     {
-        // A ring's column stands for the finer ring's columns under it, as the walk's groups do there: grass where any
-        // of them has a blade, as tall as the tallest, in whole voxels of its own.
-        float under = (make->voxel / make->fine) * (make->voxel / make->fine);
+        biomeGround = top;
+        top = growsOn(make, top) ? GROUND_GRASS : GROUND_ROCK;
+    }
+    uint stem = 3 + (r & 3u);
+    uint head = 7;
+    uint headLength = 0;
+    bool flowers = true;
+    // Cover takes the column where a kind grows on its ground, in place of the grass.
+    bool covered = !bare && coverAt(make, int2(x, z), surface, top, blade, stem, head, headLength, flowers);
+    if (!covered && top == GROUND_GRASS && !bare && coarseRing(make))
+    {
+        // A ring's blades grow with the finer ring's chance and as tall as its, in whole voxels of the ring's own: a
+        // blade under half of one is left out.
         float tallest = max(max(make->grassHeight, 0.0) / make->fine, 1.0);
         if (unit(r) < make->grass)
         {
-            float most = unit(hashOf(x, 1, z, seed));
-            blade = uint(round((1.0 + most * tallest) * make->fine / make->voxel));
+            blade = uint(round((1.0 + unit(hashOf(x, 1, z, seed)) * tallest) * make->fine / make->voxel));
+            headLength = float(blade) * make->voxel > 0.2 ? 1u : 0u;
         }
     }
-    else if (top == GROUND_GRASS && !bare && unit(r) < make->grass)
+    else if (!covered && top == GROUND_GRASS && !bare && unit(r) < make->grass)
     {
         float tallest = max(max(make->grassHeight, 0.0) / make->voxel, 1.0);
         blade = 1 + uint(unit(hashOf(x, 1, z, seed)) * tallest);
+        headLength = float(blade) * make->voxel > 0.2 ? 1u : 0u;
     }
-    make->columns[job * TOPS * TOPS + id.x] = blade | ((3 + (r & 3u)) << 8) | (top << 16) | (bare ? 1u << 24 : 0u);
+    // A biome's blades are its top block's colour, a shade each, their heads its own.
+    if (biomeGround != 0 && !covered && make->biomes != nullptr)
+    {
+        uint block = make->biomes[make->biomes[8] + ((biomeGround - GROUND_BIOMES) >> 2) * BIOME_WORDS + 7];
+        uint places = make->biomes[make->biomes[10] + block];
+        stem = min((((r >> 4) & 1u) == 0u ? places & 255u : (places >> 8) & 255u) + 1u, 255u);
+        head = min((places & 255u) + 1u, 255u);
+    }
+    make->columnGrounds[job * TOPS * TOPS + id.x] = biomeGround;
+    make->columns[job * TOPS * TOPS + id.x] = min(blade, 255u) | (stem << 8) | (top << 16) | (bare ? 1u << 19 : 0u)
+        | (min(headLength, 7u) << 20) | (flowers ? 0u : 1u << 23) | (head << 24);
 }
 
 // Trees (src/voxel_volume/trees.rs): each kind grown as a few plants, each plant's voxels made once on the CPU in each
@@ -769,18 +1419,19 @@ bool grassAt(WorldMake* make, int2 foot, uint* carried, out int h)
         h = heightAt(make, foot.x, foot.y);
         return h >= 0 && h < tall - 1;
     }
-    int east = voxelsUp(make, runColumn(make, foot.x + 2, foot.y, carried).height);
-    int west = voxelsUp(make, runColumn(make, foot.x - 2, foot.y, carried).height);
-    int north = voxelsUp(make, runColumn(make, foot.x, foot.y + 2, carried).height);
-    int south = voxelsUp(make, runColumn(make, foot.x, foot.y - 2, carried).height);
+    int east = voxelsUp(make, runColumn(make, foot.x + 2, foot.y, carried).height + riverAt(make, foot.x + 2, foot.y).x);
+    int west = voxelsUp(make, runColumn(make, foot.x - 2, foot.y, carried).height + riverAt(make, foot.x - 2, foot.y).x);
+    int north = voxelsUp(make, runColumn(make, foot.x, foot.y + 2, carried).height + riverAt(make, foot.x, foot.y + 2).x);
+    int south = voxelsUp(make, runColumn(make, foot.x, foot.y - 2, carried).height + riverAt(make, foot.x, foot.y - 2).x);
     Generated made = runColumn(make, foot.x, foot.y, carried);
-    h = voxelsUp(make, made.height);
+    float2 river = riverAt(make, foot.x, foot.y);
+    h = voxelsUp(make, made.height + river.x);
     if (h < 0 || h >= tall - 1)
     {
         return false;
     }
     int across = max(abs(east - west), abs(north - south));
-    if (groundKind(make, h, across, made.warmth, made.wetness, made.rock > 0.5) != GROUND_GRASS)
+    if (!growsOn(make, groundAt(make, foot, h, across, made.warmth, made.wetness, made.rock > 0.5, river.y)))
     {
         return false;
     }
@@ -824,7 +1475,7 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
         float2 within = float2(unit(hashOf(cell.x, 8, cell.y, seed)), unit(hashOf(cell.x, 9, cell.y, seed)));
         int2 foot = int2(floor((float2(cell) + 0.15 + 0.7 * within) * TREE_CELL / v));
         int h;
-        if (!grassAt(make, foot, carried, h) || !footKept(make, int3(foot.x, h, foot.y)))
+        if (!grassAt(make, foot, carried, h) || !treeAllowed(make, kind, foot, h) || !footKept(make, job, int3(foot.x, h, foot.y)))
         {
             continue;
         }
@@ -859,21 +1510,117 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
     }
 }
 
-// Edit `e` of the volume: its ball's middle in the world's voxels, and its radius, and what fills it.
-float4 editBall(WorldMake* make, uint e)
+// What edit `e` is (EDIT_WORDS): a ball, a box, a bank, an area, a cover or a print, in its word's low bits; with what
+// fills it over them, 0 for air or a ground or paving and one (VoxelMaterial in src/voxel_volume/edit.rs), and its
+// marks: a print fitted to the ground, and one looked at round each voxel's middle too.
+static const uint EDIT_BALL = 0u;
+static const uint EDIT_BOX = 1u;
+static const uint EDIT_RAMP = 2u;
+static const uint EDIT_AREA = 3u;
+static const uint EDIT_COVER = 4u;
+static const uint EDIT_PRINT = 5u;
+// Voxels set one at a time (src/voxel_volume/changes.rs), an edit a brick after all the others: its least corner, its
+// voxels' bits and codes, 0 for air, else a kind's place among the kinds and one, each kind its fill and colour table.
+static const uint EDIT_VOXELS = 6u;
+static const uint EDIT_FIT = 1u << 16;
+static const uint EDIT_WIDENED = 1u << 17;
+// What an edit makes of a voxel: nothing (0), air, a fill with what fills it, or a print's voxel with its colour, a
+// place in the print's palette.
+static const uint HELD_AIR = 1u;
+static const uint HELD_FILL = 1u << 30;
+static const uint HELD_COLOUR = 1u << 31;
+// The first paving's colours in the palette, a place and one, after the ground's and the generator's: four to a
+// paving, three shades and its joints (PAVING_COLORS in src/voxel_volume/edit.rs).
+static const uint PAVING_FIRST = 23u;
+static const uint FIRST_PAVING_FILL = 7u;
+
+uint editKind(WorldMake* make, uint e)
 {
-    uint* edit = make->edits + e * EDIT_WORDS;
-    return float4(asfloat(edit[0]), asfloat(edit[1]), asfloat(edit[2]), asfloat(edit[3]));
+    return make->edits[e * EDIT_WORDS + 4] & 15u;
 }
 
 uint editFill(WorldMake* make, uint e)
 {
-    return make->edits[e * EDIT_WORDS + 4];
+    return (make->edits[e * EDIT_WORDS + 4] >> 8) & 255u;
 }
 
-// The voxel at `p` of ground an edit filled with `fill` (VoxelMaterial and one), open to the sky over it or not.
+// Whether edit `e` is a print.
+bool editPrints(WorldMake* make, uint e)
+{
+    return editKind(make, e) == EDIT_PRINT;
+}
+
+bool heldSolid(uint held)
+{
+    return held >= HELD_FILL;
+}
+
+// `a` divided by `b`, rounded down.
+int floorDivided(int a, int b)
+{
+    return a >= 0 ? a / b : -((b - 1 - a) / b);
+}
+
+// The voxel at `p` of a paving, `paving` counting from cobbles: its stones, bricks or boards in rows and courses, each
+// a shade of its own by hash, with a voxel of joint between them.
+uint pavedVoxel(WorldMake* make, uint paving, int3 p)
+{
+    // Each stone's size in metres, and how far each row along Z and each course up moves the stones along X.
+    float3 metres;
+    float rowShift;
+    float courseShift;
+    switch (paving)
+    {
+    case 0u: // cobbles
+        metres = float3(0.2, 0.2, 0.2);
+        rowShift = 0.1;
+        courseShift = 0.1;
+        break;
+    case 1u: // flagstones
+        metres = float3(0.6, 0.3, 0.45);
+        rowShift = 0.3;
+        courseShift = 0.0;
+        break;
+    case 2u: // bricks
+        metres = float3(0.25, 0.125, 0.25);
+        rowShift = 0.0;
+        courseShift = 0.125;
+        break;
+    case 3u: // planks, along X
+        metres = float3(2.0, 0.25, 0.2);
+        rowShift = 0.7;
+        courseShift = 0.0;
+        break;
+    default: // ashlar
+        metres = float3(0.5, 0.25, 0.5);
+        rowShift = 0.0;
+        courseShift = 0.25;
+        break;
+    }
+    float n = 1.0 / make->voxel;
+    int3 size = max(int3(round(metres * n)), int3(2, 2, 2));
+    int row = floorDivided(p.z, size.z);
+    int course = floorDivided(p.y, size.y);
+    int shift = int(round(rowShift * n)) * row + int(round(courseShift * n)) * course;
+    int3 q = int3(p.x + shift, p.y, p.z + int(round(courseShift * n)) * course);
+    int3 cell = int3(floorDivided(q.x, size.x), floorDivided(q.y, size.y), floorDivided(q.z, size.z));
+    int3 local = q - cell * size;
+    bool joint = local.x == 0 || local.z == 0 || (paving == 2u || paving == 4u ? local.y == 0 : false);
+    uint first = PAVING_FIRST + paving * 4u;
+    if (joint)
+    {
+        return first + 3u;
+    }
+    return first + hashOf(cell.x, cell.y, cell.z, make->seed + 57 + paving) % 3u;
+}
+
+// The voxel at `p` of ground or paving an edit filled with `fill` (VoxelMaterial and one), open to the sky over it or not.
 uint fillVoxel(WorldMake* make, uint fill, bool open, int3 p)
 {
+    if (fill >= FIRST_PAVING_FILL)
+    {
+        return pavedVoxel(make, fill - FIRST_PAVING_FILL, p);
+    }
     switch (fill)
     {
     case 1u:
@@ -891,52 +1638,120 @@ uint fillVoxel(WorldMake* make, uint fill, bool open, int3 p)
     }
 }
 
-// Whether edit `e` is a print.
-bool editPrints(WorldMake* make, uint e)
-{
-    return (editFill(make, e) & PRINT_EDIT) != 0u;
-}
-
-// The rows of voxels edit `e` reaches, from its lowest to its highest, with a border of one.
-int2 editRows(WorldMake* make, uint e)
+// What edit `e` makes the palette place and one `m` of a voxel it filled, `held` (editHeld), in its tint: its colour
+// table's place for it; for voxels set one at a time, the table of the voxel's kind.
+uint editTinted(WorldMake* make, uint e, uint m, uint held)
 {
     uint* edit = make->edits + e * EDIT_WORDS;
-    if (editPrints(make, e))
-    {
-        return int2(int(floor(asfloat(edit[7]))) - 1, int(ceil(asfloat(edit[10]))) + 1);
-    }
-    float4 ball = editBall(make, e);
-    return int2(int(floor(ball.y - ball.w)) - 1, int(ceil(ball.y + ball.w)) + 1);
+    uint table = (edit[4] & 15u) == EDIT_VOXELS ? make->edits[edit[21] + (((held >> 8) & 255u) - 1u) * 2u + 1u] : edit[21];
+    return table == 0u || m == 0u ? m : make->edits[table + m - 1u] + 1u;
 }
 
-// Whether edit `e` reaches the box of voxels from `low` to `high` of the world: a ball, or a print's box.
+// The palette place and one of print edit `e`'s colour `colour`, a place in its print's palette, in its tint.
+uint editColour(WorldMake* make, uint e, uint colour)
+{
+    return make->edits[make->edits[e * EDIT_WORDS + 21] + colour] + 1u;
+}
+
+// The rows of voxels edit `e` reaches, from its lowest to its highest, with a border of one; a cover's from under the
+// lowest ground of the column `ground` gives to over the highest.
+int2 editRows(WorldMake* make, uint e, int2 ground)
+{
+    uint* edit = make->edits + e * EDIT_WORDS;
+    if ((edit[4] & 15u) == EDIT_COVER)
+    {
+        return int2(ground.x - int(edit[18]) - 1, ground.y + int(edit[19]) + 1);
+    }
+    return int2(int(floor(asfloat(edit[7]))) - 1, int(ceil(asfloat(edit[10]))) + 1);
+}
+
+// Whether edit `e` reaches the box of voxels from `low` to `high` of the world: within the ball round its place that
+// holds it all, and for all but a ball, its box.
 bool editReaches(WorldMake* make, uint e, int3 low, int3 high)
 {
-    float4 ball = editBall(make, e);
-    float3 nearest = clamp(ball.xyz, float3(low), float3(high + 1));
-    float3 off = nearest - ball.xyz;
-    if (dot(off, off) > ball.w * ball.w)
+    uint* edit = make->edits + e * EDIT_WORDS;
+    float3 at = float3(asfloat(edit[0]), asfloat(edit[1]), asfloat(edit[2]));
+    float radius = asfloat(edit[3]);
+    float3 nearest = clamp(at, float3(low), float3(high + 1));
+    float3 off = nearest - at;
+    if (dot(off, off) > radius * radius)
     {
         return false;
     }
-    if (!editPrints(make, e))
+    if ((edit[4] & 15u) == EDIT_BALL)
     {
         return true;
     }
-    uint* edit = make->edits + e * EDIT_WORDS;
     float3 least = float3(asfloat(edit[6]), asfloat(edit[7]), asfloat(edit[8]));
     float3 most = float3(asfloat(edit[9]), asfloat(edit[10]), asfloat(edit[11]));
     return all(float3(high + 1) >= least) && all(float3(low) <= most);
 }
 
-// `v` turned by the quaternion `q`, as the CPU turns it (glam's Quat * Vec3).
-float3 turnedBy(float4 q, float3 v)
+// How many parts of a voxel an edit's places are in, and of a turn's numbers (Fixed in src/voxel_volume/edit.rs): an
+// edit's shape is worked out in whole numbers, as the CPU works it, so the two find the same to the voxel.
+static const int64_t EDIT_UNIT = 16;
+static const int64_t EDIT_TURN = 4096;
+
+int64_t editWord(uint* edit, uint at)
 {
-    float3 b = q.xyz;
-    return v * (q.w * q.w - dot(b, b)) + b * (dot(v, b) * 2.0) + cross(b, v) * (q.w * 2.0);
+    return int64_t(int(edit[at]));
 }
 
-// The voxel of print `r` (its record among the prints) at `c`, in its own voxels: its place in the palette and one, or 0.
+// The middle of voxel `p`, moved by `by` sixteenths, from where edit `edit` is placed and turned back with it, in
+// sixteenths times EDIT_TURN.
+int64_t3 editLocal(uint* edit, int3 p, int3 by)
+{
+    int64_t3 off = int64_t3(p) * EDIT_UNIT + EDIT_UNIT / 2 + int64_t3(by) - int64_t3(editWord(edit, 22), editWord(edit, 23), editWord(edit, 24));
+    int64_t3 local;
+    local.x = editWord(edit, 12) * off.x + editWord(edit, 13) * off.y + editWord(edit, 14) * off.z;
+    local.y = editWord(edit, 15) * off.x + editWord(edit, 16) * off.y + editWord(edit, 17) * off.z;
+    local.z = editWord(edit, 18) * off.x + editWord(edit, 19) * off.y + editWord(edit, 20) * off.z;
+    return local;
+}
+
+// `a` divided by `b` (more than nothing), rounded down.
+int64_t floorDivided64(int64_t a, int64_t b)
+{
+    int64_t q = a / b;
+    return (a % b != 0 && a < 0) ? q - 1 : q;
+}
+
+// Whether the middle of voxel column (`x`, `z`) is inside edit `edit`'s outline, crossing its edges from it along X an
+// odd number of times, as the CPU finds it (Fixed::inside in src/voxel_volume/edit.rs).
+bool insideOutline(WorldMake* make, uint* edit, int x, int z)
+{
+    uint points = edit[29];
+    uint count = edit[30];
+    if (count < 3u)
+    {
+        return false;
+    }
+    int64_t px = int64_t(x) * EDIT_UNIT + EDIT_UNIT / 2;
+    int64_t pz = int64_t(z) * EDIT_UNIT + EDIT_UNIT / 2;
+    bool inside = false;
+    uint j = count - 1u;
+    for (uint i = 0; i < count; i++)
+    {
+        int64_t ax = int64_t(int(make->edits[points + i * 2u]));
+        int64_t az = int64_t(int(make->edits[points + i * 2u + 1u]));
+        int64_t bx = int64_t(int(make->edits[points + j * 2u]));
+        int64_t bz = int64_t(int(make->edits[points + j * 2u + 1u]));
+        if ((az > pz) != (bz > pz))
+        {
+            int64_t left = (px - ax) * (bz - az);
+            int64_t right = (bx - ax) * (pz - az);
+            if ((bz > az && left < right) || (bz < az && left > right))
+            {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    return inside;
+}
+
+// The voxel of print `r` (its record among the prints) at `c`, in its own voxels: its colour, a place in its palette,
+// and one, or 0.
 uint printVoxel(WorldMake* make, uint* r, int3 c)
 {
     if (any(c < 0) || any(c >= int3(int(r[6]), int(r[7]), int(r[8]))))
@@ -966,86 +1781,191 @@ uint printVoxel(WorldMake* make, uint* r, int3 c)
     return ((make->prints[at >> 2] >> ((at & 3u) * 8u)) & 255u) + 1u;
 }
 
-// Where in print edit `e`'s own voxels the point `off` from its origin, in the world's voxels, is; and its record.
-float3 printLocal(WorldMake* make, uint e, float3 off, out uint* r)
+// Whether print `r` stands over column (`x`, `z`) of its own voxels: its footprint's bit for it.
+bool printStands(WorldMake* make, uint* r, int x, int z)
 {
-    uint* edit = make->edits + e * EDIT_WORDS;
-    r = make->prints + PRINTS_AT + (edit[4] & ~PRINT_EDIT) * PRINT_WORDS;
-    float4 back = float4(asfloat(edit[12]), asfloat(edit[13]), asfloat(edit[14]), asfloat(edit[15]));
-    return turnedBy(back, off) * abs(asfloat(edit[5])) + float3(asfloat(r[9]), asfloat(r[10]), asfloat(r[11]));
-}
-
-// What edit `e` holds at voxel `p` of the world, its middle within the ball or in a solid voxel of the print: 0 for
-// nothing, 1 for a ball, and for a print its voxel's place in the palette and one (VoxelEdit::holds on the CPU). A print
-// turned off the quarter turns, or of voxels smaller than the world's, is looked at a quarter of a voxel each way from
-// the middle too, toward the eight corners, so a wall a voxel thick leaves no gap between voxels that only meet at
-// their edges and a thin pole is not missed.
-uint editHeld(WorldMake* make, uint e, int3 p)
-{
-    uint* edit = make->edits + e * EDIT_WORDS;
-    float3 off = float3(p) + 0.5 - float3(asfloat(edit[0]), asfloat(edit[1]), asfloat(edit[2]));
-    if ((edit[4] & PRINT_EDIT) == 0u)
-    {
-        float radius = asfloat(edit[3]);
-        return dot(off, off) <= radius * radius ? 1u : 0u;
-    }
-    uint* r;
-    float3 local = printLocal(make, e, off, r);
-    uint held = printVoxel(make, r, int3(floor(local)));
-    if (held != 0u || asfloat(edit[5]) > 0.0)
-    {
-        return held;
-    }
-    for (uint k = 0; k < 8 && held == 0u; k++)
-    {
-        float3 corner = float3(float(k & 1u), float((k >> 1) & 1u), float((k >> 2) & 1u)) * 0.5 - 0.25;
-        local = printLocal(make, e, off + corner, r);
-        held = printVoxel(make, r, int3(floor(local)));
-    }
-    return held;
-}
-
-// Whether print edit `e` stands over voxel `p` of the world: in a column of its own voxels that has any solid, under its
-// top and no further below its foot than it is tall, as the ground under a print on a slope falls away. Grass and flowers grow under none, and a tree whose foot one stands over grows not.
-bool editCovers(WorldMake* make, uint e, int3 p)
-{
-    uint* edit = make->edits + e * EDIT_WORDS;
-    if ((edit[4] & PRINT_EDIT) == 0u)
-    {
-        return false;
-    }
-    uint* r;
-    float3 off = float3(p) + 0.5 - float3(asfloat(edit[0]), asfloat(edit[1]), asfloat(edit[2]));
-    int3 c = int3(floor(printLocal(make, e, off, r)));
     int3 size = int3(int(r[6]), int(r[7]), int(r[8]));
-    if (c.x < 0 || c.z < 0 || c.x >= size.x || c.z >= size.z || c.y >= size.y || c.y < -size.y)
+    if (x < 0 || z < 0 || x >= size.x || z >= size.z)
     {
         return false;
     }
-    uint column = uint(c.x + size.x * c.z);
+    uint column = uint(x + size.x * z);
     return ((make->prints[r[12] + (column >> 5)] >> (column & 31u)) & 1u) != 0u;
 }
 
-// Whether a tree whose foot is on the ground's top voxel `top` grows, for the edits: not where its top is carved out
-// (and not filled again after), nor where a print stands over it.
-bool footKept(WorldMake* make, int3 top)
+// The voxel of print edit `e`'s own that the middle of voxel `p` of the world, moved by `by` sixteenths, is in; and its
+// record among the prints (Fixed::print_cell in src/voxel_volume/edit.rs).
+int3 printCell(WorldMake* make, uint e, int3 p, int3 by, out uint* r)
 {
-    bool ground = true;
-    for (uint e = 0; e < make->editCount; e++)
-    {
-        if (editCovers(make, e, top + int3(0, 1, 0)))
-        {
-            return false;
-        }
-        if (!editPrints(make, e) && editHeld(make, e, top) != 0u)
-        {
-            ground = editFill(make, e) != 0u;
-        }
-    }
-    return ground;
+    uint* edit = make->edits + e * EDIT_WORDS;
+    r = make->prints + PRINTS_AT + edit[25] * PRINT_WORDS;
+    int64_t3 local = editLocal(edit, p, by);
+    int64_t print = editWord(edit, 26);
+    int64_t volume = editWord(edit, 27);
+    int64_t whole = EDIT_UNIT * EDIT_TURN * volume;
+    int64_t3 origin = int64_t3(editWord(edit, 29), editWord(edit, 30), editWord(edit, 31)) * EDIT_TURN * volume;
+    return int3(int(floorDivided64(local.x * print + origin.x, whole)), int(floorDivided64(local.y * print + origin.y, whole)),
+        int(floorDivided64(local.z * print + origin.z, whole)));
 }
 
-// Lists the edits that reach each job's column: a thread a share of them.
+// What edit `e` makes of voxel `p` of the world, its column's ground's top at `ground`: 0 for nothing, HELD_AIR, a
+// fill (HELD_FILL and what fills it) or a print's voxel (HELD_COLOUR and its colour), as VoxelEdit::held works it out on
+// the CPU, in the same whole numbers. A ball holds the voxels whose middles are within it; a box, a bank and an area
+// theirs, and clear the air over their tops; a cover the ground's top within its outline, as deep as it says. A print
+// holds its solid voxels: turned off the quarter turns, or of voxels smaller than the world's, it is looked at a quarter
+// of a voxel each way from the middle too, toward the eight corners, so a wall a voxel thick leaves no gap between
+// voxels that only meet at their edges and a thin pole is not missed. Fitted, it clears the ground inside it down to its
+// foot, and fills under its foot down to the ground with its footing.
+uint editHeld(WorldMake* make, uint e, int3 p, int ground)
+{
+    uint* edit = make->edits + e * EDIT_WORDS;
+    uint kind = edit[4] & 15u;
+    uint fill = (edit[4] >> 8) & 255u;
+    uint filled = fill == 0u ? HELD_AIR : (HELD_FILL | fill);
+    if (kind == EDIT_VOXELS)
+    {
+        int3 l = p - int3(int(edit[22]), int(edit[23]), int(edit[24]));
+        if (any(l < 0) || any(l >= 8))
+        {
+            return 0u;
+        }
+        uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+        uint* voxels = make->edits + edit[29];
+        if (((voxels[index >> 5] >> (index & 31u)) & 1u) == 0u)
+        {
+            return 0u;
+        }
+        uint code = (voxels[16 + (index >> 2)] >> ((index & 3u) * 8u)) & 255u;
+        return code == 0u ? HELD_AIR : (HELD_FILL | make->edits[edit[21] + (code - 1u) * 2u] | (code << 8));
+    }
+    if (kind == EDIT_BALL)
+    {
+        int64_t3 off = int64_t3(p) * EDIT_UNIT + EDIT_UNIT / 2 - int64_t3(editWord(edit, 22), editWord(edit, 23), editWord(edit, 24));
+        int64_t radius = editWord(edit, 25);
+        return off.x * off.x + off.y * off.y + off.z * off.z <= radius * radius ? filled : 0u;
+    }
+    if (kind == EDIT_BOX || kind == EDIT_RAMP)
+    {
+        int64_t3 local = editLocal(edit, p, int3(0, 0, 0));
+        int64_t hx = editWord(edit, 25) * EDIT_TURN;
+        int64_t hy = editWord(edit, 26) * EDIT_TURN;
+        int64_t hz = editWord(edit, 27) * EDIT_TURN;
+        if (abs(local.x) >= hx || abs(local.z) >= hz || local.y < 0)
+        {
+            return 0u;
+        }
+        int64_t clear = editWord(edit, 28) * EDIT_TURN;
+        bool under = kind == EDIT_RAMP ? local.y * (2 * hz) < hy * (local.z + hz) : local.y < hy;
+        bool cleared = kind == EDIT_RAMP ? (local.y - clear) * (2 * hz) < hy * (local.z + hz) : local.y - clear < hy;
+        return under ? filled : (cleared ? HELD_AIR : 0u);
+    }
+    if (kind == EDIT_AREA || kind == EDIT_COVER)
+    {
+        if (!insideOutline(make, edit, p.x, p.z))
+        {
+            return 0u;
+        }
+        if (kind == EDIT_AREA)
+        {
+            int64_t y = int64_t(p.y) * EDIT_UNIT + EDIT_UNIT / 2;
+            int64_t low = editWord(edit, 25);
+            int64_t high = editWord(edit, 26);
+            int64_t clear = editWord(edit, 28);
+            return y >= low && y < high ? filled : (y >= high && y < high + clear ? HELD_AIR : 0u);
+        }
+        int depth = int(edit[18]);
+        int over = int(edit[19]);
+        return p.y <= ground && p.y > ground - depth ? filled : (p.y > ground && p.y <= ground + over ? HELD_AIR : 0u);
+    }
+    uint* r;
+    int3 c = printCell(make, e, p, int3(0, 0, 0), r);
+    uint held = printVoxel(make, r, c);
+    if (held != 0u)
+    {
+        return HELD_COLOUR | (held - 1u);
+    }
+    if ((edit[4] & EDIT_WIDENED) != 0u)
+    {
+        for (uint k = 0; k < 8 && held == 0u; k++)
+        {
+            int3 corner = int3(int(k & 1u), int((k >> 1) & 1u), int((k >> 2) & 1u)) * 8 - 4;
+            held = printVoxel(make, r, printCell(make, e, p, corner, r));
+        }
+        if (held != 0u)
+        {
+            return HELD_COLOUR | (held - 1u);
+        }
+    }
+    int tall = int(r[7]);
+    if ((edit[4] & EDIT_FIT) == 0u || c.y >= tall || c.y < -tall || !printStands(make, r, c.x, c.z))
+    {
+        return 0u;
+    }
+    if (c.y >= 0)
+    {
+        return HELD_AIR;
+    }
+    return fill != 0u && p.y >= ground - 1 ? (HELD_FILL | fill) : 0u;
+}
+
+// Whether print edit `e` stands over voxel `p` of the world: in a column of its own voxels that has any solid, under its
+// top and no further below its foot than it is tall, as the ground under a print on a slope falls away. Grass and
+// flowers grow under none, and a tree whose foot one stands over grows not.
+bool editCovers(WorldMake* make, uint e, int3 p)
+{
+    uint* edit = make->edits + e * EDIT_WORDS;
+    if ((edit[4] & 15u) != EDIT_PRINT)
+    {
+        return false;
+    }
+    uint* r;
+    int3 c = printCell(make, e, p, int3(0, 0, 0), r);
+    int tall = int(r[7]);
+    return c.y < tall && c.y >= -tall && printStands(make, r, c.x, c.z);
+}
+
+uint columnEdits(WorldMake* make, uint job)
+{
+    return min(make->counters[EDIT_COUNTS + job], MOST_COLUMN_EDITS);
+}
+
+// Whether a tree whose foot is on the ground's top voxel `top` grows, for the edits that reach job `job`'s column and
+// the trees round it: not where a print stands over it, nor where the last edit to hold its top carved it out, nor where
+// the last to hold the voxel over it filled that, as a street laid over the ground does.
+bool footKept(WorldMake* make, uint job, int3 top)
+{
+    int groundBy = -1;
+    int buriedBy = -1;
+    bool ground = true;
+    bool buried = false;
+    for (uint k = 0; k < columnEdits(make, job); k++)
+    {
+        uint e = make->jobEdits[job * MOST_COLUMN_EDITS + k];
+        if (editPrints(make, e))
+        {
+            if (editCovers(make, e, top + int3(0, 1, 0)))
+            {
+                return false;
+            }
+            continue;
+        }
+        uint held = editHeld(make, e, top, top.y);
+        if (held != 0u && int(e) > groundBy)
+        {
+            groundBy = int(e);
+            ground = heldSolid(held);
+        }
+        held = editHeld(make, e, top + int3(0, 1, 0), top.y);
+        if (held != 0u && int(e) > buriedBy)
+        {
+            buriedBy = int(e);
+            buried = heldSolid(held);
+        }
+    }
+    return ground && !buried;
+}
+
+// Lists the edits that reach each job's column, and the feet of the trees that may reach it: a thread a share of them.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void voxelWorldEdits(uint3 id: SV_DispatchThreadID)
@@ -1057,11 +1977,12 @@ void voxelWorldEdits(uint3 id: SV_DispatchThreadID)
         return;
     }
     int2 corner = make->jobs[job].column * 64;
-    int3 low = int3(corner.x, -1, corner.y);
-    int3 high = int3(corner.x + 63, int(make->tall) * 64, corner.y + 63);
+    int margin = make->treeKinds == 0 ? 1 : int(ceil((make->treeReach + 1.5 + TREE_CELL) / make->voxel)) + 2;
+    int3 low = int3(corner.x - margin, -1, corner.y - margin);
+    int3 high = int3(corner.x + 63 + margin, int(make->tall) * 64, corner.y + 63 + margin);
     for (uint e = id.x; e < make->editCount; e += 64)
     {
-        if (editReaches(make, e, low - 1, high + 1))
+        if (editReaches(make, e, low, high))
         {
             uint at;
             InterlockedAdd(make->counters[EDIT_COUNTS + job], 1u, at);
@@ -1071,11 +1992,6 @@ void voxelWorldEdits(uint3 id: SV_DispatchThreadID)
             }
         }
     }
-}
-
-uint columnEdits(WorldMake* make, uint job)
-{
-    return min(make->counters[EDIT_COUNTS + job], MOST_COLUMN_EDITS);
 }
 
 // A candidate brick's marks: where the ground, its grass or its flowers may be in it, which is kept whatever the
@@ -1119,6 +2035,14 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
             int blade = int(columnOf(make, job, cx, cz) & 255u);
             lowest = min(lowest, lowOf(make, job, cx, cz));
             highest = max(highest, heightOf(make, job, cx, cz) + blade);
+            // Water of voxels reaches up to its top, and its bricks are kept whatever the coarse pass finds.
+            if (make->waterVoxels != 0)
+            {
+                int2 world = make->jobs[job].column * 64 + int2(cx, cz);
+                int top = waterTopAt(make, world.x, world.y);
+                highest = max(highest, top);
+                highGrowth = max(highGrowth, top);
+            }
             if (volume)
             {
                 int surface = surfaceOf(make, job, cx, cz);
@@ -1127,6 +2051,8 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
             }
         }
     }
+    // The ground's own rows, which a cover follows.
+    int2 groundRows = int2(lowest, highest);
     // Flowers stand over the grass: their stems and heads, at most.
     if (make->flowers > 0.0)
     {
@@ -1166,7 +2092,7 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
         uint e = make->jobEdits[job * MOST_COLUMN_EDITS + k];
         if (editReaches(make, e, low - 1, high + 1))
         {
-            int2 rows = editRows(make, e);
+            int2 rows = editRows(make, e, groundRows);
             editLow = min(editLow, rows.x);
             editHigh = max(editHigh, rows.y);
         }
@@ -1316,6 +2242,9 @@ groupshared uint sharedGroupCounts[64];
 groupshared uint sharedTreeVoxels;
 // Which of SWAY_STILL, SWAY_GRASS and SWAY_LEAVES its voxels are, a bit each.
 groupshared uint sharedSway;
+// How many of its voxels' colours are in each bank of the palette, and the bank it keeps (voxelColour in voxels.slang).
+groupshared uint sharedBanks[COLOUR_BANKS];
+groupshared uint sharedBank;
 // The edits that reach the brick and its border, in the order they were made.
 groupshared uint sharedEdits[MOST_BRICK_EDITS];
 groupshared uint sharedEditCount;
@@ -1362,8 +2291,9 @@ uint volumeVoxel(WorldMake* make, uint job, uint column, int h, int3 l, int3 p)
     {
         return 0;
     }
-    uint top = (column >> 16) & 255u;
-    int under = surfaceOf(make, job, p.x - make->jobs[job].column.x * 64, p.z - make->jobs[job].column.y * 64) - p.y;
+    int2 local = int2(p.x, p.z) - make->jobs[job].column * 64;
+    uint top = groundTop(make, job, local.x, local.y, column);
+    int under = surfaceOf(make, job, local.x, local.y) - p.y;
     // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not.
     if (under > 8 || under < -2)
     {
@@ -1401,6 +2331,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (index < 32)
     {
         sharedSolid[index] = 0;
+        sharedBanks[index] = 0;
     }
     if (index == 0)
     {
@@ -1524,12 +2455,13 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             bool solid = q.y <= 0
                 || (q.y < tall && (volume ? densityAt(make, job, q.x, q.y, q.z) > 0.0 : q.y <= heightOf(make, job, q.x, q.z)));
             int3 w = int3(corner.x + q.x, q.y, corner.y + q.z);
+            int under = heightOf(make, job, q.x, q.z);
             for (uint k = 0; k < editCount; k++)
             {
-                uint e = sharedEdits[k];
-                if (editHeld(make, e, w) != 0u)
+                uint held = editHeld(make, sharedEdits[k], w, under);
+                if (held != 0u)
                 {
-                    solid = editFill(make, e) != 0u;
+                    solid = heldSolid(held);
                 }
             }
             if (solid)
@@ -1550,13 +2482,14 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (edited)
     {
         int top = volume ? min(surfaceOf(make, job, px, pz), tall - 1) : h;
+        int under = heightOf(make, job, px, pz);
         for (uint k = 0; k < editCount; k++)
         {
             uint e = sharedEdits[k];
-            uint held = editHeld(make, e, here);
+            uint held = editHeld(make, e, here, under);
             lastEdit = held != 0u ? int(e) : lastEdit;
             lastHeld = held != 0u ? held : lastHeld;
-            underEdit = editHeld(make, e, int3(here.x, top, here.z)) != 0u || editCovers(make, e, here) ? int(e) : underEdit;
+            underEdit = editHeld(make, e, int3(here.x, top, here.z), under) != 0u || editCovers(make, e, here) ? int(e) : underEdit;
         }
     }
     if (edited && !volume)
@@ -1568,16 +2501,16 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
                 || !solidNear(l, int3(-1, 0, 0)) || !solidNear(l, int3(0, 0, 1)) || !solidNear(l, int3(0, 0, -1));
             if (seen)
             {
-                m = groundVoxel(make, (column >> 16) & 255u, max(h - y, 0), here);
+                m = groundVoxel(make, groundTop(make, job, px, pz, column), max(h - y, 0), here);
             }
         }
         else if (y > h && underEdit < 0)
         {
             moves = SWAY_GRASS;
             m = flowerAt(make, job, here);
-            if (m == 0 && h >= 0 && y <= min(h + blade, tall - 1))
+            if (m == 0)
             {
-                m = (y == h + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
+                m = growthVoxel(column, y, h, tall);
             }
         }
     }
@@ -1589,38 +2522,54 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         {
             moves = SWAY_GRASS;
             m = flowerAt(make, job, int3(corner.x + px, y, corner.y + pz));
-            if (m == 0 && surface >= 0 && y <= min(surface + blade, tall - 1))
+            if (m == 0)
             {
-                m = (y == surface + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
+                m = growthVoxel(column, y, surface, tall);
             }
         }
     }
     else if (h >= 0 && y <= h && y >= max(lowOf(make, job, px, pz), 0))
     {
-        m = groundVoxel(make, (column >> 16) & 255u, h - y, int3(corner.x + px, y, corner.y + pz));
+        m = groundVoxel(make, groundTop(make, job, px, pz, column), h - y, int3(corner.x + px, y, corner.y + pz));
     }
     else if (y > h)
     {
         moves = SWAY_GRASS;
         // Flowers over the grass, as they are set after it.
         m = flowerAt(make, job, int3(corner.x + px, y, corner.y + pz));
-        if (m == 0 && h >= 0 && y <= min(h + blade, tall - 1))
+        if (m == 0)
         {
-            m = (y == h + blade && float(blade) * make->voxel > 0.2) ? 7u : (column >> 8) & 255u;
+            m = growthVoxel(column, y, h, tall);
         }
     }
     // What an edit filled is its fill, where it is seen, and what a print printed its own colour; what a ball carved out
     // is air, grass and flowers too.
     if (lastEdit >= 0)
     {
-        uint fill = editFill(make, uint(lastEdit));
-        if ((fill & PRINT_EDIT) != 0u)
+        if ((lastHeld & HELD_COLOUR) != 0u)
         {
-            m = m != 0 ? lastHeld : 0u;
+            m = m != 0 ? editColour(make, uint(lastEdit), lastHeld & 0xFFFFu) : 0u;
+        }
+        else if ((lastHeld & HELD_FILL) != 0u)
+        {
+            uint filled = fillVoxel(make, lastHeld & 255u, !solidNear(l, int3(0, 1, 0)), here);
+            m = m != 0 && moves == SWAY_STILL ? (editPrints(make, uint(lastEdit)) ? filled : editTinted(make, uint(lastEdit), filled, lastHeld)) : m;
         }
         else
         {
-            m = fill == 0u ? 0u : (m != 0 && moves == SWAY_STILL ? fillVoxel(make, fill, !solidNear(l, int3(0, 1, 0)), here) : m);
+            m = 0u;
+        }
+    }
+    // Water of voxels where nothing else is (waterVoxel), keeping still: the ground under it is solid where its column's
+    // height says, or where the Volume or the edits leave it so.
+    if (make->waterVoxels != 0 && m == 0)
+    {
+        bool open = (volume || edited) ? !solidNear(l, int3(0, 0, 0)) : y > h;
+        uint water = open ? waterVoxel(make, here, volume ? min(surfaceOf(make, job, px, pz), tall - 1) : h) : 0u;
+        if (water != 0)
+        {
+            m = water;
+            moves = SWAY_STILL;
         }
     }
     // A brick one tree's alone is its plant's brick: the job's list names it.
@@ -1674,6 +2623,10 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         InterlockedAdd(sharedGroupCounts[g], 1u);
         InterlockedOr(sharedSway, 1u << moves);
         uint colour = make->palette[m - 1];
+        if (m - 1u >= SHARED_COLOURS)
+        {
+            InterlockedAdd(sharedBanks[bankOf(m - 1u)], 1u);
+        }
         InterlockedAdd(sharedSum[0], colour & 255u);
         InterlockedAdd(sharedSum[1], (colour >> 8) & 255u);
         InterlockedAdd(sharedSum[2], (colour >> 16) & 255u);
@@ -1689,6 +2642,12 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         }
         sharedCount = count;
         sharedKept = 0;
+        // The bank most of its voxels' colours are in; those of another take the shared colour nearest theirs.
+        sharedBank = 0;
+        for (uint b = 1; b < COLOUR_BANKS; b++)
+        {
+            sharedBank = sharedBanks[b] > sharedBanks[sharedBank] ? b : sharedBank;
+        }
         if (count > 0)
         {
             // Its materials are kept a word at a time, so they are placed a word at a time.
@@ -1724,7 +2683,9 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             rank += countbits(sharedMask[w]);
         }
         uint at = materialBase + sharedOffset + rank;
-        InterlockedOr(make->staging[at >> 2], (m - 1) << ((at & 3u) * 8u));
+        uint place = m - 1u;
+        uint byte = place < SHARED_COLOURS ? place : (bankOf(place) == sharedBank ? place - sharedBank * BANK_COLOURS : make->palette[place] >> 24);
+        InterlockedOr(make->staging[at >> 2], byte << ((at & 3u) * 8u));
     }
     uint* record = make->loose + (job * make->brickRoom + sharedSlot) * BRICK_WORDS;
     if (index < 16)
@@ -1762,7 +2723,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         // A brick with any ground or wood stays still in the wind; else its leaves sway, or its grass leans.
         uint sway = (sharedSway & (1u << SWAY_STILL)) != 0 ? 0u : ((sharedSway & (1u << SWAY_LEAVES)) != 0 ? SWAY_LEAVES : SWAY_GRASS);
         record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u)
-            | (sway << SWAY_SHIFT);
+            | (sway << SWAY_SHIFT) | (sharedBank << BANK_SHIFT);
     }
     else if (index == 20)
     {
@@ -2075,6 +3036,9 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     out[2] = asuint(slots[min(outs.z, GENERATOR_SLOTS - 1)]);
     out[3] = asuint(outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0);
     out[4] = 0;
+    // The biome the place is, where there are biomes (biomeOf).
+    float height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
+    out[15] = asuint(make->biomes == nullptr ? -1.0 : float(biomeOf(make, x, z, asfloat(out[1]), asfloat(out[2]), height - make->seaLevel)));
     if (make->volumeWords == 0)
     {
         return;

@@ -4011,6 +4011,8 @@ struct BlockWaterOut
     // Its block's sky light and block light, each from 0 to 1, in a world lit by the light kept for its blocks
     // (blockCornerLight in block_quads.slang).
     nointerpolation float2 lit : BLOCK_LIGHT;
+    // How churned it is below a Voxel Volume's waterfall, from 0 to 1.
+    float churn : CHURN;
 };
 
 // How fast water running out sideways from what feeds it flows, and a river's current, in metres a second
@@ -4091,6 +4093,7 @@ BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
     o.fall = float2(falling ? 1.0 : 0.0, whole && facing == 2 ? float((quad.y >> 8) & 15) : 0.0);
     o.fallen = 0.0;
     o.lit = b.lit;
+    o.churn = 0.0;
     if (falling)
     {
         // A block further at each block down the quad from its top.
@@ -4264,6 +4267,382 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     return blockWaterLit(frame, input, world.corner.xz, world.blockSize, look, sea, at, face, swollen, below);
 }
 
+// What a face of water drawn from no world of blocks has for its world: the water over a Voxel Volume's rivers.
+static const uint NOT_BLOCK_WATER = 0xFFFFFFFFu;
+
+// Byte `k` of `word` as a number from 0 to 1.
+float voxelWaterByte(uint word, uint k)
+{
+    return float((word >> (8u * k)) & 255u) / 255.0;
+}
+
+// Four numbers at a square's corners, (0, 0), (1, 0), (0, 1) and (1, 1), read `at` across it.
+float voxelWaterAcross(float4 v, float2 at)
+{
+    return lerp(lerp(v.x, v.y, at.x), lerp(v.z, v.w, at.x), at.y);
+}
+
+// A corner of a square of water over an endless Voxel Volume's rivers and lakes (buffers()->voxelWater, six corners a
+// square), drawn as a world of blocks' water is: a still or flowing top, facing straight up so the squares' small
+// slopes show no seams in what it reflects, churned below a waterfall.
+[shader("vertex")]
+BlockWaterOut voxelWaterVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+    VoxelWater square = buffers()->voxelWater[vertexId / 6];
+    uint2 c = corners[vertexId % 6];
+    uint k = c.y * 2 + c.x;
+    float3 world = float3(square.corner.x + float(c.x) * square.size, square.heights[k], square.corner.y + float(c.y) * square.size);
+    float4 at = float4(world, 1.0);
+    BlockWaterOut o;
+    o.position = transform(frame->viewProj, at);
+    o.world = world;
+    o.normal = float3(0.0, 1.0, 0.0);
+    o.currentClip = transform(frame->unjitteredViewProj, at);
+    o.previousClip = transform(frame->prevViewProj, at);
+    o.water = uint2(NOT_BLOCK_WATER, 0);
+    o.flow = square.flow;
+    o.fall = 0.0;
+    o.fallen = 0.0;
+    o.lit = float2(1.0, 0.0);
+    o.churn = voxelWaterByte(square.churn, k);
+    return o;
+}
+
+// How many quads a side a square a Voxel Volume's waterfall pours over is drawn with, and how many sheets deep
+// (FALL_QUADS and FALL_SHEETS in src/water.rs).
+static const uint FALL_QUADS = 8;
+static const uint FALL_SHEETS = 2;
+// How far under its pool's top a waterfall plunges, in metres.
+static const float FALL_PLUNGE = 0.4;
+
+// A point of a Voxel Volume's waterfall: as a world of blocks' water's, with how much of it has water (dry where it
+// is under half), how far along the fall it is from its lip, where it is across the fall, and which sheet it is.
+struct VoxelFallOut
+{
+    float4 position : SV_Position;
+    float3 world : POSITION;
+    float3 normal : NORMAL;
+    float4 currentClip : CURRENT_CLIP;
+    float4 previousClip : PREVIOUS_CLIP;
+    nointerpolation float2 flow : FLOW;
+    float fallen : FALLEN;
+    float wet : WET;
+    float along : ALONG;
+    float across : ACROSS;
+    nointerpolation uint sheet : SHEET;
+};
+
+// Where the water of a Voxel Volume's waterfall is at `at` across square `square`, in sheet `sheet`, at time `time`:
+// leaving the lip level and falling ever more steeply, as thrown water does, from the fall's top to its foot as the
+// square's corners are along it; its front sheet with its back sheet behind it, nearer the cliff and further from it
+// the lower it is; both swaying in and out, the more the lower. Its place, the way out from the cliff, how far along
+// the fall it is, and how steeply it falls there (metres down a metre out).
+float3 voxelFallPoint(VoxelWater square, float2 at, uint sheet, float time, out float2 out, out float along, out float steep)
+{
+    float4 alongs = float4(voxelWaterByte(square.along, 0), voxelWaterByte(square.along, 1), voxelWaterByte(square.along, 2), voxelWaterByte(square.along, 3));
+    along = voxelWaterAcross(alongs, at);
+    float2 change = float2(lerp(alongs.y - alongs.x, alongs.w - alongs.z, at.y), lerp(alongs.z - alongs.x, alongs.w - alongs.y, at.x)) / square.size;
+    float rate = length(change);
+    // The way out from the cliff, as its corners look, so neighbouring squares bend as one.
+    uint looks = asuint(square.heights.w);
+    float2 ways[4];
+    for (uint k = 0; k < 4; k++)
+    {
+        float turn = voxelWaterByte(looks, k) * (255.0 / 256.0) * 6.2831853;
+        ways[k] = float2(cos(turn), sin(turn));
+    }
+    float2 way = lerp(lerp(ways[0], ways[1], at.x), lerp(ways[2], ways[3], at.x), at.y);
+    out = length(way) > 1e-3 ? normalize(way) : (rate > 1e-4 ? change / rate : float2(1.0, 0.0));
+    float top = square.heights.x;
+    // It plunges a little under its pool's top, so the pool meets it where it lands.
+    float drop = square.heights.y + FALL_PLUNGE;
+    float y = top - drop * along * along;
+    steep = 2.0 * drop * along * rate;
+    float2 xz = square.corner + at * square.size;
+    float across = dot(xz, float2(-out.y, out.x));
+    if (sheet == 1)
+    {
+        xz -= out * (0.2 + 0.35 * along);
+    }
+    float sway = (seaNoise(float2(across * 0.9 + float(sheet) * 7.3, y * 0.35 + time * 1.7)) - 0.5) * (0.06 + 0.5 * along * along);
+    xz += out * sway;
+    return float3(xz.x, y, xz.y);
+}
+
+// A corner of a quad of a Voxel Volume's waterfall: each square it pours over (buffers()->voxelWater from push.list
+// on) FALL_QUADS quads a side, in each of its sheets.
+[shader("vertex")]
+VoxelFallOut voxelFallVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+    uint each = FALL_QUADS * FALL_QUADS * 6;
+    VoxelWater square = buffers()->voxelWater[push.list + vertexId / (each * FALL_SHEETS)];
+    uint rest = vertexId % (each * FALL_SHEETS);
+    uint sheet = rest / each;
+    uint quad = (rest % each) / 6;
+    float2 at = (float2(quad % FALL_QUADS, quad / FALL_QUADS) + float2(corners[rest % 6])) / float(FALL_QUADS);
+    float2 out;
+    float along;
+    float steep;
+    float3 world = voxelFallPoint(square, at, sheet, frame->time, out, along, steep);
+    float2 outBefore;
+    float alongBefore;
+    float steepBefore;
+    float3 before = voxelFallPoint(square, at, sheet, frame->time - frame->deltaTime, outBefore, alongBefore, steepBefore);
+    float4 wets = float4(square.wet & 1u, (square.wet >> 1) & 1u, (square.wet >> 2) & 1u, (square.wet >> 3) & 1u);
+    VoxelFallOut o;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.normal = normalize(float3(out.x * steep, 1.0, out.y * steep));
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
+    o.flow = out * square.heights.z;
+    o.fallen = square.heights.x - world.y;
+    o.wet = voxelWaterAcross(wets, at);
+    o.along = along;
+    o.across = dot(world.xz, float2(-out.y, out.x));
+    o.sheet = sheet;
+    return o;
+}
+
+// A Voxel Volume's waterfall where the view meets it: lit as a world of blocks' falling water is where it falls
+// steeply, as its flowing top where it leaves the lip. Its sides ragged where the river's water ends; its front sheet
+// torn into strands lower down, so its back sheet shows between them.
+[shader("fragment")]
+FragmentOut voxelFallFragment(VoxelFallOut input)
+{
+    Frame* frame = push.frame;
+    float ragged = seaNoise(float2(input.across * 3.1, input.world.y * 1.7 + frame->time * 5.0));
+    if (input.wet < 0.35 + 0.3 * ragged)
+    {
+        discard;
+    }
+    if (input.sheet == 0 && input.along > 0.35)
+    {
+        float strands = seaNoise(float2(input.across * 2.3, input.world.y * 0.45 + frame->time * 4.5));
+        if (strands < 0.45 * smoothstep(0.35, 1.0, input.along))
+        {
+            discard;
+        }
+    }
+    if (keptDry(frame, input.world, BLOCK_WATER))
+    {
+        discard;
+    }
+    float3 face = normalize(input.normal);
+    BlockWaterOut w;
+    w.position = input.position;
+    w.world = input.world;
+    w.normal = face;
+    w.currentClip = input.currentClip;
+    w.previousClip = input.previousClip;
+    w.water = uint2(NOT_BLOCK_WATER, 0);
+    w.flow = input.flow;
+    w.fall = float2(face.y < 0.7 ? 1.0 : 0.0, 0.0);
+    w.fallen = input.fallen;
+    w.lit = float2(1.0, 0.0);
+    w.churn = 0.0;
+    float3 v = towardsEye(frame, input.world);
+    bool below = dot(v, face) < 0.0;
+    return blockWaterLit(frame, w, float2(0.0, 0.0), 1.0, voxelWaterLook(), false, input.world, below ? -face : face, false, false);
+}
+
+// ---------------------------------------------------------------- Voxels thrown over a waterfall's lip
+
+// A piece of a Voxel Volume's waterfall's lip (src/voxel_volume/rivers.rs, GpuVoxelLip): where it runs along X and Z,
+// how high the fall's top is, how far it falls, how fast its water leaves the lip, how large a voxel is, and which way
+// out from the cliff it falls.
+struct VoxelLip
+{
+    float2 a;
+    float2 b;
+    float top;
+    float drop;
+    float speed;
+    float voxel;
+    float2 out;
+    float2 pad;
+};
+
+// How many voxels of water each piece of lip throws (LIP_DROPS in src/water.rs); how long one splashes about at the
+// foot after it lands, in seconds; and how far under its pool's top a voxel falls before it is gone.
+static const uint LIP_DROPS = 1536;
+static const float DROP_SPLASH = 0.7;
+static const float DROP_UNDER = 0.4;
+static const float DROP_GRAVITY = 9.81;
+
+// A number from 0 to 1 for drop `i`, its `k`th.
+float dropRandom(uint i, uint k)
+{
+    uint h = i * 747796405u + k * 2891336453u + 1013904223u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+    return float(h & 0xFFFFFFu) / 16777216.0;
+}
+
+// Where voxel `i` thrown over lip `lip` is at time `time`, and how fast it moves, in metres a second: none where it
+// is in no air to be seen. Each leaves the lip at its own moment, at its own place along it and a little back from its
+// front, as fast as the lip says give or take a fifth, drifting a little sideways; it falls as thrown water does, so
+// the faster ones fly further out and the sheet spreads and breaks up as it falls. Where it lands, about half bounce
+// back up a little as spray; the rest are gone into the pool. Then it leaves the lip again.
+float3 dropAt(VoxelLip lip, uint i, float time, out float speed, out bool shown)
+{
+    float fall = sqrt(2.0 * (lip.drop + DROP_UNDER) / DROP_GRAVITY);
+    float period = fall + DROP_SPLASH;
+    float t = frac(time / period + dropRandom(i, 0)) * period;
+    float2 across = float2(-lip.out.y, lip.out.x);
+    float2 start = lerp(lip.a, lip.b, dropRandom(i, 1) * 1.2 - 0.1) - lip.out * dropRandom(i, 2) * 0.15;
+    float out = lip.speed * (0.8 + 0.4 * dropRandom(i, 3));
+    float aside = (dropRandom(i, 4) - 0.5) * 0.5;
+    shown = true;
+    if (t < fall)
+    {
+        speed = length(float2(out, DROP_GRAVITY * t));
+        float2 xz = start + lip.out * out * t + across * aside * t;
+        return float3(xz.x, lip.top - 0.5 * DROP_GRAVITY * t * t, xz.y);
+    }
+    // Spray off the pool where it landed.
+    float after = t - fall;
+    float2 landed = start + lip.out * out * fall + across * aside * fall;
+    float up = 1.0 + 2.5 * dropRandom(i, 5);
+    float y = 0.5 * up * after - 0.5 * DROP_GRAVITY * after * after;
+    shown = dropRandom(i, 6) < 0.5 && y > -0.05;
+    speed = 8.0;
+    float2 xz = landed + lip.out * (0.4 + 1.2 * dropRandom(i, 7)) * after + across * (dropRandom(i, 8) - 0.5) * 1.5 * after;
+    return float3(xz.x, lip.top - lip.drop + y, xz.y);
+}
+
+struct VoxelDropOut
+{
+    float4 position : SV_Position;
+    float3 world : POSITION;
+    nointerpolation float3 normal : NORMAL;
+    float4 currentClip : CURRENT_CLIP;
+    float4 previousClip : PREVIOUS_CLIP;
+    nointerpolation float white : WHITE;
+};
+
+// A corner of the cube of voxel of water `vertexId / 36` thrown over a piece of lip (buffers()->voxelWater from
+// push.list on, read as VoxelLip): as large as the volume's voxels, half as large again as it breaks up into spray.
+[shader("vertex")]
+VoxelDropOut voxelDropVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    VoxelLip lip = ((VoxelLip*)buffers()->voxelWater)[push.list + vertexId / (36u * LIP_DROPS)];
+    uint drop = vertexId / 36u;
+    uint corner = vertexId % 36u;
+    float speed;
+    bool shown;
+    float3 middle = dropAt(lip, drop, frame->time, speed, shown);
+    float speedBefore;
+    bool shownBefore;
+    float3 before = dropAt(lip, drop, frame->time - frame->deltaTime, speedBefore, shownBefore);
+    VoxelDropOut o;
+    if (!shown)
+    {
+        o.position = float4(2.0, 2.0, 0.5, 1.0);
+        o.world = 0.0;
+        o.normal = float3(0.0, 1.0, 0.0);
+        o.currentClip = o.position;
+        o.previousClip = o.position;
+        o.white = 0.0;
+        return o;
+    }
+    // A cube's six faces, two triangles each: the face's axis and side, then the corner across it.
+    uint face = corner / 6u;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(1, 0), uint2(1, 1), uint2(0, 1) };
+    uint2 c = corners[corner % 6u];
+    uint axis = face >> 1;
+    float side = (face & 1u) == 0 ? 0.5 : -0.5;
+    float3 normal = 0.0;
+    normal[axis] = side * 2.0;
+    float3 local = 0.0;
+    local[axis] = side;
+    local[(axis + 1) % 3] = float(c.x) - 0.5;
+    local[(axis + 2) % 3] = float(c.y) - 0.5;
+    // Whiter the faster it falls, each its own, some staying clear water longer.
+    float white = smoothstep(2.0, 7.0, speed) * (0.55 + 0.45 * dropRandom(drop, 9));
+    float size = lip.voxel * (1.0 + 0.5 * white);
+    float3 world = middle + local * size;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.normal = normal;
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    float3 last = (shownBefore && distance(before, middle) < 1.0) ? before + local * size : world;
+    o.previousClip = transform(frame->prevViewProj, float4(last, 1.0));
+    o.white = white;
+    return o;
+}
+
+// A voxel of water thrown over a waterfall's lip, its colour by how fast it falls: the water's own green-blue as it
+// leaves the lip, white as it speeds up and breaks into spray; lit by the sky and the sun, and the sun through it from
+// behind.
+[shader("fragment")]
+FragmentOut voxelDropFragment(VoxelDropOut input)
+{
+    Frame* frame = push.frame;
+    float3 n = normalize(input.normal);
+    float3 l = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float shadow = sunShadow(frame, input.world, n);
+    float3 albedo = lerp(float3(0.1, 0.32, 0.32), float3(0.82, 0.88, 0.9), input.white);
+    Surface s;
+    s.normal = n;
+    s.view = towardsEye(frame, input.world);
+    s.roughness = 0.5;
+    s.diffuse = albedo;
+    s.f0 = float3(0.02);
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    float wrapped = saturate((dot(n, l) + 0.5) / 1.5) + 0.35 * saturate(-dot(n, l));
+    float3 color = albedo * (ambient + sunLight * shadow * wrapped / PI);
+    float2 pixel = input.position.xy;
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), eyeDistance(frame, input.world));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
+// The colours of the water over a Voxel Volume's rivers and lakes: a world of blocks' water block's own colour, a lake's
+// green, as its look is made from it (blockWaterLook).
+BlockWaterLook voxelWaterLook()
+{
+    float4 worn = push.frame->ocean.blockWater;
+    float3 color = lerp(float3(0.04, 0.46, 0.33), worn.rgb, worn.a);
+    float3 own = color / max(max(max(color.r, color.g), color.b), 1e-3);
+    BlockWaterLook look;
+    look.deep = color;
+    look.scatter = 0.75 * sqrt(color);
+    look.absorb = -log(lerp(1.0, own, 0.55)) + 0.05;
+    return look;
+}
+
+// The water over a Voxel Volume's rivers and lakes where the view meets it, lit as a world of blocks' water is, the
+// squares' grid starting at the square's own corner.
+[shader("fragment")]
+FragmentOut voxelWaterFragment(BlockWaterOut input, uint primitive : SV_PrimitiveID)
+{
+    Frame* frame = push.frame;
+    if (keptDry(frame, input.world, BLOCK_WATER))
+    {
+        discard;
+    }
+    VoxelWater square = buffers()->voxelWater[primitive / 2];
+    float3 v = towardsEye(frame, input.world);
+    float3 face = normalize(input.normal);
+    bool below = dot(v, face) < 0.0;
+    return blockWaterLit(frame, input, square.corner, square.size, voxelWaterLook(), false, input.world, face, false, below);
+}
+
 // The camera's own world of blocks' water (waterSurface, water_bodies::block_water) where it is a rough sea and the
 // camera is under the top of it: its place among the Pools; -1 where there is none.
 int blockSeaAround(Frame* frame)
@@ -4340,10 +4719,17 @@ FragmentOut blockWaterLit(
     // Lit by the light kept for its world's blocks (blockAmbient in shading.slang): the sky's light and what it
     // reflects of its surroundings as much as its sky light lets in, its blocks' light over them, and the sun as its
     // sky light lets it in, past its shadows in their place.
-    BlockWorld world = buffers()->blockWorlds[input.water.x];
-    bool kept = (world.flags & BLOCKS_LIT) != 0;
-    float skyShare = kept ? blockSkyShare(input.lit.x, world.glow.w) : 1.0;
-    float3 glowLight = kept ? world.glow.rgb * blockGlowShare(input.lit.y) : 0.0;
+    // Water over a Voxel Volume's rivers is no world of blocks' and keeps no light of its own.
+    bool kept = false;
+    float4 worldGlow = 0.0;
+    if (input.water.x != NOT_BLOCK_WATER)
+    {
+        BlockWorld world = buffers()->blockWorlds[input.water.x];
+        kept = (world.flags & BLOCKS_LIT) != 0;
+        worldGlow = world.glow;
+    }
+    float skyShare = kept ? blockSkyShare(input.lit.x, worldGlow.w) : 1.0;
+    float3 glowLight = kept ? worldGlow.rgb * blockGlowShare(input.lit.y) : 0.0;
     if (kept)
     {
         shadow *= blockSunShare(input.lit.x, sunShadowsReach(frame, at));
@@ -4417,7 +4803,7 @@ FragmentOut blockWaterLit(
     float packFoam = 0.0;
     // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it;
     // and foam churned up beside where a fall lands, drifting and thinning out from it.
-    if (face.y > 0.5 && (oceanHas(frame, OCEAN_WET_EDGES) || input.fall.y > 0.0 || stirred.foam > 0.0))
+    if (face.y > 0.5 && (oceanHas(frame, OCEAN_WET_EDGES) || input.fall.y > 0.0 || input.churn > 0.0 || stirred.foam > 0.0))
     {
         float2 level = levelXZ(frame, at.xz, 4096.0);
         float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(level, float2(1.3, 0.7)));
@@ -4432,6 +4818,14 @@ FragmentOut blockWaterLit(
                 max((sides & 4) != 0 ? within.y : 0.0, (sides & 8) != 0 ? 1.0 - within.y : 0.0));
             float surge = 0.85 + 0.15 * sin(frame->time * 3.3 + dot(level, float2(2.1, 1.7)));
             churned = 0.6 * near * near * surge;
+        }
+        if (input.churn > 0.0)
+        {
+            // Below a Voxel Volume's waterfall, white where it lands and thinning out over a few metres, in patches
+            // that come and go.
+            float surge = 0.75 + 0.25 * sin(frame->time * 2.7 + dot(level, float2(1.9, 2.3)));
+            float patches = foamNoise(level * 0.9 + float2(frame->time * 0.35, -frame->time * 0.27));
+            churned = max(churned, saturate(input.churn * input.churn * (0.55 + 0.6 * patches)) * surge);
         }
         float coverage = max(max(0.65 * contact * contact, churned), stirred.square > 0.0 ? 0.0 : stirred.foam * 0.9);
         // Churned foam is pushed out from the foot and turned over as it goes.
@@ -4460,9 +4854,17 @@ FragmentOut blockWaterLit(
     if (input.fall.x > 0.5)
     {
         float2 white = blockFallWhite(frame, at, face, input.fallen);
-        streaked = white.x;
         float wrapped = saturate((dot(face, l) + 0.6) / 1.6);
         float3 whiteLit = ambient + sunLight * shadow * wrapped / PI;
+        if (input.water.x == NOT_BLOCK_WATER)
+        {
+            // A Voxel Volume's river falls metres at a time, a curtain mostly of air and foam: pale through, hiding
+            // what is behind it, and glowing with the sun behind it, as spray does.
+            float broken = saturate(input.fallen / BLOCK_FALL_BROKEN);
+            white.y = max(white.y, 0.6 + 0.3 * broken);
+            whiteLit += sunLight * shadow * saturate(-dot(face, l)) * 0.5 / PI;
+        }
+        streaked = white.x;
         float3 pale = lerp(whiteLit, whiteLit * look.scatter / max(max(look.scatter.r, look.scatter.g), max(look.scatter.b, 1e-3)), 0.55);
         color = lerp(color, pale, white.y);
         color = lerp(color, whiteLit, white.x);
@@ -4519,8 +4921,6 @@ FragmentOut blockWaterLit(
     color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
 #ifdef VOXEAR_PACK_WATER
     {
-        BlockWorld lit = buffers()->blockWorlds[input.water.x];
-        bool kept = (lit.flags & BLOCKS_LIT) != 0;
         WaterSurface packed;
         packed.position = at;
         packed.normal = n;
@@ -4637,6 +5037,7 @@ InsideOut blockSeaInsideFragment(UnderOut input)
     w.flow = 0.0;
     w.fall = 0.0;
     w.fallen = 0.0;
+    w.churn = 0.0;
     BlockWaterLook look;
     look.deep = body.deep;
     look.scatter = body.scatter;

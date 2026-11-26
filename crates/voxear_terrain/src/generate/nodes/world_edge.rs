@@ -7,6 +7,7 @@
 //! Inside is 1 inside the box, easing to 0 where the ground has sunk or
 //! risen all the way: a world keeps its biomes' pillars and arches to it.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -148,7 +149,18 @@ impl Edged {
     }
 }
 
+impl Edged {
+    fn gpu_step(&self, op: GpuOp) -> GpuStep {
+        let step = GpuStep::new(op).whole(self.shape as u32).number(self.from[0]).number(self.from[1]);
+        step.number(self.to[0]).number(self.to[1]).number(self.width).number(self.level)
+    }
+}
+
 impl Kernel for Edged {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(self.gpu_step(GpuOp::Edge))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("world edge")
             .whole(self.shape as u32)
@@ -210,6 +222,10 @@ fn wander(x: f32, z: f32, width: f32) -> f32 {
 struct Inside(Edged);
 
 impl Kernel for Inside {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(self.0.gpu_step(GpuOp::EdgeInside))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("world edge inside");
         self.0.key(key);

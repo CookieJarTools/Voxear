@@ -127,6 +127,13 @@ int voxelBrickAt(VoxelVolume volume, int3 b)
     return int(volume.pages[slot * 64u + (at >> 6)] * 64u + (at & 63u));
 }
 
+// The palette place of a brick's voxel's material: below 128 a place every brick shares, above it a place in the bank
+// the brick keeps over its average colour (src/voxel_volume/endless.rs), the first bank the palette's places 128 to 255.
+uint voxelPlace(uint* bits, uint material)
+{
+    return material < 128u ? material : material + (bits[19] >> 27) * 128u;
+}
+
 bool voxelSolid(VoxelVolume volume, int3 cell)
 {
     int brick = voxelBrickAt(volume, cell >> 3);
@@ -522,8 +529,7 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
             before += countbits(bits[k]);
         }
         uint at = bits[18] + before;
-        uint material = (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
-        packed = volume.palette[material];
+        packed = volume.palette[voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u)];
     }
     float3 srgb = float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0;
     // Each voxel a shade of its own, so a field of one colour still reads as small cubes: by its place in the world, so
@@ -536,6 +542,121 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
     h ^= h >> 15;
     float grain = float(h >> 8) / 16777216.0;
     return pow(srgb, 2.2) * (0.9 + 0.2 * grain);
+}
+
+// ---------------------------------------------------------------- Water of voxels
+
+// The place in its volume's palette of the voxel at `cell` of brick `brick`, its material read through its brick's
+// bank (voxelPlace).
+uint voxelMaterialOf(VoxelVolume volume, int brick, int3 cell)
+{
+    uint* bits = volume.bricks + uint(brick) * VOXEL_BRICK_WORDS;
+    int3 l = cell & 7;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
+    for (uint k = 0; k < (index >> 5); k++)
+    {
+        before += countbits(bits[k]);
+    }
+    uint at = bits[18] + before;
+    return voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u);
+}
+
+// Whether material `material` of a volume is water of voxels, one of its shades.
+bool voxelIsWater(VoxelVolume volume, uint material)
+{
+    return volume.water != 0u && material + 1u >= volume.water && material + 1u < volume.water + volume.shades;
+}
+
+// Whether a hit met a voxel of water. Far off, where the walk met a group or a brick, it is drawn in its brick's
+// average colour as ground is: the water's own there.
+bool voxelWaterOf(VoxelVolume volume, VoxelHit hit)
+{
+    if (volume.water == 0u || hit.brick < 0 || hit.level != 0)
+    {
+        return false;
+    }
+    return voxelIsWater(volume, voxelMaterialOf(volume, hit.brick, hit.cell));
+}
+
+// What the voxel at `cell` of a volume is: 0 open, 1 water, 2 anything else solid.
+uint voxelKindAt(VoxelVolume volume, int3 cell)
+{
+    int brick = voxelBrickAt(volume, cell >> 3);
+    if (brick < 0)
+    {
+        return 0u;
+    }
+    int3 l = cell & 7;
+    if (!voxelBit(volume.bricks + uint(brick) * VOXEL_BRICK_WORDS, uint(l.x + 8 * (l.y + 8 * l.z))))
+    {
+        return 0u;
+    }
+    return voxelIsWater(volume, voxelMaterialOf(volume, brick, cell)) ? 1u : 2u;
+}
+
+// How far along the ray from `from` along `d` it leaves voxel `cell` of `volume`, in metres.
+float voxelLeaves(VoxelVolume volume, int3 cell, float3 from, float3 d)
+{
+    float3 o = (from - volume.corner) / volume.voxel;
+    float3 dd = select(abs(d) < 1e-7, select(d < 0.0, -1e-7, 1e-7), d);
+    float3 far = (float3(cell) + select(dd > 0.0, 1.0, 0.0) - o) / dd;
+    return min(min(far.x, far.y), far.z) * volume.voxel;
+}
+
+// The nearest voxel along the ray that is not water, as voxelsPlainTrace finds the nearest of any (from a voxel
+// `nearVoxel` metres across, none for others), walking on through at most `most` voxels of water; how far the ray went
+// from the first water it met to it, in metres (0 where it met none); and the first water met. Where the ray goes on
+// through water past those, it meets nothing.
+bool voxelsTraceDry(VoxelVolumes* volumes, float3 from, float3 d, float start, float reach, float foot0, float footScale, uint most, float nearVoxel, out VoxelHit nearest, out float wet, out VoxelHit water)
+{
+    wet = 0.0;
+    water = (VoxelHit)0;
+    water.metres = -1.0;
+    for (uint k = 0; k <= most; k++)
+    {
+        if (!voxelsPlainTrace(volumes, from, d, start, reach, foot0, footScale, nearVoxel, nearest))
+        {
+            wet = water.metres >= 0.0 ? reach - water.metres : 0.0;
+            return false;
+        }
+        VoxelVolume volume = volumes->volumes[nearest.volume];
+        if (!voxelWaterOf(volume, nearest))
+        {
+            wet = water.metres >= 0.0 ? nearest.metres - water.metres : 0.0;
+            return true;
+        }
+        if (water.metres < 0.0)
+        {
+            water = nearest;
+        }
+        if (nearest.level != 0)
+        {
+            break;
+        }
+        start = max(voxelLeaves(volume, nearest.cell, from, d), nearest.metres) + volume.voxel * 0.01;
+    }
+    wet = water.metres >= 0.0 ? reach - water.metres : 0.0;
+    return false;
+}
+
+// A smooth number from 0 to 1 over the plane, a cell a unit wide, the same anywhere it is asked.
+float voxelWaterNoise(float2 p)
+{
+    float2 i = floor(p);
+    float2 f = p - i;
+    f = f * f * (3.0 - 2.0 * f);
+    float4 corners;
+    for (uint k = 0; k < 4; k++)
+    {
+        int2 c = int2(i) + int2(int(k & 1u), int(k >> 1));
+        uint h = uint(c.x) * 0x8DA6B343u ^ uint(c.y) * 0xD8163841u;
+        h ^= h >> 16;
+        h *= 0x7FEB352Du;
+        h ^= h >> 15;
+        corners[k] = float(h >> 8) / 16777216.0;
+    }
+    return lerp(lerp(corners.x, corners.y, f.x), lerp(corners.z, corners.w, f.x), f.y);
 }
 
 float3 voxelNormal(VoxelHit hit, float3 d)
@@ -615,6 +736,48 @@ bool voxelPlainPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
     float footScale;
     return voxelPixelStart(frame, pixel, d, start, footScale)
         && voxelsPlainTrace(voxelVolumes(), voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, 0.0, hit);
+}
+
+// What the probe reads (Renderer::voxels_on_gpu), at push.buffers: a volume, and `count` cells of it, x, y and z a
+// word each, from its window's least sector for an endless one; and where it writes what each holds: its palette
+// place and one, or 0 for nothing.
+struct VoxelProbe
+{
+    VoxelVolume volume;
+    int* cells;
+    uint* found;
+    uint count;
+    uint pad;
+};
+
+// The voxels a volume holds at cells, for checking the GPU's voxels against the CPU's: a thread a cell.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelProbe(uint3 id: SV_DispatchThreadID)
+{
+    VoxelProbe* probe = (VoxelProbe*)push.buffers;
+    if (id.x >= probe->count)
+    {
+        return;
+    }
+    VoxelVolume volume = probe->volume;
+    int3 cell = int3(probe->cells[id.x * 3], probe->cells[id.x * 3 + 1], probe->cells[id.x * 3 + 2]);
+    int brick = voxelBrickAt(volume, cell >> 3);
+    uint found = 0;
+    int3 l = cell & 7;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint* bits = volume.bricks + uint(max(brick, 0)) * VOXEL_BRICK_WORDS;
+    if (brick >= 0 && voxelBit(bits, index))
+    {
+        uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
+        for (uint k = 0; k < (index >> 5); k++)
+        {
+            before += countbits(bits[k]);
+        }
+        uint at = bits[18] + before;
+        found = voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u) + 1u;
+    }
+    probe->found[id.x] = found;
 }
 
 // The coarse rays: each walks against whole bricks, as if each brick were solid, and keeps how far it went.
@@ -699,6 +862,118 @@ struct VoxelOut
     float depth : SV_Depth;
 };
 
+// How far the sun's light is looked for towards the sun from water of voxels, in metres, and how many times coarser
+// than its pixel the walk goes: the water's own shadow, cheaply.
+static const float VOXEL_WATER_SHADOW_REACH = 24.0;
+static const float VOXEL_WATER_SHADOW_COARSER = 3.0;
+
+// A voxel of water the view meets at `hit`, seen through pixel `pixel` along `d`. Its colour is its shade, as deep as
+// the water is over the ground there (src/voxel_volume/rivers.rs), lit by the sky and the sun as the body of the water
+// scatters it; over that it reflects the sky and what stands round it, glints, and ripples drifting across it. The
+// sides of its steps, where its top drops a voxel, are lit as its top, so a sloping river reads as one surface. Foam
+// where it meets the bank, coming and going.
+VoxelOut voxelWaterLit(Frame* frame, float2 pixel, float3 d, VoxelHit hit)
+{
+    VoxelVolumes* volumes = voxelVolumes();
+    VoxelVolume volume = volumes->volumes[hit.volume];
+    float3 from = voxelOrigin(frame, pixel);
+    float3 world = from + d * hit.metres;
+    float3 face = voxelNormal(hit, d);
+    float3 l = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float footScale = voxelPixelAngle(frame, pixel) * volumes->lodScale;
+    // A step's side: open in front of it, and water under what is in front.
+    bool top = face.y > 0.5;
+    if (!top && hit.level == 0 && abs(face.y) < 0.5)
+    {
+        int3 ahead = hit.cell + int3(face);
+        top = voxelKindAt(volume, ahead) == 0u && voxelKindAt(volume, ahead - int3(0, 1, 0)) == 1u;
+    }
+    float3 lightFace = top ? float3(0.0, 1.0, 0.0) : face;
+    float shadow = sunShadow(frame, world, lightFace);
+    if (shadow > 0.0)
+    {
+        VoxelHit blocked;
+        VoxelHit wetHit;
+        float wetThrough;
+        float3 off = world + face * (hit.level == 0 ? 0.02 : 2.02) * volume.voxel;
+        float foot = hit.metres * footScale * VOXEL_WATER_SHADOW_COARSER;
+        if (voxelsTraceDry(volumes, off, l, 0.0, VOXEL_WATER_SHADOW_REACH, foot, footScale * VOXEL_WATER_SHADOW_COARSER, 2, volume.voxel, blocked, wetThrough, wetHit))
+        {
+            shadow = 0.0;
+        }
+    }
+    float t = frame->time;
+    float3 normal = lightFace;
+    if (top)
+    {
+        // Ripples drifting across it smoothly, whatever voxels they cross.
+        float2 slope = float2(0.0);
+        for (uint k = 0; k < 3; k++)
+        {
+            float size = 0.9 / float(1u << k);
+            float2 p = world.xz / size + float2(t * 0.35, t * 0.22) * float(k + 1) + float(k) * 17.0;
+            float e = 0.05;
+            float c = voxelWaterNoise(p);
+            slope += float2(voxelWaterNoise(p + float2(e, 0.0)) - c, voxelWaterNoise(p + float2(0.0, e)) - c) / e * (0.05 / float(k + 1));
+        }
+        normal = normalize(float3(-slope.x, 1.0, -slope.y));
+    }
+    float3 body = voxelColour(volume, hit);
+    Surface s;
+    s.normal = normal;
+    s.view = -d;
+    s.roughness = 0.06;
+    s.diffuse = float3(0.0);
+    s.f0 = float3(0.02);
+    float3 ambient = ambientLight(frame, world, s, sunLight, atmosphere);
+    float nv = saturate(dot(normal, -d));
+    float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
+    float found;
+    float3 reflected = environmentReflection(frame, pixel, world, normal, reflect(d, normal), s.roughness, ambient, atmosphere, found);
+    float3 under = body * (ambient * 0.8 + sunLight * shadow * saturate(l.y) * 0.5 / PI);
+    float3 color = under * (1.0 - fresnel) + reflected * fresnel;
+    Surface glint = s;
+    glint.roughness = 0.12;
+    color += shade(glint, l, sunLight) * shadow;
+    // Churned where a waterfall lands: its last two shades, white foam coming and going over it.
+    if (hit.level == 0)
+    {
+        uint material = voxelMaterialOf(volume, hit.brick, hit.cell);
+        if (material + 3u >= volume.water + volume.shades)
+        {
+            float boil = voxelWaterNoise(float2(hit.cell.xz) * 0.6 + float2(t * 1.7, -t * 1.3) + float(hit.cell.y) * 0.3);
+            float3 foamLit = 0.9 * (ambient + sunLight * shadow * saturate(l.y + 0.3) / PI);
+            color = lerp(color, foamLit, smoothstep(0.2, 0.55, boil) * (material + 2u == volume.water + volume.shades ? 1.0 : 0.6));
+        }
+    }
+    if (hit.level == 0 && top)
+    {
+        float edges = 0.0;
+        for (uint k = 0; k < 4; k++)
+        {
+            int3 o = k == 0 ? int3(1, 0, 0) : (k == 1 ? int3(-1, 0, 0) : (k == 2 ? int3(0, 0, 1) : int3(0, 0, -1)));
+            edges += voxelKindAt(volume, hit.cell + o) == 2u ? 1.0 : 0.0;
+        }
+        float churn = voxelWaterNoise(float2(hit.cell.xz) * 0.45 + float2(t * 0.6, -t * 0.45));
+        float foam = saturate(edges * 0.5) * step(0.4, churn);
+        float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(l.y + 0.3) / PI);
+        color = lerp(color, foamLit, foam);
+    }
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), hit.metres);
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), world, color);
+    VoxelOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));
+    o.depth = voxelDepthOf(frame, world);
+    return o;
+}
+
 [shader("fragment")]
 VoxelOut voxelOpaque(VoxelVertex input)
 {
@@ -730,6 +1005,10 @@ VoxelOut voxelOpaque(VoxelVertex input)
         discard;
     }
     VoxelVolume volume = volumes->volumes[hit.volume];
+    if (voxelWaterOf(volume, hit))
+    {
+        return voxelWaterLit(frame, pixel, d, hit);
+    }
     float3 world = voxelOrigin(frame, pixel) + d * hit.metres;
     float3 normal = voxelNormal(hit, d);
     float3 albedo = voxelColour(volume, hit);
@@ -749,8 +1028,11 @@ VoxelOut voxelOpaque(VoxelVertex input)
         float coarser = hit.level == 0 ? 0.02 : (hit.level == 1 ? 2.02 : 8.02);
         float3 from = world + normal * coarser * volume.voxel;
         float foot = hit.metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
+        // Water of voxels lets the sun through to what is under it.
         VoxelHit blocked;
-        if (voxelsPlainTrace(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, volume.voxel, blocked))
+        VoxelHit wetHit;
+        float wetThrough;
+        if (voxelsTraceDry(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, 3, volume.voxel, blocked, wetThrough, wetHit))
         {
             shadow = 0.0;
         }
@@ -828,4 +1110,47 @@ VoxelOut voxelOpaque(VoxelVertex input)
     o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));
     o.depth = voxelDepthOf(frame, world);
     return o;
+}
+
+// ---------------------------------------------------------------- The sea floor
+
+// The sea floor round the camera as water.slang keeps it (floorDepth): slices FLOOR_TEXELS a side in one depth image,
+// two to a row, their tops in its left half and their undersides in its right, each texel as deep as its ground is
+// high, from FLOOR_REACH under the sea's level to FLOOR_CEILING over it.
+static const float VOXEL_FLOOR_REACH = 256.0;
+static const float VOXEL_FLOOR_CEILING = 4.0;
+static const float VOXEL_FLOOR_TEXELS = 256.0;
+
+// The voxels under each texel of slice push.level of the sea floor, seen from straight above, as the meshes there are
+// drawn (water.slang's floorVertex): with push.list 0, how high the highest voxel is, walked down from the floor's
+// ceiling, as high as the ceiling where the walk starts in the ground; with push.list 1, how high the lowest is,
+// walked up from the floor's reach. Nothing where the walk meets none.
+[shader("fragment")]
+float voxelFloorFragment(VoxelVertex input) : SV_Depth
+{
+    Frame* frame = push.frame;
+    uint slice = push.level;
+    bool under = push.list != 0;
+    float2 tile = float2(float(slice % 2 + (under ? 2 : 0)), float(slice / 2)) * VOXEL_FLOOR_TEXELS;
+    float4 placed = frame->ocean.floor[slice];
+    float2 uv = (input.position.xy - tile) / VOXEL_FLOOR_TEXELS;
+    float2 xz = placed.xy + uv * placed.z;
+    float level = frame->ocean.level;
+    float top = level + VOXEL_FLOOR_CEILING;
+    float bottom = level - VOXEL_FLOOR_REACH;
+    // Read to the voxels' groups at most, finer than a texel.
+    float foot = placed.z / VOXEL_FLOOR_TEXELS * 0.25;
+    // A hair off straight down, as the walk takes no ray wholly along an axis.
+    float3 d = normalize(float3(1e-5, under ? 1.0 : -1.0, 1e-5));
+    float3 from = float3(xz.x, under ? bottom : top, xz.y);
+    // Water of voxels is no ground: the floor is walked on through it.
+    VoxelHit hit;
+    VoxelHit wetHit;
+    float wetThrough;
+    if (!voxelsTraceDry(voxelVolumes(), from, d, 0.0, top - bottom, foot, 0.0, 4, 0.0, hit, wetThrough, wetHit))
+    {
+        discard;
+    }
+    float y = under ? bottom + hit.metres : top - hit.metres;
+    return saturate((y - level + VOXEL_FLOOR_REACH) / (VOXEL_FLOOR_REACH + VOXEL_FLOOR_CEILING));
 }

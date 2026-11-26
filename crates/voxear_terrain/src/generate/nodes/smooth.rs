@@ -5,6 +5,7 @@
 //! reads make it one of the dearer nodes: everything behind it is worked
 //! out nine times.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, around};
@@ -81,6 +82,10 @@ impl Kind for Smooth {
 struct Ring;
 
 impl Kernel for Ring {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::SmoothRing))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("smooth ring");
     }
@@ -100,6 +105,10 @@ impl Kernel for Ring {
 struct Averaged;
 
 impl Kernel for Averaged {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Smoothed))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("smooth");
     }

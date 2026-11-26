@@ -29,7 +29,7 @@ pub const EMPTY: u32 = u32::MAX;
 /// The most voxels a print is along a side, and the most colours its
 /// palette has.
 pub const LARGEST_PRINT: u32 = 2048;
-pub const MOST_COLOURS: u32 = 64;
+pub const MOST_COLOURS: u32 = 128;
 
 const MAGIC: &[u8; 4] = b"VXPR";
 const VERSION: u32 = 1;
@@ -130,6 +130,9 @@ pub struct VoxelPrint {
     pub solid: u64,
     /// What tells it from another print: a hash of its voxels and colours.
     pub id: u64,
+    /// A bit for each of its columns, set where it stands over the column
+    /// ([`footprint`](Self::footprint)).
+    stands: Vec<u32>,
 }
 
 impl PartialEq for VoxelPrint {
@@ -189,8 +192,10 @@ impl VoxelPrint {
             materials,
             solid,
             id: 0,
+            stands: Vec::new(),
         };
         print.id = print.hash_of();
+        print.stands = print.columns_stood();
         print
     }
 
@@ -257,6 +262,16 @@ impl VoxelPrint {
     /// the column has any solid: what it stands over, where grass and trees
     /// do not grow.
     pub fn footprint(&self) -> Vec<u32> {
+        self.stands.clone()
+    }
+
+    /// Whether it stands over column (`x`, `z`) of its voxels, as its
+    /// footprint says.
+    pub fn stands_over(&self, x: i32, z: i32) -> bool {
+        self.covers(x, z, &self.stands)
+    }
+
+    fn columns_stood(&self) -> Vec<u32> {
         let mut bits = vec![0u32; (self.size[0] * self.size[2]).div_ceil(32) as usize];
         let across = self.bricks_across();
         for bz in 0..across[2] {
@@ -438,8 +453,10 @@ impl VoxelPrint {
             materials,
             solid,
             id: 0,
+            stands: Vec::new(),
         };
         print.id = print.hash_of();
+        print.stands = print.columns_stood();
         Ok(print)
     }
 }

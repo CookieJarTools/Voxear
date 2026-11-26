@@ -230,6 +230,9 @@ pub struct Pipelines {
     /// pass and the opaque one, each a triangle over the screen writing its
     /// own depth.
     pub voxel_coarse: vk::Pipeline,
+    /// What voxels a volume holds at given cells, for checking the GPU's
+    /// against the CPU's.
+    pub voxel_probe: vk::Pipeline,
     pub voxel_depth: vk::Pipeline,
     pub voxel_forward: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
@@ -278,6 +281,15 @@ pub struct Pipelines {
     /// pixel's view goes before it leaves the water, then its faces.
     pub block_water_exits: vk::Pipeline,
     pub block_water: vk::Pipeline,
+    /// The water over endless Voxel Volumes' rivers and lakes.
+    pub voxel_water: vk::Pipeline,
+    /// Their waterfalls, as sheets and as voxels thrown over their lips.
+    pub voxel_falls: vk::Pipeline,
+    pub voxel_drops: vk::Pipeline,
+    /// The sea floor's voxels from straight above, their tops and their
+    /// undersides.
+    pub sea_floor_voxels: vk::Pipeline,
+    pub sea_floor_voxels_under: vk::Pipeline,
     pub block_sea_inside: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
     pub underwater: vk::Pipeline,
@@ -867,6 +879,31 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Water (blocks)", water, c"blockWaterVertex", c"blockWaterFragment")
             })?,
+            // Seen from either side, as a world of blocks' water.
+            voxel_water: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Water (voxels)", water, c"voxelWaterVertex", c"voxelWaterFragment")
+            })?,
+            voxel_falls: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Waterfalls (voxels)", water, c"voxelFallVertex", c"voxelFallFragment")
+            })?,
+            voxel_drops: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Falling water (voxels)", water, c"voxelDropVertex", c"voxelDropFragment")
+            })?,
             // Over the whole view, at the depth where each pixel's view meets the swell.
             block_sea_inside: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
@@ -1037,6 +1074,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
+            voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
             voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
@@ -1054,6 +1092,21 @@ impl Pipelines {
             voxel_world_pack: maker.compute("Voxel world pack", voxel_world, c"voxelWorldPack")?,
             voxel_world_sectors: maker.compute("Voxel world sectors", voxel_world, c"voxelWorldSectors")?,
             voxel_world_places: maker.compute("Voxel world places", voxel_world, c"voxelWorldPlaces")?,
+            // The highest voxel over each texel, as the sea floor's meshes keep the highest; and the lowest beside it.
+            sea_floor_voxels: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                depth_write: true,
+                fragment_entry: Some(c"voxelFloorFragment"),
+                ..GraphicsPipelineDesc::depth_only("Sea floor (voxels)", voxels, c"voxelVertex", DEPTH_FORMAT)
+            })?,
+            sea_floor_voxels_under: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+                depth_write: true,
+                fragment_entry: Some(c"voxelFloorFragment"),
+                ..GraphicsPipelineDesc::depth_only("Sea floor underside (voxels)", voxels, c"voxelVertex", DEPTH_FORMAT)
+            })?,
             voxel_depth: graphics(&GraphicsPipelineDesc {
                 color_formats: surface_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -1451,6 +1504,7 @@ impl Pipelines {
             self.block_depth,
             self.block_forward_on_depth,
             self.voxel_coarse,
+            self.voxel_probe,
             self.voxel_depth,
             self.voxel_forward,
             self.voxel_world_columns,
@@ -1486,6 +1540,11 @@ impl Pipelines {
             self.dry_mesh_wall,
             self.block_water_exits,
             self.block_water,
+            self.voxel_water,
+            self.voxel_falls,
+            self.voxel_drops,
+            self.sea_floor_voxels,
+            self.sea_floor_voxels_under,
             self.block_sea_inside,
             self.underwater,
             self.lens_wetness,

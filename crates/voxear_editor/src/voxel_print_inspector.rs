@@ -95,7 +95,7 @@ impl VoxelPrintFields {
         let scale = number_row(ui, rows, "Scale", "", settings.scale);
         tip(ui, scale, "Multiplies the model's size");
         let colours = number_row(ui, rows, "Colours", "", settings.colours as f32);
-        tip(ui, colours, "The most colours its voxels are in, each the nearest of them, up to 64");
+        tip(ui, colours, "The most colours its voxels are in, each the nearest of them, up to 128");
         let row = prop(ui, rows, "Fill");
         ui.set_tooltip(
             row,

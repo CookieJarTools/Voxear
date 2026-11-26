@@ -17,11 +17,16 @@
 //! far, its far voxels drawn coarser.
 
 pub mod bricks;
+mod changes;
+mod edit;
 mod endless;
+mod growth;
 pub(crate) use endless::generated_at;
 mod ground;
 pub mod print;
 mod ray;
+mod rivers;
+mod solid;
 mod trees;
 mod voxelize;
 
@@ -32,9 +37,15 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
+pub use changes::{VoxelChanges, VoxelKind, VoxelSet};
+pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
+pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
+pub use voxear_terrain::generate::structures::AreaRules as VoxelAreaRules;
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
+pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
+pub use solid::{VoxelSolids, ground_at as voxel_ground_at};
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;
@@ -75,148 +86,51 @@ pub struct VoxelVolume {
     /// The trees scattered through an endless volume's ground, each kind as
     /// many to a hectare as it says, where the ground grows grass.
     pub trees: Vec<VoxelTrees>,
+    /// The crops and ground cover grown on an endless volume's ground, each
+    /// kind on the ground it says, the first that grows on a voxel column
+    /// taking it, in place of the ground's own grass.
+    pub cover: Vec<VoxelCover>,
+    /// The World Areas its trees and cover keep within or out of, by their
+    /// tags: those of its Obj's dimension, laid out from the volume's corner.
+    pub areas: Arc<Vec<VoxelArea>>,
     /// The changes made to an endless volume, in the order they were made:
-    /// balls carved out of it or filled with ground, and Voxel Prints
-    /// printed into it, a later one over an earlier. Each column is made
-    /// with those that reach it.
+    /// shapes carved out of it or filled with a ground or a paving, and
+    /// Voxel Prints printed into it, a later one over an earlier (see
+    /// [`VoxelEdit`]). Each column is made with those that reach it.
     pub edits: Arc<Vec<VoxelEdit>>,
+    /// The voxels of an endless volume dug out or placed one at a time, over
+    /// everything its edits make.
+    pub changes: Arc<VoxelChanges>,
+    /// Whether an endless volume with a generator has its generator's sea:
+    /// an Ocean at its sea level, filling the level, where the scene has no
+    /// Ocean of its own (see [`crate::ocean::seas`]).
+    pub sea: bool,
+    /// How an endless volume's rivers and lakes are drawn: as smooth water
+    /// over its voxels, or as voxels of water themselves.
+    pub water: VoxelWaterLook,
 }
 
-/// A change made to an endless Voxel Volume: a ball carved out of it, or
-/// filled with ground, its voxels' middles within the radius; or a Voxel
-/// Print printed into it, its model's origin at `at`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct VoxelEdit {
-    /// The ball's middle, or where the print's origin is, in metres from
-    /// the volume's corner.
-    pub at: Vec3,
-    /// Its radius, in metres; for a print, how far its box reaches from
-    /// `at`.
-    pub radius: f32,
-    /// What fills it: none for air, carved out.
-    pub fill: Option<VoxelMaterial>,
-    /// The print printed there in place of a ball, and how it is turned.
-    pub print: Option<VoxelPrinted>,
-}
-
-/// A Voxel Print as an edit prints it: the print, and how it is turned
-/// about its origin.
-#[derive(Clone, Debug)]
-pub struct VoxelPrinted {
-    pub print: Arc<VoxelPrint>,
-    pub rotation: Quat,
-}
-
-impl PartialEq for VoxelPrinted {
-    fn eq(&self, other: &Self) -> bool {
-        (Arc::ptr_eq(&self.print, &other.print) || self.print == other.print) && self.rotation == other.rotation
-    }
-}
-
-impl VoxelEdit {
-    /// A ball `radius` metres round `at`, carved out, or filled with `fill`.
-    pub fn ball(at: Vec3, radius: f32, fill: Option<VoxelMaterial>) -> Self {
-        Self { at, radius: radius.max(0.0), fill, print: None }
-    }
-
-    /// `print` printed with its origin at `at`, turned `rotation`.
-    pub fn printed(print: Arc<VoxelPrint>, at: Vec3, rotation: Quat) -> Self {
-        let (low, high) = print.bounds();
-        let corner = |i: usize| {
-            Vec3::new([low.x, high.x][i & 1], [low.y, high.y][(i >> 1) & 1], [low.z, high.z][i >> 2]).length()
-        };
-        let radius = (0..8).map(corner).fold(0.0, f32::max);
-        Self { at, radius, fill: None, print: Some(VoxelPrinted { print, rotation: rotation.normalize() }) }
-    }
-
-    /// The box it reaches, least and most corners, in metres from the
-    /// volume's corner.
-    pub fn reach(&self) -> (Vec3, Vec3) {
-        match &self.print {
-            Some(printed) => printed.print.placed_bounds(self.at, printed.rotation),
-            None => (self.at - self.radius, self.at + self.radius),
-        }
-    }
-
-    /// Whether a print is looked at round each voxel's middle too, a
-    /// quarter of a voxel toward its eight corners, in a volume of voxels
-    /// `voxel` metres across: where it is turned off the quarter turns, or
-    /// its voxels are smaller than the volume's, so a wall a voxel thick
-    /// leaves no gap between voxels that meet only at their edges, and a
-    /// thin pole is not missed. A ball never is.
-    pub fn widened(&self, voxel: f32) -> bool {
-        let Some(printed) = &self.print else { return false };
-        let turn = voxear_core::math::Mat3::from_quat(printed.rotation);
-        let quarter = turn.to_cols_array().iter().all(|a| a.abs() < 1e-4 || (a.abs() - 1.0).abs() < 1e-4);
-        !quarter || printed.print.voxels_per_metre as f32 * voxel > 1.001
-    }
-
-    /// Whether voxel `cell` of a volume of voxels `voxel` metres across
-    /// is in it, worked out as the GPU works it (`editHeld` in
-    /// `shaders/voxel_world.slang`): 0 for not, else for a print its colour
-    /// there as a place in the print's palette and one, and 1 for a ball.
-    pub fn holds(&self, cell: voxear_core::math::IVec3, voxel: f32) -> u8 {
-        let middle = cell.as_vec3() + 0.5;
-        match &self.print {
-            Some(printed) => {
-                let print = &printed.print;
-                let scale = print.voxels_per_metre as f32 * voxel;
-                let back = printed.rotation.inverse();
-                let at = |p: Vec3| {
-                    print.get((back * (p - self.at / voxel) * scale + print.origin).floor().as_ivec3().to_array())
-                };
-                let held = at(middle);
-                if held != 0 || !self.widened(voxel) {
-                    return held;
-                }
-                (0..8)
-                    .map(|k| Vec3::new((k & 1) as f32, (k >> 1 & 1) as f32, (k >> 2 & 1) as f32) * 0.5 - 0.25)
-                    .map(|corner| at(middle + corner))
-                    .find(|&held| held != 0)
-                    .unwrap_or(0)
-            }
-            None => {
-                let off = middle - self.at / voxel;
-                let radius = self.radius / voxel;
-                u8::from(off.dot(off) <= radius * radius)
-            }
-        }
-    }
-}
-
-/// The ground an edit fills a ball with, its voxels in the shades the
-/// volume's own ground or a generator's has: dirt; grass, its top the
-/// grass's green; rock; sand; snow; or gravel.
+/// How an endless Voxel Volume's rivers and lakes are drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum VoxelMaterial {
+pub enum VoxelWaterLook {
+    /// A smooth surface over the voxels, rippling and flowing, its
+    /// waterfalls curving down from their lips.
     #[default]
-    Dirt,
-    Grass,
-    Rock,
-    Sand,
-    Snow,
-    Gravel,
+    Smooth,
+    /// Voxels of water, as small as the ground's: a layer at the water's
+    /// top, and its waterfalls blocks of falling water.
+    Voxels,
 }
 
-impl VoxelMaterial {
-    pub const ALL: [Self; 6] = [Self::Dirt, Self::Grass, Self::Rock, Self::Sand, Self::Snow, Self::Gravel];
+impl VoxelWaterLook {
+    pub const ALL: [Self; 2] = [Self::Smooth, Self::Voxels];
 
-    /// As the editor and scenes name it.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Dirt => "Dirt",
-            Self::Grass => "Grass",
-            Self::Rock => "Rock",
-            Self::Sand => "Sand",
-            Self::Snow => "Snow",
-            Self::Gravel => "Gravel",
+            Self::Smooth => "Smooth",
+            Self::Voxels => "Voxels",
         }
-    }
-
-    /// The one named so, as [`name`](Self::name) gives it.
-    pub fn named(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|material| material.name().eq_ignore_ascii_case(name))
     }
 }
 
@@ -233,6 +147,104 @@ pub struct VoxelTrees {
     /// The colours of its wood and its leaves, as sRGB.
     pub wood: [u8; 3],
     pub leaves: [u8; 3],
+    /// The World Areas it grows in, by their tags, and those it never grows
+    /// in: anywhere where it names none.
+    pub areas: VoxelAreaRules,
+}
+
+/// A World Area as an endless Voxel Volume's trees and cover keep to it:
+/// its outline along X and Z, the lowest and highest ground it holds, in
+/// metres from the volume's corner and floor (none for any), and its tags
+/// by their assets' numbers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoxelArea {
+    pub outline: Vec<[f32; 2]>,
+    pub low: Option<f32>,
+    pub high: Option<f32>,
+    pub tags: Vec<u128>,
+}
+
+/// A kind of crop or ground cover grown on an endless Voxel Volume's ground,
+/// of its voxels: stalks a voxel across with heads of grain or flowers,
+/// or round heads of leaves, in rows or scattered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoxelCover {
+    pub kind: VoxelCoverKind,
+    /// The ground it grows on: grass where none.
+    pub on: Vec<VoxelMaterial>,
+    /// How much of the ground it takes grows a stalk or a head, from 0 to 1.
+    pub density: f32,
+    /// How tall it grows, in metres: for cabbages, how wide a head is.
+    pub height: f32,
+    /// How far apart its rows are, in metres, along X: 0 for none,
+    /// scattered as grass is.
+    pub rows: f32,
+    /// What the ground it grows on is turned to, as a ploughed field's
+    /// earth: none to leave the ground as it is.
+    pub soil: Option<VoxelMaterial>,
+    /// The World Areas it grows in, by their tags, and those it never grows
+    /// in: anywhere where it names none.
+    pub areas: VoxelAreaRules,
+}
+
+/// What a kind of cover is, each of its own voxels and colours.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelCoverKind {
+    /// Tall grass gone to seed, scattered.
+    #[default]
+    MeadowGrass,
+    /// Straw stalks with golden ears, in rows.
+    Wheat,
+    /// Paler and shorter than wheat, with longer ears.
+    Barley,
+    /// Thin green stems with blue flowers.
+    Flax,
+    /// Round heads of leaves, in rows.
+    Cabbage,
+}
+
+impl VoxelCoverKind {
+    pub const ALL: [Self; 5] = [Self::MeadowGrass, Self::Wheat, Self::Barley, Self::Flax, Self::Cabbage];
+
+    /// As the editor names it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::MeadowGrass => "Meadow Grass",
+            Self::Wheat => "Wheat",
+            Self::Barley => "Barley",
+            Self::Flax => "Flax",
+            Self::Cabbage => "Cabbage",
+        }
+    }
+
+    /// The one named so.
+    pub fn named(name: &str) -> Option<Self> {
+        let flat = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+        Self::ALL.into_iter().find(|kind| flat(kind.name()) == flat(name))
+    }
+
+    /// How tall it grows, in metres, how far apart its rows are, and how
+    /// much of its ground it takes, as a new kind is given them.
+    pub fn defaults(self) -> (f32, f32, f32) {
+        match self {
+            Self::MeadowGrass => (0.55, 0.0, 0.45),
+            Self::Wheat => (0.9, 0.25, 0.7),
+            Self::Barley => (0.75, 0.25, 0.7),
+            Self::Flax => (0.65, 0.2, 0.6),
+            Self::Cabbage => (0.3, 0.55, 0.85),
+        }
+    }
+}
+
+impl VoxelCover {
+    /// A kind as it is first grown: on grass, its own height, rows and
+    /// density, crops in ploughed earth, anywhere.
+    pub fn of(kind: VoxelCoverKind) -> Self {
+        let (height, rows, density) = kind.defaults();
+        let soil = (kind != VoxelCoverKind::MeadowGrass).then_some(VoxelMaterial::Dirt);
+        Self { kind, on: vec![VoxelMaterial::Grass], density, height, rows, soil, areas: VoxelAreaRules::default() }
+    }
 }
 
 /// A world generator an endless Voxel Volume's ground is made by, run on
@@ -250,6 +262,9 @@ pub struct VoxelGenerator {
     pub world: Arc<voxear_terrain::generate::WorldGen>,
     pub floor: f32,
     pub at: [f32; 2],
+    /// A world of blocks' biomes, whose blocks its ground is made of: none
+    /// for ground of grass, rock, sand, snow and gravel by its climate.
+    pub biomes: Option<Arc<VoxelBiomes>>,
 }
 
 impl PartialEq for VoxelGenerator {
@@ -257,6 +272,107 @@ impl PartialEq for VoxelGenerator {
         (Arc::ptr_eq(&self.world, &other.world) || self.world.hash() == other.world.hash())
             && self.floor == other.floor
             && self.at == other.at
+            && self.biomes == other.biomes
+    }
+}
+
+/// A world of blocks' biomes as an endless volume lays their ground: which
+/// is where, and what blocks each lays (see `voxear_terrain::generate::GpuBiomes`),
+/// with each block's colour, as sRGB, in the order the words name them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoxelBiomes {
+    pub words: Vec<u32>,
+    pub colours: Vec<[u8; 3]>,
+}
+
+impl VoxelBiomes {
+    fn number(&self, at: usize) -> f32 {
+        f32::from_bits(self.words[at])
+    }
+
+    /// The painted biome map's pixel `[px, pz]`, where it is painted
+    /// (`paintedPixel` in `shaders/generator.slang`).
+    fn painted(&self, map: usize, [px, pz]: [i32; 2]) -> Option<f32> {
+        let w = &self.words[map..];
+        let (tx, tz) = ((px >> 6) - w[1] as i32, (pz >> 6) - w[2] as i32);
+        let (across, down) = (w[3], w[4]);
+        if tx < 0 || tz < 0 || tx as u32 >= across || tz as u32 >= down {
+            return None;
+        }
+        let place = w[5 + tx as usize + across as usize * tz as usize];
+        if place == u32::MAX {
+            return None;
+        }
+        let at = 5 + (across * down) as usize + place as usize * 4096 + ((pz & 63) * 64 + (px & 63)) as usize;
+        Some(f32::from_bits(w[at])).filter(|value| !value.is_nan())
+    }
+
+    /// Which biome the place at `(x, z)` of the generator's world is, in
+    /// metres, with its climate there, as the GPU picks it (`biomeOf` in
+    /// `shaders/voxel_world.slang`): by its place in their list.
+    pub fn biome_of(&self, x: f32, z: f32, warmth: f32, wetness: f32, above_sea: f32) -> Option<usize> {
+        use voxear_terrain::noise::{NoiseStyle, fractal, gradient};
+        let count = *self.words.first()? as usize;
+        if count == 0 {
+            return None;
+        }
+        if self.words[9] != u32::MAX {
+            let map = self.words[9] as usize;
+            let spacing = f32::from_bits(self.words[map]);
+            let size = spacing * 3.0;
+            let wx = (fractal(NoiseStyle::Fractal, x / size, z / size, 2, 0x51) * 2.0 - 1.0) * spacing * 1.5;
+            let wz = (fractal(NoiseStyle::Fractal, x / size, z / size, 2, 0x7a) * 2.0 - 1.0) * spacing * 1.5;
+            let pixel = [((x + wx) / spacing).floor() as i32, ((z + wz) / spacing).floor() as i32];
+            if self.words[map + 3] != 0
+                && let Some(value) = self.painted(map, pixel)
+            {
+                let index = value.round();
+                if index >= 0.0 && index < count as f32 {
+                    return Some(index as usize);
+                }
+            }
+        }
+        let wander = self.number(1);
+        let (mut temperature, mut humidity) = (warmth, wetness);
+        if wander > 0.0 {
+            let (u, v) = (x / self.number(2), z / self.number(2));
+            let seed = self.words[3];
+            let off = |part: u32| {
+                (gradient(u, v, seed ^ part) + 0.4 * gradient(u * 3.7, v * 3.7, seed ^ part ^ 0x9E37_79B9)) * wander
+            };
+            temperature += off(1) * self.number(4);
+            humidity += off(2) * self.number(5);
+        }
+        let outside =
+            |low: f32, high: f32, value: f32, spread: f32| (low - value).max(value - high).max(0.0) / spread.max(1e-6);
+        let mut best: Option<(usize, f32, f32)> = None;
+        for i in 0..count {
+            let r = self.words[8] as usize + i * voxear_terrain::generate::GPU_BIOME_WORDS;
+            let t = outside(self.number(r), self.number(r + 1), temperature, self.number(4));
+            let h = outside(self.number(r + 2), self.number(r + 3), humidity, self.number(5));
+            let y = outside(self.number(r + 4), self.number(r + 5), above_sea, self.number(6));
+            let (away, reach) = (t * t + h * h + y * y, self.number(r + 6));
+            if best.is_none_or(|(_, least, narrowest)| away < least || (away == least && reach < narrowest)) {
+                best = Some((i, away, reach));
+            }
+        }
+        best.map(|(i, ..)| i)
+    }
+
+    /// Whether grass and trees grow on biome `biome`'s ground where it is
+    /// rocky, rises `across` voxels over four and stands `above_sea` metres
+    /// over the sea, as the GPU has it (`growsOn`): on its own ground, not
+    /// its steep ground's or its shore's, where its top block is green.
+    pub fn grows(&self, biome: usize, rock: bool, across: i32, above_sea: f32) -> bool {
+        let r = self.words[8] as usize + biome * voxear_terrain::generate::GPU_BIOME_WORDS;
+        let steep = self.words[r + 10] != u32::MAX && across as f32 / 4.0 >= self.number(r + 11);
+        let shore = self.words[r + 12] != u32::MAX && above_sea.abs() <= self.number(r + 13);
+        let top = self.words[r + 7];
+        let green = self
+            .colours
+            .get(top as usize)
+            .is_some_and(|&[red, g, b]| g > red.saturating_add(8) && g > b.saturating_add(8));
+        !rock && !steep && !shore && top != u32::MAX && green
     }
 }
 
@@ -273,7 +389,12 @@ impl Default for VoxelVolume {
             distance: 0.0,
             generator: None,
             trees: Vec::new(),
+            cover: Vec::new(),
+            areas: Arc::default(),
             edits: Arc::default(),
+            changes: Arc::default(),
+            sea: true,
+            water: VoxelWaterLook::Smooth,
         }
     }
 }
@@ -292,7 +413,11 @@ impl PartialEq for VoxelVolume {
             && self.distance == other.distance
             && self.generator == other.generator
             && self.trees == other.trees
+            && self.cover == other.cover
+            && (Arc::ptr_eq(&self.areas, &other.areas) || self.areas == other.areas)
             && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
+            && self.water == other.water
+            && (Arc::ptr_eq(&self.changes, &other.changes) || self.changes == other.changes)
     }
 }
 
@@ -317,6 +442,15 @@ impl PartialEq for VoxelStamp {
 }
 
 impl VoxelVolume {
+    /// How high its generator's sea stands in the world, its corner at
+    /// `corner`: none unless it is endless, has a generator and its Sea on,
+    /// nor where the sea is under its floor.
+    pub fn sea_height(&self, corner: Vec3) -> Option<f32> {
+        let generator = self.generator.as_ref().filter(|_| self.endless && self.sea)?;
+        let over_floor = generator.world.sea_level() - generator.floor;
+        (over_floor > 0.0).then_some(corner.y + over_floor)
+    }
+
     /// How many voxels it measures along each side.
     pub fn voxel_size(&self) -> [u32; 3] {
         let per = self.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
@@ -425,6 +559,10 @@ pub(crate) struct GpuVoxelVolume {
     windowed: u32,
     empty_sector: u64,
     pages: u64,
+    /// The first of the palette's shades of water and one, none for a volume
+    /// of no water voxels, and how many shades from shallow to deep.
+    water: u32,
+    shades: u32,
     /// A ring's hole: the box the ring inside it draws, which the walk
     /// passes over, in its voxels from its corner along X and Z, least then
     /// most; none where the most is not past the least.
@@ -489,6 +627,12 @@ pub(crate) struct VoxelVolumes {
     endless: HashMap<Entity, Vec<endless::Endless>>,
     /// Each volume drawn this frame and its corner.
     drawn: Vec<(GpuVoxelVolume, Vec3)>,
+    /// The water over endless volumes' rivers: how many times each one's
+    /// changed as last seen, a count of the changes to all of it, and for
+    /// each frame slot its buffer, which change it holds and how many squares.
+    water_seen: Vec<(Entity, u64)>,
+    water_version: u64,
+    water: Vec<(Option<Buffer>, u64, [u32; 3])>,
     /// Whether they are being made outside the frames, as a game loads, so
     /// rings make as many columns at a time as the finest.
     pub loading: bool,
@@ -500,6 +644,10 @@ pub struct VoxelCounts {
     pub volumes: u32,
     pub bricks: u64,
     pub bytes: u64,
+    /// How many squares of water lie over endless volumes' rivers and lakes.
+    pub water_squares: u32,
+    /// How many columns of endless volumes are made this frame.
+    pub columns_made: u32,
 }
 
 impl VoxelVolumes {
@@ -626,6 +774,18 @@ impl VoxelVolumes {
         Ok(())
     }
 
+    /// What `entity`'s endless volume holds on the GPU at each of `cells`
+    /// (see [`endless::Endless::probe`]): none where it has none.
+    pub fn probe(
+        &self,
+        gpu: &Gpu,
+        made: (&Pipelines, &Bindless),
+        entity: Entity,
+        cells: &[[i32; 3]],
+    ) -> Result<Option<(Vec<u32>, Vec<[u8; 4]>)>> {
+        self.endless.get(&entity).and_then(|rings| rings.first()).map(|endless| endless.probe(gpu, made, cells)).transpose()
+    }
+
     pub fn counts(&self) -> VoxelCounts {
         let mut counts = VoxelCounts { volumes: self.drawn.len() as u32, ..Default::default() };
         for (_, resident) in self.resident.values() {
@@ -633,12 +793,65 @@ impl VoxelVolumes {
             counts.bytes += resident.bytes;
         }
         counts.bytes += self.endless.values().flatten().map(endless::Endless::bytes).sum::<u64>();
+        counts.water_squares = self.endless.values().flatten().map(|made| made.water_squares().count() as u32).sum();
+        counts.columns_made = self.endless.values().flatten().map(endless::Endless::making_now).sum();
         counts
     }
 
     /// Each volume drawn this frame, and its corner, for every view.
     pub fn drawn(&self) -> std::sync::Arc<[(GpuVoxelVolume, Vec3)]> {
         self.drawn.iter().copied().collect()
+    }
+
+    /// The water over endless volumes' rivers and lakes for frame slot
+    /// `slot`, as every view draws it: its buffer's address, how many
+    /// squares it holds, then how many of waterfalls and of their lips,
+    /// written again where it changed.
+    pub fn water(&mut self, gpu: &Gpu, slot: usize) -> Result<(u64, [u32; 3])> {
+        let mut seen: Vec<(Entity, u64)> =
+            self.endless.iter().filter_map(|(entity, rings)| Some((*entity, rings.first()?.water_changes()))).collect();
+        seen.sort_unstable_by_key(|(entity, _)| entity.to_bits());
+        if seen != self.water_seen {
+            self.water_seen = seen;
+            self.water_version += 1;
+        }
+        if self.water.len() <= slot {
+            self.water.resize_with(slot + 1, || (None, 0, [0; 3]));
+        }
+        let version = self.water_version;
+        if self.water[slot].1 != version {
+            let mut squares: Vec<GpuVoxelWater> =
+                self.endless.values().flatten().flat_map(|made| made.water_squares().copied()).collect();
+            let still = squares.len() as u32;
+            squares.extend(self.endless.values().flatten().flat_map(|made| made.water_falls().copied()));
+            let falls = squares.len() as u32 - still;
+            // Waterfalls' lips after those, as many words each.
+            squares.extend(
+                self.endless
+                    .values()
+                    .flatten()
+                    .flat_map(|made| made.water_lips().map(|lip| bytemuck::cast::<_, GpuVoxelWater>(*lip))),
+            );
+            let bytes = (squares.len() * size_of::<GpuVoxelWater>()).max(16) as u64;
+            let (buffer, _, _) = &mut self.water[slot];
+            if buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {
+                let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+                let name = format!("voxel water {slot}");
+                // This slot's last frame is done with it.
+                if let Some(old) =
+                    buffer.replace(gpu.create_buffer(&name, bytes * 3 / 2, usage, MemoryLocation::CpuToGpu)?)
+                {
+                    gpu.destroy_buffer(old);
+                }
+            }
+            if let Some(buffer) = buffer.as_ref().filter(|_| !squares.is_empty()) {
+                buffer.write(0, &squares);
+            }
+            let lips = squares.len() as u32 - still - falls;
+            self.water[slot] = (self.water[slot].0.take(), version, [still, falls, lips]);
+        }
+        let (buffer, _, counts) = &self.water[slot];
+        Ok((buffer.as_ref().map_or(0, |buffer| buffer.address), *counts))
     }
 }
 
@@ -694,6 +907,9 @@ impl VoxelVolumes {
         }
         for made in self.endless.drain().flat_map(|(_, rings)| rings) {
             made.destroy(gpu);
+        }
+        for (buffer, _, _) in self.water.drain(..) {
+            buffer.into_iter().for_each(|buffer| gpu.destroy_buffer(buffer));
         }
     }
 }
@@ -753,7 +969,7 @@ fn fit(gpu: &Gpu, frames: &mut Frames, made: &mut endless::Endless, volume: &Vox
     }
     made.from.roughness = volume.roughness;
     // New edits make the columns they reach again.
-    let gone = made.set_edits(gpu, &volume.edits)?;
+    let gone = made.set_edits(gpu, &volume.edits, &volume.changes)?;
     retire(frames, gone);
     Ok(())
 }
@@ -831,6 +1047,8 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         windowed: 0,
         empty_sector: 0,
         pages: 0,
+        water: 0,
+        shades: 0,
         hole: [0.0; 4],
         outer: [0.0; 4],
     };
@@ -844,8 +1062,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 128);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 128 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 136);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 136 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]
@@ -868,7 +1086,7 @@ mod tests {
             // A row of voxels a voxel up, every one the wall holds.
             let held: std::collections::HashSet<(i32, i32)> = (0..128)
                 .flat_map(|z| (0..128).map(move |x| (x, z)))
-                .filter(|&(x, z)| edit.holds(IVec3::new(x, 1, z), voxel) != 0)
+                .filter(|&(x, z)| edit.held(IVec3::new(x, 1, z), voxel, 0).solid())
                 .collect();
             // Seen from the side the wall is whole: its voxels all meet face to face, one run end to end.
             let first = *held.iter().next().expect("the wall");

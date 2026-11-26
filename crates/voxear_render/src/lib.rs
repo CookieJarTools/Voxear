@@ -171,10 +171,13 @@ pub use lightmaps::{
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
 pub use voxel_volume::{
-    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelEdit, VoxelGenerator,
+    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, PAVING_COLORS as VOXEL_PAVING_COLORS, MOST_VOXELS_A_METRE,
+    VoxelBiomes, VoxelCounts, VoxelEdit, VoxelGenerator,
     VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
-    VoxelPrinted, VoxelRayHit, VoxelStamp, VoxelTrees, VoxelVolume, print::MOST_COLOURS as MOST_PRINT_COLOURS,
-    raycast as voxel_raycast, voxel_print_model,
+    VoxelArea, VoxelAreaRules, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelHeld, VoxelKind, VoxelPrinted, VoxelRayHit,
+    VoxelSet, VoxelShape, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook, VoxelWaterPoint, MOST_COVER_KINDS,
+    voxel_areas_allow, voxel_ground_at, print::MOST_COLOURS as MOST_PRINT_COLOURS, raycast as voxel_raycast,
+    voxel_print_model, water_at as voxel_water_at,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
@@ -1090,7 +1093,36 @@ impl Renderer {
         places: &[[f32; 3]],
         size: f32,
     ) -> Result<Vec<[f32; 5]>> {
-        voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, places, size)
+        let made = voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, None, places, size)?;
+        Ok(made.into_iter().map(|[a, b, c, d, e, _]| [a, b, c, d, e]).collect())
+    }
+
+    /// The biome each of `places`, `[x, z]` in metres in `world`, is, picked
+    /// on the GPU as an endless volume picks it from `biomes`: by its place
+    /// in their list, -1 for none. For checking the GPU against the CPU.
+    pub fn biomes_on_gpu(
+        &self,
+        world: &voxear_terrain::generate::WorldGen,
+        biomes: &VoxelBiomes,
+        places: &[[f32; 2]],
+    ) -> Result<Vec<i32>> {
+        let asked: Vec<[f32; 3]> = places.iter().map(|&[x, z]| [x, 0.0, z]).collect();
+        let gpu = (&self.pipelines, &self.bindless);
+        let made = voxel_volume::generated_at(&self.gpu, gpu, world, Some(biomes), &asked, 1.0)?;
+        Ok(made.into_iter().map(|place| place[5] as i32).collect())
+    }
+
+    /// What the endless Voxel Volume of `entity` holds on the GPU at each of
+    /// `cells`, in voxels from its corner: a palette place and one, or 0 for
+    /// nothing; and its palette's colours, as sRGB. For checking the GPU's
+    /// voxels against the CPU's, once the cells' columns are made: none
+    /// where the Obj has no endless volume drawn.
+    pub fn voxels_on_gpu(
+        &self,
+        entity: voxear_ecs::Entity,
+        cells: &[[i32; 3]],
+    ) -> Result<Option<(Vec<u32>, Vec<[u8; 4]>)>> {
+        self.voxels.probe(&self.gpu, (&self.pipelines, &self.bindless), entity, cells)
     }
 
     /// Makes every Voxel Volume in `world` and brings it up, waiting at most
@@ -2202,6 +2234,8 @@ impl Renderer {
         let voxel_draws = voxels.drawn();
         // Endless volumes' columns made round the camera, before any view walks them.
         let voxel_pools = voxels.record(&mut fg, *pipelines, frame.slot);
+        // The water over their rivers and lakes, which every view draws.
+        let voxel_water = voxels.water(gpu, frame.slot)?;
         let ui = &ui_buffers[frame.slot];
         // The UI's shaded backgrounds read the time from `output`.
         let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
@@ -2324,6 +2358,7 @@ impl Renderer {
                 blocks: block_draws.clone(),
                 voxels: voxel_draws.clone(),
                 voxel_pools: voxel_pools.clone(),
+                voxel_water,
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
                 sound: sound.filter(|_| !sound_done),
                 baked: baked_frame.clone(),
@@ -2900,6 +2935,10 @@ struct ViewSetup {
     voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3)]>,
     /// What endless volumes' making writes this frame, which the voxel passes read.
     voxel_pools: Vec<graph::BufferId>,
+    /// The water over endless volumes' rivers and lakes: its buffer's
+    /// address, and how many squares it has, then of waterfalls and of their
+    /// lips after.
+    voxel_water: (u64, [u32; 3]),
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
@@ -4128,10 +4167,18 @@ impl View {
         }
         // The first Ocean's sea, its waves moved on to now, the Pools and Dry Areas, and the worlds of blocks' water.
         let block_water = view_blocks.as_ref().filter(|blocks| blocks.has_water()).cloned();
+        // And the water over Voxel Volumes' rivers, and their ground under the sea, which its floor is drawn from.
+        let voxel_water = water::VoxelWater {
+            squares: setup.voxel_water.1[0],
+            falls: setup.voxel_water.1[1],
+            lips: setup.voxel_water.1[2],
+            floor: view_voxels.as_ref().map(|view| view.pools.clone()),
+        };
         let wet = extracted.ocean.is_some()
             || extracted.water_bodies.pools > 0
             || !extracted.water_bodies.streams.is_empty()
-            || block_water.is_some();
+            || block_water.is_some()
+            || voxel_water.squares + voxel_water.falls + voxel_water.lips > 0;
         // Through a Portal, only the water of worlds of blocks, and only while some of it shows there.
         let shown = portal.is_none_or(|pass| pass.water && block_water.is_some());
         let water = match wet && !wireframe && shown {
@@ -4139,7 +4186,7 @@ impl View {
                 fg,
                 (gpu, bindless),
                 (&mut self.ocean, slot),
-                (extracted.ocean, &extracted.water_bodies, block_water, extracted.origin),
+                (extracted.ocean, &extracted.water_bodies, (block_water, voxel_water), extracted.origin),
                 (extent, setup.time, camera),
                 (
                     &{
@@ -4353,6 +4400,7 @@ impl View {
                 skin_groups: 0,
                 baked_matrices: setup.baked_matrices,
                 voxel_volumes: buffers.voxels.as_ref().map_or(0, |[list, _]| list.address),
+                voxel_water: setup.voxel_water.0,
                 ui_panels: buffers.ui_panels.address,
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],

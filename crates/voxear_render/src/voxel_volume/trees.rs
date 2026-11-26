@@ -169,24 +169,9 @@ pub(crate) fn models(forest: &Forest, block: u32, palette: &[[u8; 4]]) -> Models
                 let bytes = &bytes;
                 let words = &forest.words;
                 scope.spawn(move || {
-                    let record = &words[VARIANTS_AT + plant * VARIANT_WORDS..][..VARIANT_WORDS];
-                    let kind = plant / VARIANTS as usize;
-                    let colours = words[KINDS_AT + kind * 4 + 3];
-                    let grid = Grid {
-                        low: [0, 1, 2].map(|a| record[a] as i32),
-                        size: [3, 4, 5].map(|a| record[a] as i32),
-                        bytes: &bytes[record[6] as usize..],
-                    };
-                    if grid.size.iter().any(|&a| a <= 0) {
-                        return Vec::new();
-                    }
-                    let (voxels, low, size) = grid.voxels(b, colours, plant as u32);
-                    (0..4)
-                        .map(|turns| {
-                            let (turned, low, size) = turned(&voxels, low, size, b, turns);
-                            (turned.pack(size.map(|a| a as u32), palette), low)
-                        })
-                        .collect()
+                    let colours = words[KINDS_AT + plant / VARIANTS as usize * 4 + 3];
+                    let turns = plant_turns(words, bytes, plant, b, colours);
+                    turns.into_iter().map(|(turned, low, size)| (turned.pack(size.map(|a| a as u32), palette), low)).collect()
                 })
             })
             .collect();
@@ -234,6 +219,200 @@ pub(crate) fn models(forest: &Forest, block: u32, palette: &[[u8; 4]]) -> Models
         }
     }
     Models { words, bricks: all_bricks, materials }
+}
+
+/// Plant `plant` of a forest's `words` (and those words as `bytes`) as
+/// voxels, `b` a block, its colours from palette place `colours`, in each
+/// of four turns: the voxels, and the least corner and size of their box in
+/// voxels from the least corner of the trunk's foot block as turned. None
+/// for a plant with nothing in it.
+fn plant_turns(
+    words: &[u32],
+    bytes: &[u8],
+    plant: usize,
+    b: i32,
+    colours: u32,
+) -> Vec<(bricks::Builder, [i32; 3], [i32; 3])> {
+    let record = &words[VARIANTS_AT + plant * VARIANT_WORDS..][..VARIANT_WORDS];
+    let grid = Grid {
+        low: [0, 1, 2].map(|a| record[a] as i32),
+        size: [3, 4, 5].map(|a| record[a] as i32),
+        bytes: &bytes[record[6] as usize..],
+    };
+    if grid.size.iter().any(|&a| a <= 0) {
+        return Vec::new();
+    }
+    let (voxels, low, size) = grid.voxels(b, colours, plant as u32);
+    (0..4).map(|turns| turned(&voxels, low, size, b, turns)).collect()
+}
+
+/// A forest's trees as the CPU finds them, to collide with and to meet with
+/// rays: each kind's chance in a cell, first plant and how many plants; and
+/// each plant's voxels in each of its four turns (a plant's turns one after
+/// another), as the GPU has them.
+pub(crate) struct Woods {
+    kinds: Vec<(f32, u32, u32)>,
+    models: Vec<Model>,
+    /// How far the furthest plant reaches across from the middle of its
+    /// trunk, in metres, with the block its leaves round over and the brick
+    /// a tree stands aside to keep to the grid.
+    pub reach: f32,
+    /// How many voxels a block is.
+    pub block: i32,
+}
+
+/// A plant turned, as voxels: 1 and 2 its wood, 3 to 5 its leaves, from
+/// the least corner of their box; that corner from the least corner of its
+/// trunk's foot block; and the box's size.
+struct Model {
+    voxels: bricks::Builder,
+    low: [i32; 3],
+    size: [i32; 3],
+    /// Its logs' voxels, from the least corner of its box.
+    logs: Vec<[i32; 3]>,
+}
+
+/// What a voxel is to the CPU: open air (or grass and flowers, which
+/// nothing meets), the ground, a tree's wood, or its leaves.
+pub(crate) const AIR: u8 = 0;
+pub(crate) const GROUND: u8 = 1;
+pub(crate) const LOG: u8 = 2;
+pub(crate) const LEAF: u8 = 3;
+
+/// A tree placed: where its plant's box's least corner is, in voxels from
+/// the volume's corner, on the bricks' grid; and which model it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Tree {
+    pub least: [i32; 3],
+    pub model: usize,
+}
+
+impl Woods {
+    /// The trees of `trees`, `block` voxels a block: none for none.
+    pub fn new(trees: &[VoxelTrees], block: u32) -> Option<Self> {
+        let forest = forest(trees, 0)?;
+        let b = block.max(1) as i32;
+        let bytes: Vec<u8> = forest.words.iter().flat_map(|word| word.to_le_bytes()).collect();
+        let kinds = (0..forest.words[0] as usize)
+            .map(|k| {
+                let record = &forest.words[KINDS_AT + k * 4..][..4];
+                (f32::from_bits(record[0]), record[1], record[2])
+            })
+            .collect();
+        let plants = (forest.words[0] * VARIANTS) as usize;
+        let made: Vec<Vec<(bricks::Builder, [i32; 3], [i32; 3])>> = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..plants)
+                .map(|plant| {
+                    let (words, bytes) = (&forest.words, &bytes);
+                    scope.spawn(move || plant_turns(words, bytes, plant, b, 0))
+                })
+                .collect();
+            jobs.into_iter().map(|job| job.join().expect("a plant's voxels")).collect()
+        });
+        let mut models = Vec::with_capacity(plants * 4);
+        for turns in made {
+            let empty = || Model { voxels: bricks::Builder::default(), low: [0; 3], size: [0; 3], logs: Vec::new() };
+            let model = |(voxels, low, size): (bricks::Builder, [i32; 3], [i32; 3])| {
+                let mut logs = Vec::new();
+                voxels.each(|cell, material| {
+                    if matches!(material, 1 | 2) {
+                        logs.push(cell);
+                    }
+                });
+                Model { voxels, low, size, logs }
+            };
+            let mut turns: Vec<Model> = turns.into_iter().map(model).collect();
+            turns.resize_with(4, empty);
+            models.extend(turns);
+        }
+        Some(Self { kinds, models, reach: forest.reach + 1.5, block: b })
+    }
+
+    /// Which tree, if any, cell `cell` (of [`CELL`] metres a side) may
+    /// hold, by the hashes the GPU's trees pass takes (`voxelWorldTrees`):
+    /// its kind's plant's model, and the voxel column of its foot. Whether
+    /// the ground there grows one is for the caller.
+    pub fn in_cell(&self, cell: [i32; 2], seed: u32, voxel: f32) -> Option<(usize, [i32; 2])> {
+        let chance = unit(hash_of([cell[0], 7, cell[1]], seed));
+        let kind = self.kinds.iter().position(|&(below, ..)| chance < below)?;
+        let within = [8, 9].map(|n| unit(hash_of([cell[0], n, cell[1]], seed)));
+        let foot = [0, 1].map(|a| ((cell[a] as f32 + 0.15 + 0.7 * within[a]) * CELL / voxel).floor() as i32);
+        let pick = hash_of([cell[0], 10, cell[1]], seed);
+        let (_, first, count) = self.kinds[kind];
+        let plant = first + pick % count.max(1);
+        Some(((plant * 4 + ((pick >> 8) & 3)) as usize, foot))
+    }
+
+    /// Model `model` stood with its trunk on the ground `h` voxels high at
+    /// voxel column `foot`, its box on the bricks' grid.
+    pub fn stood(&self, model: usize, foot: [i32; 2], h: i32) -> Tree {
+        let b = self.block;
+        let trunk = [foot[0] - b / 2, h + 1, foot[1] - b / 2];
+        let low = self.models[model].low;
+        Tree { least: [0, 1, 2].map(|a| (trunk[a] + low[a]) & !7), model }
+    }
+
+    /// The least and most corners of a tree's box, in voxels.
+    pub fn bounds(&self, tree: &Tree) -> ([i32; 3], [i32; 3]) {
+        let size = self.models[tree.model].size;
+        (tree.least, [0, 1, 2].map(|a| tree.least[a] + size[a].max(1) - 1))
+    }
+
+    /// Each voxel of tree `tree`'s logs within the box from `low` to `high`.
+    pub fn logs_in(&self, tree: &Tree, low: [i32; 3], high: [i32; 3], mut each: impl FnMut([i32; 3])) {
+        let (least, most) = self.bounds(tree);
+        if (0..3).any(|a| most[a] < low[a] || least[a] > high[a]) {
+            return;
+        }
+        for log in &self.models[tree.model].logs {
+            let c = [0, 1, 2].map(|a| log[a] + tree.least[a]);
+            if (0..3).all(|a| c[a] >= low[a] && c[a] <= high[a]) {
+                each(c);
+            }
+        }
+    }
+
+    /// What tree `tree` has at voxel `c`: [`LOG`], [`LEAF`] or [`AIR`].
+    pub fn at(&self, tree: &Tree, c: [i32; 3]) -> u8 {
+        let model = &self.models[tree.model];
+        let local = [0, 1, 2].map(|a| c[a] - tree.least[a]);
+        if (0..3).any(|a| local[a] < 0 || local[a] >= model.size[a]) {
+            return AIR;
+        }
+        match model.voxels.get(local) {
+            0 => AIR,
+            1 | 2 => LOG,
+            _ => LEAF,
+        }
+    }
+}
+
+/// The CPU's trees for `trees` at `block` voxels a block, made once and
+/// kept for every volume with the same: the last few kinds of wood made.
+pub(crate) fn woods(trees: &[VoxelTrees], block: u32) -> Option<std::sync::Arc<Woods>> {
+    use std::sync::{Arc, Mutex};
+    /// How many woods are kept.
+    const KEPT_WOODS: usize = 4;
+    type Kept = Vec<(Vec<VoxelTrees>, u32, Arc<Woods>)>;
+    static KEPT: Mutex<Kept> = Mutex::new(Vec::new());
+    let trees: Vec<VoxelTrees> = trees.iter().filter(|kind| kind.per_hectare > 0.0).take(MOST_KINDS).cloned().collect();
+    if trees.is_empty() {
+        return None;
+    }
+    let mut kept = KEPT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(at) = kept.iter().position(|(t, b, _)| *t == trees && *b == block) {
+        // The last asked for goes to the end, so the one asked for longest ago goes first.
+        let found = kept.remove(at);
+        let woods = found.2.clone();
+        kept.push(found);
+        return Some(woods);
+    }
+    let woods = Arc::new(Woods::new(&trees, block)?);
+    if kept.len() >= KEPT_WOODS {
+        kept.remove(0);
+    }
+    kept.push((trees, block, woods.clone()));
+    Some(woods)
 }
 
 /// A plant's voxels turned `turns` quarter turns about the middle of its
@@ -402,12 +581,14 @@ mod tests {
                 per_hectare: 80.0,
                 wood: [90, 60, 40],
                 leaves: [60, 120, 40],
+                areas: Default::default(),
             },
             VoxelTrees {
                 plant: Arc::new(PlantDef { kind: PlantKind::Conifer, ..PlantDef::default() }),
                 per_hectare: 40.0,
                 wood: [80, 50, 30],
                 leaves: [30, 80, 40],
+                areas: Default::default(),
             },
         ];
         let forest = forest(&trees, 22).expect("trees");
@@ -443,6 +624,7 @@ mod tests {
             per_hectare: 80.0,
             wood: [90, 60, 40],
             leaves: [60, 120, 40],
+            areas: Default::default(),
         };
         let forest = forest(&[oak], 22).expect("trees");
         let palette = vec![[100, 100, 100, 255]; 32];

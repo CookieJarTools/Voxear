@@ -2181,7 +2181,9 @@ struct VoxelVolumes
     uint seenOn;
     uint4* seen;
     uint seenWidth;
-    uint pad;
+    // Whether the sun reaches each pixel past the voxels (voxelShadowFragment in voxels.slang), for whatever the depth
+    // passes drew there, 1 lit and 0 in a voxel's shadow: a texture, or NO_TEXTURE where no such pass is drawn.
+    uint shadowMask;
     VoxelVolume volumes[MAX_VOXEL_VOLUMES];
 };
 

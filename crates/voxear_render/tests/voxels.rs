@@ -6,9 +6,9 @@ use std::sync::Arc;
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
-    AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
-    Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint,
-    VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
+    AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, MaterialDesc, MeshRenderer,
+    ModelBox, PostProcess, Primitive, Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround,
+    VoxelMaterial, VoxelPrint, VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
@@ -152,6 +152,29 @@ fn a_volume_is_drawn_the_same_through_the_depth_pass_with_ambient_occlusion_on()
     let pixels = render(&mut renderer, &world, 4);
     keep_image("voxel field with ao.png", &pixels);
     check_field(&pixels);
+}
+
+#[test]
+fn a_volumes_voxels_shadow_a_model_standing_by_them() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = field(true);
+    // A white slab of a model 4 m square on the ground east of the pillar, across its shadow.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let white = MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let white = renderer.add_material(&white).unwrap();
+    let slab = Transform::new(Vec3::new(12.0, 1.1, 8.0), Quat::IDENTITY, Vec3::new(4.0, 0.2, 4.0));
+    world.spawn((MeshRenderer::new(cube, white), slab));
+    let pixels = render(&mut renderer, &world, 4);
+    keep_image("voxel shadow on a model.png", &pixels);
+    let brightness = |x: f32, z: f32| {
+        let (px, py) = from_above(20.0, x, z);
+        rgb_at(&pixels, px, py).iter().sum::<i32>()
+    };
+    // On the slab, in the pillar's shadow along its middle, and lit either side of it.
+    let shadowed = brightness(11.0, 8.0);
+    for open in [brightness(11.0, 6.6), brightness(11.0, 9.4)] {
+        assert!(shadowed * 3 < open * 2, "the pillar's shadow on the slab: {shadowed} against {open}");
+    }
 }
 
 #[test]

@@ -232,6 +232,8 @@ pub struct Pipelines {
     pub voxel_coarse: vk::Pipeline,
     pub voxel_depth: vk::Pipeline,
     pub voxel_forward: vk::Pipeline,
+    /// The voxels' shadows on whatever the depth passes drew, traced from each pixel.
+    pub voxel_shadows: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
     pub voxel_world_columns: vk::Pipeline,
     pub voxel_world_tops: vk::Pipeline,
@@ -1100,6 +1102,11 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Opaque (voxels)", voxels, c"voxelVertex", c"voxelOpaque")
             })?,
+            voxel_shadows: graphics(&GraphicsPipelineDesc {
+                color_formats: &[AO_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Voxel shadows", voxels, c"voxelVertex", c"voxelShadowFragment")
+            })?,
             block_wireframe: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -1483,6 +1490,7 @@ impl Pipelines {
             self.voxel_coarse,
             self.voxel_depth,
             self.voxel_forward,
+            self.voxel_shadows,
             self.voxel_world_columns,
             self.voxel_world_tops,
             self.voxel_world_trees,

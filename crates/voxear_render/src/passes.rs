@@ -615,11 +615,13 @@ pub fn record(
     // Drawn as depth first, then shaded over it, for what reads the depth before shading, and whenever each pixel's
     // normal is wanted, as a shader pack's passes may want it.
     let through = frame.through;
+    let voxel_shadows = frame.voxels.as_ref().and_then(|voxels| voxels.shadow);
     let depth_first = ambient_occlusion.is_some()
         || contact_shadows.is_some()
         || reflections.is_some()
         || through
-        || frame.surface.is_some();
+        || frame.surface.is_some()
+        || voxel_shadows.is_some();
     if let Some(atmosphere) = frame.atmosphere.filter(|_| frame.own_sky) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
@@ -651,6 +653,7 @@ pub fn record(
         images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
+        images.extend(voxel_shadows.map(|shadows| (shadows, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
         // The GI's probes, which shading and reflections read.
         images.extend(frame.probes.into_iter().flat_map(|probes| {
@@ -917,6 +920,9 @@ pub fn record(
             }
             if let Some(contact) = contact_shadows {
                 ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);
+            }
+            if let (Some(voxels), Some(surface)) = (&frame.voxels, frame.surface) {
+                crate::voxel_volume::record_shadows(fg, (pipelines, push), voxels, (depth, surface));
             }
             if let Some((target, history)) = reflections {
                 let surface = frame.surface.expect("the depth passes' surface");

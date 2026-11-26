@@ -3887,6 +3887,18 @@ impl View {
         if let Some(image) = contact_shadows {
             frame_data.post.contact_texture = fg.texture(image).0;
         }
+        // The voxels' shadows on everything, traced from each pixel once the depth passes have drawn it.
+        let mut view_voxels = view_voxels;
+        if let Some(view) = view_voxels.as_mut().filter(|_| extracted.has_sun && !wireframe) {
+            let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+            let desc = ImageDesc::new(extent.width, extent.height, pipelines::AO_FORMAT, usage);
+            let image = fg.create_image(gpu, bindless, "voxel shadows", desc)?;
+            view.shadow = Some(image);
+            if let Some([list, _]) = self.buffers[slot].voxels.as_ref() {
+                voxel_volume::set_shadow_mask(list, fg.texture(image).0);
+            }
+        }
+        let voxel_shadows = view_voxels.as_ref().is_some_and(|view| view.shadow.is_some());
         // Reflections read last frame's finished picture, so they need TAA, and a frame of it to read.
         let reflecting = extracted.post.reflections.enabled && taa && !taa_reset && !wireframe;
         let reflections = match reflecting {
@@ -3912,8 +3924,11 @@ impl View {
             && pipelines.surface_ids
             && setup.pack.as_ref().is_some_and(shader_packs::PackDraw::reads_surface_ids);
         let pack_normals = pack_normals || pack_ids;
-        let depth_first =
-            ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || pack_normals;
+        let depth_first = ambient_occlusion.is_some()
+            || contact_shadows.is_some()
+            || reflections.is_some()
+            || pack_normals
+            || voxel_shadows;
         let surface = match depth_first || portal.is_some() {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;

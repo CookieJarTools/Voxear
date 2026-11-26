@@ -499,6 +499,22 @@ void voxelCoarse(uint3 id: SV_DispatchThreadID)
     volumes->coarse[id.y * volumes->coarseSize.x + id.x] = found ? hit.metres : 1e10;
 }
 
+// How far out from a voxel its shadow ray starts, in its voxels, by the level it was met at: a coarser level's ray
+// starts a group or a brick out, in the cell the view's ray came through, so it does not shadow itself.
+float voxelLift(uint level)
+{
+    return level == 0 ? 0.02 : (level == 1 ? 2.02 : 8.02);
+}
+
+// Whether a voxel stands between `world`, `metres` from the camera through `pixel`, and the sun, its ray started
+// `lift` metres out along `normal` and walked at the level the view's ray is.
+bool voxelSunBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 world, float3 normal, float metres, float lift)
+{
+    float foot = metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
+    VoxelHit blocked;
+    return voxelsTrace(volumes, world + normal * lift, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, blocked);
+}
+
 struct VoxelVertex
 {
     float4 position : SV_Position;
@@ -604,17 +620,12 @@ VoxelOut voxelOpaque(VoxelVertex input)
 
     bool facingSun = dot(normal, -frame->sunDirection) > 0.0;
     float shadow = facingSun ? min(sunShadow(frame, world, normal), contactShadow(frame, pixel)) : 0.0;
-    // The voxels are in no shadow map: their shadow on themselves, and on each other, is traced through them.
-    if (shadow > 0.0)
+    // The voxels are in no shadow map: their shadow on themselves, and on each other, is traced through them, by the
+    // voxels' shadows pass where it is drawn (read with the contact shadows), else here.
+    if (shadow > 0.0 && volumes->shadowMask == NO_TEXTURE
+        && voxelSunBlocked(frame, volumes, pixel, world, normal, hit.metres, voxelLift(hit.level) * volume.voxel))
     {
-        float coarser = hit.level == 0 ? 0.02 : (hit.level == 1 ? 2.02 : 8.02);
-        float3 from = world + normal * coarser * volume.voxel;
-        float foot = hit.metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
-        VoxelHit blocked;
-        if (voxelsTrace(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, blocked))
-        {
-            shadow = 0.0;
-        }
+        shadow = 0.0;
     }
     float2 blockLit = float2(1.0, 0.0);
     float4 blockGlow = 0.0;
@@ -689,6 +700,62 @@ VoxelOut voxelOpaque(VoxelVertex input)
     o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));
     o.depth = voxelDepthOf(frame, world);
     return o;
+}
+
+// ---------------------------------------------------------------- The voxels' shadows on everything
+
+// Whether the sun reaches each pixel past the voxels, for whatever the depth passes drew there: voxels, models,
+// blocks, terrain and grass alike, 1 lit and 0 in a voxel's shadow, which their lighting reads with the contact
+// shadows (contactShadow). The voxels are in no shadow map, so their shadow is traced from each pixel instead, through
+// them towards the sun: from a voxel as its own lighting did, from anything else a voxel and a half out from its
+// surface, or more where a pixel is wider. push.textures holds the depth and the depth passes' surfaces.
+[shader("fragment")]
+float4 voxelShadowFragment(VoxelVertex input) : SV_Target
+{
+    Frame* frame = push.frame;
+    float2 pixel = input.position.xy;
+    int2 at = int2(pixel);
+    float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(at, 0)).r;
+    if (depth <= 0.0 || dot(frame->sunColor, frame->sunColor) <= 0.0)
+    {
+        return 1.0;
+    }
+    VoxelVolumes* volumes = voxelVolumes();
+    float3 eye = voxelOrigin(frame, pixel);
+    float3 d = voxelRay(frame, pixel);
+    float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
+    float4 placed = transform(frame->invViewProj, float4(ndc, depth, 1.0));
+    float3 world = placed.xyz / placed.w;
+    float metres = length(world - eye);
+    float2 folded = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(at, 0)).rg;
+    float3 normal = octDecode(folded * 2.0 - 1.0);
+    // A voxel the depth pass met here, where nothing drawn after it is nearer: from where its ray met it.
+    float finest = volumes->volumes[volumes->count - 1].voxel;
+    float lift = max(1.5 * finest, 2.0 * metres * voxelPixelAngle(frame, pixel));
+    if (volumes->seenOn != 0u)
+    {
+        uint4 seen = volumes->seen[uint(at.y) * volumes->seenWidth + uint(at.x)];
+        float met = asfloat(seen.z);
+        uint volume = seen.y >> 20;
+        float voxel = volumes->volumes[min(volume, volumes->count - 1)].voxel;
+        if (seen.w == frame->frameIndex + 1 && abs(met - metres) < 0.01 * metres + 2.0 * voxel)
+        {
+            int axis = int((seen.y >> 18) & 3u) - 1;
+            normal = 0.0;
+            if (axis >= 0)
+            {
+                normal[axis] = d[axis] > 0.0 ? -1.0 : 1.0;
+            }
+            world = eye + d * met;
+            metres = met;
+            lift = voxelLift((seen.y >> 16) & 3u) * voxel;
+        }
+    }
+    if (dot(normal, -frame->sunDirection) <= 0.0)
+    {
+        return 1.0;
+    }
+    return voxelSunBlocked(frame, volumes, pixel, world, normal, metres, lift) ? 0.0 : 1.0;
 }
 
 // ---------------------------------------------------------------- The sea floor

@@ -10,11 +10,12 @@
 //! thread of their own whenever it changes, the last made drawn until then,
 //! and kept on the GPU as sparse bricks ([`bricks`]).
 //!
-//! What it does not do yet (`docs/research/small-voxels.md`, stage 1):
-//! its voxels cast no shadow onto meshes, blocks or the ground of a terrain,
-//! though they shadow each other and take the shadows of everything else;
-//! it is not turned or scaled with its Obj; and it is drawn whole, however
-//! far, its far voxels drawn coarser.
+//! Its voxels shadow each other, and meshes, blocks, terrain and grass, by
+//! a ray traced towards the sun from each pixel (**Voxel shadows**), and
+//! take the shadows of everything else from the shadow maps. What it does
+//! not do yet (`docs/research/small-voxels.md`): it is not turned or scaled
+//! with its Obj; and it is drawn whole, however far, its far voxels drawn
+//! coarser.
 
 pub mod bricks;
 mod endless;
@@ -436,7 +437,7 @@ pub(crate) struct GpuVoxelVolumes {
     seen_on: u32,
     seen: u64,
     seen_width: u32,
-    pad: u32,
+    shadow_mask: u32,
     volumes: [GpuVoxelVolume; MAX_VOXEL_VOLUMES],
 }
 
@@ -712,7 +713,7 @@ pub(crate) fn gather(
             seen_on: u32::from(seen.is_some()),
             seen: seen.map_or(0, |seen| seen.address),
             seen_width: size[0],
-            pad: 0,
+            shadow_mask: crate::NO_TEXTURE,
             volumes: [GpuVoxelVolume::default(); MAX_VOXEL_VOLUMES],
         };
         // The finest first, so the coarse rays' margin is a brick of the coarsest that is nearest the camera.
@@ -722,8 +723,14 @@ pub(crate) fn gather(
             volumes.volumes[slot] = GpuVoxelVolume { corner: (*corner - offset).to_array(), ..*record };
         }
         buffer.write(0, std::slice::from_ref(&volumes));
-        Some(ViewVoxels { coarse_size, coarse_on: fits, coarse: None, seen: None, pools: Vec::new() })
+        Some(ViewVoxels { coarse_size, coarse_on: fits, coarse: None, seen: None, pools: Vec::new(), shadow: None })
     }
+}
+
+/// Names `texture` as the voxels' shadows on everything in a view's volumes
+/// written to `buffer` by [`gather`].
+pub(crate) fn set_shadow_mask(buffer: &Buffer, texture: u32) {
+    buffer.write(std::mem::offset_of!(GpuVoxelVolumes, shadow_mask) as u64, &[texture]);
 }
 
 impl VoxelVolumes {
@@ -768,6 +775,9 @@ pub(crate) struct ViewVoxels {
     /// What endless volumes' making writes this frame, which the voxel
     /// passes read.
     pub pools: Vec<crate::graph::BufferId>,
+    /// Whether the sun reaches each pixel past the voxels, traced from
+    /// whatever the depth passes drew there, where the sun is up.
+    pub shadow: Option<ImageId>,
 }
 
 /// The bytes a view keeps of what its depth pass met, for a picture `size`
@@ -951,6 +961,31 @@ pub(crate) fn record_depth(
     fg.add_pass("Depth (voxels)", &targets.images(), &reads, move |ctx| {
         targets.begin(ctx);
         bind(ctx, pipelines.voxel_depth, vk::PipelineBindPoint::GRAPHICS, &push);
+        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
+/// **Voxel shadows**: whether the sun reaches each pixel past the voxels,
+/// traced towards it from whatever the depth passes drew there, `depth` and
+/// its `surface`: voxels, models, blocks, terrain and grass alike, which
+/// read it with the contact shadows.
+pub(crate) fn record_shadows(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    view: &ViewVoxels,
+    (depth, surface): (ImageId, ImageId),
+) {
+    let Some(target) = view.shadow else { return };
+    let push = Push { textures: [fg.texture(depth).0, fg.texture(surface).0, 0, 0], ..push };
+    let mut reads: Vec<_> = view.pools.iter().map(|&pool| (pool, BufferAccess::ShaderRead)).collect();
+    reads.extend(view.seen.map(|seen| (seen, BufferAccess::ShaderRead)));
+    let images = [(depth, ImageAccess::Sampled), (surface, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+    fg.add_pass("Voxel shadows", &images, &reads, move |ctx| {
+        let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+        let color = [attachment(ctx.view(target), layout, None)];
+        begin_rendering(ctx, ctx.extent(target), &color, None);
+        bind(ctx, pipelines.voxel_shadows, vk::PipelineBindPoint::GRAPHICS, &push);
         unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });

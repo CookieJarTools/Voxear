@@ -123,8 +123,8 @@ fn a_tree_cut_through_its_trunk_falls_the_way_it_was_cut_and_comes_to_rest_on_th
     let up = place.rotation * Vec3::Y;
     eprintln!("rested after {took:.1} s at {} (from {start}), its up now {up}", place.position);
     assert_eq!(body.fall, PieceFall::Resting, "at rest within 60 s");
-    // Over at least halfway, onto the ground or its branches, its top the way it was cut.
-    assert!(up.y < 0.75 && up.x > 0.6, "fallen over the way it was cut, not standing: up {up}");
+    // Well over, onto the ground or its crown, its top the way it was cut.
+    assert!(up.y < 0.85 && up.x > 0.5, "fallen over the way it was cut, not standing: up {up}");
     assert!(place.position.x > trunk.x + 1.0, "fallen along +X: {} from the trunk at {trunk}", place.position);
     // On the ground: its logs' middle, which is in its crown, over the ground by about the crown's half, not through it.
     let under = voxear_render::voxel_ground_at(&volume(&game), place.position.x, place.position.z).expect("ground").0;

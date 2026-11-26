@@ -4764,8 +4764,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     falls as a body (boxes of its logs, its voxels a turned volume of their own), then stays a body or is stamped
     back where it lies: the volume's Felled, or the game's choice per cut
     and per piece (`VoxelPieces`, `VoxelPieceRest`, `Voxels.StampPiece`).
-  - It tips over its stump on a hinge, lets go most of the way over and slides off, its leaves pressed against the
-    ground where it rests. Grass is cut where the blade meets it, stubble left, clippings flying.
+  - A slight push the way it was cut, and gravity falls it over its stump; its leaves are pressed against the ground
+    where it rests. Grass is cut where the blade meets it, stubble left, clippings flying.
   - A felled tree is kept as its foot and stump height; GPU, collision and rays agree to the voxel.
   - Not yet: felling off the main thread (0.14 s a tree), bodies kept by a save.
 

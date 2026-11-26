@@ -846,6 +846,7 @@ impl Engine {
             scene
         };
         crate::voxel_volumes::sync_colliders(&mut self.world);
+        let mut stepped: Vec<PhysicsEvent> = Vec::new();
         let scene = self.world.remove_resource::<PhysicsScene>();
         if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(made)) {
             {
@@ -860,8 +861,11 @@ impl Engine {
             // Trees felled in endless Voxel Volumes fall and come to rest.
             crate::voxel_felling::fall(&mut self.world, dt);
             told.extend(events.iter().flat_map(PhysicsEventData::both));
+            stepped.extend(events.iter().cloned());
             self.physics_events.extend(events);
         }
+        // What was built comes loose and gives way, whether or not anything has a body yet.
+        crate::voxel_collapse::step(&mut self.world, dt, &stepped);
         let scene = self.world.remove_resource::<PhysicsScene2D>();
         let flat = crate::modules::has(&self.world, crate::modules::Module::Physics2D);
         let made_2d = || {

@@ -60,7 +60,7 @@ pub use plants::{FoliageCall, set_foliage_call};
 pub use columns::{ColumnEventData, GroundMade, set_ground_made};
 pub use voxels::{
     VoxelCutPiece, VoxelCutRequest, VoxelCuts, VoxelCutting, VoxelFellingCall, VoxelEdits, VoxelPieces, VoxelPrintRequest, VoxelRaycast, VoxelRaycastMeeting, VoxelSea, VoxelSets,
-    VoxelShapeRequest, VoxelShapes, VoxelWaterAt, VoxelWaterLookCall, set_voxel_cuts, set_voxel_cutting, set_voxel_edits, set_voxel_felling, set_voxel_pieces, set_voxel_raycast,
+    VoxelShapeRequest, VoxelShapes, VoxelWaterAt, VoxelWaterLookCall, VoxelBlasts, set_voxel_blasts, set_voxel_cuts, set_voxel_cutting, set_voxel_edits, set_voxel_felling, set_voxel_pieces, set_voxel_raycast,
     set_voxel_raycast_meeting, set_voxel_sets, set_voxel_shapes, set_voxel_water, set_voxel_water_look, take_voxel_prints,
 };
 pub use crowds::{CrowdRecordsState, FarFigureData, FarFiguresSet, set_crowd_records, set_far_figures};

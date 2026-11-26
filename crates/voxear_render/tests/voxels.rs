@@ -3099,3 +3099,51 @@ fn a_volume_is_turned_with_its_obj_its_voxels_lit_and_shadowing_as_they_lie() {
     }
     assert!(!red(8.0, 6.0) && !red(8.0, 10.0) && !red(4.0, 8.0), "and is a metre wide, three long");
 }
+
+#[test]
+fn a_house_blown_in_is_drawn_as_the_cpu_finds_it_after_what_came_loose_was_dug_out() {
+    use voxear_core::math::IVec3;
+    let Some(mut renderer) = renderer() else { return };
+    let mut scene = bare_hills_view();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let ground = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(8.0, 47.0, 8.0), -Vec3::Y, 60.0).unwrap().point;
+    // A house of bricks with a roof of planks, sunk a little into the hill.
+    let foot = ground - Vec3::Y * 0.5;
+    let edits = vec![
+        VoxelEdit::boxed(foot, Vec3::new(5.0, 3.0, 4.0), Quat::IDENTITY, Some(VoxelMaterial::Bricks)),
+        VoxelEdit::boxed(foot + Vec3::Y * 0.5, Vec3::new(4.5, 2.5, 3.5), Quat::IDENTITY, None),
+        VoxelEdit::boxed(foot + Vec3::Y * 3.0, Vec3::new(5.5, 0.25, 4.5), Quat::IDENTITY, Some(VoxelMaterial::Planks)),
+    ];
+    let corner = foot + Vec3::new(-2.5, 2.0, -2.0);
+    let mut built = volume.clone();
+    built.edits = Arc::new(edits);
+    // Blown out at a corner, and every round of what gave way dug out, as the game does a fifth of a second apart.
+    let mut memory = voxear_render::VoxelStrainMemory::default();
+    let blast = voxear_render::VoxelBlast { at: corner, radius: 1.8 };
+    let (mut changes, done) = voxear_render::voxel_blast(&built, blast, &mut memory);
+    let rounds = &done.settled.strain.loose;
+    let loose: usize = rounds.iter().map(|round| round.dig.len()).sum();
+    eprintln!("{} dug, {} rounds, {loose} voxels gave way", done.dug, rounds.len());
+    assert!(loose > 1000, "{loose}");
+    for c in rounds.iter().flat_map(|round| round.dig.iter()) {
+        changes.set(*c, None);
+    }
+    let changed = changes.clone();
+    {
+        let volumes = scene.query::<&mut VoxelVolume>();
+        let volume = volumes.into_iter().next().unwrap();
+        volume.edits = built.edits.clone();
+        volume.changes = Arc::new(changes);
+    }
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("voxels house blown in.png", &pixels);
+    let low = ((foot - Vec3::new(3.5, 1.0, 3.0)) * 16.0).floor().as_ivec3();
+    let made = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let reaches = |c: IVec3, ground: i32| {
+        changed.get(c).is_some() || made.edits.iter().any(|edit| edit.held(c, 1.0 / 16.0, ground) != voxear_render::VoxelHeld::Not)
+    };
+    let (differ, kept, _) = gpu_against_cpu(&renderer, &scene, (low.to_array(), [112, 80, 96]), &reaches);
+    eprintln!("{differ} differ, {kept} kept");
+    assert!(kept > 1000);
+    assert_eq!(differ, 0, "the GPU's voxels are the CPU's");
+}

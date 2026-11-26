@@ -40,6 +40,22 @@ fn gpu_volume(generator: &super::VoxelGenerator) -> Option<voxear_terrain::gener
     generator.world.volume().filter(|_| super::endless::gpu_runs_volume(&generator.world))
 }
 
+/// What made a voxel of an endless volume ([`Ground::made_in`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Made {
+    Air,
+    /// Carved out by an edit, or dug out a voxel at a time.
+    Carved,
+    /// The ground as it is made.
+    Ground,
+    /// A tree's log.
+    Log,
+    /// Filled by the edit at that place in the list, or printed by it.
+    Edit(u32, VoxelHeld),
+    /// Placed a voxel at a time, by its kind's code.
+    Placed(u8),
+}
+
 /// What the ground of an endless volume is, voxel by voxel, with what was
 /// worked out kept.
 pub(super) struct Ground<'a> {
@@ -490,6 +506,79 @@ impl<'a> Ground<'a> {
             }
         }
         found
+    }
+
+    /// What made each voxel of the box from `low`, `size` voxels a side,
+    /// written to `made` along X first, then Y, then Z: solid where and as
+    /// [`VoxelSolids::fill`] finds it, and by what.
+    pub fn made_in(&mut self, low: IVec3, size: IVec3, made: &mut Vec<Made>) {
+        let count = (size.x * size.y * size.z).max(0) as usize;
+        made.clear();
+        made.resize(count, Made::Air);
+        if count == 0 {
+            return;
+        }
+        let high = low + size - 1;
+        self.heights_for(low.x, low.z, [size.x, size.z]);
+        let trees = self.trees_near(low, high);
+        let edits = self.edits_near(low, high);
+        let generated = self.volume.generator.as_ref().and_then(gpu_volume);
+        let over = generated.as_ref().map_or(0.0, |generated| generated.reach());
+        let has_volume = generated.is_some();
+        let (tall, voxel) = (self.tall, self.voxel);
+        let index = |x: i32, y: i32, z: i32| (x + size.x * (y + size.y * z)) as usize;
+        let fixed: Vec<(usize, Fixed)> =
+            edits.iter().map(|&e| (e, Fixed::of(&self.volume.edits[e], voxel))).collect();
+        for z in 0..size.z {
+            for x in 0..size.x {
+                let (wx, wz) = (low.x + x, low.z + z);
+                let h = self.height(wx, wz);
+                let top = match has_volume {
+                    true => (h + (over / voxel).ceil() as i32 + 1).min(high.y).min(tall - 1),
+                    false => h.min(high.y).min(tall - 1),
+                };
+                let from = low.y.max(1);
+                let densities = match (has_volume, top >= from) {
+                    (true, true) => self.densities(wx, from, wz, (top - from + 1) as usize),
+                    _ => None,
+                };
+                for y in 0..size.y {
+                    let wy = low.y + y;
+                    let solid = match &densities {
+                        _ if wy <= 0 => true,
+                        _ if wy > top => false,
+                        Some(d) => d[(wy - from) as usize] > 0.0,
+                        None => !has_volume,
+                    };
+                    let mut kind = if solid { Made::Ground } else { Made::Air };
+                    let c = IVec3::new(wx, wy, wz);
+                    for (e, fixed) in &fixed {
+                        match fixed.held(&self.volume.edits[*e], c, h) {
+                            VoxelHeld::Not => {}
+                            VoxelHeld::Air => kind = Made::Carved,
+                            held => kind = Made::Edit(*e as u32, held),
+                        }
+                    }
+                    if let Some(held) = self.volume.changes.get(c) {
+                        kind = match held.solid() {
+                            true => Made::Placed(self.volume.changes.code(c)),
+                            false => Made::Carved,
+                        };
+                    }
+                    made[index(x, y, z)] = kind;
+                }
+            }
+        }
+        // The trees' logs where the ground leaves none and nothing carved them.
+        let Some(woods) = self.woods else { return };
+        for tree in &trees {
+            woods.logs_in(tree, low.to_array(), high.to_array(), |c| {
+                let at = index(c[0] - low.x, c[1] - low.y, c[2] - low.z);
+                if made[at] == Made::Air {
+                    made[at] = Made::Log;
+                }
+            });
+        }
     }
 
     /// What voxel `c` is, looking up the trees and edits that reach it.

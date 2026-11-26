@@ -49,7 +49,7 @@ pub const GROUND_COLORS: [[u8; 4]; 13] = [
     [230, 190, 40, 255],  // 12 a flower's middle
 ];
 
-fn hash(x: i32, y: i32, z: i32, seed: u32) -> u32 {
+pub(super) fn hash(x: i32, y: i32, z: i32, seed: u32) -> u32 {
     let mut h = (x as u32).wrapping_mul(0x8DA6_B343)
         ^ (y as u32).wrapping_mul(0xD816_3841)
         ^ (z as u32).wrapping_mul(0xCB1A_B31F)

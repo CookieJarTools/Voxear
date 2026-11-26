@@ -667,6 +667,14 @@ pub enum Prop {
     VoxelFelled,
     /// How many seconds an endless volume's cut grass takes to grow back: none for never.
     VoxelRegrow,
+    /// What holds up what is built in an endless volume: earth and the ground, the ground alone, or everything.
+    VoxelAnchor,
+    /// How an endless volume finds where what is built gives way: off, load paths, or solved.
+    VoxelStrain,
+    /// What an endless volume's printed voxels are made of.
+    VoxelBuilt,
+    /// The most pieces of what was built falling at once in an endless volume.
+    VoxelMostPieces,
     VoxelGround,
     VoxelGroundHeight,
     VoxelHills,
@@ -1316,6 +1324,10 @@ impl Prop {
             | Prop::VoxelWater
             | Prop::VoxelFelled
             | Prop::VoxelRegrow
+            | Prop::VoxelAnchor
+            | Prop::VoxelStrain
+            | Prop::VoxelBuilt
+            | Prop::VoxelMostPieces
             | Prop::VoxelGround
             | Prop::VoxelGroundHeight
             | Prop::VoxelHills
@@ -1762,6 +1774,10 @@ impl Prop {
             Prop::VoxelWater => "water",
             Prop::VoxelFelled => "felled",
             Prop::VoxelRegrow => "regrow",
+            Prop::VoxelAnchor => "anchor",
+            Prop::VoxelStrain => "strain",
+            Prop::VoxelBuilt => "built",
+            Prop::VoxelMostPieces => "most_pieces",
             Prop::VoxelGround => "ground",
             Prop::VoxelGroundHeight => "ground_height",
             Prop::VoxelHills => "hills",
@@ -2456,6 +2472,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 }
                 props.push(Prop::VoxelTreeAdd);
                 props.extend([Prop::VoxelFelled, Prop::VoxelRegrow]);
+                props.extend([Prop::VoxelAnchor, Prop::VoxelStrain, Prop::VoxelBuilt, Prop::VoxelMostPieces]);
                 if let Some(source) = source {
                     props.extend(crate::voxel_growth_props::fields(&source.0).into_iter().map(Prop::VoxelGrowth));
                 }
@@ -3108,6 +3125,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelWater => "Water",
         Prop::VoxelFelled => "Felled",
         Prop::VoxelRegrow => "Regrow",
+        Prop::VoxelAnchor => "Anchor",
+        Prop::VoxelStrain => "Strain",
+        Prop::VoxelBuilt => "Built Of",
+        Prop::VoxelMostPieces => "Most Pieces",
         Prop::VoxelGround => "Ground",
         Prop::VoxelGroundHeight => "Ground Height",
         Prop::VoxelHills => "Hills",
@@ -4293,6 +4314,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelWater
         | Prop::VoxelFelled
         | Prop::VoxelRegrow
+        | Prop::VoxelAnchor
+        | Prop::VoxelStrain
+        | Prop::VoxelBuilt
+        | Prop::VoxelMostPieces
         | Prop::VoxelGround
         | Prop::VoxelGroundHeight
         | Prop::VoxelHills
@@ -6466,6 +6491,19 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
             voxear_render::VoxelFelled::ALL.iter().map(|felled| felled.name().to_string()).collect(),
         ),
         Prop::VoxelRegrow => Value::Number(data.regrow),
+        Prop::VoxelAnchor => Value::Choice(
+            voxear_render::VoxelAnchor::ALL.iter().position(|&anchor| anchor == data.anchor).unwrap_or(0),
+            voxear_render::VoxelAnchor::ALL.iter().map(|anchor| anchor.name().to_string()).collect(),
+        ),
+        Prop::VoxelStrain => Value::Choice(
+            voxear_render::VoxelStrain::ALL.iter().position(|&strain| strain == data.strain).unwrap_or(0),
+            voxear_render::VoxelStrain::ALL.iter().map(|strain| strain.name().to_string()).collect(),
+        ),
+        Prop::VoxelBuilt => Value::Choice(
+            voxear_render::VoxelStuff::ALL.iter().position(|&stuff| stuff == data.built).unwrap_or(0),
+            voxear_render::VoxelStuff::ALL.iter().map(|stuff| stuff.name().to_string()).collect(),
+        ),
+        Prop::VoxelMostPieces => Value::Number(data.most_pieces as f32),
         Prop::VoxelGround => Value::Toggle(data.ground_on),
         Prop::VoxelGroundHeight => Value::Number(ground.height),
         Prop::VoxelHills => Value::Number(ground.hills),
@@ -6508,6 +6546,16 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
             data.felled = voxear_render::VoxelFelled::ALL.get(index).copied().unwrap_or_default();
         }
         (Prop::VoxelRegrow, Value::Number(n)) => data.regrow = n.clamp(0.0, 1.0e6),
+        (Prop::VoxelAnchor, Value::Choice(index, _)) => {
+            data.anchor = voxear_render::VoxelAnchor::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::VoxelStrain, Value::Choice(index, _)) => {
+            data.strain = voxear_render::VoxelStrain::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::VoxelBuilt, Value::Choice(index, _)) => {
+            data.built = voxear_render::VoxelStuff::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::VoxelMostPieces, Value::Number(n)) => data.most_pieces = n.round().clamp(0.0, 48.0) as u32,
         (Prop::VoxelGeneratorFloor, Value::Number(n)) => data.generator_floor = Some(n.clamp(-100_000.0, 100_000.0)),
         (Prop::VoxelGeneratorAt, Value::Vector(v)) if v.len() == 2 => {
             data.generator_at = [v[0], v[1]].map(|metres| metres.clamp(-1.0e7, 1.0e7));

@@ -100,7 +100,19 @@ pub enum PieceFall {
     Resting,
 }
 
-/// A piece of a tree felled in an endless Voxel Volume, falling or at rest.
+/// How a piece is set falling once it is let go.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PiecePush {
+    /// A slight turn over the edge of its foot, as a felled tree's.
+    Tip,
+    /// Thrown away from `from`, in the world, at `speed` metres a second.
+    Away { from: Vec3, speed: f32 },
+    /// Let go, gravity doing it all.
+    Drop,
+}
+
+/// A piece of a tree felled in an endless Voxel Volume, or of what was
+/// built in one, falling or at rest.
 #[derive(Clone, Debug)]
 pub struct VoxelPieceBody {
     /// The volume it came from.
@@ -125,6 +137,10 @@ pub struct VoxelPieceBody {
     /// The edge of its foot it is pushed over, in the world, and the way
     /// across it turns about there.
     pub pivot: (Vec3, Vec3),
+    /// How it is set falling.
+    pub push: PiecePush,
+    /// Whether it came of what was built, not of a tree.
+    pub built: bool,
 }
 
 impl Component for VoxelPieceBody {}
@@ -209,9 +225,8 @@ fn spawn(
 ) -> Entity {
     let middle = piece.middle();
     let place = corner + piece.low.as_vec3() * piece.voxel + middle;
-    // Its logs as boxes: its leaves pass through branches and the ground, and are pressed against the ground where it
-    // comes to rest.
-    let boxes: Vec<(Vec3, Vec3)> = piece.boxes(MOST_BOXES).into_iter().map(|(at, half)| (at - middle, half)).collect();
+    // Its logs as boxes (`spawn_body`): its leaves pass through branches and the ground, and are pressed against the
+    // ground where it comes to rest.
     let felling = world.get::<VoxelVolume>(volume).map(|made| made.felling).unwrap_or_default();
     let mass = (piece.logs() as f32 * piece.voxel.powi(3) * felling.wood_density).max(1.0);
     // Away from the cut, across; straight down a trunk, a way of its own.
@@ -223,32 +238,69 @@ fn spawn(
         let turn = (place.x * 12.9898 + place.z * 78.233).sin() * 43758.545;
         Vec3::new(turn.cos(), 0.0, turn.sin())
     });
-    let key =
-        place.to_array().iter().fold(piece.voxels.len() as u64, |key, a| key.rotate_left(17) ^ u64::from(a.to_bits()));
-    let collider = Collider { friction: 0.8, acoustic: Acoustic::Wood, ..Collider::default() };
-    let rigidbody = Rigidbody { mass, kinematic: true, angular_drag: 0.3, ..Rigidbody::default() };
-    let reach = boxes.iter().map(|(at, half)| at.length() + half.length()).fold(0.0, f32::max);
-    let roughness = world.get::<VoxelVolume>(volume).map_or(0.8, |made| made.roughness);
     let toward = toward.normalize();
     let pivot = (corner + piece.low.as_vec3() * piece.voxel + stump_edge(&piece, toward), Vec3::Y.cross(toward));
+    let made = PieceMade { push: PiecePush::Tip, rest: options.rest, built: false, mass: Some(mass) };
+    let entity = spawn_body(world, volume, corner, piece, made, "Felled tree", Acoustic::Wood);
+    if let Some(body) = world.get_mut::<VoxelPieceBody>(entity) {
+        (body.toward, body.pivot) = (toward, pivot);
+    }
+    entity
+}
+
+/// How a piece's body is made: how it is set falling, what becomes of it at
+/// rest, whether it is of what was built, and how heavy it is (none for
+/// the piece's own mass).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PieceMade {
+    pub push: PiecePush,
+    pub rest: Option<PieceRest>,
+    pub built: bool,
+    pub mass: Option<f32>,
+}
+
+/// A piece's Obj, named `name`, held where it came loose from the volume
+/// `volume` whose corner is at `corner` until the ground's collision round
+/// it is made again without it, then set falling as `made` says.
+pub(crate) fn spawn_body(
+    world: &mut World,
+    volume: Entity,
+    corner: Vec3,
+    piece: VoxelPiece,
+    made: PieceMade,
+    name: &str,
+    acoustic: Acoustic,
+) -> Entity {
+    let middle = piece.middle();
+    let place = corner + piece.low.as_vec3() * piece.voxel + middle;
+    let boxes: Vec<(Vec3, Vec3)> = piece.boxes(MOST_BOXES).into_iter().map(|(at, half)| (at - middle, half)).collect();
+    let mass = made.mass.unwrap_or(piece.mass).max(1.0);
+    let key =
+        place.to_array().iter().fold(piece.voxels.len() as u64, |key, a| key.rotate_left(17) ^ u64::from(a.to_bits()));
+    let collider = Collider { friction: 0.8, acoustic, ..Collider::default() };
+    let rigidbody = Rigidbody { mass, kinematic: true, angular_drag: 0.3, ..Rigidbody::default() };
+    let reach = boxes.iter().map(|(at, half)| at.length() + half.length()).fold(0.0, f32::max);
+    let roughness = world.get::<VoxelVolume>(volume).map_or(0.8, |volume| volume.roughness);
     let piece = Arc::new(piece);
-    let entity = world.spawn((Transform::from_position(place), voxear_scene::Name("Felled tree".into())));
+    let entity = world.spawn((Transform::from_position(place), voxear_scene::Name(name.into())));
     // Its voxels, as a volume of their own as large as its box, its corner the box's, turned with the body.
-    let look = world.spawn((Transform::from_position(-middle), voxear_scene::Name("Felled tree voxels".into())));
+    let look = world.spawn((Transform::from_position(-middle), voxear_scene::Name(format!("{name} voxels"))));
     world.insert(look, voxear_scene::Parent(entity));
     world.insert(look, piece_volume(&piece, roughness));
     let body = VoxelPieceBody {
         volume,
         piece,
         middle,
-        toward,
-        rest: options.rest,
+        toward: Vec3::X,
+        rest: made.rest,
         look,
-        pivot,
+        pivot: (place, Vec3::Z),
         reach,
         fall: PieceFall::Waiting,
         falling: 0.0,
         still: 0.0,
+        push: made.push,
+        built: made.built,
     };
     world.insert(entity, collider);
     world.insert(entity, ColliderBoxes { key, boxes: boxes.into() });
@@ -314,11 +366,23 @@ pub fn fall(world: &mut World, dt: f32) {
                 // Made again as a dynamic body: a slight push over the edge of its foot the way it was cut, as the
                 // blow that cut it would give, and gravity does the rest.
                 if let Some(id) = physics.body(entity) {
-                    let (point, axis) = body.pivot;
-                    let push = world.get::<VoxelVolume>(body.volume).map_or(0.6, |volume| volume.felling.push);
-                    let turn = axis * push;
+                    let (linear, turn) = match body.push {
+                        PiecePush::Tip => {
+                            let (point, axis) = body.pivot;
+                            let push = world.get::<VoxelVolume>(body.volume).map_or(0.6, |volume| volume.felling.push);
+                            let turn = axis * push;
+                            (turn.cross(place.0 - point), turn)
+                        }
+                        PiecePush::Away { from, speed } => {
+                            let away = (place.0 - from).normalize_or(Vec3::Y);
+                            // A tumble of its own about the way it flies.
+                            let spin = away.cross(Vec3::Y).normalize_or(Vec3::X) * speed * 0.3;
+                            (away * speed, spin)
+                        }
+                        PiecePush::Drop => (Vec3::ZERO, Vec3::ZERO),
+                    };
                     physics.world_mut().set_active(id, true);
-                    physics.world_mut().set_velocity(id, turn.cross(place.0 - point), turn);
+                    physics.world_mut().set_velocity(id, linear, turn);
                     body.fall = PieceFall::Falling;
                 }
             }
@@ -408,7 +472,7 @@ pub fn piece(world: &World, entity: Entity) -> Option<FelledPiece> {
 
 /// Where a piece tips over its stump, in metres from its box's least
 /// corner: the edge of its lowest logs the way it falls, at their foot.
-fn stump_edge(piece: &VoxelPiece, toward: Vec3) -> Vec3 {
+pub(crate) fn stump_edge(piece: &VoxelPiece, toward: Vec3) -> Vec3 {
     let logs: Vec<Vec3> = piece
         .voxels
         .iter()
@@ -601,6 +665,7 @@ mod tests {
             palette: vec![[100, 70, 50, 255], [70, 120, 40, 255]],
             wood: vec![true, false],
             voxel: 1.0 / 16.0,
+            mass: 1.0,
         };
         let model = piece_model(&piece, Vec3::new(0.0, 1.0, 0.0));
         // Taller than the largest grid: in two boxes, one over the other.

@@ -179,7 +179,9 @@ pub use voxel_volume::{
     VoxelWaterPoint, MOST_COVER_KINDS, voxel_areas_allow, voxel_ground_at, print::MOST_COLOURS as MOST_PRINT_COLOURS,
     raycast as voxel_raycast, voxel_print_model, water_at as voxel_water_at, UNCUT, VoxelCut, VoxelCutColumns, VoxelCutDone,
     VoxelFelled, VoxelFelledTree, VoxelFelling, VoxelPiece, VoxelRayMeets, voxel_cut, voxel_stamp, voxel_tree_trunks,
-    raycast_meeting as voxel_raycast_meeting,
+    raycast_meeting as voxel_raycast_meeting, MOST_PIECES, VOXEL_CRUMBS, VoxelAnchor, VoxelBlast, VoxelBlastDone,
+    VoxelLoosened, VoxelSettled, VoxelStuff, voxel_blast, voxel_blast_dig, voxel_loosen, voxel_settle, voxel_dug_between, VoxelRound,
+    VoxelStrain, VoxelStrainDone, VoxelStrainMemory, VoxelJoinLoad,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;

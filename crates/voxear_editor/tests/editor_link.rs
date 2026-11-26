@@ -939,6 +939,51 @@ fn a_tool_cuts_an_endless_volumes_grass_which_fades_one_step_to_undo_and_is_save
 }
 
 #[test]
+fn a_tool_blasts_a_bridges_pier_and_its_span_is_taken_away_one_step_to_undo() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Voxels", "position": [0, 0, 0] }));
+    let volume = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": volume, "component": "voxel_volume" }));
+    let endless = json!({ "obj": volume, "component": "voxel_volume", "field": "endless", "value": true });
+    done(&mut editor, &mut renderer, "field.set", endless);
+    // A span on one pier of stone, over the ground.
+    let ground = done(&mut editor, &mut renderer, "voxels.raycast", json!({ "from": [4.0, 20.0, 4.0], "direction": [0, -1, 0] }));
+    let y = ground["point"][1].as_f64().unwrap();
+    let pier = json!({ "at": [4.0, y - 0.2, 4.0], "size": [0.5, 2.2, 0.5], "material": "ashlar" });
+    done(&mut editor, &mut renderer, "voxels.box", pier);
+    let span = json!({ "at": [5.0, y + 2.0, 4.0], "size": [3.0, 0.25, 1.0], "material": "cobbles" });
+    done(&mut editor, &mut renderer, "voxels.box", span);
+    // Its pier blown through: in the editor the span is taken away at once, nothing falling.
+    let blast = done(&mut editor, &mut renderer, "voxels.blast", json!({ "at": [4.0, y + 1.0, 4.0], "radius": 0.6 }));
+    assert_eq!(blast["reached"], 1, "{blast}");
+    assert!(blast["dug"].as_u64().unwrap() > 500, "{blast}");
+    let pieces = blast["pieces"].as_array().unwrap();
+    assert!(!pieces.is_empty() && pieces.iter().all(|piece| piece["obj"].is_null()), "{blast}");
+    assert!(pieces.iter().any(|piece| piece["voxels"].as_u64().unwrap() > 3000), "the span: {blast}");
+    let settled = done(&mut editor, &mut renderer, "voxels.settled", json!({}));
+    assert_eq!((settled["settled"].clone(), settled["falling"].clone()), (json!(true), json!(0)), "{settled}");
+    let over = json!({ "from": [5.5, y + 5.0, 4.0], "direction": [0, -1, 0] });
+    let hit = done(&mut editor, &mut renderer, "voxels.raycast", over.clone());
+    assert!(hit["point"][1].as_f64().unwrap() < y + 0.5, "the span is gone: {hit}");
+    // One step to undo: the span is back.
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    let hit = done(&mut editor, &mut renderer, "voxels.raycast", over);
+    assert!(hit["point"][1].as_f64().unwrap() > y + 2.0, "the span back: {hit}");
+    // What holds and how loads are found, as the Inspector sets them, and saved.
+    for (field, value) in [("anchor", json!("Ground")), ("strain", json!("Paths")), ("built", json!("Wood")), ("most_pieces", json!(8.0))] {
+        let set = json!({ "obj": volume, "component": "voxel_volume", "field": field, "value": value });
+        assert_eq!(done(&mut editor, &mut renderer, "field.set", set)["changed"], true, "{field}");
+    }
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let path = saved["saved"].as_array().unwrap().iter().filter_map(|p| p.as_str()).find(|p| !p.ends_with(".vxr")).unwrap().to_string();
+    let scene = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    for written in ["anchor = \"ground\"", "strain = \"paths\"", "built = \"wood\"", "most_pieces = 8"] {
+        assert!(scene.contains(written), "{written} saved:\n{scene}");
+    }
+}
+
+#[test]
 fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_one_step_to_undo() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

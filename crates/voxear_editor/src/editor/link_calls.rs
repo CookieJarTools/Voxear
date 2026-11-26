@@ -309,6 +309,8 @@ impl Editor {
             "voxels.box" | "voxels.ramp" | "voxels.area" | "voxels.cover" => self.voxels_shape(call, args),
             "voxels.dig" | "voxels.place" | "voxels.restore" => self.voxels_set(call, args),
             "voxels.cut" => self.voxels_cut(args),
+            "voxels.blast" => self.voxels_blast(args),
+            "voxels.settled" => self.voxels_settled(),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
             "voxel_prints.materials" => self.voxel_prints_materials(args),
@@ -2584,6 +2586,66 @@ impl Editor {
         done(json!({ "reached": reached, "columns": columns, "voxels": voxels, "pieces": pieces }))
     }
 
+    fn voxels_blast(&mut self, args: &Json) -> Called {
+        use voxear_engine::voxel_collapse::BlastOptions;
+        use voxear_engine::voxel_felling::CutPieces;
+        use voxear_render::VoxelVolume;
+        let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+        let radius = need(args, "radius")?.as_f64().ok_or_else(|| bad("`radius` is a number of metres"))? as f32;
+        let throw = args.get("throw").and_then(Json::as_f64).map_or(3.0, |t| t as f32).max(0.0);
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        // In the editor nothing falls: what comes loose is taken away, at once.
+        let editing = self.game.engine.is_edit_mode();
+        let pieces = if editing { CutPieces::Gone } else { CutPieces::Fall };
+        let wait = editing || args.get("wait").and_then(Json::as_bool).unwrap_or(false);
+        let options = BlastOptions { pieces, throw, wait, ..BlastOptions::default() };
+        let volumes: Vec<Entity> = self
+            .game
+            .engine
+            .world
+            .query_ref::<(Entity, &VoxelVolume)>()
+            .into_iter()
+            .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        let (mut reached, mut dug, mut broken, mut rounds, mut loose) = (0, 0, 0, 0, Vec::new());
+        for entity in volumes {
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            let made = voxear_engine::voxel_collapse::blast(&mut self.game.engine.world, at, radius.max(0.0), options, Some(entity));
+            if made.reached > 0 {
+                reached += 1;
+                (dug, broken, rounds) = (dug + made.dug, broken + made.broken, rounds + made.rounds);
+                loose.extend(made.pieces);
+                self.record_change(entity, before);
+            }
+        }
+        let pieces: Vec<Json> = loose
+            .iter()
+            .map(|piece| {
+                json!({
+                    "obj": piece.obj.map(|obj| obj_ref(&self.game, obj)),
+                    "place": piece.place.to_array(),
+                    "size": piece.size.to_array(),
+                    "voxels": piece.logs,
+                })
+            })
+            .collect();
+        done(json!({ "reached": reached, "dug": dug, "pieces": pieces, "broken": broken, "rounds": rounds }))
+    }
+
+    fn voxels_settled(&mut self) -> Called {
+        let world = &self.game.engine.world;
+        let falling = world
+            .query_ref::<&voxear_engine::voxel_felling::VoxelPieceBody>()
+            .into_iter()
+            .filter(|body| body.built && body.fall != voxear_engine::voxel_felling::PieceFall::Resting)
+            .count();
+        done(json!({ "settled": voxear_engine::voxel_collapse::all_settled(world), "falling": falling }))
+    }
+
     fn voxels_water_at(&mut self, args: &Json) -> Called {
         let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
         let only = match args.get("obj") {
@@ -2623,11 +2685,18 @@ impl Editor {
             .map(|(entity, _)| entity)
             .collect();
         let mut reached = 0;
+        // While the game plays, what a carve cuts off comes loose.
+        let settles = fill.is_none() && !self.game.engine.is_edit_mode();
         for entity in volumes {
             let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
             let world = &mut self.game.engine.world;
+            let was = world.get::<VoxelVolume>(entity).cloned();
             if voxear_engine::voxel_volumes::edit(world, at, radius, fill, Some(entity)) > 0 {
                 reached += 1;
+                if let Some(was) = was.filter(|_| settles) {
+                    let (low, high) = (at - radius, at + radius);
+                    voxear_engine::voxel_collapse::settle_after(world, entity, was, low, high, voxear_engine::voxel_felling::CutPieces::Fall);
+                }
                 self.record_change(entity, before);
             }
         }
@@ -2777,9 +2846,13 @@ impl Editor {
             .map(|(entity, _)| entity)
             .collect();
         let mut set = 0;
+        // While the game plays, what digging cuts off comes loose.
+        let settles = call == "voxels.dig" && !self.game.engine.is_edit_mode();
+        let (low, high) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(l, h), p| (l.min(*p), h.max(*p)));
         for entity in volumes {
             let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
             let world = &mut self.game.engine.world;
+            let was = world.get::<VoxelVolume>(entity).cloned().filter(|_| settles);
             let count = match call {
                 "voxels.restore" => {
                     voxear_engine::voxel_volumes::unset_voxels(world, &points, Some(entity));
@@ -2789,6 +2862,10 @@ impl Editor {
             };
             if count > 0 {
                 set += count;
+                if let Some(was) = was {
+                    let world = &mut self.game.engine.world;
+                    voxear_engine::voxel_collapse::settle_after(world, entity, was, low, high, voxear_engine::voxel_felling::CutPieces::Fall);
+                }
                 self.record_change(entity, before);
             }
         }

@@ -245,6 +245,9 @@ pub struct VoxelGenerator {
     pub world: Arc<voxear_terrain::generate::WorldGen>,
     pub floor: f32,
     pub at: [f32; 2],
+    /// A world of blocks' biomes, whose blocks its ground is made of: none
+    /// for ground of grass, rock, sand, snow and gravel by its climate.
+    pub biomes: Option<Arc<VoxelBiomes>>,
 }
 
 impl PartialEq for VoxelGenerator {
@@ -252,7 +255,17 @@ impl PartialEq for VoxelGenerator {
         (Arc::ptr_eq(&self.world, &other.world) || self.world.hash() == other.world.hash())
             && self.floor == other.floor
             && self.at == other.at
+            && self.biomes == other.biomes
     }
+}
+
+/// A world of blocks' biomes as an endless volume lays their ground: which
+/// is where, and what blocks each lays (see `voxear_terrain::generate::GpuBiomes`),
+/// with each block's colour, as sRGB, in the order the words name them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoxelBiomes {
+    pub words: Vec<u32>,
+    pub colours: Vec<[u8; 3]>,
 }
 
 impl Default for VoxelVolume {

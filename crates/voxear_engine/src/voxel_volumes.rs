@@ -59,7 +59,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume};
+use voxear_render::{
+    VoxelBiomes, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume,
+};
 
 use crate::content::Content;
 
@@ -267,10 +269,11 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         }
         found
     });
-    let generator = generator.map(|world| VoxelGenerator {
+    let generator = generator.map(|(world, biomes)| VoxelGenerator {
         floor: data.generator_floor.unwrap_or_else(|| auto_floor(&world, data)),
         at: data.generator_at,
         world,
+        biomes,
     });
     let trees = data.trees.iter().filter_map(|kind| trees_of(content, kind)).collect();
     VoxelVolume {
@@ -289,15 +292,24 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
 
 /// The world generator `reference` names: a `.worldgen`, or a world of
 /// blocks' ground generator, as its chunks are made by it (its biomes'
-/// land, its painted maps, its rivers; see `blocks::world_ground`).
-fn generator_of(content: &mut Content, reference: &str) -> Option<Arc<voxear_terrain::generate::WorldGen>> {
+/// land, its painted maps, its rivers; see `blocks::world_ground`), with
+/// its biomes, whose blocks the volume's ground is then made of.
+fn generator_of(
+    content: &mut Content,
+    reference: &str,
+) -> Option<(Arc<voxear_terrain::generate::WorldGen>, Option<Arc<VoxelBiomes>>)> {
     let guid = content.parse(reference).ok().and_then(|parsed| parsed.guid())?;
-    match content.db().get(guid).map(|entry| entry.kind) {
-        Some(voxear_assets::AssetKind::BlockWorld) => {
-            crate::blocks::world_ground(content, guid).map(|(ground, _, _)| ground)
-        }
-        _ => content.world_gen(reference),
+    if content.db().get(guid).map(|entry| entry.kind) != Some(voxear_assets::AssetKind::BlockWorld) {
+        return content.world_gen(reference).map(|world| (world, None));
     }
+    let found = crate::blocks::world_ground(content, guid)?;
+    let biomes = found.biomes.as_ref().filter(|placed| !placed.biomes.is_empty()).map(|placed| {
+        let own = [found.ground.top, found.ground.under, found.ground.bottom];
+        let gpu = placed.gpu(own, found.ground.under_depth, found.block_size);
+        let colour = |block: u16| found.colours.get(usize::from(block)).copied().unwrap_or([128; 3]);
+        Arc::new(VoxelBiomes { colours: gpu.blocks.iter().map(|&block| colour(block)).collect(), words: gpu.words })
+    });
+    Some((found.generator, biomes))
 }
 
 /// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Print` and `Voxels.Raycast` in scripts.

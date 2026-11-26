@@ -561,6 +561,104 @@ impl WorldBiomes {
     }
 }
 
+/// A world's biomes as the GPU picks among them and lays their ground
+/// (`biomeOf` and `biomeGround` in `voxear_render/shaders/voxel_world.slang`):
+/// `words`, and the blocks they name, by their place in `blocks`, whose
+/// colours the GPU is given beside them.
+///
+/// `words` holds how many biomes, how far and over how many metres their
+/// borders wander, the seed, the spreads of warmth, wetness and height,
+/// how many blocks, where the biomes' records start, where the painted
+/// biome map starts (`u32::MAX` for none), a word for where the blocks'
+/// colours start, which the renderer sets, and how large a block is, in
+/// metres; then each biome's record of
+/// [`GPU_BIOME_WORDS`]: its warmth, wetness and height (both `f32::MIN`
+/// and `f32::MAX` for any), how much of the climate its ranges take in,
+/// its top, under, deep, steep and shore blocks' places (`u32::MAX` for
+/// none), how deep its under block goes in metres, how steep its steep
+/// ground is, as rise over run, and how far over and under the sea its
+/// shore is; then the painted biome map's words.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuBiomes {
+    pub words: Vec<u32>,
+    pub blocks: Vec<BlockId>,
+}
+
+/// The words of one biome's record in [`GpuBiomes::words`].
+pub const GPU_BIOME_WORDS: usize = 16;
+
+impl WorldBiomes {
+    /// Its biomes for the GPU, each block a biome leaves to the world its
+    /// world's own: `own` its top, under and deep blocks, `own_depth` how
+    /// many blocks deep its under block goes; its blocks `block_size`
+    /// metres a side.
+    pub fn gpu(&self, own: [BlockId; 3], own_depth: u32, block_size: f32) -> GpuBiomes {
+        let mut blocks: Vec<BlockId> = Vec::new();
+        let mut place = |block: BlockId| -> u32 {
+            if block == AIR {
+                return u32::MAX;
+            }
+            match blocks.iter().position(|&known| known == block) {
+                Some(at) => at as u32,
+                None => {
+                    blocks.push(block);
+                    (blocks.len() - 1) as u32
+                }
+            }
+        };
+        let biomes = &self.biomes;
+        let list = biomes.list();
+        let mut records = Vec::with_capacity(list.len() * GPU_BIOME_WORDS);
+        for (at, biome) in list.iter().enumerate() {
+            let ground = self.blocks.get(at).cloned().unwrap_or_default();
+            let or = |block: BlockId, own: BlockId| if block == AIR { own } else { block };
+            let (low, high) = biome.height.map_or((f32::MIN, f32::MAX), |[low, high]| (low, high));
+            let depth = if ground.under == AIR { own_depth } else { ground.under_depth } as f32 * block_size;
+            records.extend([
+                biome.temperature[0].to_bits(),
+                biome.temperature[1].to_bits(),
+                biome.humidity[0].to_bits(),
+                biome.humidity[1].to_bits(),
+                low.to_bits(),
+                high.to_bits(),
+                biome.reach(biomes.spreads).to_bits(),
+                place(or(ground.top, own[0])),
+                place(or(ground.under, own[1])),
+                place(or(ground.deep, own[2])),
+                place(ground.steep),
+                ground.steep_slope.to_bits(),
+                place(ground.shore),
+                ground.shore_height.to_bits(),
+                depth.to_bits(),
+                0,
+            ]);
+        }
+        let painted = self.painted.as_ref().map(|painted| painted.maps()).filter(|maps| !maps.biome.is_empty());
+        let header = 12;
+        let painted_at = painted.as_ref().map_or(u32::MAX, |_| (header + records.len()) as u32);
+        let spreads = biomes.spreads;
+        let mut words = vec![
+            list.len() as u32,
+            biomes.wander.to_bits(),
+            biomes.wander_size.to_bits(),
+            biomes.seed,
+            spreads.temperature.to_bits(),
+            spreads.humidity.to_bits(),
+            spreads.height.to_bits(),
+            blocks.len() as u32,
+            header as u32,
+            painted_at,
+            0,
+            block_size.to_bits(),
+        ];
+        words.extend(records);
+        if let Some(maps) = painted {
+            words.extend(maps.biome.gpu_words());
+        }
+        GpuBiomes { words, blocks }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

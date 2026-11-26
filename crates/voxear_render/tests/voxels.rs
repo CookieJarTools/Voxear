@@ -7,7 +7,7 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, ModelBox, PostProcess,
-    Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint,
+    Renderer, RendererSettings, Sky, VoxelBiomes, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint,
     VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
 };
 use voxear_scene::Transform;
@@ -419,6 +419,59 @@ fn peaks_plateaus_smoothing_world_edges_and_painted_maps_on_the_gpu_are_the_cpus
     assert!(failed.is_empty(), "not the CPU's on the GPU: {failed:?}");
 }
 
+#[test]
+fn the_biome_an_endless_volume_picks_on_the_gpu_is_the_world_of_blocks_on_the_cpu() {
+    use voxear_terrain::generate::{
+        BiomeBlocks, BiomeDef, Biomes, WorldBiomes,
+        biomes::Place,
+        painted::{Painted, PaintedMaps},
+    };
+    let Some(renderer) = renderer() else { return };
+    let world = without_rivers(&starter("Rolling Hills"));
+    // Four biomes by warmth and wetness, one keeping to the hilltops, and the second painted over a patch.
+    let biome = |temperature: [f32; 2], humidity: [f32; 2], height: Option<[f32; 2]>| BiomeDef {
+        temperature,
+        humidity,
+        height,
+        ..BiomeDef::default()
+    };
+    let list = vec![
+        biome([-30.0, 5.0], [0.0, 1.0], None),
+        biome([5.0, 15.0], [0.0, 0.5], None),
+        biome([5.0, 15.0], [0.5, 1.0], None),
+        biome([15.0, 40.0], [0.0, 1.0], None),
+        biome([-30.0, 40.0], [0.0, 1.0], Some([60.0, 400.0])),
+    ];
+    let painted = Painted::new(11, PaintedMaps::default());
+    painted.change(|maps| maps.biome.paint([300.0, -200.0], 200.0, 0.0, &|_, _| Some(1.0)));
+    let biomes = WorldBiomes {
+        biomes: Biomes::new(list, 12.0, 0.4, 7),
+        blocks: vec![BiomeBlocks::default(); 5],
+        regions: None,
+        painted: Some(painted),
+    };
+    let gpu = biomes.gpu([1, 2, 3], 3, 1.0);
+    let voxel_biomes = VoxelBiomes { colours: vec![[100; 3]; gpu.blocks.len()], words: gpu.words };
+    let places: Vec<[f32; 2]> =
+        (0..8192).map(|i| [(i % 128) as f32 * 9.7 - 300.0, (i / 128) as f32 * 11.3 - 500.0]).collect();
+    let picked = renderer.biomes_on_gpu(&world, &voxel_biomes, &places).expect("biomes on the GPU");
+    let (mut same, mut seen) = (0, [0usize; 5]);
+    for (at, &[x, z]) in places.iter().enumerate() {
+        let height = world.height_at(x, z);
+        let (temperature, humidity) = world.climate(x, z, height);
+        let place = Place { temperature, humidity, above_sea: height - world.sea_level(), sunk: 0.0 };
+        let cpu = biomes.index_at(x, z, place).map_or(-1, |index| index as i32);
+        same += usize::from(cpu == picked[at]);
+        if let Ok(index) = usize::try_from(cpu) {
+            seen[index] += 1;
+        }
+    }
+    eprintln!("{same} of {} the same; the CPU's biomes {seen:?}", places.len());
+    assert!(seen.iter().filter(|&&count| count > 0).count() >= 3, "several biomes: {seen:?}");
+    // A place on a border may fall either side of it by a rounding.
+    assert!(same * 1000 >= places.len() * 995, "{same} of {} the same", places.len());
+}
+
 /// An endless volume made by a starter generator, seen from `height` metres
 /// over its ground at `(x, z)` and looking down at `pitch` degrees.
 fn generated_view(world: Arc<WorldGen>, x: f32, z: f32, height: f32, pitch: f32) -> World {
@@ -429,7 +482,7 @@ fn generated_view(world: Arc<WorldGen>, x: f32, z: f32, height: f32, pitch: f32)
         ground: Some(VoxelGround { grass: 0.5, flowers: 0.2, ..VoxelGround::default() }),
         endless: true,
         reach: 48.0,
-        generator: Some(VoxelGenerator { world, floor: ground - 24.0, at: [0.0, 0.0] }),
+        generator: Some(VoxelGenerator { world, floor: ground - 24.0, at: [0.0, 0.0], biomes: None }),
         ..VoxelVolume::default()
     };
     scene.spawn((volume, Transform::default()));

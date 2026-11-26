@@ -171,8 +171,8 @@ pub use lightmaps::{
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
 pub use voxel_volume::{
-    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelEdit, VoxelGenerator,
-    VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
+    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelBiomes, VoxelCounts, VoxelEdit,
+    VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
     VoxelPrinted, VoxelRayHit, VoxelStamp, VoxelTrees, VoxelVolume, print::MOST_COLOURS as MOST_PRINT_COLOURS,
     raycast as voxel_raycast, voxel_print_model,
 };
@@ -1090,7 +1090,23 @@ impl Renderer {
         places: &[[f32; 3]],
         size: f32,
     ) -> Result<Vec<[f32; 5]>> {
-        voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, places, size)
+        let made = voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, None, places, size)?;
+        Ok(made.into_iter().map(|[a, b, c, d, e, _]| [a, b, c, d, e]).collect())
+    }
+
+    /// The biome each of `places`, `[x, z]` in metres in `world`, is, picked
+    /// on the GPU as an endless volume picks it from `biomes`: by its place
+    /// in their list, -1 for none. For checking the GPU against the CPU.
+    pub fn biomes_on_gpu(
+        &self,
+        world: &voxear_terrain::generate::WorldGen,
+        biomes: &VoxelBiomes,
+        places: &[[f32; 2]],
+    ) -> Result<Vec<i32>> {
+        let asked: Vec<[f32; 3]> = places.iter().map(|&[x, z]| [x, 0.0, z]).collect();
+        let gpu = (&self.pipelines, &self.bindless);
+        let made = voxel_volume::generated_at(&self.gpu, gpu, world, Some(biomes), &asked, 1.0)?;
+        Ok(made.into_iter().map(|place| place[5] as i32).collect())
     }
 
     /// Makes every Voxel Volume in `world` and brings it up, waiting at most

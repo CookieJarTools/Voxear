@@ -1,9 +1,13 @@
 //! Where a ray meets an endless Voxel Volume's ground, its trees' logs and
 //! leaves, and its edits, as the CPU finds them ([`super::solid`]). Its
-//! grass and flowers are not met.
+//! grass, cover and crops are met only when asked ([`VoxelRayMeets`]), as
+//! the layer they grow in: as tall as their kind grows, less what a cut
+//! left of them.
 //!
 //! The ray is walked a voxel at a time near the ground, and in steps as long
 //! as the ground, the balls filled and the trees are far from it elsewhere.
+
+use std::collections::HashMap;
 
 use voxear_core::math::{IVec3, Vec3};
 
@@ -21,6 +25,17 @@ pub struct VoxelRayHit {
     pub point: Vec3,
     pub normal: Vec3,
     pub distance: f32,
+    /// Whether what it met is grass, cover or crops.
+    pub cover: bool,
+}
+
+/// What a ray meets: what is solid, and the trees' leaves; or that and the
+/// grass, cover and crops too, as a blade swung through them does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum VoxelRayMeets {
+    #[default]
+    Solid,
+    Cover,
 }
 
 /// How many voxels the walk takes a voxel at a time before it looks again
@@ -34,15 +49,33 @@ const NEAR: f32 = 6.0;
 pub(super) const HEIGHT_STEP: f32 = 0.4;
 pub(super) const DENSITY_STEP: f32 = 0.3;
 
-/// Whether voxel `c` is anything a ray meets.
-fn is(ground: &mut Ground, c: IVec3) -> bool {
-    ground.at(c) != AIR
+/// Whether voxel `c` is anything a ray meets: and whether it is cover.
+/// `covers` keeps each column's cover as it is found.
+fn is(ground: &mut Ground, c: IVec3, covers: &mut Option<HashMap<(i32, i32), Option<(i32, i32)>>>) -> Option<bool> {
+    if ground.at(c) != AIR {
+        return Some(false);
+    }
+    let covers = covers.as_mut()?;
+    let over = *covers.entry((c.x, c.z)).or_insert_with(|| super::fell::cover_over(ground, c.x, c.z));
+    over.filter(|&(h, blades)| c.y > h && c.y <= h + blades).map(|_| true)
 }
 
 /// Where the ray from `origin` along `direction`, in the world, first meets
 /// the ground of the endless volume whose corner is at `corner`, within
 /// `reach` metres: none where it meets none.
 pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3, reach: f32) -> Option<VoxelRayHit> {
+    raycast_meeting(volume, corner, origin, direction, reach, VoxelRayMeets::Solid)
+}
+
+/// As [`raycast`], meeting what `meets` says.
+pub fn raycast_meeting(
+    volume: &VoxelVolume,
+    corner: Vec3,
+    origin: Vec3,
+    direction: Vec3,
+    reach: f32,
+    meets: VoxelRayMeets,
+) -> Option<VoxelRayHit> {
     let d = direction.normalize_or_zero();
     if d == Vec3::ZERO || !volume.endless {
         return None;
@@ -50,6 +83,14 @@ pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3
     let woods = trees::woods(&volume.trees, volume.voxels_per_metre.clamp(1, super::MOST_VOXELS_A_METRE));
     let mut ground = Ground::new(volume, woods.as_deref());
     let (voxel, tall) = (ground.voxel, ground.tall);
+    // Meeting cover, the walk goes a voxel at a time as high over the ground as it grows.
+    let mut covers = (meets == VoxelRayMeets::Cover).then(HashMap::new);
+    let over = if covers.is_some() {
+        let grass = volume.ground.map_or(0.0, |g| if g.grass > 0.0 { g.grass_height } else { 0.0 });
+        (volume.cover.iter().map(|cover| cover.height).fold(grass, f32::max) / voxel).ceil() + 1.0
+    } else {
+        0.0
+    };
     let o = (origin - corner) / voxel;
     let reach = reach / voxel;
     // Into the volume's height: under its top, and over its floor, which is solid.
@@ -60,19 +101,19 @@ pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3
         }
         t = (o.y - tall as f32) / -d.y;
     }
-    let hit = |t: f32, axis: Option<usize>| {
+    let hit = |t: f32, axis: Option<usize>, cover: bool| {
         let mut normal = -d;
         if let Some(axis) = axis {
             normal = Vec3::ZERO;
             normal[axis] = -d[axis].signum();
         }
-        VoxelRayHit { point: corner + (o + d * t) * voxel, normal, distance: t * voxel }
+        VoxelRayHit { point: corner + (o + d * t) * voxel, normal, distance: t * voxel, cover }
     };
-    if is(&mut ground, (o + d * t).floor().as_ivec3()) {
-        return (t <= reach).then(|| hit(t, None));
+    if let Some(cover) = is(&mut ground, (o + d * t).floor().as_ivec3(), &mut covers) {
+        return (t <= reach).then(|| hit(t, None, cover));
     }
     while t < reach {
-        let clear = ground.clear(o + d * t);
+        let clear = ground.clear(o + d * t) - over;
         if clear > NEAR {
             t += clear;
             continue;
@@ -86,8 +127,8 @@ pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3
         let inv = Vec3::new(1.0 / across.x, 1.0 / across.y, 1.0 / across.z);
         let edge = |c: IVec3, a: usize| (c[a] as f32 + if across[a] > 0.0 { 1.0 } else { 0.0 } - o[a]) * inv[a];
         let mut next = Vec3::new(edge(c, 0), edge(c, 1), edge(c, 2));
-        if is(&mut ground, c) {
-            return Some(hit(t, None));
+        if let Some(cover) = is(&mut ground, c, &mut covers) {
+            return Some(hit(t, None, cover));
         }
         for _ in 0..FINE_STEPS {
             let axis = if next.x < next.y && next.x < next.z {
@@ -103,8 +144,8 @@ pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3
             }
             c[axis] += step[axis];
             next[axis] = edge(c, axis);
-            if is(&mut ground, c) {
-                return Some(hit(t, Some(axis)));
+            if let Some(cover) = is(&mut ground, c, &mut covers) {
+                return Some(hit(t, Some(axis), cover));
             }
             if c.y >= tall && d.y >= 0.0 {
                 return None;
@@ -150,6 +191,29 @@ mod tests {
         assert!(deeper.point.y < corner.y + 1.1 && deeper.point.y > corner.y + 0.9, "{deeper:?}");
         let across = raycast(&volume, corner, corner + Vec3::new(3.0, 4.0, 3.0), Vec3::X, 100.0).expect("the rock");
         assert!((across.point.x - (corner.x + 8.5)).abs() < 0.07 && across.normal == -Vec3::X, "{across:?}");
+    }
+
+    #[test]
+    fn a_ray_meeting_cover_stops_in_the_grass_and_passes_where_it_was_cut() {
+        let ground = VoxelGround { height: 2.0, hills: 0.0, grass: 1.0, grass_height: 0.5, ..VoxelGround::default() };
+        let volume = VoxelVolume { ground: Some(ground), ..flat() };
+        let from = Vec3::new(3.03, 7.0, 3.03);
+        let down = Vec3::new(0.0, -1.0, 0.0);
+        let solid = raycast(&volume, Vec3::ZERO, from, down, 100.0).expect("the ground");
+        let cover = raycast_meeting(&volume, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("the grass");
+        assert!(cover.cover && !solid.cover);
+        assert!((cover.point.y - (solid.point.y + 0.5)).abs() < 0.07, "{cover:?} over {solid:?}");
+        // Cut and faded, the grass there is met no more; half faded, half as high.
+        let mut changes = crate::VoxelChanges::default();
+        changes.cut(48, 48);
+        changes.tend_cuts(128, 0);
+        let half = VoxelVolume { changes: Arc::new(changes.clone()), ..volume.clone() };
+        let met = raycast_meeting(&half, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("half");
+        assert!((met.point.y - (solid.point.y + 0.25)).abs() < 0.07, "{met:?}");
+        changes.tend_cuts(255, 0);
+        let cut = VoxelVolume { changes: Arc::new(changes), ..volume };
+        let met = raycast_meeting(&cut, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("the ground");
+        assert!(!met.cover && (met.point.y - solid.point.y).abs() < 1e-3, "{met:?}");
     }
 
     #[test]

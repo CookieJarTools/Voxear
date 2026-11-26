@@ -423,6 +423,14 @@ impl PhysicsWorld {
         (shape != 0).then_some(ShapeId(shape))
     }
 
+    /// Boxes as one shape, each its middle and half its size, for what moves
+    /// as well as what does not: a felled tree's logs. `None` for none.
+    pub fn boxes_shape(&mut self, boxes: &[(Vec3, Vec3)]) -> Option<ShapeId> {
+        let flat: Vec<f32> = boxes.iter().flat_map(|(middle, half)| [middle.to_array(), half.to_array()]).flatten().collect();
+        let shape = unsafe { ffi::vx_shape_boxes(self.world, flat.as_ptr(), boxes.len() as u32) };
+        (shape != 0).then_some(ShapeId(shape))
+    }
+
     /// A triangle mesh, for what does not move: its vertices, and three
     /// indices a triangle.
     pub fn mesh_shape(&mut self, vertices: &[Vec3], indices: &[u32]) -> Option<ShapeId> {

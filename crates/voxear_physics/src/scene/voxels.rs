@@ -187,6 +187,19 @@ pub(super) fn chunk_faces(solids: &dyn VoxelSolids, key: [i32; 3]) -> (Vec<Vec3>
 }
 
 impl PhysicsScene {
+    /// Whether the chunks of `entity`'s voxels within the box from `low` to
+    /// `high`, in the world, are made from its voxels as they are now: none
+    /// there waiting to be made again after they changed. A body put where
+    /// voxels were just taken away waits for this, so it does not start
+    /// inside their old shapes.
+    pub fn voxels_ready(&self, entity: Entity, low: Vec3, high: Vec3) -> bool {
+        let Some(kept) = self.voxel_bodies.get(&entity) else { return true };
+        let side = CHUNK as f32 * kept.voxel;
+        let (least, most) = (((low - kept.corner) / side).floor().as_ivec3(), ((high - kept.corner) / side).floor().as_ivec3());
+        let inside = |key: &[i32; 3]| (0..3).all(|a| key[a] >= least[a] && key[a] <= most[a]);
+        !kept.stale.iter().any(inside) && !kept.making.keys().any(inside)
+    }
+
     /// Gives each Obj with a [`VoxelCollider`] the chunks of its voxels'
     /// faces round what moves, made again where its voxels changed, and
     /// moved with it.
@@ -209,12 +222,17 @@ impl PhysicsScene {
             return;
         }
         // What moves: the characters, and the bodies physics or the game moves; each where it is and where it will be.
-        let walkers =
-            self.characters.values().map(|walker| (walker.placed, walker.state.map_or(Vec3::ZERO, |s| s.velocity)));
+        // Each with how far it reaches from its place: a long body, a felled tree, wants chunks as far as its ends.
+        let walkers = self
+            .characters
+            .values()
+            .map(|walker| (walker.placed, walker.state.map_or(Vec3::ZERO, |s| s.velocity), 0.0));
         let bodies = self.bodies.values().filter(|kept| kept.key.rigidbody.is_some());
-        let bodies = bodies.map(|kept| (kept.placed.0, self.world.velocity(kept.body).0));
-        let movers: Vec<(Vec3, bool)> =
-            walkers.chain(bodies).flat_map(|(at, going)| [(at, true), (at + going * LOOK_AHEAD, false)]).collect();
+        let bodies = bodies.map(|kept| (kept.placed.0, self.world.velocity(kept.body).0, kept.reach));
+        let movers: Vec<(Vec3, bool, f32)> = walkers
+            .chain(bodies)
+            .flat_map(|(at, going, far)| [(at, true, far), (at + going * LOOK_AHEAD, false, far)])
+            .collect();
         for (entity, solids, corner) in found {
             let layer = layer(world, entity);
             let voxel = solids.voxel().max(1e-4);
@@ -274,8 +292,8 @@ impl PhysicsScene {
             // and up and down no further than a chunk, as things go mostly across.
             let mut now: HashSet<[i32; 3]> = HashSet::new();
             let mut wanted: HashMap<[i32; 3], f32> = HashMap::new();
-            let reach = Vec3::new(AHEAD.max(side), side, AHEAD.max(side));
-            for (place, there) in &movers {
+            for (place, there, far) in &movers {
+                let reach = Vec3::new(AHEAD.max(side) + far, side + far, AHEAD.max(side) + far);
                 let local = *place - corner;
                 let low = ((local - reach) / side).floor().as_ivec3();
                 let high = ((local + reach) / side).floor().as_ivec3();
@@ -402,7 +420,7 @@ impl PhysicsScene {
             let keep = 2.0 * side + LET_GO;
             let far = |key: &[i32; 3]| {
                 let (least, most) = (at(key), at(key) + Vec3::splat(side));
-                movers.iter().all(|(place, _)| place.clamp(least, most).distance(*place) > keep)
+                movers.iter().all(|(place, _, reach)| place.clamp(least, most).distance(*place) > keep + reach)
             };
             let gone: Vec<[i32; 3]> = kept.chunks.keys().filter(|key| far(key)).copied().collect();
             for key in gone {

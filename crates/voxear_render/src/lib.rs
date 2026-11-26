@@ -176,6 +176,8 @@ pub use voxel_volume::{
     VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
     VoxelArea, VoxelAreaRules, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelHeld, VoxelKind, VoxelPrinted, VoxelRayHit,
     VoxelSet, VoxelShape, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook, VoxelWaterPoint, MOST_COVER_KINDS,
+    UNCUT, VoxelCut, VoxelCutColumns, VoxelCutDone, VoxelFelled, VoxelFelledTree, VoxelPiece, VoxelRayMeets, voxel_cut,
+    voxel_stamp, voxel_tree_trunks, raycast_meeting as voxel_raycast_meeting,
     voxel_areas_allow, voxel_ground_at, print::MOST_COLOURS as MOST_PRINT_COLOURS, raycast as voxel_raycast,
     voxel_print_model, water_at as voxel_water_at,
 };

@@ -20,6 +20,7 @@ pub mod bricks;
 mod changes;
 mod edit;
 mod endless;
+mod fell;
 mod growth;
 pub(crate) use endless::generated_at;
 mod ground;
@@ -37,13 +38,14 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
-pub use changes::{VoxelChanges, VoxelKind, VoxelSet};
+pub use changes::{CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelFelledTree, VoxelChanges, VoxelKind, VoxelSet};
+pub use fell::{VoxelCut, VoxelCutDone, VoxelPiece, cut as voxel_cut, stamp as voxel_stamp, tree_trunks as voxel_tree_trunks};
 pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
 pub use voxear_terrain::generate::structures::AreaRules as VoxelAreaRules;
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
-pub use ray::{VoxelRayHit, raycast};
+pub use ray::{VoxelRayHit, VoxelRayMeets, raycast, raycast_meeting};
 pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
 pub use solid::{VoxelSolids, ground_at as voxel_ground_at};
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
@@ -108,6 +110,34 @@ pub struct VoxelVolume {
     /// How an endless volume's rivers and lakes are drawn: as smooth water
     /// over its voxels, or as voxels of water themselves.
     pub water: VoxelWaterLook,
+    /// What a tree felled in an endless volume becomes once it has fallen
+    /// and come to rest.
+    pub felled: VoxelFelled,
+    /// How many seconds an endless volume's cut grass, cover and crops take
+    /// to grow back: none for never.
+    pub regrow: f32,
+}
+
+/// What a tree felled in an endless Voxel Volume becomes once it has
+/// fallen and come to rest: a body of its own, which can be pushed and
+/// rolled; or voxels of the volume again where it lies, solid as the ground.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelFelled {
+    #[default]
+    Body,
+    Stamped,
+}
+
+impl VoxelFelled {
+    pub const ALL: [Self; 2] = [Self::Body, Self::Stamped];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Body => "Body",
+            Self::Stamped => "Stamped",
+        }
+    }
 }
 
 /// How an endless Voxel Volume's rivers and lakes are drawn.
@@ -395,6 +425,8 @@ impl Default for VoxelVolume {
             changes: Arc::default(),
             sea: true,
             water: VoxelWaterLook::Voxels,
+            felled: VoxelFelled::Body,
+            regrow: 0.0,
         }
     }
 }
@@ -417,6 +449,8 @@ impl PartialEq for VoxelVolume {
             && (Arc::ptr_eq(&self.areas, &other.areas) || self.areas == other.areas)
             && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
             && self.water == other.water
+            && self.felled == other.felled
+            && self.regrow == other.regrow
             && (Arc::ptr_eq(&self.changes, &other.changes) || self.changes == other.changes)
     }
 }

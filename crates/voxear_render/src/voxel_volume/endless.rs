@@ -237,6 +237,10 @@ struct GpuWorldMake {
     fine: f32,
     river_window: u32,
     water_voxels: u32,
+    /// Where among the edits' words the trees felled and the cut grass are
+    /// kept (`felledAt`, `cutLeft`): none past the last word.
+    felled_at: u32,
+    cuts_at: u32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -295,6 +299,10 @@ pub(crate) struct Endless {
     edits: Arc<Vec<VoxelEdit>>,
     changes: Arc<VoxelChanges>,
     edit_total: u32,
+    /// Where among the edits' words its felled trees' and cut grass's
+    /// tables start: [`NO_TABLE`] for none.
+    felled_at: u32,
+    cuts_at: u32,
     edit_buffer: Option<Buffer>,
     job_edits: Buffer,
     /// Every print its edits have printed, in the order first printed;
@@ -349,6 +357,69 @@ pub(crate) struct Endless {
     settled: Option<[i32; 4]>,
     outer: Option<[f32; 4]>,
     hole: Option<[f32; 4]>,
+}
+
+/// Where a table among the edits' words is not.
+const NO_TABLE: u32 = u32::MAX;
+
+/// The slot a foot's or a sector column's place hashes to, in a table of
+/// `mask` and one slots (`tableSlot` in `shaders/voxel_world.slang`).
+fn table_slot(x: i32, z: i32, mask: u32) -> u32 {
+    let h = (x as u32).wrapping_mul(0x8DA6_B343) ^ (z as u32).wrapping_mul(0xD816_3841);
+    (h ^ (h >> 15)) & mask
+}
+
+/// The trees felled as the trees pass looks them up (`felledCut`): how many
+/// slots less one, a power of two, then three words a slot, a foot's voxel
+/// column and how high its stump stands and one, 0 in an empty slot.
+fn felled_table(changes: &VoxelChanges) -> Vec<u32> {
+    let felled: Vec<_> = changes.all_felled().collect();
+    let slots = (felled.len() * 2).next_power_of_two().max(2) as u32;
+    let mut words = vec![0u32; 1 + slots as usize * 3];
+    words[0] = slots - 1;
+    for (foot, felled) in felled {
+        let mut at = table_slot(foot[0], foot[1], slots - 1);
+        while words[1 + at as usize * 3 + 2] != 0 {
+            at = (at + 1) & (slots - 1);
+        }
+        let record = &mut words[1 + at as usize * 3..][..3];
+        record.copy_from_slice(&[foot[0] as u32, foot[1] as u32, (felled.cut.max(0) as u32).saturating_add(1)]);
+    }
+    words
+}
+
+/// The cut grass as the tops pass looks it up (`cutLeft`): how many slots
+/// less one, a power of two, then three words a slot, a sector column of
+/// the finest voxels and where its bytes start among these words and one,
+/// 0 in an empty slot; then for each sector column with any cut, a byte a
+/// voxel column of how much of its blades is left, 255 for all.
+fn cuts_table(changes: &VoxelChanges) -> Vec<u32> {
+    let mut sectors: std::collections::BTreeMap<[i32; 2], Vec<u8>> = std::collections::BTreeMap::new();
+    for (brick, cut) in changes.cuts() {
+        let sector = brick.map(|a| a.div_euclid(8));
+        let bytes = sectors.entry(sector).or_insert_with(|| vec![super::changes::FULL; 64 * 64]);
+        let within = brick.map(|a| a.rem_euclid(8) * 8);
+        for index in 0..64 {
+            if cut.set >> index & 1 != 0 {
+                let (x, z) = (within[0] + index as i32 % 8, within[1] + index as i32 / 8);
+                bytes[(x + 64 * z) as usize] = cut.left[index];
+            }
+        }
+    }
+    let slots = (sectors.len() * 2).next_power_of_two().max(2) as u32;
+    let head = 1 + slots as usize * 3;
+    let mut words = vec![0u32; head];
+    words[0] = slots - 1;
+    for (sector, bytes) in sectors {
+        let mut at = table_slot(sector[0], sector[1], slots - 1);
+        while words[1 + at as usize * 3 + 2] != 0 {
+            at = (at + 1) & (slots - 1);
+        }
+        let start = words.len() as u32;
+        words[1 + at as usize * 3..][..3].copy_from_slice(&[sector[0] as u32, sector[1] as u32, start + 1]);
+        words.extend(bytes.chunks(4).map(|four| u32::from_le_bytes([four[0], four[1], four[2], four[3]])));
+    }
+    words
 }
 
 /// How many voxel metres a sector column is a side.
@@ -910,6 +981,8 @@ impl Endless {
             edits: Arc::default(),
             changes: Arc::default(),
             edit_total: 0,
+            felled_at: NO_TABLE,
+            cuts_at: NO_TABLE,
             edit_buffer: None,
             job_edits,
             prints: Vec::new(),
@@ -966,12 +1039,27 @@ impl Endless {
         }
         let same = self.edits.iter().zip(edits.iter()).take_while(|(a, b)| a == b).count();
         let voxel = self.voxel();
+        // The changes are in the finest ring's voxels: a coarser ring's are larger.
+        let fine_voxel = 1.0 / self.fine.clamp(1, MOST_VOXELS_A_METRE) as f32;
         let mut reached: Vec<(Vec3, Vec3)> =
             self.edits[same..].iter().chain(&edits[same..]).map(VoxelEdit::reach).collect();
         // The bricks whose voxels were set or let go.
         reached.extend(changes.changed_from(&self.changes).into_iter().map(|(low, high)| {
-            (Vec3::from(low.map(|a| a as f32)) * voxel, Vec3::from(high.map(|a| (a + 1) as f32)) * voxel)
+            (Vec3::from(low.map(|a| a as f32)) * fine_voxel, Vec3::from(high.map(|a| (a + 1) as f32)) * fine_voxel)
         }));
+        // Columns whose grass was cut, or grew: only those columns, as nothing else changed in them.
+        for (low, high) in changes.cuts_changed_from(&self.changes) {
+            let sector = |a: i32| a as f32 * fine_voxel / (64.0 * voxel);
+            let (low, high) = (low.map(sector), high.map(|a| sector(a + 1)));
+            for z in low[1].floor() as i32..=high[1].floor() as i32 {
+                for x in low[0].floor() as i32..=high[0].floor() as i32 {
+                    let slot = self.slot_of([x, z]) as usize;
+                    if self.made[slot] == Some([x, z]) {
+                        self.made[slot] = None;
+                    }
+                }
+            }
+        }
         for (low, high) in reached {
             // The columns the edit reaches, with a voxel's border, are made again; and those the trees standing in it
             // reach, as they may grow no more, or grow again.
@@ -1006,7 +1094,10 @@ impl Endless {
         let voxel = self.voxel();
         let colours_before = self.colours.len();
         let changes = self.changes.clone();
-        let bricks = changes.bricks().count();
+        // The voxels set one at a time are in the finest ring's voxels: a coarser ring leaves them out, as too small
+        // to see from as far as it draws.
+        let coarser = self.fine != self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+        let bricks = if coarser { 0 } else { changes.bricks().count() };
         let mut words = vec![0u32; (edits.len() + bricks) * EDIT_WORDS];
         // Each colour table once, however many edits share it.
         let mut placed: std::collections::HashMap<Tinted, u32> = std::collections::HashMap::new();
@@ -1061,7 +1152,7 @@ impl Endless {
                 words[kinds_at as usize + k * 2 + 1] = at;
             }
         }
-        for (i, (brick, changed)) in changes.bricks().enumerate() {
+        for (i, (brick, changed)) in changes.bricks().take(bricks).enumerate() {
             let low = Vec3::from(brick.map(|a| (a * 8) as f32));
             let mut edit_words = [0u32; EDIT_WORDS];
             let middle = low + 4.0;
@@ -1080,6 +1171,15 @@ impl Endless {
             words[(edits.len() + i) * EDIT_WORDS..][..EDIT_WORDS].copy_from_slice(&edit_words);
         }
         self.edit_total = (edits.len() + bricks) as u32;
+        (self.felled_at, self.cuts_at) = (NO_TABLE, NO_TABLE);
+        if changes.all_felled().next().is_some() {
+            self.felled_at = words.len() as u32;
+            words.extend(felled_table(&changes));
+        }
+        if changes.cuts().next().is_some() {
+            self.cuts_at = words.len() as u32;
+            words.extend(cuts_table(&changes));
+        }
         if self.colours.len() != colours_before {
             gone.push(std::mem::replace(&mut self.palette, palette_buffer(gpu, &self.colours)?));
         }
@@ -1662,6 +1762,8 @@ impl Endless {
             river_window: self.rivers.as_ref().map_or(0, |rivers| rivers.window),
             water_voxels: u32::from(self.from.water == VoxelWaterLook::Voxels),
             edit_count: self.edit_total,
+            felled_at: self.felled_at,
+            cuts_at: self.cuts_at,
             fine: 1.0 / self.fine.clamp(1, MOST_VOXELS_A_METRE) as f32,
             brick_pages: self.room.brick_pages,
             jobs,

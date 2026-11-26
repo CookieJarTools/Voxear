@@ -27,6 +27,7 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
@@ -328,6 +329,23 @@ uint32_t vx_shape_convex_hull(VxWorld *world, const float *points, uint32_t coun
 		hull.push_back(Vec3(points[i * 3], points[i * 3 + 1], points[i * 3 + 2]));
 	}
 	ConvexHullShapeSettings settings(hull);
+	auto made = settings.Create();
+	return made.IsValid() ? keep(world, made.Get().GetPtr()) : 0;
+}
+
+// Boxes as one shape, each its middle and half its size, six floats a box:
+// a body of many boxes, such as a felled tree's logs.
+uint32_t vx_shape_boxes(VxWorld *world, const float *boxes, uint32_t count) {
+	if (count == 0) {
+		return 0;
+	}
+	StaticCompoundShapeSettings settings;
+	for (uint32_t i = 0; i < count; ++i) {
+		const float *b = boxes + i * 6;
+		Vec3 half(std::max(b[3], 0.01f), std::max(b[4], 0.01f), std::max(b[5], 0.01f));
+		float convex = std::min(0.05f, 0.5f * std::min(half.GetX(), std::min(half.GetY(), half.GetZ())));
+		settings.AddShape(Vec3(b[0], b[1], b[2]), Quat::sIdentity(), new BoxShape(half, convex));
+	}
 	auto made = settings.Create();
 	return made.IsValid() ? keep(world, made.Get().GetPtr()) : 0;
 }

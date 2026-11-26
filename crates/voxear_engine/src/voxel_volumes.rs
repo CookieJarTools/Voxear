@@ -114,7 +114,7 @@ use voxear_ecs::{Entity, World};
 use voxear_assets::AssetGuid;
 use voxear_render::{
     VoxelArea, VoxelAreaRules, VoxelBiomes, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator,
-    VoxelGround, VoxelKind, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
+    VoxelFelled, VoxelGround, VoxelKind, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
 };
 
 use crate::content::Content;
@@ -179,6 +179,19 @@ pub struct VoxelVolumeData {
     /// water, or smooth (`water = "smooth"`).
     #[serde(skip_serializing_if = "is_voxels")]
     pub water: VoxelWaterLook,
+    /// What a tree felled in an endless volume becomes once it has fallen
+    /// and come to rest: a body of its own, or stamped back into the volume
+    /// (`felled = "stamped"`).
+    #[serde(skip_serializing_if = "is_body")]
+    pub felled: VoxelFelled,
+    /// How many seconds its cut grass, cover and crops take to grow back:
+    /// never unless written.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub regrow: f32,
+}
+
+fn is_body(felled: &VoxelFelled) -> bool {
+    *felled == VoxelFelled::Body
 }
 
 fn is_on(on: &bool) -> bool {
@@ -506,6 +519,8 @@ impl Default for VoxelVolumeData {
             regions: Vec::new(),
             sea: made.sea,
             water: made.water,
+            felled: made.felled,
+            regrow: made.regrow,
         }
     }
 }
@@ -586,6 +601,8 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         changes: Arc::new(read_changes(content, data)),
         sea: data.sea,
         water: data.water,
+        felled: data.felled,
+        regrow: data.regrow.max(0.0),
     }
 }
 

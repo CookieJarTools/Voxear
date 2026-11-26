@@ -355,7 +355,12 @@ impl<'a> Ground<'a> {
                 let h = grass.next().flatten()?;
                 let kind = model / (4 * trees::VARIANTS as usize);
                 let allowed = self.growth.as_ref().is_none_or(|growth| growth.tree_allowed(kind, foot, h));
-                (allowed && self.foot_kept(IVec3::new(foot[0], h, foot[1]))).then(|| woods.stood(model, foot, h))
+                let felled = self.volume.changes.felled(foot);
+                let stood = |mut tree: Tree| {
+                    tree.cut = felled.map_or(trees::NOT_CUT, |felled| felled.cut);
+                    tree
+                };
+                (allowed && self.foot_kept(IVec3::new(foot[0], h, foot[1]))).then(|| stood(woods.stood(model, foot, h)))
             });
             placed.push((cell, tree));
         }
@@ -457,6 +462,29 @@ impl<'a> Ground<'a> {
             }
         }
         kind
+    }
+
+    /// What voxel `c` is without its trees, `edits` the indices of the edits
+    /// that may reach it: whether it is solid, and whether a voxel set one
+    /// at a time or an edit holds it, so no tree's voxel is there.
+    pub fn without_trees(&mut self, c: IVec3, edits: &[usize]) -> (bool, bool) {
+        if let Some(held) = self.volume.changes.get(c) {
+            return (held.solid(), true);
+        }
+        let mut found = (self.made(c), false);
+        if edits.is_empty() {
+            return found;
+        }
+        let h = self.height(c.x, c.z);
+        let (volume, voxel) = (self.volume, self.voxel);
+        for &e in edits {
+            let fixed = self.fixed.entry(e).or_insert_with(|| Fixed::of(&volume.edits[e], voxel));
+            match fixed.held(&volume.edits[e], c, h) {
+                VoxelHeld::Not => {}
+                held => found = (held.solid(), true),
+            }
+        }
+        found
     }
 
     /// What voxel `c` is, looking up the trees and edits that reach it.

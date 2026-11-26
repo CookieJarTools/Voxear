@@ -115,12 +115,20 @@ DepthOut depthFragment(VertexOut input, bool frontFacing : SV_IsFrontFace)
 }
 
 // Whether the contact shadows pass found something between a pixel and the
-// sun, close by: 0 in such a shadow, 1 out of it, and 1 without the pass.
+// sun, close by, or the voxels' shadows pass a voxel: 0 in such a shadow, 1
+// out of it, and 1 without either pass.
 float contactShadow(Frame* frame, float2 pixel)
 {
-    if (frame->post.contactTexture == NO_TEXTURE)
+    float lit = 1.0;
+    if (frame->post.contactTexture != NO_TEXTURE)
     {
-        return 1.0;
+        lit = textures[NonUniformResourceIndex(frame->post.contactTexture)].Load(int3(int2(pixel), 0)).r;
     }
-    return textures[NonUniformResourceIndex(frame->post.contactTexture)].Load(int3(int2(pixel), 0)).r;
+    // And the voxels' shadows, which no shadow map holds, traced from each pixel the depth passes drew.
+    VoxelVolumes* voxels = buffers()->voxelVolumes;
+    if (voxels != nullptr && voxels->count != 0 && voxels->shadowMask != NO_TEXTURE)
+    {
+        lit = min(lit, textures[NonUniformResourceIndex(voxels->shadowMask)].Load(int3(int2(pixel), 0)).r);
+    }
+    return lit;
 }

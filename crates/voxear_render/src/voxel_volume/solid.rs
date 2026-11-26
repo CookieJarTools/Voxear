@@ -34,6 +34,12 @@ pub(super) const GRAVEL: u32 = 4;
 /// How far a ray's step looks for trees, in voxels.
 const TREE_LOOK: f32 = 96.0;
 
+/// A generator's Volume where the GPU runs it: none where it leaves it out,
+/// as the ground is then its height made solid.
+fn gpu_volume(generator: &super::VoxelGenerator) -> Option<voxear_terrain::generate::Volume<'_>> {
+    generator.world.volume().filter(|_| super::endless::gpu_runs_volume(&generator.world))
+}
+
 /// What the ground of an endless volume is, voxel by voxel, with what was
 /// worked out kept.
 pub(super) struct Ground<'a> {
@@ -67,8 +73,7 @@ impl<'a> Ground<'a> {
     pub fn new(volume: &'a VoxelVolume, woods: Option<&'a Woods>) -> Self {
         let voxel = 1.0 / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
         let tall = (volume.size.y / voxel).ceil() as i32;
-        let sector = 64.0 * voxel;
-        let rows = ((volume.size.y.max(sector) / sector).ceil() as i32).clamp(1, 16) * 64;
+        let rows = super::endless::sectors_tall(volume) as i32 * 64;
         let seed = volume.ground.map_or(VoxelGround::default().seed, |ground| ground.seed);
         let (heights, columns, cells) = (HashMap::new(), HashMap::new(), HashMap::new());
         Self {
@@ -140,7 +145,7 @@ impl<'a> Ground<'a> {
     /// without one.
     fn carried(&mut self, x: i32, z: i32) -> Option<&Vec<f32>> {
         let generator = self.volume.generator.as_ref()?;
-        let volume = generator.world.volume()?;
+        let volume = gpu_volume(generator)?;
         let v = self.voxel;
         let (gx, gz) = ((x as f32 + 0.5) * v + generator.at[0], (z as f32 + 0.5) * v + generator.at[1]);
         // Carried up from the ground without the rivers, as the GPU's columns carry it.
@@ -157,7 +162,7 @@ impl<'a> Ground<'a> {
     pub fn densities(&mut self, x: i32, y: i32, z: i32, count: usize) -> Option<Vec<f32>> {
         let carried = self.carried(x, z)?.clone();
         let generator = self.volume.generator.as_ref()?;
-        let volume = generator.world.volume()?;
+        let volume = gpu_volume(generator)?;
         let v = self.voxel;
         let (gx, gz) = ((x as f32 + 0.5) * v + generator.at[0], (z as f32 + 0.5) * v + generator.at[1]);
         let rows: Vec<&[f32]> = carried.iter().map(std::slice::from_ref).collect();
@@ -629,7 +634,7 @@ impl VoxelSolids {
         ground.heights_for(low.x, low.z, [size.x, size.z]);
         let trees = ground.trees_near(low, high);
         let edits = ground.edits_near(low, high);
-        let volume = self.volume.generator.as_ref().and_then(|generator| generator.world.volume());
+        let volume = self.volume.generator.as_ref().and_then(gpu_volume);
         let over = volume.as_ref().map_or(0.0, |volume| volume.reach());
         let (tall, voxel) = (ground.tall, ground.voxel);
         let index = |x: i32, y: i32, z: i32| (x + size.x * (y + size.y * z)) as usize;

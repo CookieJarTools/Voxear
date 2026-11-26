@@ -173,13 +173,13 @@ pub use lightmaps::{
 pub use voxel_volume::{
     GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, PAVING_COLORS as VOXEL_PAVING_COLORS, MOST_VOXELS_A_METRE,
     VoxelBiomes, VoxelCounts, VoxelEdit, VoxelGenerator,
-    VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
-    VoxelArea, VoxelAreaRules, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelHeld, VoxelKind, VoxelPrinted, VoxelRayHit,
-    VoxelSet, VoxelShape, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook, VoxelWaterPoint, MOST_COVER_KINDS,
-    UNCUT, VoxelCut, VoxelCutColumns, VoxelCutDone, VoxelFelled, VoxelFelledTree, VoxelPiece, VoxelRayMeets, voxel_cut,
-    voxel_stamp, voxel_tree_trunks, raycast_meeting as voxel_raycast_meeting,
-    voxel_areas_allow, voxel_ground_at, print::MOST_COLOURS as MOST_PRINT_COLOURS, raycast as voxel_raycast,
-    voxel_print_model, water_at as voxel_water_at,
+    VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture,
+    VoxelPrintSettings, VoxelArea, VoxelAreaRules, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelHeld, VoxelKind,
+    VoxelPrinted, VoxelRayHit, VoxelSet, VoxelShape, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
+    VoxelWaterPoint, MOST_COVER_KINDS, voxel_areas_allow, voxel_ground_at, print::MOST_COLOURS as MOST_PRINT_COLOURS,
+    raycast as voxel_raycast, voxel_print_model, water_at as voxel_water_at, UNCUT, VoxelCut, VoxelCutColumns, VoxelCutDone,
+    VoxelFelled, VoxelFelledTree, VoxelPiece, VoxelRayMeets, voxel_cut, voxel_stamp, voxel_tree_trunks,
+    raycast_meeting as voxel_raycast_meeting,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
@@ -2235,7 +2235,7 @@ impl Renderer {
         let block_draws = blocks.record(&mut fg, frames);
         let voxel_draws = voxels.drawn();
         // Endless volumes' columns made round the camera, before any view walks them.
-        let voxel_pools = voxels.record(&mut fg, *pipelines, frame.slot);
+        let (voxel_pools, voxel_light) = voxels.record(gpu, &mut fg, *pipelines, frame.slot)?;
         // The water over their rivers and lakes, which every view draws.
         let voxel_water = voxels.water(gpu, frame.slot)?;
         let ui = &ui_buffers[frame.slot];
@@ -2360,6 +2360,7 @@ impl Renderer {
                 blocks: block_draws.clone(),
                 voxels: voxel_draws.clone(),
                 voxel_pools: voxel_pools.clone(),
+                voxel_light,
                 voxel_water,
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
                 sound: sound.filter(|_| !sound_done),
@@ -2937,6 +2938,7 @@ struct ViewSetup {
     voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3)]>,
     /// What endless volumes' making writes this frame, which the voxel passes read.
     voxel_pools: Vec<graph::BufferId>,
+    voxel_light: Option<voxel_volume::LightView>,
     /// The water over endless volumes' rivers and lakes: its buffer's
     /// address, and how many squares it has, then of waterfalls and of their
     /// lips after.
@@ -3842,7 +3844,8 @@ impl View {
                 let buffers = &self.buffers[slot];
                 let [list, coarse] = buffers.voxels.as_ref().expect("made above");
                 let seen = buffers.voxels_seen.as_ref().expect("made above");
-                voxel_volume::gather(&setup.voxels, (list, coarse, Some(seen)), size, offset).map(|view| {
+                let light = setup.voxel_light;
+                voxel_volume::gather(&setup.voxels, (list, coarse, Some(seen)), size, offset, light).map(|view| {
                     voxel_volume::ViewVoxels {
                         coarse: Some(fg.import_buffer(coarse)),
                         seen: Some(fg.import_buffer(seen)),
@@ -3925,6 +3928,18 @@ impl View {
         if let Some(image) = contact_shadows {
             frame_data.post.contact_texture = fg.texture(image).0;
         }
+        // The voxels' shadows on everything, traced from each pixel once the depth passes have drawn it.
+        let mut view_voxels = view_voxels;
+        if let Some(view) = view_voxels.as_mut().filter(|_| extracted.has_sun && !wireframe) {
+            let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+            let desc = ImageDesc::new(extent.width, extent.height, pipelines::AO_FORMAT, usage);
+            let image = fg.create_image(gpu, bindless, "voxel shadows", desc)?;
+            view.shadow = Some(image);
+            if let Some([list, _]) = self.buffers[slot].voxels.as_ref() {
+                voxel_volume::set_shadow_mask(list, fg.texture(image).0);
+            }
+        }
+        let voxel_shadows = view_voxels.as_ref().is_some_and(|view| view.shadow.is_some());
         // Reflections read last frame's finished picture, so they need TAA, and a frame of it to read.
         let reflecting = extracted.post.reflections.enabled && taa && !taa_reset && !wireframe;
         let reflections = match reflecting {
@@ -3950,8 +3965,12 @@ impl View {
             && pipelines.surface_ids
             && setup.pack.as_ref().is_some_and(shader_packs::PackDraw::reads_surface_ids);
         let pack_normals = pack_normals || pack_ids;
-        let depth_first =
-            ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || pack_normals;
+        let depth_first = ambient_occlusion.is_some()
+            || contact_shadows.is_some()
+            || reflections.is_some()
+            || pack_normals
+            || voxel_shadows
+            || view_voxels.is_some();
         let surface = match depth_first || portal.is_some() {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;

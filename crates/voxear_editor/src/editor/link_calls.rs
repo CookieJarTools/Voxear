@@ -311,6 +311,7 @@ impl Editor {
             "voxels.cut" => self.voxels_cut(args),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
+            "voxel_prints.materials" => self.voxel_prints_materials(args),
             "blocks.restore" => self.blocks_restore(args),
             "blocks.bake_far" => {
                 let world = match args.get("obj").filter(|obj| !obj.is_null()) {
@@ -2879,6 +2880,28 @@ impl Editor {
             "colours": print.palette.len(),
             "bytes": bytes,
         }))
+    }
+
+    fn voxel_prints_materials(&mut self, args: &Json) -> Called {
+        use voxear_render::VoxelPrintMaterial;
+        let (_, path, kind) = link::resolve_project_asset(&self.game, need(args, "print")?)?;
+        if kind != AssetKind::VoxelPrint {
+            return Err(refuse(ErrorKind::WrongValue, "`print` is not a .voxprint"));
+        }
+        let given = need(args, "materials")?.as_array().ok_or_else(|| bad("`materials` is a list"))?;
+        let mut materials = Vec::new();
+        for each in given {
+            let colour = need(each, "colour")?.as_array().filter(|colour| colour.len() == 3);
+            let colour = colour.ok_or_else(|| bad("a material's `colour` is its red, green and blue, 0 to 255"))?;
+            let colour = [0, 1, 2].map(|i| colour[i].as_u64().unwrap_or(0).min(255) as u8);
+            let level = |key: &str| each.get(key).and_then(Json::as_u64).unwrap_or(0).min(15) as u8;
+            let (glass, light) = (level("glass"), level("light"));
+            if glass > 0 || light > 0 {
+                materials.push(VoxelPrintMaterial { colour, glass, light });
+            }
+        }
+        let print = self.set_print_materials(&path, materials).map_err(|error| refuse(ErrorKind::WrongValue, error))?;
+        done(json!({ "materials": serde_json::to_value(&print.settings.materials).unwrap_or(Json::Null) }))
     }
 
     fn voxel_prints_info(&mut self, args: &Json) -> Called {

@@ -369,7 +369,7 @@ one.
 | 3. **Plants and trees of small voxels** | Ground cover, grown plants and crowns as voxel stamps filled on the GPU; then models shared between bricks so a forest costs one tree per kind | +0.5 ms | 230 MB a 256 m forest unshared; tens of MB shared | 3 |
 | 4. **Editing a voxel at a time** | `Voxels` in C#, an editor brush, changed bricks in region files, edit commands over the network, picking | – | changed bricks only | 2–3 |
 | 5. **Distance in rings** (built, below) | 1/16, 1/8, 1/4 m rings and coarser to the horizon, made as they come into view, far rings kept on disk | +0.5 ms (measured: +8 ms for land to the horizon in view) | 400–760 MB (measured: 500–620 MB) | 3 |
-| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid | 1–2 ms | – | 2 |
+| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid; begun 2026-11-26: shadows on everything, light indoors, glass | 1–2 ms | – | 2 |
 | 7. **Physics, navigation and debris at voxel scale** | Collision from the bricks round each body, broken pieces as falling voxel objects, voxel characters | – | – | 3–4 |
 
 Block Worlds drawn as patterns of small voxels (option D) can follow any time after stage 1, for the worlds of
@@ -1150,6 +1150,100 @@ what the CPU and the GPU make the ground from, and both are small.
 - **Saves** keep the same: the edits added since the scene loaded, and the region files.
 
 Not built yet: the messages and the join; the bytes they would carry are what the scene and the region files hold.
+## Stage 6 begun: shadows, light indoors and glass (2026-11-26)
+
+The Realm's city moving onto Voxel Volumes needed three things lighting gave its blocks: things standing among the
+voxels shadowed by them, rooms and cellars dark but for their lanterns, and windows of glass.
+
+- **Voxels shadow everything** (`voxelShadowFragment` in `shaders/voxels.slang`). The voxels are in no shadow map.
+  Once the depth passes have drawn the picture, a pass traces a ray towards the sun from each pixel through the
+  voxels, whatever is drawn there, and writes whether it got through. Models, blocks, terrain and grass read it
+  with the contact shadows, as they all share one lit fragment shader. A voxel's ray starts as its own lit pass
+  started it before, a group or a brick out at the coarser levels, found by the hit the depth pass kept for the
+  pixel; anything else's starts a voxel and a half out along its normal, more where a pixel is wider. The voxels'
+  lit pass no longer traces its own. Tracing into a shadow map instead was set aside: four cascades of 2048² are
+  16M rays a frame, eight times the screen's.
+- **Light kept round the camera** (`voxel_volume/light.rs`, `voxelLightCells`, `voxelLightSky` and
+  `voxelLightSpread`). This is the plan's grid at the bricks' half metre, as the light kept for blocks is a byte a
+  block, 96 × 48 × 96 cells. A cell keeps sky light and glow, with the glow's colour in 16 bits.
+  - What lets light through a cell is worked out each frame from its brick: for each side, the lines from that side
+    to the cell's middle that meet no voxel. Two cells pass light by the lines open from one middle to the other,
+    matched line by line, so a cell is the light at its middle. A wall a few voxels thick anywhere in a brick keeps
+    light out, and the air over a floor in a brick's lower half is open to the sky.
+  - The sky is found straight down from the top row afresh each frame. Then four steps spread light a step less a
+    cell (a level a metre, as blocks), read from last frame's moved as the camera moved, 32 steps when the volumes
+    are new.
+  - Voxels, models and grass read it between the cells round them that are not solid. Along the axis the surface
+    faces, the cell before it is read alone, so a wall's face never takes the light of the far side.
+  - It is shared by the lighting with blocks' (`blockSkyShare`, `blockGlowShare`, the same darkest sky and glow
+    brightness). A room of voxels with a lamp of light 15 looks as the blocks test's room of blocks does.
+- **Glass and glowing voxels.** A palette colour's kind is kept on the GPU after the palette's colours, a byte a
+  place: how see-through (0 to 15) and how bright it glows (0 to 15). On the CPU it is `255 - kind` in the colour's
+  fourth byte, so every palette until now is plain. A brick with any such voxel, or with water of voxels, is marked
+  in the lowest bits of its average colour, so only those bricks are looked into; its top bits are its palette bank.
+  - The walk passes through a see-through voxel and keeps the first it met. The depth pass writes it beside what it
+    met, and **Glass (voxels)** draws it lit over everything opaque, blended by how solid it is and what it reflects.
+  - Sun shadow rays pass through glass and water. In the light kept round the camera, glass, water and glowing voxels
+    let light through, and a glowing voxel's cell gives its glow. A glowing voxel shines, its colour times four at light 15.
+  - A print's colours are made glass or lights by its settings' `materials`, in its Inspector's **Glass and Lights**
+    or `voxel_prints.materials`. Its id takes them in, so volumes printing it are made again.
+
+![The pillar's shadow across a model's slab, which voxels did not shadow before](../images/small-voxels/shadow-on-a-model.webp)
+
+![A house of voxels open to the sky, roofed and shut, roofed with a door, and shut with a lantern](../images/small-voxels/rooms-sky-door-lantern.webp)
+
+![The blocks test's sealed room lit by a lamp block, and the same room of voxels lit by a lamp of voxels](../images/small-voxels/room-blocks-and-voxels.webp)
+
+![A stone wall, and the same wall with a window of glass, the red pillar inside seen through it](../images/small-voxels/window-glass.webp)
+
+What went wrong on the way, worth knowing for the rest of stage 6:
+
+- **Sides in the wrong order.** The six sides were listed y-first and their axis taken as x-first, so light crossed each
+  cell by the wrong axis's openness and a sealed room was sky-lit.
+- **Lines through a whole cell** kept the sky out of the air over a floor in a cell's lower half, as no line crossed
+  the cell, and a flat field went dark.
+- **Hollow ground.** An edited brick keeps only the voxels open air is beside, so under the ground's skin and inside
+  thick walls there is nothing. Past a volume's window and under its floor, where no brick is, light came round
+  underneath and up into rooms. Those are solid now; inside a volume, the hollows are sealed by their skin.
+- **Counts, not lines.** Two cells passed light when each had *some* lines open across their side, though not the
+  same ones, and light got through the foot of every wall. Lines are matched one by one now.
+- **Stale light.** Light kept from the frame before falls a step a step, so a scene changed at once kept its old
+  light. Other voxel buffers or palettes, as a generator changed in the Inspector or a print added, start it afresh.
+- **A lamp of voxels a metre wide** filled its cells, which were then solid and kept their glow in. Glowing voxels
+  let light through now, as a block of light does.
+
+Measured on an RTX 3070 shared with other sessions: a street of six houses (5 × 4 × 6 m, glass windows, gables)
+printed into Rolling Hills without its rivers, with a dozen figures among them, seen from 20 m up at 1920 × 1080.
+Each number is the least of 60 frames, three runs each, on the commit this was built on and with it:
+
+| | Before | Now |
+|---|---|---|
+| Frame, post-processing on | 6.57 ms | 6.96 ms |
+| Frame, post-processing off | 6.36 ms | 6.79 ms |
+| Depth (voxels) | 2.04 ms | 2.21 ms |
+| Opaque (voxels), shadows traced in it before | 3.41 ms | 0.88 ms |
+| Voxel shadows | – | 2.27 ms |
+| Light round the camera (cells, sky, 4 spread steps) | – | 0.26 ms |
+| Glass (voxels) | – | 0.13 ms |
+
+The shadows cost what the lit pass's tracing did, now for every pixel. The rest is the light, the glass and the
+glass's look-ups in the depth pass (`measure_a_street_of_houses` in `tests/voxels.rs`).
+
+![The street before and after, from 20 m up](../images/small-voxels/street-before-after.webp)
+
+![Close up: the windows are glass now and the houses dark inside but by their doors](../images/small-voxels/street-close-before-after.webp)
+
+Not done:
+
+- **Lamps.** A Light's light isn't stopped by voxels, so a lamp in a room lights the walls outside it. Lamps'
+  shadow maps could take the voxels as the sun's mask does, a ray a texel, kept while the lamp and voxels stand
+  still; or each lit pixel could trace to the few lamps near it.
+- **Fog, particles and water** read the sun's shadow maps and not the voxels' mask.
+- **Glass** lets the sun through untinted, and only the nearest glass in a pixel is drawn.
+- **GI rays through voxels**, the rest of the stage. Worlds of blocks are lit without the probe GI, so it waits.
+- **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
+  commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
+  walk's, not the light's.
 
 ## Stage 5, distance in rings (2026-11-26)
 
@@ -1222,9 +1316,48 @@ the same hills in rings and in full detail to 192 m: 8×8 blocks of ground diffe
 trees' and voxels' own grain.
 
 - **Not done.** Far rings are made again as they come into view, not kept on disk. The frame with the land to the horizon is three times today's view of sky;
-  the far crowns' rays are most of the depth pass. The finest ring is at most 16 sectors tall (64 m at 16 voxels a
-  metre), while a ring of a metre's voxels may be 1 km tall: hills taller than the finest ring are cut flat near the
-  camera and whole further out.
+  the far crowns' rays are most of the depth pass. The finest ring was at most 16 sectors tall (64 m at 16 voxels a
+  metre), so hills taller than it were cut flat near the camera and whole further out; it may now be 1,024 m tall
+  (below).
+
+## Ground hundreds of metres tall (2026-11-26)
+
+An endless volume was at most 16 sectors tall: 64 m at 16 voxels a metre. The Realm, the first game's world of
+51 km painted with land, runs from 54 m under its sea to summits of 655 m, with cliffs that rise 140 m in 64 m.
+
+- **Measured first, on the CPU, over the whole world.** Its heights every 64 m: 54 m under the sea to 576 m (655 m
+  sampled finer). Over 2 km round its highest ground, each 4 m column's ground, sampled every half metre with its
+  border, spans one sector in a quarter of the columns, two in half, and at most 14 (56 m) on the steepest faces.
+  A column's ground is a thin band however high it is: keeping every sector of a column 640 m tall would spend the
+  window's table on air.
+- **Each column keeps a band of 24 sectors** (96 m at 16 voxels a metre), from the lowest that holds anything up,
+  or down from the highest where it holds more. The window's table has 24 layers in place of one a sector, and a
+  sector's entry goes in the layer its height wraps to. The walk already checks the world place an entry names, so
+  a sector outside its column's band reads as empty, as one not yet made does. A volume may now be 256 sectors tall,
+  1,024 m at 16 voxels a metre; a volume 24 sectors tall or less is kept as before.
+- **The walk stops at the highest ground made.** Each column notes its highest sector; the walk's box is as tall as
+  the highest any column has noted, read back from the GPU, so a tall volume of low ground walks no more air.
+- **What a height costs** (Rolling Hills with oaks and pines, reach 64 m, 1920×1080, the least of 60 frames):
+
+  | Tall | On the GPU | Frame | Making (median) |
+  |---|---|---|---|
+  | 48 m | 120 MB | 10.30 ms | 1.39 ms |
+  | 128 m | 124 MB | 10.43 ms | 1.81 ms |
+  | 320 m | 125 MB | 10.39 ms | 1.64 ms |
+  | 512 m | 127 MB | 10.40 ms | 1.73 ms |
+
+  The few MB are the making passes' lists of bricks by row, which still go a whole column up; the GPU was shared with
+  other sessions, so making times move by a few tenths either way.
+- **The CPU leaves out a Volume the GPU leaves out.** The Realm's generator has overhangs (Bridged, Over, Towered)
+  the GPU cannot run, so its ground is the height made solid there; the CPU still ran them for collision and rays,
+  and met a summit six voxels under the one drawn. It now asks whether the GPU runs the Volume, kept for each
+  generator. On the Realm's ground, the GPU's top voxel, the CPU's collision and its ray meet at the same voxel on
+  the highest summit (715.6 m over a floor at -60 m) and at the players' start; on a river's cliff one voxel apart.
+- **Checked** by a test of a hill painted 360 m high in a volume 400 m tall: every voxel the CPU has open to the air
+  near the summit and halfway up is on the GPU, the GPU has none where the CPU has air, and the CPU's ray meets the
+  summit.
+- **Not done:** a column whose ground, trees and buildings rise more than 96 m within its 4 m loses the lowest of
+  it. The making passes' lists of bricks by row still go a whole column up.
 
 ## Stage 7 on: cutting grass and felling trees (2026-11-26)
 

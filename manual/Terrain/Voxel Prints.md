@@ -21,6 +21,8 @@ The Inspector shows its size in voxels and in metres, how many voxels are solid,
 
 The settings change nothing until **Make Again**, which makes the print from its model as they say. Every volume printing it shows it as it is now.
 
+**Glass and Lights** lists the print's colours. Each can be made **Glass**, seen through as a window is, **Frosted Glass**, more of its own colour, **Light**, glowing as a lantern's flame and lighting what is round it for fifteen metres, or a **Dim Light**; or left **Solid**. A change is kept in the print's file at once, and every volume printing it shows it so: its voxels are as they were. See [[Voxel Volumes]] for how glass and lights are drawn.
+
 A print's file is small: its palette and how it was made, then each brick of eight voxels a side as one byte where it is empty or all one colour, the rest packed with zstd. A sandbag barrier 3.5 m long at 16 voxels a metre is under 2 KB, a timber wall 2 m by 1.7 m about the same. Printing one adds only its name, place and turn to the scene, which is all that goes over the network to a player who joins.
 
 ## Printing one
@@ -70,8 +72,11 @@ Turned other than by quarter turns, or made of voxels smaller than the volume's,
 vox editor call voxel_prints.make '{ "model": "Models/Crate.fbx", "voxels_per_metre": 16 }'
 vox editor call voxel_prints.make '{ "print": "Models/Crate.voxprint", "fill": "sealed" }'
 vox editor call voxel_prints.info '{ "print": "Models/Crate.voxprint" }'
+vox editor call voxel_prints.materials '{ "print": "Models/House.voxprint", "materials": [{ "colour": [196, 222, 230], "glass": 14 }, { "colour": [255, 183, 108], "light": 14 }] }'
 vox editor call voxels.print '{ "print": "Models/Crate.voxprint", "at": [12, 24, 9], "turn": 30 }'
 ```
+
+`voxel_prints.materials` makes colours of a print glass or lights, in place of those it had: `glass` says how see-through, from 0 to 15 (14 for a window), and `light` how bright, from 0 to 15, as a block's Light. A colour it leaves out is solid.
 
 `voxel_prints.make` with a `model` makes a new print, beside the model unless `path` says where; with a `print`, it makes that one again as it was made, but for what the call gives. It also takes `scale`, `colours` and `pictures`: `[{ "part": "material0", "picture": "Models/Crate_BaseColor.png" }]`. It makes the print before it answers, so the answer can say what was made; with `"background": true` it answers at once and makes it on a thread of its own, as the Project panel's menu does, and `voxel_prints.info` finds it once it is made.
 

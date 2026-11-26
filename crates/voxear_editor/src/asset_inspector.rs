@@ -189,6 +189,12 @@ pub enum AssetAction {
         path: String,
         settings: voxear_render::VoxelPrintSettings,
     },
+    /// Make these the colours of the Voxel Print at this path that are
+    /// glass or lights.
+    SetVoxelPrintMaterials {
+        path: String,
+        materials: Vec<voxear_render::VoxelPrintMaterial>,
+    },
     /// Write the biome at this path as this, for the worlds of blocks
     /// listing it to make their ground again, and when `rebuild`, show it
     /// again.
@@ -953,6 +959,7 @@ impl AssetView {
                 PrintChange::Drop(field, source) => AssetAction::DropVoxelPrintRef { print, field, source },
                 PrintChange::Ping(path) => AssetAction::Ping(path),
                 PrintChange::Make(settings) => AssetAction::MakeVoxelPrint { path: print, settings },
+                PrintChange::Materials(materials) => AssetAction::SetVoxelPrintMaterials { path: print, materials },
             });
         }
         if let Some(fields) = self.biome.as_mut()

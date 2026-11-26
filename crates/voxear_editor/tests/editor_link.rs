@@ -987,6 +987,17 @@ fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_on
     let edits =
         |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
     assert!(edits(&editor)[0].print().is_some());
+    // Its first colour made glass: kept in its file, and the volume prints it so.
+    let colour = info["settings"].clone();
+    let (_, print) = editor.game.content.voxel_print("Models/Pyramid.voxprint").unwrap();
+    let first = print.palette[0];
+    let glass = json!({ "print": "Models/Pyramid.voxprint", "materials": [{ "colour": [first[0], first[1], first[2]], "glass": 14 }] });
+    let set = done(&mut editor, &mut renderer, "voxel_prints.materials", glass);
+    assert_eq!(set["materials"][0]["glass"], 14, "{set} (was {colour})");
+    let info = done(&mut editor, &mut renderer, "voxel_prints.info", json!({ "print": "Models/Pyramid.voxprint" }));
+    assert_eq!(info["settings"]["materials"][0]["glass"], 14, "{info}");
+    let printed = edits(&editor)[0].print().cloned().unwrap();
+    assert_eq!(printed.print.settings.materials.len(), 1, "printed again as it is now");
     // The CPU's ray meets it over the ground, coming down on its middle.
     let down = json!({ "from": [4.0, 30.0, 4.0], "direction": [0.0, -1.0, 0.0], "obj": volume });
     let met = done(&mut editor, &mut renderer, "voxels.raycast", down);

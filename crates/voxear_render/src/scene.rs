@@ -958,6 +958,7 @@ pub fn extract(
         stars: sky.stars.max(0.0),
         viewport: [width, height],
         inv_view_proj: cols(view_proj.inverse()),
+        eye_rays: cols((jittered_projection * Mat4::from_quat(rotation.inverse())).inverse()),
         lighting: GpuLighting {
             sky: match sky.mode {
                 SkyMode::Gradient => SKY_GRADIENT,

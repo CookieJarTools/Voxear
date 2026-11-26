@@ -1544,6 +1544,11 @@ impl Editor {
             AssetAction::BrowseVoxelPrintRef { print, field, anchor } => self.browse_print_ref(&print, field, anchor),
             AssetAction::DropVoxelPrintRef { print, field, source } => self.drop_print_ref(&print, field, &source),
             AssetAction::MakeVoxelPrint { path, settings } => self.make_voxel_print(&path, &settings, renderer),
+            AssetAction::SetVoxelPrintMaterials { path, materials } => {
+                if let Err(error) = self.set_print_materials(&path, materials) {
+                    self.notify(&error);
+                }
+            }
             AssetAction::DropPlantRef { plant, field, source } => self.drop_plant_ref(&plant, field, &source),
             AssetAction::BrowseBiomeRef { biome, field, anchor } => self.browse_biome_ref(&biome, field, anchor),
             AssetAction::DropBiomeRef { biome, field, source } => self.drop_biome_ref(&biome, field, &source),

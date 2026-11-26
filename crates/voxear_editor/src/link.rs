@@ -641,6 +641,20 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ print: { guid, path }, size, metres, solid, colours, bytes }",
     },
     CallInfo {
+        name: "voxel_prints.materials",
+        about: "Makes colours of a Voxel Print glass or lights, in place of those it had: glass is drawn see-through over what is behind it, and lets the sun and the light round it through; a light glows and lights what is round it, a step less for each metre. Its voxels stay as they are, and every volume printing it shows it so.",
+        args: &[
+            arg("print", ArgKind::Asset, "The .voxprint."),
+            arg(
+                "materials",
+                ArgKind::Value,
+                "[{ \"colour\": [r, g, b], \"glass\": 0-15, \"light\": 0-15 }]: a colour of its palette, how see-through (14 for a window) and how bright a light. A colour left out is solid.",
+            ),
+        ],
+        changes: true,
+        returns: "{ materials }",
+    },
+    CallInfo {
         name: "voxel_prints.info",
         about: "A Voxel Print's size in voxels and metres, how many voxels are solid, its colours, its file's size, and how it was made.",
         args: &[arg("print", ArgKind::Asset, "The .voxprint.")],

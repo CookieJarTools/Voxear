@@ -1562,6 +1562,12 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     {
         shadow *= blockSunShare(blockLit.x, sunShadowsReach(frame, input.worldPosition));
     }
+    // Else by the light kept round the camera for the voxels, where they are: the voxels' traced shadows keep the sun
+    // out wherever they stand in its way, so only the sky's light and their glow are taken from it.
+    else
+    {
+        blockLitHere = voxelLitAround(input.worldPosition, s.normal, blockLit, blockGlow);
+    }
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;

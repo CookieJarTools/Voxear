@@ -130,6 +130,21 @@ pub fn write(content: &mut Content, path: &str, print: &VoxelPrint) -> Result<()
     Ok(())
 }
 
+/// Makes `materials` the colours of the `.voxprint` at `path` made glass or
+/// lights, writing it again: its voxels are as they were.
+pub fn set_materials(
+    content: &mut Content,
+    path: &str,
+    materials: Vec<voxear_render::VoxelPrintMaterial>,
+) -> Result<VoxelPrint> {
+    let guid = content.db().guid_of(path).with_context(|| format!("{path} is not in the project"))?;
+    let (_, print) = content.voxel_print(&guid.to_string()).with_context(|| format!("{path} could not be read"))?;
+    let mut print = (*print).clone();
+    print.set_materials(materials);
+    write(content, path, &print)?;
+    Ok(print)
+}
+
 /// The settings a `.voxprint` in the project was made with.
 pub fn settings_of(content: &mut Content, reference: &str) -> Option<VoxelPrintSettings> {
     content.voxel_print(reference).map(|(_, print)| print.settings.clone())

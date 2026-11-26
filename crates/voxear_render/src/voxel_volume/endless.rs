@@ -90,6 +90,14 @@ const TREE_WORDS: u64 = 8;
 /// The most edits that reach a column being made and the trees round it
 /// (`MOST_COLUMN_EDITS` in `shaders/voxel_world.slang`).
 const MOST_COLUMN_EDITS: u64 = 4096;
+/// The most sectors tall a column is: 1,024 m at 16 voxels a metre.
+pub(crate) const MOST_TALL: u32 = 256;
+/// The most sectors of a column the window keeps entries for: a band of
+/// them round its ground, from the lowest that holds anything, or down
+/// from the highest where it holds more. Measured over the Realm's steepest
+/// ground, a column's ground and grass span at most 14 sectors; trees take
+/// a few more over them.
+const BAND: u32 = 24;
 /// The most voxel columns a window is across: 256 sector columns.
 const LARGEST_WINDOW: u32 = 256;
 /// The words an edit takes as the GPU reads it (`EDIT_WORDS` in
@@ -212,6 +220,8 @@ struct GpuWorldMake {
     voxel: f32,
     window: u32,
     tall: u32,
+    layers: u32,
+    spare: u32,
     brick_room: u32,
     material_room: u32,
     job_count: u32,
@@ -427,6 +437,13 @@ fn sector_metres(volume: &VoxelVolume) -> f32 {
     64.0 / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32
 }
 
+/// How many sectors tall an endless volume's columns are: as tall as the
+/// volume, at most [`MOST_TALL`] (`MOST_TALL` in `shaders/voxel_world.slang`).
+pub(crate) fn sectors_tall(volume: &VoxelVolume) -> u32 {
+    let metres = sector_metres(volume);
+    ((volume.size.y.max(metres) / metres).ceil() as u32).clamp(1, MOST_TALL)
+}
+
 /// Whether two volumes make the same endless ground: everything but where
 /// it is drawn from and how its voxels shine.
 pub(crate) fn same_ground(a: &VoxelVolume, b: &VoxelVolume) -> bool {
@@ -500,13 +517,17 @@ fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
     Ok(buffer)
 }
 
+/// How many sectors of each column a window keeps entries for.
+fn layers_of(tall: u32) -> u32 {
+    tall.min(BAND)
+}
+
 /// How many sector columns an endless volume's window is a side, and how
 /// many sectors tall each column is.
 fn window_of(volume: &VoxelVolume) -> (u32, u32) {
     let metres = sector_metres(volume);
     let window = (((volume.reach.max(metres) * 2.0) / metres).ceil() as u32 + 1).clamp(2, LARGEST_WINDOW);
-    let tall = ((volume.size.y.max(metres) / metres).ceil() as u32).clamp(1, 16);
-    (window, tall)
+    (window, sectors_tall(volume))
 }
 
 /// The program a volume's generator runs on the GPU, if it has one the GPU
@@ -521,6 +542,27 @@ fn gpu_program_of(volume: &VoxelVolume) -> Option<GpuProgram> {
         made.volume = None;
     }
     program
+}
+
+/// Whether the GPU runs `world`'s Volume, its overhangs and caves: not where
+/// it has none, where it is the height made solid, where a node of it
+/// cannot run there or where it carries up more than there is room for.
+/// The CPU's ground leaves it out where the GPU does, so collision and rays
+/// meet the ground drawn. Kept for each generator, as working it out
+/// compiles the graph.
+pub(super) fn gpu_runs_volume(world: &WorldGen) -> bool {
+    static RUNS: std::sync::Mutex<Vec<(u64, bool)>> = std::sync::Mutex::new(Vec::new());
+    let mut runs = RUNS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(&(_, kept)) = runs.iter().find(|(hash, _)| *hash == world.hash()) {
+        return kept;
+    }
+    let made = world
+        .gpu_program()
+        .ok()
+        .and_then(|program| program.volume)
+        .is_some_and(|volume| volume.carried.len() <= MOST_CARRIED && volume.spans.len() <= MOST_SPANS);
+    runs.push((world.hash(), made));
+    made
 }
 
 /// How many pages of bricks and of materials the shared room has.
@@ -576,7 +618,8 @@ fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow:
 /// over it, for a colour of a bank, the shared place nearest it, which a
 /// voxel of it takes in a brick of another bank.
 fn palette_buffer(gpu: &Gpu, colours: &[[u8; 4]]) -> Result<Buffer> {
-    let words = palette_words(colours);
+    let mut words = palette_words(colours);
+    super::add_kinds(&mut words, colours);
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
@@ -639,7 +682,8 @@ fn bank_start(bank: usize) -> usize {
 /// bank where they fit, the palette's last or a new one, so a brick of one
 /// building has every colour of it. With every bank full, the nearest.
 fn place_table(palette: &mut Vec<[u8; 4]>, wanted: &[[u8; 4]]) -> Vec<u32> {
-    let same = |a: &[u8; 4], b: &[u8; 4]| a[..3] == b[..3];
+    // The same colour and kind: glass or a light keeps a place of its own beside a solid colour like it.
+    let same = |a: &[u8; 4], b: &[u8; 4]| a == b;
     let shared = palette.len().min(SHARED_COLOURS);
     let mut places: Vec<Option<usize>> =
         wanted.iter().map(|colour| palette[..shared].iter().position(|c| same(c, colour))).collect();
@@ -873,7 +917,7 @@ impl Endless {
         };
         let none = vk::BufferUsageFlags::empty();
         let jobs = MAX_JOBS as u64;
-        let table = make("table", slots_in * u64::from(tall) * ENTRY_WORDS * 4, none)?;
+        let table = make("table", slots_in * u64::from(layers_of(tall)) * ENTRY_WORDS * 4, none)?;
         let (colours, forest, made, biomes) = forest_buffers(gpu, volume, true)?;
         let palette = palette_buffer(gpu, &colours)?;
         let growth = growth_buffer(gpu, volume)?;
@@ -934,8 +978,11 @@ impl Endless {
         let placed = make("placed", jobs * JOB_BRICKS * 4, none)?;
         let slots = make("slots", jobs * 64 * rows * 4, none)?;
         let loose = make("loose bricks", jobs * JOB_BRICKS * BRICK_BYTES, none)?;
-        let counters =
-            make("counters", (jobs * COUNTERS + 8 + jobs + jobs * 33) * 4, vk::BufferUsageFlags::INDIRECT_BUFFER)?;
+        let counters = make(
+            "counters",
+            (jobs * COUNTERS + 8 + jobs + jobs * (2 * u64::from(MOST_TALL) + 1)) * 4,
+            vk::BufferUsageFlags::INDIRECT_BUFFER,
+        )?;
         let job_edits = make("job edits", jobs * MOST_COLUMN_EDITS * 4, none)?;
         // The candidate bricks, and after them those the coarse pass leaves.
         let candidates = make("candidates", 2 * jobs * 64 * rows * 4, none)?;
@@ -1214,7 +1261,10 @@ impl Endless {
         let table: Vec<u32> = match *tinted {
             Tinted::Print(id, tint) => {
                 let print = self.prints.iter().find(|print| print.id == id).cloned();
-                let palette = print.map(|print| print.palette.clone()).unwrap_or_default();
+                // Its colours with their kinds, glass and lights as its settings say.
+                let palette: Vec<[u8; 4]> = print
+                    .map(|print| (0..print.palette.len()).map(|i| print.volume_colour(i)).collect())
+                    .unwrap_or_default();
                 let shades: Vec<[u8; 4]> = match tint {
                     Some(tint) => tinted_colours(&palette, tint),
                     None => palette,
@@ -1587,6 +1637,15 @@ impl Endless {
         (words[2] != 0).then_some(self.grow)
     }
 
+    /// How many sectors up the walk goes: to the top of the highest
+    /// sector any column has held anything in, as the GPU noted it a frame
+    /// or two ago, so a tall volume of low ground walks no more air than a
+    /// low one; at least one.
+    fn top(&self) -> u32 {
+        let words: &[u32] = bytemuck::cast_slice(&self.pool.read()[..16]);
+        words[3].clamp(1, self.tall)
+    }
+
     /// How many columns are made this frame.
     pub fn making_now(&self) -> u32 {
         self.jobs.len() as u32
@@ -1614,7 +1673,7 @@ impl Endless {
             bricks: self.bricks.address,
             materials: self.materials.address,
             palette: self.palette.address,
-            sector_count: [w, self.tall as i32, w],
+            sector_count: [w, self.top() as i32, w],
             voxel,
             corner: [0.0; 3],
             roughness: self.from.roughness.clamp(0.0, 1.0),
@@ -1624,6 +1683,8 @@ impl Endless {
             pages: self.pages.address,
             water: if self.from.water == VoxelWaterLook::Voxels { WATER_COLOUR + 1 } else { 0 },
             shades: WATER_SHADES,
+            layers: layers_of(self.tall),
+            pad: 0,
             hole: voxels(self.hole),
             outer: voxels(self.outer),
         };
@@ -1720,6 +1781,8 @@ impl Endless {
             voxel: 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32,
             window: self.window,
             tall: self.tall,
+            layers: layers_of(self.tall),
+            spare: 0,
             brick_room: JOB_BRICKS as u32,
             material_room: JOB_MATERIALS as u32,
             job_count: self.jobs.len() as u32,
@@ -1861,7 +1924,7 @@ impl Recording {
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_pack, [1, 1, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_sectors, [self.tall, jobs, 1]);
+        run(pipelines.voxel_world_sectors, [layers_of(self.tall), jobs, 1]);
     }
 }
 
@@ -1913,6 +1976,7 @@ impl Endless {
         all
     }
 }
+
 
 /// Prints as the GPU reads them (`PRINTS_AT` in `shaders/voxel_world.slang`):
 /// how many, then for each its bricks along X, Y and Z, where its grid, its

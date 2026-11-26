@@ -45,9 +45,11 @@ static const uint ROW = 1024;
 // each job keeps in each of its sectors, then how many of its trees' bricks are in each, then how many edits reach
 // each job's column.
 static const uint COUNTERS = 4;
+// The most sectors tall a column is (MOST_TALL in src/voxel_volume/endless.rs).
+static const uint MOST_TALL = 256;
 static const uint SECTOR_COUNTS = MAX_JOBS * COUNTERS + 8 + MAX_JOBS;
-static const uint TREE_COUNTS = SECTOR_COUNTS + MAX_JOBS * 16;
-static const uint EDIT_COUNTS = TREE_COUNTS + MAX_JOBS * 16;
+static const uint TREE_COUNTS = SECTOR_COUNTS + MAX_JOBS * MOST_TALL;
+static const uint EDIT_COUNTS = TREE_COUNTS + MAX_JOBS * MOST_TALL;
 // The most edits that reach a column and the trees round it, and a brick with its border: more are left out, the latest
 // first.
 static const uint MOST_COLUMN_EDITS = 4096;
@@ -90,6 +92,20 @@ static const uint LEAFY = 1u << 24;
 // What moves a brick in the wind, two bits over that mark (VOXEL_SWAY_SHIFT in voxels.slang); and a voxel that keeps
 // still.
 static const uint SWAY_SHIFT = 25u;
+// A brick with a voxel that glows, and one with a voxel that is see-through, marked in the lowest bits of its average
+// red and green (VOXEL_GLOWS and VOXEL_SEE_THROUGH in voxels.slang).
+static const uint GLOWS = 1u << 0;
+static const uint SEE_THROUGH = 1u << 8;
+// And one with water of voxels, in the lowest bit of its average blue (VOXEL_WET in voxels.slang).
+static const uint WET = 1u << 16;
+// Where a palette's kinds start after its colours, a byte a place (PALETTE_KINDS in src/voxel_volume.rs): how
+// see-through, in its low four bits, and how bright it glows, in its high four.
+static const uint PALETTE_KINDS = 4224u;
+
+uint paletteKind(uint* palette, uint place)
+{
+    return (palette[PALETTE_KINDS + (place >> 2)] >> ((place & 3u) * 8u)) & 255u;
+}
 static const uint SWAY_STILL = 0u;
 static const uint SWAY_GRASS = 1u;
 static const uint SWAY_LEAVES = 2u;
@@ -170,9 +186,12 @@ struct WorldMake
     float flowers;
     uint seed;
     float voxel;
-    // How many columns the window is a side, and how many sectors tall a column is.
+    // How many columns the window is a side, how many sectors tall a column is, and how many of them it keeps
+    // entries for: a band round its ground (voxelWorldSectors).
     uint window;
     uint tall;
+    uint layers;
+    uint spare;
     // How many bricks and material bytes a column's slot has room for.
     uint brickRoom;
     uint materialRoom;
@@ -2328,6 +2347,9 @@ groupshared uint sharedSway;
 // How many of its voxels' colours are in each bank of the palette, and the bank it keeps (voxelColour in voxels.slang).
 groupshared uint sharedBanks[COLOUR_BANKS];
 groupshared uint sharedBank;
+// The kinds of its voxels' colours, or'd together: whether any glows or is see-through; and whether any is water.
+groupshared uint sharedKinds;
+groupshared uint sharedWet;
 // The edits that reach the brick and its border, in the order they were made.
 groupshared uint sharedEdits[MOST_BRICK_EDITS];
 groupshared uint sharedEditCount;
@@ -2427,6 +2449,8 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedOwn = 0;
         sharedTreeVoxels = 0;
         sharedSway = 0;
+        sharedKinds = 0;
+        sharedWet = 0;
         sharedEditCount = 0;
     }
     GroupMemoryBarrierWithGroupSync();
@@ -2666,6 +2690,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         {
             m = water;
             moves = SWAY_STILL;
+            sharedWet = 1u;
         }
     }
     // A brick one tree's alone is its plant's brick: the job's list names it.
@@ -2686,7 +2711,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         {
             uint rows = make->tall * 8;
             make->slots[job * 64 * rows + uint(row * 64 + bz * 8 + bx)] = TREE_BRICK | sharedTrees[0];
-            InterlockedAdd(make->counters[TREE_COUNTS + job * 16 + uint(row) / 8], 1u);
+            InterlockedAdd(make->counters[TREE_COUNTS + job * MOST_TALL + uint(row) / 8], 1u);
         }
         return;
     }
@@ -2729,6 +2754,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         InterlockedAdd(sharedSum[1], (colour >> 8) & 255u);
         InterlockedAdd(sharedSum[2], (colour >> 16) & 255u);
         InterlockedAdd(sharedSum[3], 1u);
+        InterlockedOr(sharedKinds, paletteKind(make->palette, m - 1u));
     }
     GroupMemoryBarrierWithGroupSync();
     if (index == 0)
@@ -2822,12 +2848,15 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         uint sway = (sharedSway & (1u << SWAY_STILL)) != 0 ? 0u : ((sharedSway & (1u << SWAY_LEAVES)) != 0 ? SWAY_LEAVES : SWAY_GRASS);
         record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u)
             | (sway << SWAY_SHIFT) | (sharedBank << BANK_SHIFT);
+        // Marked in the lowest bits of its average red and green where any voxel of it glows or is see-through.
+        record[19] = (record[19] & ~(GLOWS | SEE_THROUGH | WET)) | ((sharedKinds & 0xF0u) != 0u ? GLOWS : 0u)
+            | ((sharedKinds & 0x0Fu) != 0u ? SEE_THROUGH : 0u) | (sharedWet != 0u ? WET : 0u);
     }
     else if (index == 20)
     {
         uint rows = make->tall * 8;
         make->slots[job * 64 * rows + uint(row * 64 + bz * 8 + bx)] = sharedSlot + 1;
-        InterlockedAdd(make->counters[SECTOR_COUNTS + job * 16 + uint(row) / 8], 1u);
+        InterlockedAdd(make->counters[SECTOR_COUNTS + job * MOST_TALL + uint(row) / 8], 1u);
     }
 }
 
@@ -2891,8 +2920,8 @@ void voxelWorldPack(uint3 id: SV_DispatchThreadID)
     uint named = 0;
     for (uint s = 0; s < make->tall; s++)
     {
-        total += make->counters[SECTOR_COUNTS + job * 16 + s];
-        named += make->counters[TREE_COUNTS + job * 16 + s];
+        total += make->counters[SECTOR_COUNTS + job * MOST_TALL + s];
+        named += make->counters[TREE_COUNTS + job * MOST_TALL + s];
     }
     // The column's own bricks, then the names of its trees' bricks, so many to a brick of room.
     total += (named + NAMES_A_BRICK - 1u) / NAMES_A_BRICK;
@@ -2946,18 +2975,22 @@ groupshared uint sectorTrees[16];
 groupshared uint sectorFirst;
 groupshared uint sectorNames;
 groupshared uint sectorUnplaced;
+groupshared uint sectorBase;
 
 // Puts each sector's bricks in its slot's pages, in the order of its bits after the sectors under it, with their
 // materials, and writes its entry: where it is in the world, its bits, its slot and first brick in the slot's pages,
 // which of its bricks are trees' and where the names of the plants' bricks they are start among the slot's words,
 // after all its own bricks. The walk finds its bricks by them (voxels.slang). A sector any of whose bricks has no room
 // is left empty.
+//
+// A column keeps entries for a band of `layers` sectors, from the lowest that holds anything up, or down from the
+// highest where it holds more: each in the layer its height in sectors wraps to, so a slot's entries name the sectors
+// round its own ground, however high that is. A group a layer.
 [shader("compute")]
 [numthreads(512, 1, 1)]
 void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
     WorldMake* make = push.make;
-    uint sy = group.x;
     uint job = group.y;
     if (job >= make->jobCount)
     {
@@ -2971,12 +3004,29 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (index == 0)
     {
         sectorUnplaced = 0;
+        int lowest = int(make->tall);
+        int highest = -1;
+        for (uint s = 0; s < make->tall; s++)
+        {
+            if (make->counters[SECTOR_COUNTS + job * MOST_TALL + s] + make->counters[TREE_COUNTS + job * MOST_TALL + s] > 0u)
+            {
+                lowest = min(lowest, int(s));
+                highest = int(s);
+            }
+        }
+        int layers = int(make->layers);
+        sectorBase = highest < 0 ? 0u : uint(clamp(max(lowest, highest - layers + 1), 0, int(make->tall) - layers));
+        if (highest >= 0)
+        {
+            InterlockedMax(make->pool[3], uint(highest) + 1u);
+        }
     }
     GroupMemoryBarrierWithGroupSync();
+    uint sy = sectorBase + group.x;
     int3 l = int3(index & 7u, (index >> 3) & 7u, index >> 6);
     uint row = sy * 8 + uint(l.y);
     uint rows = make->tall * 8;
-    uint kept = make->slots[job * 64 * rows + row * 64 + uint(l.z * 8 + l.x)];
+    uint kept = sy < make->tall ? make->slots[job * 64 * rows + row * 64 + uint(l.z * 8 + l.x)] : 0u;
     uint slot = make->jobs[job].slot;
     bool named = (kept & TREE_BRICK) != 0;
     if (kept != 0)
@@ -3006,12 +3056,12 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         uint own = 0;
         for (uint s = 0; s < make->tall; s++)
         {
-            uint here = make->counters[SECTOR_COUNTS + job * 16 + s];
+            uint here = make->counters[SECTOR_COUNTS + job * MOST_TALL + s];
             own += here;
             if (s < sy)
             {
                 first += here;
-                firstName += make->counters[TREE_COUNTS + job * 16 + s];
+                firstName += make->counters[TREE_COUNTS + job * MOST_TALL + s];
             }
         }
         uint room = (make->slotCounts[slot] & 0xFFFFu) * PAGE_BRICKS;
@@ -3022,7 +3072,7 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     GroupMemoryBarrierWithGroupSync();
     uint w = make->window;
-    uint* entry = make->table + ((sy * w * w) + slot) * ENTRY_WORDS;
+    uint* entry = make->table + (((sy % make->layers) * w * w) + slot) * ENTRY_WORDS;
     int2 column = make->jobs[job].column;
     bool empty = sectorFirst == EMPTY;
     if (index == 0)

@@ -24,6 +24,8 @@ A reach of 64 m at 16 voxels a metre keeps about 100 MB on the GPU. The ground r
 
 An endless volume can take its ground from one of the project's [[Generator Graphs|world generators]]: pick it as its **Generator**. The generator's graph runs on the GPU, a voxel column at a time, and the volume shows that graph's land in small voxels, its hills, valleys and gullies to the voxel. The generator's ground at a place is the CPU's to within a millimetre or so.
 
+The **Generator** can also be a generated world of blocks (a `.blockworld`): the volume then shows the ground its chunks are made of, its generator shaped by its biomes' land, its painted Land, Height and Biome maps read, and the sea or cliffs past a world of a set size. The painted maps go to the GPU with the program, about 9 MB for a world 51 km a side painted all over.
+
 - **Floor**: how high the generator's ground is at the volume's floor, in metres of the generator's world. Until it is set, it is worked out from the generator: the ground at the volume's corner stands two fifths of the way up the volume.
 - **Offset**: where the volume's corner lies in the generator's world, in metres along X and Z.
 - **Sea**: whether the generator's sea fills the level at its sea level. On unless turned off; see [The sea](#the-sea).
@@ -37,11 +39,15 @@ Each column's ground is what a world of blocks with no biomes of its own would l
 
 Each has a pattern of its own in a few shades, as a block's face has. The volume's **Ground Height**, **Hills** and **Hill Spacing** are not used then: the hills are the generator's.
 
-Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies, Clamp, Blend, Terrace, Height Mask, Cells, Falloff, Landmass and Climate, which covers the Battlefield Plains, Rolling Hills, Alpine, Archipelago and Canyons starters. Some are left out there:
+With a world of blocks as its **Generator**, each column is instead of the biome the world of blocks puts there: the one painted on its Biome map, else the one its climate is nearest, their borders ragged as the world's are. The ground is that biome's blocks, each in its block's colour: its top block a block deep, its under block as deep as the biome says, then its deep block; its steep block where the ground is steeper than the biome says, its shore block by the sea, and its deep block all the way where the generator's Rock says. A block the biome leaves to the world is the world's own. Grass grows on a biome's ground where its top block is green, in that block's colour, and trees with it. A biome's rock layers are not laid yet.
+
+Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies, Clamp, Blend, Terrace, Height Mask, Cells, Falloff, Landmass, Climate, Peaks, Plateaus (with its rivers' canyons and ramps), Smooth, World Edge and Painted Map, which covers the Battlefield Plains, Rolling Hills, Alpine, Archipelago and Canyons starters and a world of blocks' painted ground. Some are left out there:
 
 - **Rivers** are found on the CPU, as a world of blocks finds them, and laid into the GPU's ground (below).
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
-- A graph with a node that cannot run on the GPU (Plateaus, Peaks, Raised Land, Spires, Fins, Chasms, Slope Mask, a painted map) makes the volume's own ground instead, and the Console names the node.
+- A graph with a node that cannot run on the GPU (Raised Land, Spires, Fins, Chasms, Slope Mask) makes the volume's own ground instead, and the Console names the node.
+- An endless volume's ground far from its Obj, as a world tens of kilometres across has it, is drawn streaked: put the volume's Obj near the camera and its **Offset** where the camera's ground lies in the generator's world.
+- An endless volume is at most 16 of its sectors tall, 64 voxels each: 64 m at 16 voxels a metre, 256 m at 4. Land higher than its top is cut off flat there.
 
 ### Rivers and lakes
 
@@ -142,6 +148,89 @@ plant = "Plants/Pine.voxplant"
 per_hectare = 20.0
 ```
 
+### Trees in their World Areas
+
+A kind of tree can keep to [[World Areas]], as a world of blocks' structures do: its **Within** row picks an Area Tag, and the kind grows only inside World Areas with that tag; its **Not Within** row picks one it never grows in. Leave both at None for trees everywhere there is grass. With a wood and an orchard marked out by areas, oaks set **Within** the wood's tag and apple trees **Within** the orchard's grow only there, and a town's area keeps them all out.
+
+- The areas are those outlined on Objs in the volume's dimension, between their Low and High where they have them. Areas painted on a world of blocks' Area map don't reach a volume.
+- A kind's **A Hectare** still holds inside its areas: a wood of 60 oaks a hectare has as many as before, just only there.
+- Moving an area, or the volume, makes the trees again where it reaches. Collision and `Voxels.Raycast` find the trees where they are drawn.
+
+`vox editor call field.set` sets them as `tree_within` and `tree_not_within`, `#2` for the second kind and so on, picking a tag by its path. A scene can give a kind several tags of each, by their numbers:
+
+```toml
+[[obj.voxel_volume.trees]]
+plant = "Plants/Apple.voxplant"
+per_hectare = 120.0
+within = ["…the Orchard tag's number…"]
+never_within = ["…the Town tag's number…"]
+```
+
+## Crops and ground cover
+
+An endless volume grows crops and ground cover of its own voxels on the ground you choose, in place of its grass: **Add Cover** picks a kind, each drawn its own way.
+
+| Kind | What it is |
+|---|---|
+| Meadow Grass | Tall grass, scattered, a few blades gone to seed. Flowers still grow among it |
+| Wheat | Straw-coloured stalks in rows, each with a golden ear |
+| Barley | Paler and shorter than wheat, with longer ears |
+| Flax | Thin green stems in rows, some with a blue flower |
+| Cabbage | Round heads of leaves in rows, pale at the middle, ringed by darker leaves spread low |
+
+Each kind's rows:
+
+- **Cover**: the kind. None takes it away.
+- **On**: the ground it grows on: grass, dirt, rock, sand, snow or gravel, as the volume's ground is there.
+- **Soil**: what the ground under it turns to. Crops start as Dirt, so a field shows ploughed earth between its rows; None leaves the ground as it is.
+- **Height**: how tall it grows, in metres; for cabbages, how wide a head is.
+- **Rows**: how far apart its rows are, in metres, along X. 0 scatters it as grass is.
+- **Density**: how much of its ground grows a stalk or a head, from 0 to 1.
+- **Within** and **Not Within**: Area Tags, as for trees: wheat set Within a Fields tag grows only in the fields.
+
+The first kind in the list that grows on a spot takes it, so put the crops kept to their fields first and a Meadow Grass for everywhere else last. Ground no kind takes grows the volume's own grass. Cover is drawn, and moves in the wind, but isn't solid: it's walked through, and rays pass it. Cover, and trees kept to two dozen areas, make the ground no slower to make than grass alone.
+
+`vox editor call field.set` sets the rows as the Inspector does: `cover`, `cover_on`, `cover_soil`, `cover_height`, `cover_rows`, `cover_density`, `cover_within` and `cover_not_within` for the first kind, the same with `#2` for the second, and `add_cover`. In the scene:
+
+```toml
+[[obj.voxel_volume.cover]]
+kind = "wheat"
+on = ["grass"]
+soil = "dirt"
+height = 0.9
+rows = 0.25
+density = 0.7
+within = ["…the Fields tag's number…"]
+
+[[obj.voxel_volume.cover]]
+kind = "meadow_grass"
+height = 0.55
+density = 0.45
+```
+
+## Mobs
+
+An endless volume can spawn mobs on its ground round the player while the game plays. **Add Mob** picks a prefab; give it a [[Block Mobs|Block Mob]] and a Character, and it walks the volume's ground.
+
+- **Mob**: the prefab. None takes it away.
+- **A Hectare** and **Most**: how many to a hectare round the player, and the most there are at once.
+- **On**: the ground they spawn on.
+- **Near** and **Far**: they spawn no nearer the player than Near and no further than Far, in metres, on ground no steeper than 45°. Once the player is a fifth again further than Far from one, it is taken away, and another comes nearer.
+- **Within** and **Not Within**: Area Tags, as for trees: sheep set Within a Pasture tag spawn only in the pastures.
+
+The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume walks straight to where it's sent and wanders about where it was spawned, picking places it can stand. It doesn't yet find a way round what is in its way: one that can't get somewhere within 12 seconds gives up and picks somewhere else. A navigation of voxel ground can be put in the engine through `voxear_engine::voxel_ways`: every agent on a volume walks the ways it finds.
+
+```toml
+[[obj.voxel_volume.mobs]]
+prefab = "…the prefab's number…"
+per_hectare = 3.0
+most = 6
+on = ["grass"]
+near = 20.0
+far = 70.0
+within = ["…the Pasture tag's number…"]
+```
+
 ## Box models stamped in
 
 A [[Box Models|box model]]'s sculpted cubes can be stamped into a volume, turned into its voxels: a tree sculpted at 16 cubes a metre becomes a tree of the volume's voxels. Each stamp is the model, where its feet stand in metres from the volume's corner, how far it is turned about Y in degrees, and how many times its size it is. A model's cubes larger than the volume's voxels fill all the voxels they cover; smaller ones are rounded to the voxels.
@@ -163,24 +252,53 @@ turn = 30.0
 
 ## Carving and filling
 
-An endless volume's ground can be changed: a ball carved out of it, or filled with a ground (dirt, grass, rock, sand, snow or gravel), its voxels' middles within the ball's radius. A carve takes the ground, its grass and flowers and its trees with it, and opens walls of the layers under the grass. A change goes over the ones before it, so a ball carved into rock just filled takes a bite out of it. The columns a change reaches are made again within a frame or two.
+An endless volume's ground can be changed: shapes carved out of it, or filled with a ground (dirt, grass, rock, sand, snow or gravel) or a paving (cobbles, flagstones, bricks, planks or ashlar, dressed stone blocks). A carve takes the ground, its grass and flowers and its trees with it, and opens walls of the layers under the grass. A change goes over the ones before it, so a ball carved into rock just filled takes a bite out of it. The columns a change reaches are made again within a frame or two.
 
-From a script, every endless volume the ball falls in is changed:
+The shapes:
+
+- **Ball**: its voxels' middles within a radius of its middle.
+- **Box**: a box turned any way, placed by the middle of its foot. Half a metre tall, it is a slab: a step, or half a block of ground.
+- **Ramp**: a box whose top slopes from its foot at its back up to its height at its front: a graded bank, a ramp down to a quay.
+- **Area**: an outline of points across the ground, from one height up to another: a street however it bends, a square, a quay, a levelled plot.
+- **Cover**: the top of the ground within an outline, as deep as it says, wherever the ground is: a road paved over hills, a field laid. Dug, with no ground, it lowers the ground by as much.
+
+A box, a ramp, an area or a cover also clears the air over its top as far as it says, ground, grass, flowers and trees: the room over a street or a levelled plot. One edit lays a whole street or square, however many voxels it covers.
+
+A paving is laid in a pattern of its own, on the world's grid, so pavings laid side by side join up: cobbles a fifth of a metre across, each row half a stone along from the last; flagstones 0.6 m by 0.45 m; bricks a quarter of a metre long and an eighth tall, each course half a brick along; planks a fifth of a metre wide and two metres long, along X; ashlar half a metre long and a quarter tall. Each stone, brick or board takes one of three shades, with a voxel of joint round it. Any fill can be **tinted**: its colours are shaded from the tint as they were from their own average, so the same bricks can be red, yellow or whitewashed.
+
+From a script, every endless volume a change reaches is changed:
 
 ```csharp
 // A crater where a shell lands, and a heap of rock where a wall is raised.
 Voxels.Carve(landed, 1.5f);
 Voxels.Fill(wall, 1f, VoxelMaterial.Rock);
+
+// A cobbled street with three metres of air over it.
+Voxels.Area([new(0f, 0f), new(40f, 0f), new(40f, 6f), new(0f, 6f)], 11.75f, 12f, VoxelMaterial.Cobbles, clear: 3f);
+// A flagged square laid on the ground's own top, a quarter of a metre deep.
+Voxels.Cover(square, 0.25f, VoxelMaterial.Flagstones, clear: 0.5f);
+// A step, a bank down to the quay, and a cellar dug under a house.
+Voxels.Slab(stepFoot, 2f, 0.5f, VoxelMaterial.Ashlar);
+Voxels.Ramp(bankFoot, new Vector3(6f, 2f, 8f), VoxelMaterial.Dirt, turn: 30f);
+Voxels.CarveBox(cellarFoot, new Vector3(4f, 2.5f, 5f), turn: 15f);
+// A whitewashed brick wall.
+Voxels.Box(wallFoot, new Vector3(6f, 2f, 0.5f), VoxelMaterial.Bricks, tint: new Color(0.92f, 0.9f, 0.85f));
 ```
 
-`vox editor call voxels.carve` and `voxels.fill` change them as scripts do, or one Obj's volume alone, each one step to undo:
+An outline's points are along X and Z: a `Vector2`'s Y is the world's Z.
+
+`vox editor call` changes them as scripts do, or one Obj's volume alone, each one step to undo. With no `material`, a shape is carved out:
 
 ```
 vox editor call voxels.carve '{ "at": [12, 24, 9], "radius": 1.5 }'
 vox editor call voxels.fill '{ "at": [14, 24, 9], "radius": 1, "material": "rock" }'
+vox editor call voxels.box '{ "at": [10, 23.5, 4], "size": [4, 0.5, 2], "turn": 20, "material": "cobbles", "clear": 2 }'
+vox editor call voxels.ramp '{ "at": [12, 22, 9], "size": [2, 1.5, 4], "material": "dirt" }'
+vox editor call voxels.area '{ "points": [[0, 0], [40, 0], [40, 6], [0, 6]], "low": 23.75, "high": 24, "material": "flagstones", "clear": 3 }'
+vox editor call voxels.cover '{ "points": [[0, 0], [8, 0], [8, 8]], "depth": 0.25, "material": "bricks", "tint": [220, 200, 150] }'
 ```
 
-The volume keeps its changes in order, and its scene saves them, each its middle in metres from the volume's corner:
+The volume keeps its changes in order, and its scene saves them, in metres from the volume's corner:
 
 ```toml
 [[obj.voxel_volume.edits]]
@@ -188,20 +306,80 @@ at = [12.0, 24.0, 9.0]
 radius = 1.5
 
 [[obj.voxel_volume.edits]]
-at = [14.0, 24.0, 9.0]
-radius = 1.0
-fill = "rock"
+shape = "area"
+points = [[0.0, 0.0], [40.0, 0.0], [40.0, 6.0], [0.0, 6.0]]
+low = 23.75
+high = 24.0
+fill = "cobbles"
+clear = 3.0
+
+[[obj.voxel_volume.edits]]
+shape = "box"
+at = [12.0, 21.0, 9.0]
+size = [4.0, 2.5, 5.0]
+rotation = [0.0, 15.0, 0.0]
 ```
 
-A column takes up to 1,024 changes that reach it, and a half-metre brick 128; past those the latest are left out.
+A `shape` is `box`, `ramp`, `area` or `cover`, a ball where none is written; `tint` is `[r, g, b]` from 0 to 255.
+
+A column takes up to 4,096 changes that reach it, and a half-metre brick 256; past those the latest are left out.
+
+Trees don't grow where the ground under them was carved, nor where a change filled the voxel over their foot, as a street laid over the ground does.
 
 ### The brush
 
-With an endless volume selected, set its **Brush** to Carve or Fill: a ball under the pointer in the Scene view shows where it meets the volume's ground, as big as **Brush Size**. Hold the left button and drag to carve balls out along the way, or fill them with **Brush Ground**; hold Shift to do the other. Each stroke is one step to undo. The brush is the editor's own setting, kept for every volume and not saved with the scene.
+With an endless volume selected, set its **Brush**:
+
+- **Carve** or **Fill**: a ball under the pointer in the Scene view shows where it meets the volume's ground, as big as **Brush Size**. Hold the left button and drag to carve balls out along the way, or fill them with **Brush Ground**; hold Shift to do the other.
+- **Box**: drag across the ground to mark out a box's foot, turned **Brush Turn** degrees, its corners on a grid of **Brush Snap** metres (none at 0). Let go and it is filled **Brush Height** tall on the ground where the drag began, clearing **Brush Clear** over it; with Shift it is dug as deep. A Brush Height of 0.5 makes slabs.
+- **Area**: click the points of an outline across the ground, and click its first point again to close it: it is laid flat at the first point's height, Brush Height thick, clearing Brush Clear over it, or dug out with Shift.
+- **Cover**: an outline clicked as for an area, laying the ground's own top within it, Brush Height deep.
+
+**Brush Tint** shades the fill, white for its own colours. Each stroke, box or outline is one step to undo. The brush is the editor's own setting, kept for every volume and not saved with the scene.
+
+### Digging and building a voxel at a time
+
+A game's digging and building set one voxel at a time: dug out, or placed in a ground or a paving, tinted or not. A voxel set this way goes over everything the volume's edits make, whatever order they came in, and stays until it is set again or let go back to what the edits make.
+
+```csharp
+// Dig the voxel the player looks at, and build one on the face beside it.
+if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f))
+{
+    if (Input.Pressed(dig)) Voxels.Dig(hit.Point - hit.Normal * 0.01f);
+    if (Input.Pressed(build)) Voxels.Place(hit.Point + hit.Normal * 0.01f, VoxelMaterial.Planks);
+}
+// Undo a digging there: back to what the ground and edits make.
+Voxels.Restore([spot]);
+```
+
+`Dig`, `Place` and `Restore` take many points at once, too. A volume keeps up to 255 kinds of placed voxel, a ground or paving and a tint each. In the brush, **Dig** digs the voxel under the pointer and **Build** places one of **Brush Ground** on the face under it, as you drag; Shift does the other. `vox editor call` does the same:
+
+```
+vox editor call voxels.dig '{ "points": [[12.03, 23.97, 9.03]] }'
+vox editor call voxels.place '{ "points": [[12.03, 24.03, 9.03]], "material": "bricks", "tint": [200, 40, 40] }'
+vox editor call voxels.restore '{ "points": [[12.03, 23.97, 9.03]] }'
+```
+
+Collision, rays and trees find the voxels set as the GPU draws them: a tree whose foot is dug away grows no more.
+
+### Saved in region files
+
+The voxels set one at a time are kept brick by brick, and saved with the scene in region files beside it, a folder for each volume (`<scene>.voxels/<Obj id>/`) and a file for each region of 64 m a side at 16 voxels a metre: each brick its place, a bit for each of its voxels and a byte for each voxel set, packed with zstd. A tunnel of 320 voxels dug across two regions takes under 2 KB. The scene names the folder and its regions, so it loads them as it loads; a save writes only the regions that changed and takes away those no voxel is set in any more:
+
+```toml
+[obj.voxel_volume]
+endless = true
+changes = "Levels/Harbour.level.voxels/12"
+regions = [[0, 0], [-1, 0]]
+```
+
+### Colours
+
+A volume holds 4,224 colours: 128 every brick shares (the ground's, the generator's, the pavings' and the trees'), and 32 banks of 128 more. A print's colours, in each tint it is printed in, and a tinted fill's go together in one bank, so a brick of one building has all of its colours; each brick keeps the bank most of its voxels are in. Where two buildings of different banks meet in one brick, half a metre across, the voxels of the other take the shared colour nearest theirs. Sixty kinds of building of thirty colours each, each in a tint of its own, keep every colour.
 
 ### Printing models
 
-A model made into a [[Voxel Prints|Voxel Print]] is printed into the ground as another change, kept in order with the balls: a sandbag wall or a crate of voxels, solid all through, which a ball carved later bites into. Set the **Brush** to Print to place one with a click, or call `Voxels.Print` from a script.
+A model made into a [[Voxel Prints|Voxel Print]] is printed into the ground as another change, kept in order with the rest: a sandbag wall or a crate of voxels, solid all through, which a ball carved later bites into. Set the **Brush** to Print to place one with a click, or call `Voxels.Print` from a script. A print can be fitted to the ground, its inside cleared and a footing under it where the ground falls away, and tinted.
 
 ### Where a ray meets the ground
 
@@ -243,5 +421,6 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
-- An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
-- A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A volume of a set size doesn't collide yet; an endless one does.
+- An endless one's trees can't be felled, and every tree of a kind is one of four plants. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
+- A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
+- Edits and voxels set one at a time aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.

@@ -30,8 +30,6 @@ static const float VOXEL_STEP_COARSENING = 0.01;
 // A brick of leaves, marked over its average colour (src/voxel_volume/bricks.rs): its groups are loosely filled as its
 // voxels are, and a group of it takes the colour of a voxel of its own.
 static const uint VOXEL_LEAFY = 1u << 24;
-// A brick mostly of water, marked over its average colour as leaves are (src/voxel_volume/rivers.rs).
-static const uint VOXEL_WATERY = 1u << 27;
 // What moves a brick in the wind, in two bits over that: nothing; its grass and flowers, leant from the brick's foot;
 // or its leaves, the whole brick swaying.
 static const uint VOXEL_SWAY_SHIFT = 25u;
@@ -127,6 +125,13 @@ int voxelBrickAt(VoxelVolume volume, int3 b)
     }
     at = (sector[24] & 0xFFFu) + ((sector[16 + (index >> 6)] >> (pair * 16u)) & 0xFFFFu) + countbits(word & ~trees & below);
     return int(volume.pages[slot * 64u + (at >> 6)] * 64u + (at & 63u));
+}
+
+// The palette place of a brick's voxel's material: below 128 a place every brick shares, above it a place in the bank
+// the brick keeps over its average colour (src/voxel_volume/endless.rs), the first bank the palette's places 128 to 255.
+uint voxelPlace(uint* bits, uint material)
+{
+    return material < 128u ? material : material + (bits[19] >> 27) * 128u;
 }
 
 bool voxelSolid(VoxelVolume volume, int3 cell)
@@ -404,8 +409,7 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
             before += countbits(bits[k]);
         }
         uint at = bits[18] + before;
-        uint material = (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
-        packed = volume.palette[material];
+        packed = volume.palette[voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u)];
     }
     float3 srgb = float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0;
     // Each voxel a shade of its own, so a field of one colour still reads as small cubes.
@@ -420,7 +424,8 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
 
 // ---------------------------------------------------------------- Water of voxels
 
-// The place in its volume's palette of the voxel at `cell` of brick `brick`: its material.
+// The place in its volume's palette of the voxel at `cell` of brick `brick`, its material read through its brick's
+// bank (voxelPlace).
 uint voxelMaterialOf(VoxelVolume volume, int brick, int3 cell)
 {
     uint* bits = volume.bricks + uint(brick) * VOXEL_BRICK_WORDS;
@@ -432,7 +437,7 @@ uint voxelMaterialOf(VoxelVolume volume, int brick, int3 cell)
         before += countbits(bits[k]);
     }
     uint at = bits[18] + before;
-    return (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
+    return voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u);
 }
 
 // Whether material `material` of a volume is water of voxels, one of its shades.
@@ -441,16 +446,13 @@ bool voxelIsWater(VoxelVolume volume, uint material)
     return volume.water != 0u && material + 1u >= volume.water && material + 1u < volume.water + volume.shades;
 }
 
-// Whether a hit met a voxel of water. Far off, where the walk met a group or a brick, a brick mostly of water is.
+// Whether a hit met a voxel of water. Far off, where the walk met a group or a brick, it is drawn in its brick's
+// average colour as ground is: the water's own there.
 bool voxelWaterOf(VoxelVolume volume, VoxelHit hit)
 {
-    if (volume.water == 0u || hit.brick < 0)
+    if (volume.water == 0u || hit.brick < 0 || hit.level != 0)
     {
         return false;
-    }
-    if (hit.level != 0)
-    {
-        return (volume.bricks[uint(hit.brick) * VOXEL_BRICK_WORDS + 19] & VOXEL_WATERY) != 0u;
     }
     return voxelIsWater(volume, voxelMaterialOf(volume, hit.brick, hit.cell));
 }
@@ -596,6 +598,48 @@ bool voxelPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
         start = max(nearest - 12.0 * volumes->volumes[0].voxel, 0.0);
     }
     return voxelsTrace(volumes, voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, hit);
+}
+
+// What the probe reads (Renderer::voxels_on_gpu), at push.buffers: a volume, and `count` cells of it, x, y and z a
+// word each, from its window's least sector for an endless one; and where it writes what each holds: its palette
+// place and one, or 0 for nothing.
+struct VoxelProbe
+{
+    VoxelVolume volume;
+    int* cells;
+    uint* found;
+    uint count;
+    uint pad;
+};
+
+// The voxels a volume holds at cells, for checking the GPU's voxels against the CPU's: a thread a cell.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelProbe(uint3 id: SV_DispatchThreadID)
+{
+    VoxelProbe* probe = (VoxelProbe*)push.buffers;
+    if (id.x >= probe->count)
+    {
+        return;
+    }
+    VoxelVolume volume = probe->volume;
+    int3 cell = int3(probe->cells[id.x * 3], probe->cells[id.x * 3 + 1], probe->cells[id.x * 3 + 2]);
+    int brick = voxelBrickAt(volume, cell >> 3);
+    uint found = 0;
+    int3 l = cell & 7;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint* bits = volume.bricks + uint(max(brick, 0)) * VOXEL_BRICK_WORDS;
+    if (brick >= 0 && voxelBit(bits, index))
+    {
+        uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
+        for (uint k = 0; k < (index >> 5); k++)
+        {
+            before += countbits(bits[k]);
+        }
+        uint at = bits[18] + before;
+        found = voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u) + 1u;
+    }
+    probe->found[id.x] = found;
 }
 
 // The coarse rays: each walks against whole bricks, as if each brick were solid, and keeps how far it went.

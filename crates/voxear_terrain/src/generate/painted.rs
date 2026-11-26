@@ -101,6 +101,34 @@ impl PaintedMap {
         painted.then_some(value)
     }
 
+    /// Its tiles as the GPU reads them (`paintedSample` in
+    /// `voxear_render/shaders/generator.slang`): its spacing, the least tile
+    /// of the box its tiles lie in and how many tiles that box is along x
+    /// and z, a word for each tile of the box naming its place among those
+    /// that follow or `u32::MAX` for none, then each tile's pixels.
+    pub fn gpu_words(&self) -> Vec<u32> {
+        let (mut low, mut high) = ([i32::MAX; 2], [i32::MIN; 2]);
+        for key in self.tiles.keys() {
+            low = [low[0].min(key[0]), low[1].min(key[1])];
+            high = [high[0].max(key[0]), high[1].max(key[1])];
+        }
+        if self.tiles.is_empty() {
+            return vec![self.spacing.to_bits(), 0, 0, 0, 0];
+        }
+        let (w, h) = ((high[0] - low[0] + 1) as u32, (high[1] - low[1] + 1) as u32);
+        let mut words = vec![self.spacing.to_bits(), low[0] as u32, low[1] as u32, w, h];
+        let directory = words.len();
+        words.resize(directory + (w * h) as usize, u32::MAX);
+        let mut keys: Vec<&[i32; 2]> = self.tiles.keys().collect();
+        keys.sort();
+        for (place, key) in keys.into_iter().enumerate() {
+            let at = (key[0] - low[0]) as usize + w as usize * (key[1] - low[1]) as usize;
+            words[directory + at] = place as u32;
+            words.extend(self.tiles[key].iter().map(|value| value.to_bits()));
+        }
+        words
+    }
+
     /// The value of the pixel nearest `(x, z)`, where it is painted.
     pub fn nearest(&self, x: f32, z: f32) -> Option<f32> {
         if self.tiles.is_empty() {

@@ -859,6 +859,39 @@ fn a_tool_carves_and_fills_an_endless_voxel_volume_each_one_step_to_undo() {
     let saved = done(&mut editor, &mut renderer, "save", json!({}));
     let scene = std::fs::read_to_string(dir.path().join(saved["saved"][0].as_str().unwrap())).unwrap();
     assert!(scene.contains("radius = 1.5") && !scene.contains("fill = \"rock\""), "the carve saved alone:\n{scene}");
+    // A cobbled box and a tinted area of flagstones, then voxels dug and placed, each one step to undo.
+    let boxed = json!({ "at": [4.0, 3.0, 4.0], "size": [2.0, 0.5, 2.0], "turn": 20, "material": "cobbles", "clear": 1.0 });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.box", boxed)["reached"], 1);
+    let area = json!({ "points": [[0, 0], [3, 0], [3, 3]], "low": 2.0, "high": 2.5, "material": "flagstones", "tint": [200, 60, 60] });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.area", area)["reached"], 1);
+    let paving = json!({ "points": [[0, 0], [3, 0], [3, 3]], "low": 2.0, "high": 2.5, "material": "lava" });
+    assert_eq!(ask(&mut editor, &mut renderer, "voxels.area", paving).unwrap_err().kind, ErrorKind::WrongValue);
+    let dug = done(&mut editor, &mut renderer, "voxels.dig", json!({ "points": [[4.03, 2.97, 4.03], [4.1, 2.97, 4.03]] }));
+    assert_eq!(dug["set"], 2);
+    let placed = json!({ "points": [[5.03, 3.03, 5.03]], "material": "bricks", "tint": [200, 40, 40] });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.place", placed)["set"], 1);
+    let set = |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().changes.count();
+    assert_eq!(set(&editor), 3);
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(set(&editor), 2, "the placing taken back alone");
+    frames(&mut editor, &mut renderer, 5);
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let path = saved["saved"].as_array().unwrap().iter().filter_map(|p| p.as_str()).find(|p| !p.ends_with(".vxr")).unwrap().to_string();
+    let scene = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    for written in ["shape = \"box\"", "shape = \"area\"", "fill = \"cobbles\"", "tint = [200, 60, 60]", "regions = [[0, 0]]"] {
+        assert!(scene.contains(written), "{written} saved:\n{scene}");
+    }
+    let regions: Vec<_> = std::fs::read_dir(dir.path().join(format!("{path}.voxels")))
+        .unwrap()
+        .flatten()
+        .flat_map(|volume| std::fs::read_dir(volume.path()).unwrap().flatten().map(|file| file.path()))
+        .collect();
+    assert_eq!(regions.len(), 1, "one region file: {regions:?}");
+    // Opened again, the voxels dug come back from their region.
+    drop(editor);
+    let Some((_, editor)) = open(dir.path()) else { return };
+    let volume = editor.game.engine.world.query_ref::<&voxear_render::VoxelVolume>().into_iter().find(|v| v.endless).cloned();
+    assert_eq!(volume.map(|v| v.changes.count()), Some(2), "the voxels dug, read back");
 }
 
 #[test]
@@ -909,7 +942,7 @@ fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_on
     let entity = link::resolve_obj(&editor.game, &volume).unwrap();
     let edits =
         |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
-    assert!(edits(&editor)[0].print.is_some());
+    assert!(edits(&editor)[0].print().is_some());
     // The CPU's ray meets it over the ground, coming down on its middle.
     let down = json!({ "from": [4.0, 30.0, 4.0], "direction": [0.0, -1.0, 0.0], "obj": volume });
     let met = done(&mut editor, &mut renderer, "voxels.raycast", down);
@@ -1013,7 +1046,7 @@ fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_
     frames(&mut editor, &mut renderer, 2);
     let printed = editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
     assert_eq!(printed.len(), 1, "one print for a click and a drag");
-    assert!(printed[0].print.is_some());
+    assert!(printed[0].print().is_some());
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert_eq!(edits(&editor), 0, "the print taken back");
 }

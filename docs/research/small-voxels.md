@@ -1045,6 +1045,112 @@ Not done: what floats over voxel shallows feels the ground only within the chunk
 metres, so the sea calms it less than it is drawn; the sea standing under the ground inland, so a cave dug below sea
 level is under water where the Sea is on; waterfalls pushing down what is under them.
 
+## What grows where, and mobs (2026-11-26)
+
+The Realm needs crops in its fields, trees only in its woods and orchards and none in the city, and animals on its
+ground. A world of blocks does these with ground cover on chosen blocks, structures kept to World Areas by their
+tags, and Block Mobs walking its blocks' places. An endless volume now does the same.
+
+- **World Areas** (`voxel_volume/growth.rs`). The engine gives each endless volume whose trees, cover or mobs name
+  an Area Tag the outlined World Areas of its dimension, laid out from its corner, again whenever one moves. Only
+  areas holding a tag some rule names go to the GPU: each its box, its lowest and highest ground in voxels, its tags
+  as bits (at most 32 tags a volume) and its corners. The trees pass asks each tree's foot after `grassAt`
+  (`treeAllowed`); `solid.rs` asks the same of each foot with the same numbers in the same order, so collision and
+  rays find the trees where they are drawn. A test of a wood kept west of a line, pines kept out of a town in it,
+  finds no tree east of it on the GPU or the CPU, and 95% of pixels agreeing.
+- **Crops and ground cover.** Each kind is a shape of the tops pass, a voxel column at a time, like grass: meadow
+  grass scattered with a few seed heads; wheat, barley and flax as stalks a voxel across in rows, with ears or
+  flowers; cabbages as domes of leaves on a grid, pale at the middle, with darker leaves spread low round them. The
+  first kind whose ground and areas hold takes the column, in place of the grass, and may turn its ground to dirt.
+  The column word was repacked to hold a stalk's head: its length and material beside the stem's, and a bit that
+  keeps flowers out of a field.
+- **Mobs** (`voxear_engine::voxel_mobs`). A volume lists prefabs to keep round the player, by density, ground and
+  areas; the game spawns them on ground no steeper than 45°, found by a ray down, between a near and a far ring, and
+  takes them away a fifth again beyond the far ring. A Block Mob on a volume, with no world of blocks under it,
+  walks straight where it is sent and wanders to places it can stand, giving up on one after 12 s. Finding ways
+  round what stands in the way waits for navigation over voxels.
+- **Measured** at 1920 × 1080 on Rolling Hills with 100 oaks and pines a hectare, reach 64 m, the GPU 98% busy with
+  other sessions' work (so only the comparison holds):
+
+  | | Making, flying at 10 m/s | Depth + lit, least of 60 |
+  |---|---|---|
+  | Neither | least 1.01 ms, median 2.00 ms a frame | 4.05 + 3.67 ms |
+  | Trees kept to 24 areas of 8 corners | least 1.00 ms, median 1.81 ms | 4.26 + 4.44 ms |
+  | And wheat, cabbages and meadow grass | least 1.01 ms, median 1.85 ms | 4.04 + 4.20 ms |
+
+  The areas and cover cost nothing measurable in making a column; the drawing differs by what is in view. 400 CPU
+  rays down through the wood took 1.32 s without areas and 1.36 s with them.
+- **One fault on the way.** Reading the flower's foot column before checking it was near read past a job's columns
+  and lost the device: a test with flowers on caught it, the tree tests having flowers off.
+
+## Stage 4 on: edits for building a city (2026-11-26)
+
+The first city to build in endless ground, a harbour city of streets, squares, a quay, levelled plots, graded banks,
+cellars and about sixty kinds of building, wanted more of the edits than balls and prints.
+
+- **Typed shapes** (`voxel_volume/edit.rs`). An edit is a shape, a fill (a ground, a paving, or none for air), a tint
+  and how far it clears over its top: a ball; a box turned any way, placed by the middle of its foot (half a metre
+  tall it is a slab); a bank, a box whose top slopes along its length; an area, an outline of points from one height
+  to another; a cover, the ground's own top within an outline, as deep as it says. One area paves a street whatever
+  its length, so a paved city is a few hundred edits, not one a block.
+- **One answer for a voxel, worked out twice.** `editHeld` on the GPU and `VoxelEdit::held` on the CPU give the same
+  thing for a voxel: nothing, air, a fill with what fills it, or a print's colour. The bricks pass and the CPU's ground
+  for collision and rays take each edit over the last in turn. Exactness is checked, not hoped for: a probe pass reads
+  an endless volume's voxels back from the GPU (`Renderer::voxels_on_gpu`), and a test compares every voxel round
+  each kind of edit with the CPU's, those solid with air beside them, which are what the GPU keeps.
+- **Pavings** are patterns on the world's grid, worked out on the GPU from a voxel's place: rows of cobbles,
+  flagstones, planks, courses of bricks and ashlar, each stone a shade of three by hash, a voxel of joint round it.
+  Twenty colours after the generator's. Tinted, a fill's colours are shaded from the tint as from their own average:
+  each edit with a tint has a colour table among the edits' words, a palette place for each of its colours.
+- **Covers follow the ground.** A cover holds the voxels from the column's ground's top down as deep as it says;
+  the GPU passes each voxel's column height to `editHeld`, the CPU its own. A column's candidate bricks reach as far
+  round its ground as a cover does.
+- **Fitted prints.** A print can be cleared inside, down to its foot, and stand on a footing of its fill reaching
+  down to the ground, in the columns its footprint says it stands over, at most as deep as it is tall.
+- **Trees and edits.** A tree grows not where the last edit to hold its foot carved it, nor where the last to hold
+  the voxel over it filled it, as a street does. The trees pass now reads the column's list of edits, widened by how
+  far a tree's foot can be from it, not every edit there is; which is last is found by number, as the list is not
+  in order.
+- **More per place.** A column now takes 4,096 edits (and the trees round it), a brick with its border 256.
+- **Exact, in whole numbers.** The first comparison found two voxels in 131,328 at a turned box's edge where the CPU
+  and the GPU disagreed: the same float sums rounded differently (a fused multiply and add on the GPU, the CPU's
+  own order of adds). Every shape is now worked out in whole numbers the CPU makes once (`edit::Fixed`): places in
+  sixteenths of a voxel, a turn's rows in 4096ths, products in 64 bits on the GPU. A print's own voxel is found by
+  dividing by how many of its voxels and the volume's make a metre, both whole.
+- **A voxel at a time** (`voxel_volume/changes.rs`). Dug and placed voxels are kept brick by brick: 512 bits for
+  which are set and a byte each, 0 for air or a kind (a ground or paving and a tint, up to 255 a volume). On the
+  GPU each changed brick is one more edit after all the others, so the bricks pass needs nothing new; on the CPU a
+  voxel set goes over the edits. A changed brick makes again only its column and the trees round it.
+- **Region files.** 128 bricks a side (64 m at 16 voxels a metre) to a file beside the scene, its kinds, then packed
+  with zstd each brick's place in the region, its bits and its bytes for the voxels set. A tunnel of 320 voxels
+  across two regions is under 2 KB; reading one is a zstd unpack and a copy.
+- **Colours in banks.** A material stays a byte. Below 128 it is a place every brick shares; above, a place in the
+  brick's own bank of 128, which the brick keeps in five spare bits over its average colour. The bricks pass counts
+  its voxels' banks and keeps the most; a voxel of another bank takes the shared colour nearest it, kept over its
+  colour in the palette. A table's colours (a print in a tint, a tinted fill) go together into one bank, the
+  palette's last or the next, so a brick of one building has all of its colours. 4,224 colours: room for sixty kinds
+  of building of thirty colours, each in its own tint, and more.
+
+### Edits over the network: a design
+
+What every machine must have alike is the volume's list of edits and its voxels set one at a time; both are already
+what the CPU and the GPU make the ground from, and both are small.
+
+- **What is sent.** An edit is its shape in a few numbers (an area its points), its fill, tint and clear: 20 to 60
+  bytes, a print its asset's GUID and place. A voxel set is its place and a byte. Neither carries voxels made from
+  them: each machine makes those itself, the same to the voxel, as the whole-number shapes make sure.
+- **Joining.** The scene's own edits come with the scene. Those a game made as it played, and its voxels set, go to a
+  joining player as the level's block edits do (`net/dimensions.rs`): the edits added since the scene loaded, in
+  order, then the region files' bytes of its changed bricks, cut into pieces nearest the player first, within a share
+  of the connection's budget, then a word that they are all sent. The player's ground is made as they arrive.
+- **Playing.** The server is the one that edits: a client asks (dig here, place this, print that), the server checks
+  it may and adds it to its list, and sends the edit or the voxels set to every player who has the volume, in order,
+  on a reliable channel, with the edit's number in the list so a late one is put in its place. A client may show its
+  own dig at once and take the server's answer over it.
+- **Saves** keep the same: the edits added since the scene loaded, and the region files.
+
+Not built yet: the messages and the join; the bytes they would carry are what the scene and the region files hold.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

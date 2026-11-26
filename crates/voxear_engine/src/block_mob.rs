@@ -109,6 +109,11 @@ pub struct BlockMobState {
     seed: u32,
     /// Whether its goal was taken up, for a wander asked for in its settings.
     begun: bool,
+    /// Wandering an endless Voxel Volume's ground: where it began, where it
+    /// is heading and how long it has been heading there.
+    voxel_home: Option<Vec3>,
+    voxel_heading: Option<Vec3>,
+    heading_for: f32,
 }
 
 impl Component for BlockMobState {}
@@ -228,6 +233,23 @@ pub fn set_destinations(world: &mut World, delta: f32) {
         // The world of blocks it is in: of its own dimension, the one it can stand in, or else the first there is.
         let here = voxear_scene::dimension_of(world, entity);
         let ours: Vec<&Walked> = walked.iter().filter(|walked| walked.dimension == here).collect();
+        // No world of blocks here: an endless Voxel Volume's ground, where there is one.
+        if ours.is_empty() && crate::voxel_mobs::has_voxel_ground(world, here) {
+            let destination = on_voxels(world, &mob, &mut state, at, here, delta);
+            mob.arrived = destination.is_none();
+            state.destination = destination;
+            if let Some(agent) = world.get_mut::<NavAgent>(entity) {
+                (agent.destination, agent.stopped) = (destination, false);
+            }
+            world.insert(entity, state);
+            if let Some(kept) = world.get_mut::<BlockMob>(entity) {
+                kept.arrived = mob.arrived;
+                if begins {
+                    kept.goal = mob.goal;
+                }
+            }
+            continue;
+        }
         let place = ours
             .iter()
             .position(|walked| walked.standing(at + Vec3::Y * 0.1, walker_in(walked), 2.0).is_some())
@@ -301,6 +323,59 @@ fn target(
                 state.rest = RESTS.0 + state.chance() * (RESTS.1 - RESTS.0);
             }
             state.heading.map(|cell| walked.floor(cell, walker))
+        }
+    }
+}
+
+/// How long a mob on voxel ground heads somewhere before it gives up, in
+/// seconds: something stands in its way.
+const GIVE_UP: f32 = 12.0;
+
+/// The point a mob on an endless Voxel Volume's ground is heading for, by
+/// its goal: straight there, a wander's points picked where it can stand.
+fn on_voxels(
+    world: &World,
+    mob: &BlockMob,
+    state: &mut BlockMobState,
+    at: Vec3,
+    dimension: voxear_scene::DimensionId,
+    delta: f32,
+) -> Option<Vec3> {
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    match mob.goal {
+        MobGoal::Stand => None,
+        MobGoal::To(point) => (flat(point, at) > 0.15).then_some(point),
+        MobGoal::Follow { obj, near } => {
+            let followed = position(world, obj)?;
+            (flat(followed, at) > near.max(0.2)).then_some(followed)
+        }
+        MobGoal::Wander { radius } => {
+            let home = *state.voxel_home.get_or_insert(at);
+            if let Some(heading) = state.voxel_heading {
+                state.heading_for += delta;
+                if flat(heading, at) > 0.5 && state.heading_for < GIVE_UP {
+                    return Some(heading);
+                }
+                state.voxel_heading = None;
+            }
+            state.rest -= delta;
+            if state.rest > 0.0 {
+                return None;
+            }
+            state.rest = RESTS.0 + state.chance() * (RESTS.1 - RESTS.0);
+            for _ in 0..6 {
+                let (turn, far) = (state.chance() * std::f32::consts::TAU, radius.max(1.0) * state.chance().sqrt());
+                let point = home + Vec3::new(turn.cos() * far, 0.0, turn.sin() * far);
+                let standing = crate::voxel_mobs::standing(world, dimension, point + Vec3::Y * (radius + 4.0));
+                if let Some((ground, material)) = standing
+                    && material != voxear_render::VoxelMaterial::Gravel
+                    && (ground.y - at.y).abs() < radius + 2.0
+                {
+                    (state.voxel_heading, state.heading_for) = (Some(ground), 0.0);
+                    return Some(ground);
+                }
+            }
+            None
         }
     }
 }

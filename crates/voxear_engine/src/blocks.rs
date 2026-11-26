@@ -1429,6 +1429,46 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     Ok(written)
 }
 
+/// A generated world of blocks' ground as something other than its chunks
+/// shows it, as an endless Voxel Volume does (see [`world_ground`]).
+pub struct WorldGround {
+    /// Its ground generator, as its chunks are made by it.
+    pub generator: Arc<WorldGen>,
+    /// Its biomes, where it lists any.
+    pub biomes: Option<Arc<voxear_terrain::generate::WorldBiomes>>,
+    /// How large its blocks are, in metres.
+    pub block_size: f32,
+    /// Its own ground's blocks, where a biome names none.
+    pub ground: voxear_terrain::blocks::file::Ground,
+    /// Each of its blocks' colour, by its number, as sRGB.
+    pub colours: Vec<[u8; 3]>,
+}
+
+/// The ground of the world of blocks `guid` as its chunks are made: its
+/// world generator shaped by its biomes' land, its painted maps read, its
+/// rivers and its own overhangs and caves wired in; its biomes, where it
+/// lists any; and its blocks' colours. None where it is not generated.
+pub fn world_ground(content: &mut Content, guid: AssetGuid) -> Option<WorldGround> {
+    let loaded = content.block_world(guid)?;
+    let file = &loaded.file;
+    let mut generate = file.generate.clone()?;
+    let landed = generator(content, file)?;
+    if let Some(painted) = content.painted(guid, false) {
+        generate.placed = generate.placed.map(|placed| painted_biomes(&placed, &painted));
+        generate.painted = voxear_terrain::blocks::generate::PaintedRef(Some(painted));
+    }
+    let size = file.block_size.max(0.01);
+    let ground = voxear_terrain::blocks::generate::ground_generator(&generate, &landed, size);
+    let (_, faces) = resolved(content, file).file.faces();
+    Some(WorldGround {
+        generator: ground,
+        biomes: generate.placed.clone(),
+        block_size: size,
+        ground: file.ground.clone(),
+        colours: faces.iter().map(|faces| faces.color).collect(),
+    })
+}
+
 /// What a generated world of blocks' chunks are made from, as its file and
 /// its blocks are now: none without a generator.
 pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_terrain::blocks::stream::BlockMaking> {

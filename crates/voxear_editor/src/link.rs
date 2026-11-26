@@ -457,15 +457,16 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "voxels.raycast",
-        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed and its trees, not its grass or flowers. `obj` is null where it meets none.",
+        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed and its trees, and with `cover` its grass, cover and crops too. `obj` is null where it meets none.",
         args: &[
             arg("from", ArgKind::Vector, "Where the ray starts, in metres, in the world."),
             arg("direction", ArgKind::Vector, "Which way it goes."),
             maybe("reach", ArgKind::Number, "How far it goes, in metres: 1000 unless given."),
+            maybe("cover", ArgKind::Toggle, "Meet the grass, cover and crops too, as tall as they grow less what a cut left."),
             maybe("obj", ArgKind::Obj, "The Voxel Volume."),
         ],
         changes: false,
-        returns: "{ obj, point, normal, distance }",
+        returns: "{ obj, point, normal, distance, cover }",
     },
     CallInfo {
         name: "voxels.water_at",
@@ -598,6 +599,20 @@ pub const CALLS: &[CallInfo] = &[
         ],
         changes: true,
         returns: "{ set }",
+    },
+    CallInfo {
+        name: "voxels.cut",
+        about: "Cuts every endless Voxel Volume it reaches, or `obj`'s alone, as a script's Voxels.Cut and Voxels.Slice do: a ball round `at`, a blade's slice through `at` square to `across`, or the voxel at each of `points`. The grass, cover and crops of the columns it reaches fade away and stay cut until they grow back over the volume's `regrow` seconds; logs and leaves in it are cut out, and what of a tree is no longer joined to the ground by logs comes loose: while the game plays it falls as a body, which rests as the volume's `felled` says; in the editor it is taken away. The ground is not cut. Saved with the volume's other changes. One step to undo.",
+        args: &[
+            maybe("at", ArgKind::Vector, "The ball's or slice's middle, in metres, in the world."),
+            maybe("radius", ArgKind::Number, "How far it reaches from `at`, in metres."),
+            maybe("across", ArgKind::Vector, "The way a slice is square to: [0, 1, 0] cuts a trunk straight across. A ball without it."),
+            maybe("points", ArgKind::Value, "The voxels to cut, in place of `at`, in metres, in the world: [[x, y, z], ...]."),
+            maybe("fall", ArgKind::Vector, "Which way across what comes loose falls: away from the cut unless given."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached, columns, voxels, pieces }",
     },
     CallInfo {
         name: "voxels.restore",

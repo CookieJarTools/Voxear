@@ -4728,6 +4728,15 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   ms to 1 km, 618 MB and 12.9 ms to 2 km; without trees 433 MB to 2 km. The lit pass keeps a plain walk of its own,
   as carrying the rings' edges made it 0.5–1.3 ms slower for every volume. Next: far rings kept on disk, the finest
   ring taller than 64 m.
+- **Cutting grass and felling trees (2026-11-26).**
+  - `Voxels.Cut` (a ball or points) and `Voxels.Slice` (an axe's thin cut) cut an endless volume's grass, cover and
+    crops, which fade and grow back over the volume's Regrow seconds, and cut through logs and leaves. A ray can meet
+    cover. The brush has a Cut mode; `vox editor call voxels.cut` does the same.
+  - What is no longer joined to the ground by logs comes loose and falls as a body (boxes of its logs, drawn from its
+    voxels), then stays a body or is stamped back where it lies: the volume's Felled, or the game's choice per cut
+    and per piece (`VoxelPieces`, `VoxelPieceRest`, `Voxels.StampPiece`).
+  - A felled tree is kept as its foot and stump height; GPU, collision and rays agree to the voxel.
+  - Not yet: felling off the main thread (0.14 s a tree), bodies kept by a save.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -26,6 +26,12 @@
 //! prints it there, its model's origin on the ground, fitted to the ground
 //! on a footing of **Brush Footing** with **Brush Fit**.
 //!
+//! Set to Cut, the ball sits on the grass, cover and crops under the
+//! pointer, and dragging cuts them, as `voxels.cut` and a script's
+//! `Voxels.Cut` do: the blades fade away, and logs in the ball are cut
+//! through, what comes loose of a tree falling while the game plays, or
+//! taken away in the editor.
+//!
 //! Every fill but a print's is in **Brush Tint**, white for its own colours.
 
 use voxear_assets::AssetGuid;
@@ -43,6 +49,7 @@ use crate::{props::Value, scene_tools::ViewCamera};
 const CARVE_COLOR: u32 = 0xe8784c;
 const FILL_COLOR: u32 = 0x5ad1e6;
 const PRINT_COLOR: u32 = 0xf2c94c;
+const CUT_COLOR: u32 = 0x9ad66a;
 /// How far a ray from the pointer looks for the ground, in metres.
 const REACH: f32 = 2000.0;
 /// How far apart a stroke's balls are, as a share of the brush's size.
@@ -63,11 +70,22 @@ pub enum VoxelBrushMode {
     Print,
     Dig,
     Build,
+    Cut,
 }
 
 impl VoxelBrushMode {
-    pub const ALL: [Self; 9] =
-        [Self::Off, Self::Carve, Self::Fill, Self::Box, Self::Area, Self::Cover, Self::Print, Self::Dig, Self::Build];
+    pub const ALL: [Self; 10] = [
+        Self::Off,
+        Self::Carve,
+        Self::Fill,
+        Self::Box,
+        Self::Area,
+        Self::Cover,
+        Self::Print,
+        Self::Dig,
+        Self::Build,
+        Self::Cut,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -80,6 +98,7 @@ impl VoxelBrushMode {
             Self::Print => "Print",
             Self::Dig => "Dig",
             Self::Build => "Build",
+            Self::Cut => "Cut",
         }
     }
 
@@ -193,6 +212,7 @@ pub fn fields(world: &World) -> Vec<VoxelBrushField> {
         VoxelBrushMode::Carve | VoxelBrushMode::Fill => vec![F::Mode, F::Size, F::Ground, F::Tint],
         VoxelBrushMode::Dig => vec![F::Mode],
         VoxelBrushMode::Build => vec![F::Mode, F::Ground, F::Tint],
+        VoxelBrushMode::Cut => vec![F::Mode, F::Size],
     }
 }
 
@@ -232,7 +252,7 @@ pub fn key(field: VoxelBrushField) -> &'static str {
 pub fn tooltip(field: VoxelBrushField) -> &'static str {
     match field {
         VoxelBrushField::Mode => {
-            "Carve or fill balls, dragging; mark out a box, dragging; click an area's or a cover's outline, closing it on its first point; click to print a Voxel Print; or dig and build a voxel at a time. Shift digs in place of filling"
+            "Carve or fill balls, dragging; mark out a box, dragging; click an area's or a cover's outline, closing it on its first point; click to print a Voxel Print; dig and build a voxel at a time; or cut grass and trees, dragging. Shift digs in place of filling"
         }
         VoxelBrushField::Size => "The balls' radius, in metres",
         VoxelBrushField::Ground => "The ground or paving it fills with",
@@ -350,14 +370,20 @@ pub struct VoxelTools {
     outline: Option<(Entity, Vec<Vec3>)>,
 }
 
-/// Where a ray through `point` meets `entity`'s endless volume's ground.
+/// Where a ray through `point` meets `entity`'s endless volume's ground,
+/// and its grass, cover and crops while the brush cuts.
 fn ground_under(game: &Game, camera: &ViewCamera, entity: Entity, point: [f32; 2]) -> Option<Vec3> {
     let world = &game.engine.world;
     if !world.get::<VoxelVolume>(entity).is_some_and(|volume| volume.endless) {
         return None;
     }
     let (origin, direction) = camera.ray(point);
-    voxear_engine::voxel_volumes::raycast(world, origin, direction, REACH, Some(entity)).map(|(_, hit)| hit.point)
+    let meets = match ui(world).mode {
+        VoxelBrushMode::Cut => voxear_render::VoxelRayMeets::Cover,
+        _ => voxear_render::VoxelRayMeets::Solid,
+    };
+    voxear_engine::voxel_volumes::raycast_meeting(world, origin, direction, REACH, meets, Some(entity))
+        .map(|(_, hit)| hit.point)
 }
 
 /// The box a drag from `from` to `to` marks out, turned `turn` degrees about
@@ -519,6 +545,15 @@ impl VoxelTools {
     fn dab(&mut self, game: &mut Game, at: Vec3) {
         let Some(stroke) = &mut self.stroke else { return };
         let ui = ui(&game.engine.world);
+        if ui.mode == VoxelBrushMode::Cut {
+            use voxear_engine::voxel_felling::{CutOptions, CutPieces, cut};
+            // In the editor nothing falls: what comes loose is taken away.
+            let pieces = if game.engine.is_edit_mode() { CutPieces::Gone } else { CutPieces::Fall };
+            let ball = voxear_render::VoxelCut::Ball { at, radius: ui.size };
+            cut(&mut game.engine.world, &ball, CutOptions { pieces, ..CutOptions::default() }, Some(stroke.entity));
+            stroke.last = at;
+            return;
+        }
         let mut data = VoxelEditData::ball(at.to_array(), ui.size, stroke.fill.then_some(ui.ground));
         data.tint = ui.tint().filter(|_| stroke.fill);
         voxear_engine::voxel_volumes::shape_edit(&mut game.engine.world, &data, Some(stroke.entity));
@@ -555,7 +590,11 @@ impl VoxelTools {
         let ui = ui(&game.engine.world);
         let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
         let fill = self.stroke.as_ref().map_or((ui.mode != VoxelBrushMode::Carve) != shift, |stroke| stroke.fill);
-        let color = Color::hex(if fill { FILL_COLOR } else { CARVE_COLOR });
+        let color = Color::hex(match ui.mode {
+            VoxelBrushMode::Cut => CUT_COLOR,
+            _ if fill => FILL_COLOR,
+            _ => CARVE_COLOR,
+        });
         let mut shapes = Vec::new();
         match ui.mode {
             VoxelBrushMode::Print => return print_box(game, camera, &ui, at),

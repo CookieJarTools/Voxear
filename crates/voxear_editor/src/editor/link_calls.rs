@@ -308,6 +308,7 @@ impl Editor {
             "voxels.print" => self.voxels_print(args),
             "voxels.box" | "voxels.ramp" | "voxels.area" | "voxels.cover" => self.voxels_shape(call, args),
             "voxels.dig" | "voxels.place" | "voxels.restore" => self.voxels_set(call, args),
+            "voxels.cut" => self.voxels_cut(args),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
             "blocks.restore" => self.blocks_restore(args),
@@ -2498,15 +2499,88 @@ impl Editor {
             _ => None,
         };
         let world = &self.game.engine.world;
-        match voxear_engine::voxel_volumes::raycast(world, from, direction, reach, only) {
+        let meets = match args.get("cover").and_then(Json::as_bool) {
+            Some(true) => voxear_render::VoxelRayMeets::Cover,
+            _ => voxear_render::VoxelRayMeets::Solid,
+        };
+        match voxear_engine::voxel_volumes::raycast_meeting(world, from, direction, reach, meets, only) {
             Some((entity, hit)) => done(json!({
                 "obj": obj_ref(&self.game, entity),
                 "point": hit.point.to_array(),
                 "normal": hit.normal.to_array(),
                 "distance": hit.distance,
+                "cover": hit.cover,
             })),
-            None => done(json!({ "obj": null, "point": null, "normal": null, "distance": null })),
+            None => done(json!({ "obj": null, "point": null, "normal": null, "distance": null, "cover": false })),
         }
+    }
+
+    fn voxels_cut(&mut self, args: &Json) -> Called {
+        use voxear_engine::voxel_felling::{CutOptions, CutPieces};
+        use voxear_render::{VoxelCut, VoxelVolume};
+        let cut = match args.get("points").filter(|points| !points.is_null()) {
+            Some(points) => {
+                let points = points.as_array().ok_or_else(|| bad("`points` is a list of [x, y, z]"))?;
+                let points: Option<Vec<Vec3>> = points
+                    .iter()
+                    .map(|point| {
+                        let p = point.as_array()?;
+                        Some(Vec3::new(p.first()?.as_f64()? as f32, p.get(1)?.as_f64()? as f32, p.get(2)?.as_f64()? as f32))
+                    })
+                    .collect();
+                VoxelCut::Points(points.ok_or_else(|| bad("each of `points` is [x, y, z], in metres"))?)
+            }
+            None => {
+                let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` or `points` is needed"))?);
+                let radius = need(args, "radius")?.as_f64().ok_or_else(|| bad("`radius` is a number of metres"))?;
+                let radius = (radius as f32).max(0.0);
+                match opt_vector(args, "across")? {
+                    Some(across) => VoxelCut::Slice { at, across: Vec3::from_array(across), radius },
+                    None => VoxelCut::Ball { at, radius },
+                }
+            }
+        };
+        let toward = opt_vector(args, "fall")?.map(Vec3::from_array);
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        // In the editor nothing falls: what comes loose is taken away.
+        let pieces = if self.game.engine.is_edit_mode() { CutPieces::Gone } else { CutPieces::Fall };
+        let volumes: Vec<Entity> = self
+            .game
+            .engine
+            .world
+            .query_ref::<(Entity, &VoxelVolume)>()
+            .into_iter()
+            .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        let (mut reached, mut columns, mut voxels, mut felled) = (0, 0, 0, Vec::new());
+        for entity in volumes {
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            let world = &mut self.game.engine.world;
+            let made = voxear_engine::voxel_felling::cut(world, &cut, CutOptions { toward, pieces, rest: None }, Some(entity));
+            if made.reached > 0 {
+                reached += 1;
+                (columns, voxels) = (columns + made.columns, voxels + made.voxels);
+                felled.extend(made.pieces);
+                self.record_change(entity, before);
+            }
+        }
+        let pieces: Vec<Json> = felled
+            .iter()
+            .map(|piece| {
+                json!({
+                    "obj": piece.obj.map(|obj| obj_ref(&self.game, obj)),
+                    "place": piece.place.to_array(),
+                    "size": piece.size.to_array(),
+                    "logs": piece.logs,
+                    "leaves": piece.leaves,
+                })
+            })
+            .collect();
+        done(json!({ "reached": reached, "columns": columns, "voxels": voxels, "pieces": pieces }))
     }
 
     fn voxels_water_at(&mut self, args: &Json) -> Called {

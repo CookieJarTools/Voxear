@@ -895,6 +895,50 @@ fn a_tool_carves_and_fills_an_endless_voxel_volume_each_one_step_to_undo() {
 }
 
 #[test]
+fn a_tool_cuts_an_endless_volumes_grass_which_fades_one_step_to_undo_and_is_saved() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Voxels", "position": [0, 0, 0] }));
+    let volume = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": volume, "component": "voxel_volume" }));
+    let endless = json!({ "obj": volume, "component": "voxel_volume", "field": "endless", "value": true });
+    done(&mut editor, &mut renderer, "field.set", endless);
+    // A ray meeting cover stops in the grass, over where it meets the ground.
+    let down = |cover: bool| json!({ "from": [4.03, 10.0, 4.03], "direction": [0, -1, 0], "cover": cover });
+    let ground = done(&mut editor, &mut renderer, "voxels.raycast", down(false));
+    let grass = done(&mut editor, &mut renderer, "voxels.raycast", down(true));
+    assert!(grass["cover"] == true && grass["distance"].as_f64() < ground["distance"].as_f64(), "{grass} over {ground}");
+    let cut = done(&mut editor, &mut renderer, "voxels.cut", json!({ "at": grass["point"], "radius": 1.0 }));
+    assert_eq!(cut["reached"], 1, "{cut}");
+    assert!(cut["columns"].as_u64().unwrap() > 500, "{cut}");
+    // It fades over the next frames, and is met by the ray no more.
+    frames(&mut editor, &mut renderer, 60);
+    let after = done(&mut editor, &mut renderer, "voxels.raycast", down(true));
+    assert_eq!(after["cover"], false, "{after}");
+    let refused = ask(&mut editor, &mut renderer, "voxels.cut", json!({ "at": [0, 0, 0] })).unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::BadArguments, "no radius: {refused}");
+    // Felled trees stamped back, and the grass growing back in two minutes, as the Inspector sets them.
+    for (field, value) in [("felled", json!("Stamped")), ("regrow", json!(120.0))] {
+        let set = json!({ "obj": volume, "component": "voxel_volume", "field": field, "value": value });
+        assert_eq!(done(&mut editor, &mut renderer, "field.set", set)["changed"], true);
+    }
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let path = saved["saved"].as_array().unwrap().iter().filter_map(|p| p.as_str()).find(|p| !p.ends_with(".vxr")).unwrap().to_string();
+    let scene = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    for written in ["felled = \"stamped\"", "regrow = 120.0", "regions = [[0, 0]]"] {
+        assert!(scene.contains(written), "{written} saved:\n{scene}");
+    }
+    let entity = link::resolve_obj(&editor.game, &volume).unwrap();
+    let cut_columns = |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().changes.cuts().count();
+    assert!(cut_columns(&editor) > 0);
+    // The settings and then the cut taken back, a step each.
+    for _ in 0..3 {
+        done(&mut editor, &mut renderer, "undo", json!({}));
+    }
+    assert_eq!(cut_columns(&editor), 0, "the cut taken back");
+}
+
+#[test]
 fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_one_step_to_undo() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

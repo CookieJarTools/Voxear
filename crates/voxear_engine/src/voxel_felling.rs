@@ -50,6 +50,49 @@ pub enum CutPieces {
     Gone,
 }
 
+/// What becomes of a felled piece once it has come to rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PieceRest {
+    /// It stays a body of its own, which can be pushed and rolled.
+    Stay,
+    /// It becomes voxels of its volume again where it lies.
+    Stamp,
+    /// It is taken away: as when the game puts something of its own there.
+    Remove,
+}
+
+/// How a cut is made: which way across what comes loose falls (none for
+/// away from the cut), whether it falls or is taken away at once, and what
+/// becomes of it at rest (none for what its volume's Felled says).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CutOptions {
+    pub toward: Option<Vec3>,
+    pub pieces: CutPieces,
+    pub rest: Option<PieceRest>,
+}
+
+/// A piece of tree a cut took loose: its Obj while it is a body (none once
+/// taken away), where the middle of its logs is in the world, its size in
+/// metres as it was cut, how many voxels of logs and of leaves it has, and
+/// whether it has come to rest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FelledPiece {
+    pub obj: Option<Entity>,
+    pub place: Vec3,
+    pub size: Vec3,
+    pub logs: usize,
+    pub leaves: usize,
+    pub resting: bool,
+}
+
+impl FelledPiece {
+    fn of(obj: Option<Entity>, place: Vec3, piece: &VoxelPiece, resting: bool) -> Self {
+        let logs = piece.logs();
+        let size = Vec3::from(piece.size.map(|a| a as f32)) * piece.voxel;
+        Self { obj, place, size, logs, leaves: piece.voxels.len() - logs, resting }
+    }
+}
+
 /// Where a felled piece is in its fall.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PieceFall {
@@ -75,6 +118,8 @@ pub struct VoxelPieceBody {
     pub middle: Vec3,
     /// Which way across it was cut to fall.
     pub toward: Vec3,
+    /// What becomes of it at rest: none for what its volume's Felled says.
+    pub rest: Option<PieceRest>,
     /// How far its logs reach from its place, in metres.
     pub reach: f32,
     pub fall: PieceFall,
@@ -92,15 +137,15 @@ pub struct CutDone {
     pub reached: usize,
     pub columns: usize,
     pub voxels: usize,
-    pub pieces: Vec<Entity>,
+    pub pieces: Vec<FelledPiece>,
 }
 
 /// Cuts every endless Voxel Volume `cut` reaches (in the world), or
 /// `only`'s alone: the grass, cover and crops of the columns it reaches,
-/// and the logs and leaves, the trees felled. What comes loose falls the
-/// way `toward` says across, or away from the cut, or is taken away, as
-/// `pieces` says. Kept with the volume and saved with its other changes.
-pub fn cut(world: &mut World, cut: &VoxelCut, toward: Option<Vec3>, pieces: CutPieces, only: Option<Entity>) -> CutDone {
+/// and the logs and leaves, the trees felled. What comes loose falls, or
+/// is taken away, and rests, as `options` say. Kept with the volume and
+/// saved with its other changes.
+pub fn cut(world: &mut World, cut: &VoxelCut, options: CutOptions, only: Option<Entity>) -> CutDone {
     let volumes: Vec<(Entity, Vec3)> = world
         .query_ref::<(Entity, &VoxelVolume, &Transform, Option<&voxear_scene::WorldTransform>)>()
         .without::<voxear_scene::Destroying>()
@@ -113,7 +158,9 @@ pub fn cut(world: &mut World, cut: &VoxelCut, toward: Option<Vec3>, pieces: CutP
         let local = match cut {
             VoxelCut::Points(points) => VoxelCut::Points(points.iter().map(|p| *p - corner).collect()),
             VoxelCut::Ball { at, radius } => VoxelCut::Ball { at: *at - corner, radius: *radius },
-            VoxelCut::Slice { at, across, radius } => VoxelCut::Slice { at: *at - corner, across: *across, radius: *radius },
+            VoxelCut::Slice { at, across, radius } => {
+                VoxelCut::Slice { at: *at - corner, across: *across, radius: *radius }
+            }
         };
         let Some(volume) = world.get::<VoxelVolume>(entity).cloned() else { continue };
         let (changes, made) = voxear_render::voxel_cut(&volume, &local);
@@ -126,15 +173,17 @@ pub fn cut(world: &mut World, cut: &VoxelCut, toward: Option<Vec3>, pieces: CutP
         done.reached += 1;
         done.columns += made.columns;
         done.voxels += made.voxels;
-        if pieces == CutPieces::Gone {
-            continue;
-        }
         let middle_of_cut = match &local {
             VoxelCut::Points(points) => points.iter().fold(Vec3::ZERO, |sum, p| sum + *p) / points.len().max(1) as f32,
             VoxelCut::Ball { at, .. } | VoxelCut::Slice { at, .. } => *at,
         };
         for piece in made.pieces {
-            done.pieces.push(spawn(world, entity, corner, piece, middle_of_cut + corner, toward));
+            let place = corner + piece.low.as_vec3() * piece.voxel + piece.middle();
+            let obj = match options.pieces {
+                CutPieces::Gone => None,
+                CutPieces::Fall => Some(spawn(world, entity, corner, piece.clone(), middle_of_cut + corner, options)),
+            };
+            done.pieces.push(FelledPiece::of(obj, place, &piece, false));
         }
     }
     done
@@ -142,7 +191,15 @@ pub fn cut(world: &mut World, cut: &VoxelCut, toward: Option<Vec3>, pieces: CutP
 
 /// A piece's Obj, held where it was cut from the volume `volume` whose
 /// corner is at `corner`.
-fn spawn(world: &mut World, volume: Entity, corner: Vec3, piece: VoxelPiece, cut_at: Vec3, toward: Option<Vec3>) -> Entity {
+fn spawn(
+    world: &mut World,
+    volume: Entity,
+    corner: Vec3,
+    piece: VoxelPiece,
+    cut_at: Vec3,
+    options: CutOptions,
+) -> Entity {
+    let toward = options.toward;
     let middle = piece.middle();
     let place = corner + piece.low.as_vec3() * piece.voxel + middle;
     let boxes: Vec<(Vec3, Vec3)> = piece.boxes(MOST_BOXES).into_iter().map(|(at, half)| (at - middle, half)).collect();
@@ -156,7 +213,8 @@ fn spawn(world: &mut World, volume: Entity, corner: Vec3, piece: VoxelPiece, cut
         let turn = (place.x * 12.9898 + place.z * 78.233).sin() * 43758.545;
         Vec3::new(turn.cos(), 0.0, turn.sin())
     });
-    let key = place.to_array().iter().fold(piece.voxels.len() as u64, |key, a| key.rotate_left(17) ^ u64::from(a.to_bits()));
+    let key =
+        place.to_array().iter().fold(piece.voxels.len() as u64, |key, a| key.rotate_left(17) ^ u64::from(a.to_bits()));
     let collider = Collider { friction: 0.8, acoustic: Acoustic::Wood, ..Collider::default() };
     let rigidbody = Rigidbody { mass, kinematic: true, angular_drag: 0.3, ..Rigidbody::default() };
     let reach = boxes.iter().map(|(at, half)| at.length() + half.length()).fold(0.0, f32::max);
@@ -165,6 +223,7 @@ fn spawn(world: &mut World, volume: Entity, corner: Vec3, piece: VoxelPiece, cut
         piece: Arc::new(piece),
         middle,
         toward: toward.normalize(),
+        rest: options.rest,
         reach,
         fall: PieceFall::Waiting,
         falling: 0.0,
@@ -195,7 +254,8 @@ pub fn fall(world: &mut World, dt: f32) {
         match body.fall {
             PieceFall::Waiting => {
                 // Where it may fall: round it and under it.
-                let (low, high) = (place.0 - body.reach - 1.0, place.0 + Vec3::new(body.reach + 1.0, 1.0, body.reach + 1.0));
+                let (low, high) =
+                    (place.0 - body.reach - 1.0, place.0 + Vec3::new(body.reach + 1.0, 1.0, body.reach + 1.0));
                 if physics.body(entity).is_some() && physics.voxels_ready(body.volume, low, high) {
                     if let Some(rigidbody) = world.get_mut::<Rigidbody>(entity) {
                         rigidbody.kinematic = false;
@@ -213,7 +273,8 @@ pub fn fall(world: &mut World, dt: f32) {
             }
             PieceFall::Falling => {
                 body.falling += dt;
-                let (linear, angular) = physics.body(entity).map_or((Vec3::ZERO, Vec3::ZERO), |id| physics.world().velocity(id));
+                let (linear, angular) =
+                    physics.body(entity).map_or((Vec3::ZERO, Vec3::ZERO), |id| physics.world().velocity(id));
                 let asleep = physics.body(entity).is_some_and(|id| !physics.world().is_active(id));
                 body.still = if asleep || (linear.length() < STILL_SPEED && angular.length() < STILL_SPEED) {
                     body.still + dt
@@ -222,9 +283,14 @@ pub fn fall(world: &mut World, dt: f32) {
                 };
                 if (body.still >= STILL_FOR && body.falling > 0.5) || body.falling > LONGEST_FALL {
                     body.fall = PieceFall::Resting;
-                    let felled = world.get::<VoxelVolume>(body.volume).map(|volume| volume.felled);
-                    if felled == Some(VoxelFelled::Stamped) {
-                        stamp.push((entity, body.clone(), place));
+                    let felled = world.get::<VoxelVolume>(body.volume).map(|volume| match volume.felled {
+                        VoxelFelled::Body => PieceRest::Stay,
+                        VoxelFelled::Stamped => PieceRest::Stamp,
+                    });
+                    match body.rest.or(felled) {
+                        Some(PieceRest::Stamp) => stamp.push((entity, Some(body.clone()), place)),
+                        Some(PieceRest::Remove) => stamp.push((entity, None, place)),
+                        _ => {}
                     }
                 }
             }
@@ -236,19 +302,51 @@ pub fn fall(world: &mut World, dt: f32) {
     }
     world.insert_resource(physics);
     for (entity, body, (position, rotation)) in stamp {
-        stamp_back(world, &body, position, rotation);
+        if let Some(body) = body {
+            stamp_back(world, &body, position, rotation);
+        }
         world.despawn(entity);
     }
+}
+
+/// What felled piece `entity` is: none for an Obj that is not one.
+pub fn piece(world: &World, entity: Entity) -> Option<FelledPiece> {
+    let body = world.get::<VoxelPieceBody>(entity)?;
+    let place = world.get::<Transform>(entity)?.position;
+    Some(FelledPiece::of(Some(entity), place, &body.piece, body.fall == PieceFall::Resting))
+}
+
+/// Stamps felled piece `entity` into its volume where it lies now, whether
+/// at rest or not, and takes its Obj away: whether it was a piece.
+pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
+    let Some(body) = world.get::<VoxelPieceBody>(entity).cloned() else { return false };
+    let Some((position, rotation)) = world.get::<Transform>(entity).map(|t| (t.position, t.rotation)) else {
+        return false;
+    };
+    stamp_back(world, &body, position, rotation);
+    world.despawn(entity);
+    true
+}
+
+/// Takes felled piece `entity` away: whether it was a piece.
+pub fn remove_piece(world: &mut World, entity: Entity) -> bool {
+    if world.get::<VoxelPieceBody>(entity).is_none() {
+        return false;
+    }
+    world.despawn(entity);
+    true
 }
 
 /// Stamps a piece back into its volume where it lies, its Obj at
 /// `position`, turned `rotation`.
 fn stamp_back(world: &mut World, body: &VoxelPieceBody, position: Vec3, rotation: Quat) {
     let Some(corner) = world.get::<Transform>(body.volume).map(|t| t.position) else { return };
-    let corner = world.get::<voxear_scene::WorldTransform>(body.volume).map_or(corner, |placed| placed.0.w_axis.truncate());
+    let corner =
+        world.get::<voxear_scene::WorldTransform>(body.volume).map_or(corner, |placed| placed.0.w_axis.truncate());
     let Some(volume) = world.get::<VoxelVolume>(body.volume).cloned() else { return };
     // From metres of the piece's box to metres from the volume's corner.
-    let pose = Mat4::from_translation(position - corner) * Mat4::from_quat(rotation) * Mat4::from_translation(-body.middle);
+    let pose =
+        Mat4::from_translation(position - corner) * Mat4::from_quat(rotation) * Mat4::from_translation(-body.middle);
     let mut changes = (*volume.changes).clone();
     voxear_render::voxel_stamp(&volume, &mut changes, &body.piece, pose);
     if let Some(volume) = world.get_mut::<VoxelVolume>(body.volume) {
@@ -321,25 +419,72 @@ pub fn draw(world: &mut World, renderer: &mut voxear_render::Renderer) {
     let undrawn: Vec<(Entity, Arc<VoxelPiece>, Vec3)> = world
         .query_ref::<(Entity, &VoxelPieceBody)>()
         .without::<voxear_render::MeshRenderer>()
+        .without::<Undrawn>()
         .into_iter()
         .map(|(entity, body)| (entity, body.piece.clone(), body.middle))
         .collect();
     for (entity, piece, middle) in undrawn {
-        let model = piece_model(&piece, middle);
-        let mut mesh = model.mesh();
-        mesh.skin.clear();
+        let (model, mesh) = piece_mesh(&piece, middle);
         let made = renderer.add_mesh(&mesh).and_then(|mesh| Ok((mesh, renderer.upload_look(&model.prepared(""))?)));
         match made {
             Ok((mesh, materials)) => {
-                if let Some(&material) = materials.first() {
-                    world.insert(entity, voxear_render::MeshRenderer::new(mesh, material));
-                }
+                match materials.first() {
+                    Some(&material) => world.insert(entity, voxear_render::MeshRenderer::new(mesh, material)),
+                    None => world.insert(entity, Undrawn),
+                };
                 meshes.0.push((entity, mesh, materials));
             }
-            Err(error) => tracing::warn!("a felled tree's piece could not be drawn: {error:#}"),
+            Err(error) => {
+                // Not tried again each frame: it stays a body, unseen.
+                tracing::warn!("a felled tree's piece could not be drawn: {error:#}");
+                world.insert(entity, Undrawn);
+            }
         }
     }
     world.insert_resource(meshes);
+}
+
+/// Marks a felled piece whose mesh could not be made, not to try again.
+struct Undrawn;
+
+impl Component for Undrawn {}
+
+/// How many voxels of leaves a piece may have and still be drawn in cubes of
+/// one voxel, then of two: past those, of four. A crown of leaves drawn a
+/// voxel to a cube is most of a million vertices.
+const FINE_LEAVES: usize = 2_000;
+const HALF_LEAVES: usize = 15_000;
+
+/// A piece's mesh, in metres from `middle`: its logs a cube a voxel, its
+/// leaves in cubes of one, two or four voxels a side as there are more of
+/// them, a cube the colour of the first of its voxels; and the box model of
+/// its logs, whose look (its palette's texture) both are drawn with.
+pub fn piece_mesh(piece: &VoxelPiece, middle: Vec3) -> (voxear_render::BoxModel, voxear_render::MeshData) {
+    let (logs, leaves): (Vec<_>, Vec<_>) = piece.voxels.iter().copied().partition(|(_, place)| piece.is_wood(*place));
+    let coarse: u16 = match leaves.len() {
+        n if n <= FINE_LEAVES => 1,
+        n if n <= HALF_LEAVES => 2,
+        _ => 4,
+    };
+    let wood = VoxelPiece { voxels: logs, ..piece.clone() };
+    let mut grouped: Vec<([u16; 3], u8)> =
+        leaves.into_iter().map(|(c, place)| (c.map(|a| a / coarse), place)).collect();
+    grouped.sort_by_key(|(c, _)| *c);
+    grouped.dedup_by_key(|(c, _)| *c);
+    let crown = VoxelPiece {
+        voxels: grouped,
+        size: piece.size.map(|a| a.div_ceil(u32::from(coarse))),
+        voxel: piece.voxel * f32::from(coarse),
+        ..piece.clone()
+    };
+    let model = piece_model(&wood, middle);
+    let mut mesh = model.mesh();
+    let more = piece_model(&crown, middle).mesh();
+    let first = mesh.vertices.len() as u32;
+    mesh.vertices.extend(more.vertices);
+    mesh.indices.extend(more.indices.iter().map(|index| index + first));
+    mesh.skin.clear();
+    (model, mesh)
 }
 
 /// A piece as a box model of its voxels' cubes, one bone, in boxes of at

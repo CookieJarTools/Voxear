@@ -88,8 +88,9 @@ public static unsafe partial class Voxels
 	/// <summary>
 	/// Where a ray from <paramref name="origin"/> along <paramref name="direction"/> first meets the ground of an
 	/// endless Voxel Volume within <paramref name="maxDistance"/> metres: its ground as it is made and as it was changed,
-	/// the prints printed into it with the rest, and its trees' logs and leaves; not its grass or flowers. Every machine
-	/// finds the same, so a game can carve where a player aims.
+	/// the prints printed into it with the rest, and its trees' logs and leaves; and with <paramref name="meets"/>
+	/// <see cref="VoxelRayMeets.Cover"/> its grass, cover and crops too, as tall as they grow, for a blade to cut them.
+	/// Every machine finds the same, so a game can carve where a player aims.
 	/// <code>
 	/// // Dig where the player looks.
 	/// if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f) &amp;&amp; Input.Pressed(dig))
@@ -98,22 +99,22 @@ public static unsafe partial class Voxels
 	/// }
 	/// </code>
 	/// </summary>
-	public static bool Raycast(Vector3 origin, Vector3 direction, out VoxelHit hit, float maxDistance = 1000f)
+	public static bool Raycast(Vector3 origin, Vector3 direction, out VoxelHit hit, float maxDistance = 1000f, VoxelRayMeets meets = VoxelRayMeets.Solid)
 	{
 		hit = default;
 		if (!Native.IsConnected)
 		{
 			return false;
 		}
-		var found = stackalloc float[7];
+		var found = stackalloc float[8];
 		ulong obj = 0;
-		if (Native.Api->VoxelRaycast(&origin, &direction, maxDistance, found, &obj) != 1)
+		if (Native.Api->VoxelRaycastMeeting(&origin, &direction, maxDistance, (int)meets, found, &obj) != 1)
 		{
 			return false;
 		}
 		var point = new Vector3(found[0], found[1], found[2]);
 		var normal = new Vector3(found[3], found[4], found[5]);
-		hit = new VoxelHit(point, normal, found[6], new Obj(obj));
+		hit = new VoxelHit(point, normal, found[6], new Obj(obj), found[7] != 0f);
 		return true;
 	}
 

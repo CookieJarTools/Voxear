@@ -256,7 +256,9 @@ pub fn cut(volume: &VoxelVolume, cut: &VoxelCut) -> (VoxelChanges, VoxelCutDone)
                     // The voxel of the grass's layer nearest the middle, or any a slice passes through.
                     let reached = match cut {
                         VoxelCut::Slice { .. } => (h + 1..=h + layer).any(|y| cut.holds(IVec3::new(x, y, z), voxel)),
-                        _ => cut.holds(IVec3::new(x, ((at.y / voxel).floor() as i32).clamp(h + 1, h + layer), z), voxel),
+                        _ => {
+                            cut.holds(IVec3::new(x, ((at.y / voxel).floor() as i32).clamp(h + 1, h + layer), z), voxel)
+                        }
                     };
                     if reached {
                         columns.insert([x, z]);
@@ -393,13 +395,11 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
     // Of those, the trees whose logs may touch the cut ones': the cut trees, and any whose logs' box meets the box of
     // one taken, until no more are.
     let b = woods.block;
-    let mut log_blocks: Vec<_> = near.iter().map(|tree| woods.log_blocks(tree)).collect();
-    let boxes: Vec<(IVec3, IVec3)> = log_blocks
+    let boxes: Vec<(IVec3, IVec3)> = near
         .iter()
-        .map(|blocks| {
-            blocks.values().fold((IVec3::MAX, IVec3::MIN), |(l, m), (corner, _)| {
-                (l.min(IVec3::from(*corner)), m.max(IVec3::from(*corner) + b - 1))
-            })
+        .map(|tree| {
+            let (low, high) = woods.log_bounds(tree);
+            (IVec3::from(low), IVec3::from(high))
         })
         .collect();
     let mut taken: Vec<bool> = near.iter().map(|tree| cut.iter().any(|c| c.foot == tree.foot)).collect();
@@ -418,19 +418,20 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
         more.into_iter().for_each(|i| taken[i] = true);
     }
     let trees: Vec<Tree> = near.iter().zip(&taken).filter(|(_, taken)| **taken).map(|(tree, _)| *tree).collect();
-    let mut log_blocks: Vec<_> = log_blocks.drain(..).zip(&taken).filter(|(_, taken)| **taken).map(|(blocks, _)| blocks).collect();
+    let mut log_blocks: Vec<_> = trees.iter().map(|tree| woods.log_blocks(tree)).collect();
     let edits = ground.edits_near(low, high);
     // Whether a tree's voxel is there still (nothing set or edited over it, and no ground), and whether it is solid
     // without the trees.
-    let mut there = |ground: &mut Ground, c: IVec3| {
+    let there = |ground: &mut Ground, c: IVec3| {
         let (solid, held) = ground.without_trees(c, &edits);
         !solid && !held
     };
-    let mut solid = |ground: &mut Ground, c: IVec3| ground.without_trees(c, &edits).0;
+    let solid = |ground: &mut Ground, c: IVec3| ground.without_trees(c, &edits).0;
     // Their logs as they are now, block by block of their plants, each block in pieces that touch.
     let mut logs: HashSet<IVec3> = HashSet::new();
     let mut segments: Vec<Segment> = Vec::new();
     let mut blocks: HashMap<(usize, [i32; 3]), Vec<usize>> = HashMap::new();
+    let mut corners: Vec<(usize, IVec3, Vec<usize>)> = Vec::new();
     for (t, own) in log_blocks.iter_mut().enumerate() {
         for (block, (corner, all)) in std::mem::take(own) {
             let present: Vec<IVec3> = all.iter().map(|c| IVec3::from(*c)).filter(|c| there(&mut ground, *c)).collect();
@@ -449,14 +450,24 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
                 _ => 1,
             };
             let slice = |c: &IVec3| (c[axis] - corner[axis]).clamp(0, b - 1);
-            // Its logs left, in pieces that touch: a cut through the block, straight or aslant, leaves two.
-            let left: HashSet<IVec3> = present.iter().copied().collect();
-            let mut seen: HashSet<IVec3> = HashSet::new();
+            // Its logs left, in pieces that touch: a cut through the block, straight or aslant, leaves two. Worked
+            // out on the block's own grid: 0 none, 1 a log, 2 one taken.
+            let corner = IVec3::from(corner);
+            let inside = |c: IVec3| {
+                let l = c - corner;
+                (l.cmpge(IVec3::ZERO).all() && l.cmplt(IVec3::splat(b)).all())
+                    .then(|| (l.x + b * (l.y + b * l.z)) as usize)
+            };
+            let mut grid = vec![0u8; (b * b * b) as usize];
+            for c in &present {
+                if let Some(at) = inside(*c) {
+                    grid[at] = 1;
+                }
+            }
             let mut ids = Vec::new();
             for &start in &present {
-                if !seen.insert(start) {
-                    continue;
-                }
+                let Some(first) = inside(start).filter(|&at| grid[at] == 1) else { continue };
+                grid[first] = 2;
                 let mut voxels = vec![start];
                 let mut at = 0;
                 while at < voxels.len() {
@@ -464,7 +475,8 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
                     at += 1;
                     for i in 0..27 {
                         let n = c + IVec3::new(i % 3 - 1, (i / 3) % 3 - 1, i / 9 - 1);
-                        if left.contains(&n) && seen.insert(n) {
+                        if let Some(k) = inside(n).filter(|&k| grid[k] == 1) {
+                            grid[k] = 2;
                             voxels.push(n);
                         }
                     }
@@ -478,6 +490,7 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
                 }
                 ids.push(push(&mut segments, Segment { tree: t, axis, first, last, middle, voxels }));
             }
+            corners.push((t, corner, ids.clone()));
             blocks.insert((t, block), ids);
         }
     }
@@ -487,14 +500,17 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
     let reaching = |ids: &[usize], segments: &[Segment], toward: IVec3| -> Option<usize> {
         let first = *ids.first()?;
         let (axis, way) = (segments[first].axis, toward[segments[first].axis]);
-        ids.iter().copied().find(|&id| {
-            let segment = &segments[id];
-            match way {
-                w if w < 0 => segment.first,
-                w if w > 0 => segment.last,
-                _ => segment.middle,
-            }
-        }).filter(|_| axis < 3)
+        ids.iter()
+            .copied()
+            .find(|&id| {
+                let segment = &segments[id];
+                match way {
+                    w if w < 0 => segment.first,
+                    w if w > 0 => segment.last,
+                    _ => segment.middle,
+                }
+            })
+            .filter(|_| axis < 3)
     };
     for ((t, block), ids) in &blocks {
         for i in 0..27 {
@@ -509,28 +525,41 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
             }
         }
     }
-    // Logs of trees grown into each other join them where they touch.
-    if trees.len() > 1 {
-        let mut owner: HashMap<IVec3, usize> = HashMap::new();
-        for (id, segment) in segments.iter().enumerate() {
-            for c in &segment.voxels {
-                if let Some(&other) = owner.get(c) {
-                    joined.join(id, other);
-                }
-                owner.insert(*c, id);
-            }
+    // Logs of trees grown into each other join them where they touch: looked for only in the blocks of a tree within
+    // a voxel of a block of another.
+    let mut by_place: HashMap<IVec3, Vec<(usize, IVec3)>> = HashMap::new();
+    for (t, corner, _) in &corners {
+        by_place.entry(corner.div_euclid(IVec3::splat(b))).or_default().push((*t, *corner));
+    }
+    let mut bordering: Vec<usize> = Vec::new();
+    for (t, corner, ids) in &corners {
+        let place = corner.div_euclid(IVec3::splat(b));
+        let close = (0..27).map(|i| place + IVec3::new(i % 3 - 1, (i / 3) % 3 - 1, i / 9 - 1)).any(|p| {
+            by_place
+                .get(&p)
+                .is_some_and(|others| others.iter().any(|(o, c)| o != t && (*c - *corner).abs().max_element() <= b))
+        });
+        if close {
+            bordering.extend(ids.iter().copied());
         }
-        let touching = |c: IVec3| {
-            (0..27).filter(|&i| i != 13).map(move |i| c + IVec3::new(i % 3 - 1, (i / 3) % 3 - 1, i / 9 - 1))
-        };
-        for (id, segment) in segments.iter().enumerate() {
-            for c in &segment.voxels {
-                for n in touching(*c) {
-                    if let Some(&other) = owner.get(&n)
-                        && segments[other].tree != segment.tree
-                    {
-                        joined.join(id, other);
-                    }
+    }
+    let mut owner: HashMap<IVec3, usize> = HashMap::new();
+    for &id in &bordering {
+        for c in &segments[id].voxels {
+            if let Some(&other) = owner.get(c) {
+                joined.join(id, other);
+            }
+            owner.insert(*c, id);
+        }
+    }
+    for &id in &bordering {
+        for c in &segments[id].voxels {
+            for i in (0..27).filter(|&i| i != 13) {
+                let n = *c + IVec3::new(i % 3 - 1, (i / 3) % 3 - 1, i / 9 - 1);
+                if let Some(&other) = owner.get(&n)
+                    && segments[other].tree != segments[id].tree
+                {
+                    joined.join(id, other);
                 }
             }
         }
@@ -538,8 +567,16 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
     // Held: what is joined to a log on the ground, or on a log beyond these.
     const SIDES: [IVec3; 6] = [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z];
     let mut held_roots: HashSet<usize> = HashSet::new();
+    // Without edits, voxels placed or a generator's Volume, nothing is solid but the ground under its top: only logs
+    // within a voxel of that are asked about.
+    let plain = edits.is_empty()
+        && changes.kinds().is_empty()
+        && volume.generator.as_ref().is_none_or(|generator| generator.world.volume().is_none());
     for (id, segment) in segments.iter().enumerate() {
         let resting = segment.voxels.iter().any(|c| {
+            if plain && c.y > ground.height(c.x, c.z) + 1 {
+                return false;
+            }
             SIDES.iter().any(|side| {
                 let n = *c + *side;
                 !logs.contains(&n) && solid(&mut ground, n)
@@ -584,8 +621,11 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
     // its logs over what it keeps lost, loses all its leaves over that; else each brick of its leaves goes with the
     // nearest of its logs.
     let mut voxels: HashMap<IVec3, (u32, [u8; 4], bool)> = HashMap::new();
-    let losing: HashSet<usize> =
-        segments.iter().filter(|segment| segment.voxels.iter().any(|c| piece_of.contains_key(c))).map(|s| s.tree).collect();
+    let losing: HashSet<usize> = segments
+        .iter()
+        .filter(|segment| segment.voxels.iter().any(|c| piece_of.contains_key(c)))
+        .map(|s| s.tree)
+        .collect();
     for (t, tree) in trees.iter().enumerate() {
         if !losing.contains(&t) {
             continue;
@@ -721,7 +761,8 @@ pub fn stamp(volume: &VoxelVolume, changes: &mut VoxelChanges, piece: &VoxelPiec
     }
     let span = high - low + 1;
     let mut solid = vec![false; (span.x * span.y * span.z) as usize];
-    if let Some(solids) = VoxelSolids::of(&VoxelVolume { changes: std::sync::Arc::new(changes.clone()), ..volume.clone() })
+    if let Some(solids) =
+        VoxelSolids::of(&VoxelVolume { changes: std::sync::Arc::new(changes.clone()), ..volume.clone() })
     {
         solids.fill(low.to_array(), span.to_array(), &mut solid);
     }
@@ -820,7 +861,13 @@ mod tests {
             areas: Default::default(),
         }];
         let ground = VoxelGround { height: 2.0, hills: 0.0, ..VoxelGround::default() };
-        VoxelVolume { endless: true, size: Vec3::new(16.0, 32.0, 16.0), ground: Some(ground), trees, ..VoxelVolume::default() }
+        VoxelVolume {
+            endless: true,
+            size: Vec3::new(16.0, 32.0, 16.0),
+            ground: Some(ground),
+            trees,
+            ..VoxelVolume::default()
+        }
     }
 
     /// A tree standing in `volume`, and the middle of its trunk where it leaves the ground, in metres from the
@@ -884,7 +931,8 @@ mod tests {
         let piece = &done.pieces[0];
         let boxes = piece.boxes(256);
         assert!(!boxes.is_empty() && boxes.len() <= 256, "{}", boxes.len());
-        let volume_of = |boxes: &[(Vec3, Vec3)]| boxes.iter().map(|(_, half)| half.x * half.y * half.z * 8.0).sum::<f32>();
+        let volume_of =
+            |boxes: &[(Vec3, Vec3)]| boxes.iter().map(|(_, half)| half.x * half.y * half.z * 8.0).sum::<f32>();
         let logs = piece.logs() as f32 * piece.voxel.powi(3);
         assert!(volume_of(&piece.boxes(100_000)) - logs < 1e-3, "exactly the logs at one a voxel");
         // Laid on its side, high over the ground: every voxel of it is placed, turned a quarter.

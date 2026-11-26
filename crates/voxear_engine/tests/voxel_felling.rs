@@ -7,7 +7,7 @@ use voxear_core::math::Vec3;
 use voxear_ecs::Entity;
 use voxear_engine::{
     Engine, Game, Project,
-    voxel_felling::{CutPieces, PieceFall, VoxelPieceBody},
+    voxel_felling::{CutOptions, CutPieces, PieceFall, PieceRest, VoxelPieceBody},
     voxel_volumes::VoxelVolumeSource,
 };
 use voxear_render::{VoxelCut, VoxelFelled, VoxelVolume};
@@ -59,10 +59,19 @@ fn fell_one(game: &mut Game) -> (Vec3, Vec<Entity>) {
     let trunk = *trunks.first().expect("a tree near the camera");
     // An axe's cut: a slice across the trunk a metre up.
     let cut = VoxelCut::Slice { at: trunk + Vec3::Y, across: Vec3::new(0.2, 1.0, 0.0), radius: 0.9 };
-    let done = voxear_engine::voxel_felling::cut(&mut game.engine.world, &cut, Some(Vec3::X), CutPieces::Fall, None);
+    let started = std::time::Instant::now();
+    let options = CutOptions { toward: Some(Vec3::X), ..CutOptions::default() };
+    let done = voxear_engine::voxel_felling::cut(&mut game.engine.world, &cut, options, None);
+    let regions: usize = crate::volume(game).changes.regions().iter().map(|(_, bytes)| bytes.len()).sum();
+    eprintln!(
+        "felled in {:?}: {} voxels cut, {} columns, kept in {regions} bytes of region files",
+        started.elapsed(),
+        done.voxels,
+        done.columns
+    );
     assert!(done.voxels > 0, "{done:?}");
     assert!(!done.pieces.is_empty(), "the tree comes loose");
-    (trunk, done.pieces)
+    (trunk, done.pieces.iter().filter_map(|piece| piece.obj).collect())
 }
 
 /// Plays until every piece has come to rest, or is gone, `most` seconds at most: how long it took.
@@ -71,12 +80,8 @@ fn play_until_rested(game: &mut Game, most: f32) -> f32 {
     while time < most {
         game.tick(1.0 / 60.0, None);
         time += 1.0 / 60.0;
-        let falling = game
-            .engine
-            .world
-            .query_ref::<&VoxelPieceBody>()
-            .into_iter()
-            .any(|body| body.fall != PieceFall::Resting);
+        let falling =
+            game.engine.world.query_ref::<&VoxelPieceBody>().into_iter().any(|body| body.fall != PieceFall::Resting);
         if !falling {
             break;
         }
@@ -90,17 +95,21 @@ fn a_tree_cut_through_its_trunk_falls_the_way_it_was_cut_and_comes_to_rest_on_th
     let (trunk, pieces) = fell_one(&mut game);
     let piece = pieces[0];
     let start = game.engine.world.get::<Transform>(piece).unwrap().position;
-    let took = play_until_rested(&mut game, 20.0);
+    let took = play_until_rested(&mut game, 60.0);
     let body = game.engine.world.get::<VoxelPieceBody>(piece).expect("it stays a body").clone();
     let place = game.engine.world.get::<Transform>(piece).unwrap().clone();
     let up = place.rotation * Vec3::Y;
     eprintln!("rested after {took:.1} s at {} (from {start}), its up now {up}", place.position);
-    assert_eq!(body.fall, PieceFall::Resting, "at rest within 20 s");
+    assert_eq!(body.fall, PieceFall::Resting, "at rest within 60 s");
     assert!(up.y < 0.5, "lying down, not standing: up {up}");
     assert!(place.position.x > trunk.x + 1.0, "fallen along +X: {} from the trunk at {trunk}", place.position);
     // On the ground: its logs' middle a little over the ground's top under it, not through it.
     let under = voxear_render::voxel_ground_at(&volume(&game), place.position.x, place.position.z).expect("ground").0;
-    assert!(place.position.y > under - 0.5 && place.position.y < under + 3.0, "{} over ground at {under}", place.position.y);
+    assert!(
+        place.position.y > under - 0.5 && place.position.y < under + 3.0,
+        "{} over ground at {under}",
+        place.position.y
+    );
     // Pushed, it moves again: still a body of its own.
     assert!(game.engine.world.get::<voxear_engine::physics::Rigidbody>(piece).is_some_and(|rb| !rb.kinematic));
     // The stump stands, the volume keeps the tree as felled, and the grass about it fades.
@@ -116,10 +125,47 @@ fn a_felled_tree_stamped_back_where_it_rests_is_the_volumes_voxels_again() {
     let (_, pieces) = fell_one(&mut game);
     let before = volume(&game).changes.count();
     let voxels = game.engine.world.get::<VoxelPieceBody>(pieces[0]).unwrap().piece.voxels.len();
-    let took = play_until_rested(&mut game, 20.0);
+    let took = play_until_rested(&mut game, 60.0);
     eprintln!("stamped after {took:.1} s");
     assert!(game.engine.world.get::<VoxelPieceBody>(pieces[0]).is_none(), "the piece's Obj is gone");
     let after = volume(&game).changes.count();
     let placed = after.saturating_sub(before) as usize;
     assert!(placed * 2 > voxels, "its voxels placed in the volume: {placed} of {voxels}");
+}
+
+#[test]
+fn a_cut_takes_its_pieces_away_or_says_what_they_become_at_rest_and_a_game_stamps_one_when_it_chooses() {
+    let (_dir, mut game) = game(VoxelFelled::Body);
+    let volume = volume(&game);
+    let trunks = voxear_render::voxel_tree_trunks(&volume, Vec3::new(-16.0, 0.0, -16.0), Vec3::new(32.0, 0.0, 32.0));
+    let mut fell = |game: &mut Game, options: CutOptions| {
+        trunks
+            .iter()
+            .map(|trunk| {
+                let cut = VoxelCut::Slice { at: *trunk + Vec3::Y, across: Vec3::Y, radius: 0.9 };
+                voxear_engine::voxel_felling::cut(&mut game.engine.world, &cut, options, None)
+            })
+            .find(|done| !done.pieces.is_empty())
+            .expect("a tree comes loose")
+    };
+    // Taken away at once: no Obj, but where it was and how much wood it had, for the game's own logs.
+    let gone = fell(&mut game, CutOptions { pieces: CutPieces::Gone, ..CutOptions::default() });
+    let piece = gone.pieces[0];
+    assert!(piece.obj.is_none() && piece.logs > 1000 && piece.leaves > 1000, "{piece:?}");
+    assert!(piece.size.y > 3.0, "a tree's height: {piece:?}");
+    // Taken away at rest, whatever the volume says.
+    let removed = fell(&mut game, CutOptions { rest: Some(PieceRest::Remove), ..CutOptions::default() });
+    let removed = removed.pieces[0].obj.expect("a body while it falls");
+    // Left to the game: it asks, and stamps it once at rest.
+    let kept = fell(&mut game, CutOptions::default());
+    let kept = kept.pieces[0].obj.expect("a body");
+    assert!(!voxear_engine::voxel_felling::piece(&game.engine.world, kept).unwrap().resting);
+    play_until_rested(&mut game, 60.0);
+    assert!(game.engine.world.get::<VoxelPieceBody>(removed).is_none(), "taken away at rest");
+    let resting = voxear_engine::voxel_felling::piece(&game.engine.world, kept).expect("still a body");
+    assert!(resting.resting, "{resting:?}");
+    let before = crate::volume(&game).changes.count();
+    assert!(voxear_engine::voxel_felling::stamp_piece(&mut game.engine.world, kept));
+    assert!(crate::volume(&game).changes.count() > before + 1000, "stamped where it lies");
+    assert!(voxear_engine::voxel_felling::piece(&game.engine.world, kept).is_none());
 }

@@ -362,6 +362,7 @@ With an endless volume selected, set its **Brush**:
 - **Box**: drag across the ground to mark out a box's foot, turned **Brush Turn** degrees, its corners on a grid of **Brush Snap** metres (none at 0). Let go and it is filled **Brush Height** tall on the ground where the drag began, clearing **Brush Clear** over it; with Shift it is dug as deep. A Brush Height of 0.5 makes slabs.
 - **Area**: click the points of an outline across the ground, and click its first point again to close it: it is laid flat at the first point's height, Brush Height thick, clearing Brush Clear over it, or dug out with Shift.
 - **Cover**: an outline clicked as for an area, laying the ground's own top within it, Brush Height deep.
+- **Cut**: a ball as big as Brush Size sits on the grass under the pointer; drag to cut the grass, crops and trees it passes through (see [Cutting grass and felling trees](#cutting-grass-and-felling-trees)).
 
 **Brush Tint** shades the fill, white for its own colours. Each stroke, box or outline is one step to undo. The brush is the editor's own setting, kept for every volume and not saved with the scene.
 
@@ -390,6 +391,87 @@ vox editor call voxels.restore '{ "points": [[12.03, 23.97, 9.03]] }'
 
 Collision, rays and trees find the voxels set as the GPU draws them: a tree whose foot is dug away grows no more.
 
+### Cutting grass and felling trees
+
+A cut takes the grass, cover and crops off the voxel columns it reaches, and cuts through the logs and leaves in it. The ground itself is never cut: carve it for that.
+
+```csharp
+// A scythe's sweep in front of the player.
+Voxels.Cut(player.Position + player.Forward, 1.2f);
+
+// An axe's blow: a slice straight across the trunk the player looks at, the tree falling away from them.
+if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 3f))
+{
+    Voxels.Slice(hit.Point, Vector3.UnitY, 0.8f, fall: camera.Forward);
+}
+
+// A sword swung low: the ray meets the grass, not the ground under it.
+if (Voxels.Raycast(camera.Position, camera.Forward, out var blade, 2f, VoxelRayMeets.Cover) && blade.Cover)
+{
+    Voxels.Cut(blade.Point, 0.4f);
+}
+```
+
+`Voxels.Cut` takes a ball, or a list of points, each the one voxel there. `Voxels.Slice` cuts a disc a voxel thick, square to the way given: as thin as a cut through a trunk can be. Each gives what it did, a `VoxelCutDone`:
+
+- `Columns`: how many voxel columns of grass, cover and crops it cut. A swing through grass alone has these and nothing else.
+- `Voxels`: how many voxels of logs and leaves it cut through.
+- `Pieces` (and `All`, `Felled`): each piece of tree that came loose, a `VoxelFelledPiece` with its Obj, where the middle of its logs is, its size, how many voxels of logs and of leaves it has, and whether it has come to rest. A tree cut through its trunk is one piece of thousands of log voxels; a branch is a smaller one.
+
+**Cut grass.** The blades of a cut column shrink to nothing over about half a second, its flowers and the heads of its crops going with them. They stay cut until they grow back over the volume's **Regrow** seconds, a little at a time; with Regrow at 0 they never do. A cut costs a byte for each column, kept eight by eight columns, and is saved in the region files with the other changes.
+
+**Felling.** Logs in a cut are cut out. Then every log no longer joined to the ground through other logs comes loose, with the leaves nearest it: a trunk cut through takes the whole crown, a branch cut off takes only itself and its leaves. What holds is how the logs touch, not which tree they belong to, so a branch resting on another tree's trunk, or on a wall, stays up. The stump stays.
+
+What comes loose is taken out of the volume and falls as a body of its own: an Obj named Felled tree, with a Rigidbody as heavy as its wood, collider boxes made of its logs, and drawn from its own voxels. It hangs where it was cut for a moment, while collision round it is made again without it, then tips over its stump the way the cut said, or away from the cut, and falls. Once it has lain still for a second it is at rest, and the volume's **Felled** says what becomes of it:
+
+- **Body**: it stays a body, which can be pushed and rolled, until the level is left.
+- **Stamped**: it becomes voxels of the volume again where it lies, solid as the ground, each in its own colour, and its Obj goes away.
+
+A game can choose for itself, cut by cut and piece by piece:
+
+```csharp
+// The tree vanishes over its stump at once, and the game drops logs of its own where it stood.
+var done = Voxels.Slice(hit.Point, Vector3.UnitY, 0.8f, pieces: VoxelPieces.Remove);
+foreach (var piece in done.All)
+{
+    for (var i = 0; i < piece.Logs / 4000; i++) LogPrefab.Instantiate(piece.Place + Vector3.UnitY * i, Quaternion.Identity);
+}
+
+// It falls, and once at rest becomes part of the ground, whatever the volume says.
+Voxels.Slice(hit.Point, Vector3.UnitY, 0.8f, fall: camera.Forward, rest: VoxelPieceRest.Stamp);
+
+// It falls and stays a body; the game decides later, piece by piece.
+var felled = Voxels.Slice(hit.Point, Vector3.UnitY, 0.8f, rest: VoxelPieceRest.Stay).Pieces[0].Obj;
+// ...each frame:
+if (felled is { } tree && Voxels.Piece(tree, out var lying) && lying.Resting)
+{
+    if (Voxels.WaterAt(lying.Place, out _)) Voxels.RemovePiece(tree);
+    else Voxels.StampPiece(tree);
+}
+```
+
+`pieces:` says what happens at once: `Fall` (as it comes) or `Remove`, the tree gone over its stump and nothing falling. `rest:` says what a fallen piece becomes once still: `Stay`, `Stamp` or `Remove`; left out, the volume's Felled says. `Voxels.Piece` asks what a piece's Obj is, and `Voxels.StampPiece` and `Voxels.RemovePiece` stamp it where it lies or take it away at any time. A felled piece's leaves are drawn in cubes of two or four voxels when there are many of them, so a whole crown stays a mesh of tens of thousands of vertices.
+
+A tree felled through its trunk is kept as the column of its foot and the height of its stump, a few bytes, and the GPU, collision and rays all leave out what it grew over that height. What a branch, or a tree held up by a neighbour, loses is dug out a voxel at a time. A stamped tree's voxels are voxels placed one at a time, so a wood stamped flat costs as much as building it would.
+
+In the brush, **Cut** cuts as you drag. In the editor nothing falls: what comes loose is taken away, so a cut clears a tree and leaves its stump. While the game plays it falls as in the game. `vox editor call` does the same:
+
+```
+vox editor call voxels.cut '{ "at": [12.0, 24.5, 9.0], "radius": 1.0 }'
+vox editor call voxels.cut '{ "at": [12.0, 25.0, 9.0], "across": [0, 1, 0], "radius": 0.8, "fall": [1, 0, 0] }'
+vox editor call voxels.raycast '{ "from": [12, 40, 9], "direction": [0, -1, 0], "cover": true }'
+vox editor call field.set '{ "obj": 7, "component": "voxel_volume", "field": "felled", "value": "Stamped" }'
+```
+
+The scene writes the volume's settings:
+
+```toml
+[obj.voxel_volume]
+endless = true
+felled = "stamped"
+regrow = 600.0
+```
+
 ### Saved in region files
 
 The voxels set one at a time are kept brick by brick, and saved with the scene in region files beside it, a folder for each volume (`<scene>.voxels/<Obj id>/`) and a file for each region of 64 m a side at 16 voxels a metre: each brick its place, a bit for each of its voxels and a byte for each voxel set, packed with zstd. A tunnel of 320 voxels dug across two regions takes under 2 KB. The scene names the folder and its regions, so it loads them as it loads; a save writes only the regions that changed and takes away those no voxel is set in any more:
@@ -411,7 +493,7 @@ A model made into a [[Voxel Prints|Voxel Print]] is printed into the ground as a
 
 ### Where a ray meets the ground
 
-`Voxels.Raycast` finds where a ray first meets an endless volume's ground, as it was made and changed, and its trees' logs and leaves, within a reach; not its grass or flowers. It is worked out on the CPU the way the GPU makes the ground and places the trees, so every machine finds the same, in well under a millisecond:
+`Voxels.Raycast` finds where a ray first meets an endless volume's ground, as it was made and changed, and its trees' logs and leaves, within a reach; not its grass or flowers, unless it is asked to meet them with `VoxelRayMeets.Cover`. Then it meets them as the layer they grow in: as tall as their kind grows, less what a cut left of them. It is worked out on the CPU the way the GPU makes the ground and places the trees, so every machine finds the same, in well under a millisecond:
 
 ```csharp
 // Dig where the player looks.
@@ -449,6 +531,6 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It isn't turned or scaled with its Obj.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk, and its full detail is at most 64 m tall at 16 voxels a metre: taller hills are cut flat near the camera and whole in the rings. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
-- An endless one's trees can't be felled, and every tree of a kind is one of four plants. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
+- Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
-- Edits and voxels set one at a time aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.
+- Edits, voxels set one at a time, cut grass and felled trees aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.

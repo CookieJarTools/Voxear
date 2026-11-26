@@ -269,8 +269,9 @@ struct Model {
     low: [i32; 3],
     size: [i32; 3],
     /// Its logs' voxels, from the least corner of its box, by the brick of
-    /// eight a side they are in from there.
+    /// eight a side they are in from there; and the least and most of them.
     logs: HashMap<[i32; 3], Vec<[i32; 3]>>,
+    log_box: ([i32; 3], [i32; 3]),
 }
 
 /// What a voxel is to the CPU: open air (or grass and flowers, which
@@ -337,7 +338,13 @@ impl Woods {
         });
         let mut models = Vec::with_capacity(plants * 4);
         for turns in made {
-            let empty = || Model { voxels: bricks::Builder::default(), low: [0; 3], size: [0; 3], logs: HashMap::new() };
+            let empty = || Model {
+                voxels: bricks::Builder::default(),
+                low: [0; 3],
+                size: [0; 3],
+                logs: HashMap::new(),
+                log_box: ([0; 3], [-1; 3]),
+            };
             let model = |(voxels, low, size): (bricks::Builder, [i32; 3], [i32; 3])| {
                 let mut logs: HashMap<[i32; 3], Vec<[i32; 3]>> = HashMap::new();
                 voxels.each(|cell, material| {
@@ -345,7 +352,10 @@ impl Woods {
                         logs.entry(cell.map(|a| a.div_euclid(8))).or_default().push(cell);
                     }
                 });
-                Model { voxels, low, size, logs }
+                let log_box = logs.values().flatten().fold(([i32::MAX; 3], [i32::MIN; 3]), |(l, m), c| {
+                    ([0, 1, 2].map(|a| l[a].min(c[a])), [0, 1, 2].map(|a| m[a].max(c[a])))
+                });
+                Model { voxels, low, size, logs, log_box }
             };
             let mut turns: Vec<Model> = turns.into_iter().map(model).collect();
             turns.resize_with(4, empty);
@@ -381,6 +391,12 @@ impl Woods {
     /// Which kind of tree model `model` is, among the volume's kinds.
     pub fn kind_of(model: usize) -> usize {
         model / (4 * VARIANTS as usize)
+    }
+
+    /// The least and most voxels of tree `tree`'s logs, standing whole.
+    pub fn log_bounds(&self, tree: &Tree) -> ([i32; 3], [i32; 3]) {
+        let (low, high) = self.models[tree.model].log_box;
+        ([0, 1, 2].map(|a| low[a] + tree.least[a]), [0, 1, 2].map(|a| high[a] + tree.least[a]))
     }
 
     /// Tree `tree`'s logs left standing, block by block of its plant: each

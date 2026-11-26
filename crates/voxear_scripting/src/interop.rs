@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 101;
+pub(crate) const API_VERSION: u32 = 102;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -661,6 +661,36 @@ pub(crate) struct NativeApi {
     /// `Voxels.WaterLook`: draws endless Voxel Volumes' rivers and lakes smooth (0) or as voxels (1), or asks (-1);
     /// the first one's look, or -1 for none.
     pub voxel_water_look: unsafe extern "C" fn(look: i32) -> i32,
+    /// `Voxels.Cut` and `Voxels.Slice`: grass cut and trees felled at points (`shape` 0), in a ball (1) or a
+    /// blade's slice (2), what comes loose falling `toward` across, or away from the cut where null, or taken away
+    /// (`pieces` 1), and at rest as `rest` says (-1 its volume's Felled, 0 a body, 1 stamped, 2 taken away); the
+    /// columns, voxels and pieces cut in `done`, the first `room` pieces in `found` and `objs`, and how many volumes it
+    /// reached, or -1.
+    pub voxel_cut: unsafe extern "C" fn(
+        shape: i32,
+        numbers: *const f32,
+        count: i32,
+        toward: *const [f32; 3],
+        pieces: i32,
+        rest: i32,
+        done: *mut [i32; 3],
+        found: *mut [f32; 9],
+        objs: *mut u64,
+        room: i32,
+    ) -> i32,
+    /// `Voxels.Raycast` meeting the grass, cover and crops too (`meets` 1): as `voxel_raycast`, 1 in `hit[7]` where it
+    /// met cover.
+    /// `Voxels.Piece`, `Voxels.Stamp` and `Voxels.Remove`: what felled piece `obj` is, in `info`, and with `act` 1
+    /// stamped back where it lies, 2 taken away; 1, or 0 for an Obj that is not one.
+    pub voxel_piece: unsafe extern "C" fn(obj: u64, act: i32, info: *mut [f32; 9]) -> i32,
+    pub voxel_raycast_meeting: unsafe extern "C" fn(
+        origin: *const [f32; 3],
+        direction: *const [f32; 3],
+        reach: f32,
+        meets: i32,
+        hit: *mut [f32; 8],
+        obj: *mut u64,
+    ) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2418,6 +2448,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         voxel_shape: crate::voxels::voxel_shape,
         voxel_set: crate::voxels::voxel_set,
         voxel_water_look: crate::voxels::voxel_water_look,
+        voxel_cut: crate::voxels::voxel_cut,
+        voxel_piece: crate::voxels::voxel_piece,
+        voxel_raycast_meeting: crate::voxels::voxel_raycast_meeting,
     }
 }
 

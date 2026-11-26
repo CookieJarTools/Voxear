@@ -426,20 +426,21 @@ int voxelsUp(WorldMake* make, float height)
 
 // The rivers' water over voxel column (x, z) of the world: in x, how high it stands, in metres of the generator's
 // world, read between the four points round it where they all have water and else the highest of them, or
-// NO_RIVER_WATER where none has; in y, how many metres of a waterfall pour down there, read between them.
-float2 riverWaterAt(WorldMake* make, int x, int z)
+// NO_RIVER_WATER where none has; in y, how many metres of a waterfall pour down there, read between them; in z, the
+// lowest water of those points that have any; in w, 1 where every one of them is a waterfall's.
+float4 riverWaterAt(WorldMake* make, int x, int z)
 {
     uint w = make->riverWindow;
     if (w == 0)
     {
-        return float2(NO_RIVER_WATER, 0.0);
+        return float4(NO_RIVER_WATER, 0.0, NO_RIVER_WATER, 0.0);
     }
     int2 c = int2(x >> 6, z >> 6);
     uint2 slot = uint2(uint(c.x + int(w) * 65536), uint(c.y + int(w) * 65536)) % w;
     uint* entry = make->rivers + (slot.y * w + slot.x) * RIVER_WORDS;
     if (int(entry[0]) != c.x || int(entry[1]) != c.y || entry[2] == 0)
     {
-        return float2(NO_RIVER_WATER, 0.0);
+        return float4(NO_RIVER_WATER, 0.0, NO_RIVER_WATER, 0.0);
     }
     float fx;
     float fz;
@@ -455,40 +456,58 @@ float2 riverWaterAt(WorldMake* make, int x, int z)
     {
         top = lerp(lerp(four.x, four.y, fx), lerp(four.z, four.w, fx), fz);
     }
-    float fell = lerp(lerp(falls[at], falls[at + 1], fx), lerp(falls[at + RIVER_GRID], falls[at + RIVER_GRID + 1], fx), fz);
-    return float2(top, fell);
+    float4 drops = float4(falls[at], falls[at + 1], falls[at + RIVER_GRID], falls[at + RIVER_GRID + 1]);
+    float fell = lerp(lerp(drops.x, drops.y, fx), lerp(drops.z, drops.w, fx), fz);
+    float lowest = highest;
+    for (uint k = 0; k < 4; k++)
+    {
+        lowest = four[k] > NO_RIVER_WATER * 0.5 ? min(lowest, four[k]) : lowest;
+    }
+    float falling = min(min(drops.x, drops.y), min(drops.z, drops.w)) > 0.0 ? 1.0 : 0.0;
+    return float4(top, fell, lowest, falling);
 }
 
 // The voxel the top of the rivers' water over voxel column (x, z) is in, counted up from the floor; -1 for none.
 int waterTopAt(WorldMake* make, int x, int z)
 {
-    float top = riverWaterAt(make, x, z).x;
-    return top > NO_RIVER_WATER * 0.5 ? voxelsUp(make, top) : -1;
+    float4 river = riverWaterAt(make, x, z);
+    if (river.x <= NO_RIVER_WATER * 0.5 || river.w > 0.5 || (river.y > 0.0 && river.z > river.x - 0.5))
+    {
+        return -1;
+    }
+    return voxelsUp(make, river.y > 0.0 ? river.z : river.x);
 }
 
-// What is water at voxel `p` of the world, where it is open (src/voxel_volume/rivers.rs): a layer at the top of the
-// rivers' and lakes' water, as deep as its top is over the lowest beside it, so its steps show no gap; and over a
-// waterfall, falling water from its top down. As materials: WATER_VOXEL or one more, FALLING_VOXEL, or 0 for none.
+// What is water at voxel `p` of the world, where it is open, its ground's top `ground` voxels up (src/voxel_volume/
+// rivers.rs): a layer at the top of the rivers' and lakes' water, as deep as its top is over the lowest beside it, so
+// its steps show no gap. Where a waterfall pours, the voxels thrown over its lip are its water: none between its
+// points, and beside them only where a point round has its pool's water, and only as high as that. Its shade goes by how deep the water is
+// over the ground, from shallow, where the sand shows through, to deep; within a metre or so of where a fall lands it
+// is churned white. As a material, or 0.
 static const uint WATER_VOXEL = 23;
-static const uint FALLING_VOXEL = 25;
-// How many metres of a waterfall pour down over a column for it to be falling water.
-static const float FALLING = 0.25;
+static const uint WATER_SHADES = 8;
+// The two shades of churned water after the eight of depth.
+static const uint CHURNED_VOXEL = WATER_VOXEL + WATER_SHADES;
+// How many metres of water each shade is deeper than the one before.
+static const float WATER_SHADE_DEPTH = 0.3;
 
-uint waterVoxel(WorldMake* make, int3 p)
+uint waterVoxel(WorldMake* make, int3 p, int ground)
 {
-    float2 river = riverWaterAt(make, p.x, p.z);
-    if (river.x <= NO_RIVER_WATER * 0.5)
+    float4 river = riverWaterAt(make, p.x, p.z);
+    if (river.x <= NO_RIVER_WATER * 0.5 || river.w > 0.5)
     {
         return 0;
     }
-    int top = voxelsUp(make, river.x);
+    // Beside a waterfall only where a corner has its pool's water, well under the fall's top.
+    bool byFall = river.y > 0.0;
+    if (byFall && river.z > river.x - 0.5)
+    {
+        return 0;
+    }
+    int top = voxelsUp(make, byFall ? river.z : river.x);
     if (p.y > top)
     {
         return 0;
-    }
-    if (river.y > FALLING)
-    {
-        return FALLING_VOXEL;
     }
     int lowest = top;
     for (uint k = 0; k < 4; k++)
@@ -501,7 +520,30 @@ uint waterVoxel(WorldMake* make, int3 p)
     {
         return 0;
     }
-    return WATER_VOXEL + (unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 71)) < 0.6 ? 0u : 1u);
+    // Churned where a fall lands near: a fall's point a grid step or two off, its water over this.
+    int churned = 0;
+    for (uint k = 0; k < 8 && !byFall; k++)
+    {
+        int reach = k < 4 ? 8 : 16;
+        uint way = k & 3u;
+        int2 o = way == 0 ? int2(reach, 0) : (way == 1 ? int2(-reach, 0) : (way == 2 ? int2(0, reach) : int2(0, -reach)));
+        float4 there = riverWaterAt(make, p.x + o.x, p.z + o.y);
+        if (there.y > 0.25 && there.x > river.x + 0.5)
+        {
+            churned = max(churned, k < 4 ? 2 : 1);
+        }
+    }
+    if (byFall || churned == 2)
+    {
+        return CHURNED_VOXEL + (unit(hashOf(p.x, p.y, p.z, make->seed + 73)) < 0.5 ? 0u : 1u);
+    }
+    if (churned == 1 && unit(hashOf(p.x >> 1, p.y, p.z >> 1, make->seed + 74)) < 0.5)
+    {
+        return CHURNED_VOXEL + 1;
+    }
+    float deep = float(top - ground) * make->voxel;
+    uint shade = uint(clamp(deep / WATER_SHADE_DEPTH + (unit(hashOf(p.x, p.y, p.z, make->seed + 71)) - 0.5) * 0.6, 0.0, float(WATER_SHADES - 1)));
+    return WATER_VOXEL + shade;
 }
 
 // What the ground is where it is `h` voxels high and its height changes by `across` voxels over four, as warm, wet
@@ -1755,7 +1797,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (make->waterVoxels != 0 && m == 0)
     {
         bool open = (volume || edited) ? !solidNear(l, int3(0, 0, 0)) : y > h;
-        uint water = open ? waterVoxel(make, here) : 0u;
+        uint water = open ? waterVoxel(make, here, volume ? min(surfaceOf(make, job, px, pz), tall - 1) : h) : 0u;
         if (water != 0)
         {
             m = water;

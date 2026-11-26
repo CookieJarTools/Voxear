@@ -93,9 +93,10 @@ const MOST_COLOURS: usize = 256;
 
 /// The colours of the ground a generator makes, as sRGB, in the palette
 /// after the volume's own ground's: rock in three shades, sand, snow and
-/// gravel in two; then its rivers' water as voxels in two, and falling
-/// water.
-pub(crate) const GENERATED_COLORS: [[u8; 4]; 12] = [
+/// gravel in two; then its rivers' water as voxels, from as shallow as the
+/// sand under it shows through to deep, in eight shades, and churned white
+/// where a waterfall lands, in two.
+pub(crate) const GENERATED_COLORS: [[u8; 4]; 19] = [
     [118, 117, 112, 255], // 13 rock
     [132, 130, 125, 255],
     [100, 99, 96, 255],
@@ -105,15 +106,23 @@ pub(crate) const GENERATED_COLORS: [[u8; 4]; 12] = [
     [218, 226, 236, 255],
     [128, 120, 108, 255], // 20 gravel
     [104, 98, 90, 255],
-    [40, 104, 100, 255], // 22 water
-    [52, 116, 112, 255],
-    [226, 238, 240, 255], // 24 falling water
+    [150, 160, 118, 255], // 22 water, shallow
+    [118, 146, 112, 255],
+    [88, 130, 106, 255],
+    [64, 114, 102, 255],
+    [46, 98, 96, 255],
+    [34, 84, 88, 255],
+    [26, 70, 78, 255],
+    [20, 58, 68, 255], // 29 deep
+    [214, 228, 228, 255], // 30 churned
+    [168, 200, 200, 255],
 ];
 
-/// Where the water's colours are in the palette (`WATER_VOXEL` and
-/// `FALLING_VOXEL` in `shaders/voxel_world.slang`, as materials, one more).
+/// Where the water's shades are in the palette, and how many with the
+/// churned ones (`WATER_VOXEL`, and `WATER_SHADES` and two, in
+/// `shaders/voxel_world.slang`, as materials, one more).
 const WATER_COLOUR: u32 = 22;
-const FALLING_COLOUR: u32 = 24;
+const WATER_SHADES: u32 = 10;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -886,13 +895,17 @@ impl Endless {
     /// it is made.
     fn lay_water(&mut self, column: [i32; 2], slot: u32) {
         let quads = match &self.rivers {
-            // Water of voxels is the columns' own.
-            Some(_) if self.from.water == VoxelWaterLook::Voxels => ColumnWater::default(),
             Some(rivers) => {
                 let grid = rivers.layer.grid(column);
                 let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
                 let floor = self.from.generator.as_ref().map_or(0.0, |generator| generator.floor);
-                rivers::water_quads(&grid, column, (self.corner, floor, voxel))
+                let made = rivers::water_quads(&grid, column, (self.corner, floor, voxel));
+                // Water of voxels is the columns' own, its waterfalls voxels thrown over their lips; smooth water is
+                // its squares, its waterfalls sheets.
+                match self.from.water {
+                    VoxelWaterLook::Voxels => ColumnWater { lips: made.lips, ..ColumnWater::default() },
+                    VoxelWaterLook::Smooth => ColumnWater { lips: Vec::new(), ..made },
+                }
             }
             None => ColumnWater::default(),
         };
@@ -912,14 +925,23 @@ impl Endless {
         }
     }
 
-    /// The water over its rivers and lakes, each square in the world, then
-    /// the squares its waterfalls pour over, and how many times it has
-    /// changed.
-    #[allow(clippy::type_complexity)]
-    pub fn water(&self) -> ((impl Iterator<Item = &GpuVoxelWater>, impl Iterator<Item = &GpuVoxelWater>), u64) {
-        let squares = self.water.iter().flat_map(|water| &water.squares);
-        let falls = self.water.iter().flat_map(|water| &water.falls);
-        ((squares, falls), self.water_changes)
+    /// The water over its rivers and lakes, each square in the world; the
+    /// squares its waterfalls pour over; its waterfalls' lips; and how many
+    /// times they have changed.
+    pub fn water_squares(&self) -> impl Iterator<Item = &GpuVoxelWater> {
+        self.water.iter().flat_map(|water| &water.squares)
+    }
+
+    pub fn water_falls(&self) -> impl Iterator<Item = &GpuVoxelWater> {
+        self.water.iter().flat_map(|water| &water.falls)
+    }
+
+    pub fn water_lips(&self) -> impl Iterator<Item = &rivers::GpuVoxelLip> {
+        self.water.iter().flat_map(|water| &water.lips)
+    }
+
+    pub fn water_changes(&self) -> u64 {
+        self.water_changes
     }
 
     fn slot_of(&self, column: [i32; 2]) -> u32 {
@@ -964,7 +986,7 @@ impl Endless {
             empty_sector: self.empty.address,
             pages: self.pages.address,
             water: if self.from.water == VoxelWaterLook::Voxels { WATER_COLOUR + 1 } else { 0 },
-            falling: if self.from.water == VoxelWaterLook::Voxels { FALLING_COLOUR + 1 } else { 0 },
+            shades: WATER_SHADES,
         };
         let at = Vec3::new(self.window_sector[0] as f32, 0.0, self.window_sector[2] as f32) * metres;
         (record, self.corner + at)

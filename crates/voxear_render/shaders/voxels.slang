@@ -435,41 +435,40 @@ uint voxelMaterialOf(VoxelVolume volume, int brick, int3 cell)
     return (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
 }
 
-// What a voxel of water a hit met is: 0 for none, 1 for water, 2 for falling water. Far off, where the walk met a
-// group or a brick, a brick mostly of water is water.
-uint voxelWaterOf(VoxelVolume volume, VoxelHit hit)
+// Whether material `material` of a volume is water of voxels, one of its shades.
+bool voxelIsWater(VoxelVolume volume, uint material)
+{
+    return volume.water != 0u && material + 1u >= volume.water && material + 1u < volume.water + volume.shades;
+}
+
+// Whether a hit met a voxel of water. Far off, where the walk met a group or a brick, a brick mostly of water is.
+bool voxelWaterOf(VoxelVolume volume, VoxelHit hit)
 {
     if (volume.water == 0u || hit.brick < 0)
     {
-        return 0u;
+        return false;
     }
     if (hit.level != 0)
     {
-        return (volume.bricks[uint(hit.brick) * VOXEL_BRICK_WORDS + 19] & VOXEL_WATERY) != 0u ? 1u : 0u;
+        return (volume.bricks[uint(hit.brick) * VOXEL_BRICK_WORDS + 19] & VOXEL_WATERY) != 0u;
     }
-    uint material = voxelMaterialOf(volume, hit.brick, hit.cell);
-    if (material + 1u == volume.water || material == volume.water)
-    {
-        return 1u;
-    }
-    return material + 1u == volume.falling ? 2u : 0u;
+    return voxelIsWater(volume, voxelMaterialOf(volume, hit.brick, hit.cell));
 }
 
-// Whether the voxel at `cell` of a volume is solid and not water: ground beside water.
-bool voxelDryAt(VoxelVolume volume, int3 cell)
+// What the voxel at `cell` of a volume is: 0 open, 1 water, 2 anything else solid.
+uint voxelKindAt(VoxelVolume volume, int3 cell)
 {
     int brick = voxelBrickAt(volume, cell >> 3);
     if (brick < 0)
     {
-        return false;
+        return 0u;
     }
     int3 l = cell & 7;
     if (!voxelBit(volume.bricks + uint(brick) * VOXEL_BRICK_WORDS, uint(l.x + 8 * (l.y + 8 * l.z))))
     {
-        return false;
+        return 0u;
     }
-    uint material = voxelMaterialOf(volume, brick, cell);
-    return !(material + 1u == volume.water || material == volume.water || material + 1u == volume.falling);
+    return voxelIsWater(volume, voxelMaterialOf(volume, brick, cell)) ? 1u : 2u;
 }
 
 // How far along the ray from `from` along `d` it leaves voxel `cell` of `volume`, in metres.
@@ -497,7 +496,7 @@ bool voxelsTraceDry(VoxelVolumes* volumes, float3 from, float3 d, float start, f
             return false;
         }
         VoxelVolume volume = volumes->volumes[nearest.volume];
-        if (voxelWaterOf(volume, nearest) == 0u)
+        if (!voxelWaterOf(volume, nearest))
         {
             wet = water.metres >= 0.0 ? nearest.metres - water.metres : 0.0;
             return true;
@@ -679,15 +678,17 @@ struct VoxelOut
     float depth : SV_Depth;
 };
 
-// How much a metre of the rivers' water takes of each colour, and its colour where it is deep: a lake's green.
-static const float3 VOXEL_WATER_TAKES = float3(0.42, 0.13, 0.11);
-static const float3 VOXEL_WATER_DEEP = float3(0.012, 0.055, 0.045);
+// How far the sun's light is looked for towards the sun from water of voxels, in metres, and how many times coarser
+// than its pixel the walk goes: the water's own shadow, cheaply.
+static const float VOXEL_WATER_SHADOW_REACH = 24.0;
+static const float VOXEL_WATER_SHADOW_COARSER = 3.0;
 
-// A voxel of water the view meets at `hit`, seen through pixel `pixel` along `d`, of kind `kind` (voxelWaterOf).
-// Its top shimmers a voxel at a time, reflects the sky and what stands round it, and shows the bed through as much
-// water as the view goes through to it, walked on through the water; foam where it meets the bank. Falling water is
-// white, threads of it running down a voxel at a time.
-VoxelOut voxelWaterLit(Frame* frame, float2 pixel, float3 d, VoxelHit hit, uint kind)
+// A voxel of water the view meets at `hit`, seen through pixel `pixel` along `d`. Its colour is its shade, as deep as
+// the water is over the ground there (src/voxel_volume/rivers.rs), lit by the sky and the sun as the body of the water
+// scatters it; over that it reflects the sky and what stands round it, glints, and ripples drifting across it. The
+// sides of its steps, where its top drops a voxel, are lit as its top, so a sloping river reads as one surface. Foam
+// where it meets the bank, coming and going.
+VoxelOut voxelWaterLit(Frame* frame, float2 pixel, float3 d, VoxelHit hit)
 {
     VoxelVolumes* volumes = voxelVolumes();
     VoxelVolume volume = volumes->volumes[hit.volume];
@@ -698,108 +699,83 @@ VoxelOut voxelWaterLit(Frame* frame, float2 pixel, float3 d, VoxelHit hit, uint 
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float footScale = voxelPixelAngle(frame, pixel) * volumes->lodScale;
-    // The sun on it, past the shadows of everything else and of the voxels that are not water.
-    float shadow = sunShadow(frame, world, face);
+    // A step's side: open in front of it, and water under what is in front.
+    bool top = face.y > 0.5;
+    if (!top && hit.level == 0 && abs(face.y) < 0.5)
+    {
+        int3 ahead = hit.cell + int3(face);
+        top = voxelKindAt(volume, ahead) == 0u && voxelKindAt(volume, ahead - int3(0, 1, 0)) == 1u;
+    }
+    float3 lightFace = top ? float3(0.0, 1.0, 0.0) : face;
+    float shadow = sunShadow(frame, world, lightFace);
     if (shadow > 0.0)
     {
         VoxelHit blocked;
         VoxelHit wetHit;
         float wetThrough;
         float3 off = world + face * (hit.level == 0 ? 0.02 : 2.02) * volume.voxel;
-        if (voxelsTraceDry(volumes, off, l, 0.0, VOXEL_SHADOW_REACH, hit.metres * footScale, 0.0, 3, blocked, wetThrough, wetHit))
+        float foot = hit.metres * footScale * VOXEL_WATER_SHADOW_COARSER;
+        if (voxelsTraceDry(volumes, off, l, 0.0, VOXEL_WATER_SHADOW_REACH, foot, footScale * VOXEL_WATER_SHADOW_COARSER, 2, blocked, wetThrough, wetHit))
         {
             shadow = 0.0;
         }
     }
     float t = frame->time;
-    float3 color;
-    float3 normal = face;
-    if (kind == 2u)
+    float3 normal = lightFace;
+    if (top)
     {
-        // Falling water: threads of white running down it, a voxel at a time, and their flecks.
-        int3 c = hit.cell;
-        float run = t * 5.0 / volume.voxel;
-        float across = float(c.x * 7 + c.z * 13);
-        float threads = voxelWaterNoise(float2(across * 0.37, (float(c.y) + run) * 0.09));
-        float flecks = voxelWaterNoise(float2(across * 0.91 + 31.0, (float(c.y) + run * 1.4) * 0.3));
-        float white = saturate(0.45 + 0.7 * threads * (0.6 + 0.6 * flecks));
-        float3 albedo = lerp(float3(0.28, 0.46, 0.46), float3(0.86, 0.9, 0.92), white);
-        Surface s;
-        s.normal = face;
-        s.view = -d;
-        s.roughness = 0.6;
-        s.diffuse = albedo;
-        s.f0 = float3(0.02);
-        float3 ambient = ambientLight(frame, world, s, sunLight, atmosphere);
-        float wrapped = saturate((dot(face, l) + 0.5) / 1.5) + 0.4 * saturate(-dot(face, l));
-        color = albedo * (ambient + sunLight * shadow * wrapped / PI);
+        // Ripples drifting across it smoothly, whatever voxels they cross.
+        float2 slope = float2(0.0);
+        for (uint k = 0; k < 3; k++)
+        {
+            float size = 0.9 / float(1u << k);
+            float2 p = world.xz / size + float2(t * 0.35, t * 0.22) * float(k + 1) + float(k) * 17.0;
+            float e = 0.05;
+            float c = voxelWaterNoise(p);
+            slope += float2(voxelWaterNoise(p + float2(e, 0.0)) - c, voxelWaterNoise(p + float2(0.0, e)) - c) / e * (0.05 / float(k + 1));
+        }
+        normal = normalize(float3(-slope.x, 1.0, -slope.y));
     }
-    else
+    float3 body = voxelColour(volume, hit);
+    Surface s;
+    s.normal = normal;
+    s.view = -d;
+    s.roughness = 0.06;
+    s.diffuse = float3(0.0);
+    s.f0 = float3(0.02);
+    float3 ambient = ambientLight(frame, world, s, sunLight, atmosphere);
+    float nv = saturate(dot(normal, -d));
+    float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
+    float found;
+    float3 reflected = environmentReflection(frame, pixel, world, normal, reflect(d, normal), s.roughness, ambient, atmosphere, found);
+    float3 under = body * (ambient * 0.8 + sunLight * shadow * saturate(l.y) * 0.5 / PI);
+    float3 color = under * (1.0 - fresnel) + reflected * fresnel;
+    Surface glint = s;
+    glint.roughness = 0.12;
+    color += shade(glint, l, sunLight) * shadow;
+    // Churned where a waterfall lands: its last two shades, white foam coming and going over it.
+    if (hit.level == 0)
     {
-        // Its top ripples, the ripples drifting across it smoothly whatever voxels they cross; its steps' sides are flat.
-        if (face.y > 0.5)
+        uint material = voxelMaterialOf(volume, hit.brick, hit.cell);
+        if (material + 3u >= volume.water + volume.shades)
         {
-            float2 at = world.xz;
-            float2 slope = float2(0.0);
-            for (uint k = 0; k < 3; k++)
-            {
-                float size = 0.9 / float(1u << k);
-                float2 drift = float2(t * 0.35, t * 0.22) * float(k + 1);
-                float2 p = at / size + drift + float(k) * 17.0;
-                float e = 0.05;
-                float c = voxelWaterNoise(p);
-                slope += float2(voxelWaterNoise(p + float2(e, 0.0)) - c, voxelWaterNoise(p + float2(0.0, e)) - c) / e * (0.05 / float(k + 1));
-            }
-            normal = normalize(float3(-slope.x, 1.0, -slope.y));
+            float boil = voxelWaterNoise(float2(hit.cell.xz) * 0.6 + float2(t * 1.7, -t * 1.3) + float(hit.cell.y) * 0.3);
+            float3 foamLit = 0.9 * (ambient + sunLight * shadow * saturate(l.y + 0.3) / PI);
+            color = lerp(color, foamLit, smoothstep(0.2, 0.55, boil) * (material + 2u == volume.water + volume.shades ? 1.0 : 0.6));
         }
-        Surface s;
-        s.normal = normal;
-        s.view = -d;
-        s.roughness = 0.06;
-        s.diffuse = float3(0.0);
-        s.f0 = float3(0.02);
-        float3 ambient = ambientLight(frame, world, s, sunLight, atmosphere);
-        float nv = saturate(dot(normal, -d));
-        float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
-        float found;
-        float3 reflected = environmentReflection(frame, pixel, world, normal, reflect(d, normal), s.roughness, ambient, atmosphere, found);
-        float3 deep = VOXEL_WATER_DEEP * (ambient + sunLight * shadow * 0.3);
-        float3 under = deep;
-        if (hit.level == 0)
+    }
+    if (hit.level == 0 && top)
+    {
+        float edges = 0.0;
+        for (uint k = 0; k < 4; k++)
         {
-            // The bed, walked on to through the water, lit simply and dimmed by as much water as the view went through.
-            VoxelHit bed;
-            VoxelHit first;
-            float through;
-            if (voxelsTraceDry(volumes, from, d, hit.metres, hit.metres + 40.0, 0.0, footScale, 6, bed, through, first))
-            {
-                VoxelVolume bedVolume = volumes->volumes[bed.volume];
-                float3 bedAlbedo = voxelColour(bedVolume, bed);
-                float3 bedNormal = voxelNormal(bed, d);
-                float3 lit = bedAlbedo * (ambient * 0.5 + sunLight * shadow * saturate(dot(bedNormal, l)) / PI);
-                float3 kept = exp(-VOXEL_WATER_TAKES * through * 2.2);
-                under = lit * kept + deep * (1.0 - kept);
-            }
+            int3 o = k == 0 ? int3(1, 0, 0) : (k == 1 ? int3(-1, 0, 0) : (k == 2 ? int3(0, 0, 1) : int3(0, 0, -1)));
+            edges += voxelKindAt(volume, hit.cell + o) == 2u ? 1.0 : 0.0;
         }
-        color = under * (1.0 - fresnel) + reflected * fresnel;
-        Surface glint = s;
-        glint.roughness = 0.12;
-        color += shade(glint, l, sunLight) * shadow;
-        // Foam where it meets the bank, and where water falls in beside it, coming and going.
-        if (hit.level == 0 && face.y > 0.5)
-        {
-            float edges = 0.0;
-            for (uint k = 0; k < 4; k++)
-            {
-                int3 o = k == 0 ? int3(1, 0, 0) : (k == 1 ? int3(-1, 0, 0) : (k == 2 ? int3(0, 0, 1) : int3(0, 0, -1)));
-                edges += voxelDryAt(volume, hit.cell + o) ? 1.0 : 0.0;
-                edges += voxelDryAt(volume, hit.cell + o * 2) ? 0.5 : 0.0;
-            }
-            float churn = voxelWaterNoise(float2(hit.cell.xz) * 0.45 + float2(t * 0.6, -t * 0.45));
-            float foam = saturate(edges * 0.4) * step(0.45 - 0.2 * saturate(edges * 0.3), churn);
-            float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(l.y + 0.3) / PI);
-            color = lerp(color, foamLit, foam);
-        }
+        float churn = voxelWaterNoise(float2(hit.cell.xz) * 0.45 + float2(t * 0.6, -t * 0.45));
+        float foam = saturate(edges * 0.5) * step(0.4, churn);
+        float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(l.y + 0.3) / PI);
+        color = lerp(color, foamLit, foam);
     }
     if (atmosphere)
     {
@@ -845,10 +821,9 @@ VoxelOut voxelOpaque(VoxelVertex input)
         discard;
     }
     VoxelVolume volume = volumes->volumes[hit.volume];
-    uint wet = voxelWaterOf(volume, hit);
-    if (wet != 0u)
+    if (voxelWaterOf(volume, hit))
     {
-        return voxelWaterLit(frame, pixel, d, hit, wet);
+        return voxelWaterLit(frame, pixel, d, hit);
     }
     float3 world = voxelOrigin(frame, pixel) + d * hit.metres;
     float3 normal = voxelNormal(hit, d);

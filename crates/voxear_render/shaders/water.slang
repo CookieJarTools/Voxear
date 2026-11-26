@@ -4450,6 +4450,168 @@ FragmentOut voxelFallFragment(VoxelFallOut input)
     return blockWaterLit(frame, w, float2(0.0, 0.0), 1.0, voxelWaterLook(), false, input.world, below ? -face : face, false, false);
 }
 
+// ---------------------------------------------------------------- Voxels thrown over a waterfall's lip
+
+// A piece of a Voxel Volume's waterfall's lip (src/voxel_volume/rivers.rs, GpuVoxelLip): where it runs along X and Z,
+// how high the fall's top is, how far it falls, how fast its water leaves the lip, how large a voxel is, and which way
+// out from the cliff it falls.
+struct VoxelLip
+{
+    float2 a;
+    float2 b;
+    float top;
+    float drop;
+    float speed;
+    float voxel;
+    float2 out;
+    float2 pad;
+};
+
+// How many voxels of water each piece of lip throws (LIP_DROPS in src/water.rs); how long one splashes about at the
+// foot after it lands, in seconds; and how far under its pool's top a voxel falls before it is gone.
+static const uint LIP_DROPS = 1536;
+static const float DROP_SPLASH = 0.7;
+static const float DROP_UNDER = 0.4;
+static const float DROP_GRAVITY = 9.81;
+
+// A number from 0 to 1 for drop `i`, its `k`th.
+float dropRandom(uint i, uint k)
+{
+    uint h = i * 747796405u + k * 2891336453u + 1013904223u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+    return float(h & 0xFFFFFFu) / 16777216.0;
+}
+
+// Where voxel `i` thrown over lip `lip` is at time `time`, and how fast it moves, in metres a second: none where it
+// is in no air to be seen. Each leaves the lip at its own moment, at its own place along it and a little back from its
+// front, as fast as the lip says give or take a fifth, drifting a little sideways; it falls as thrown water does, so
+// the faster ones fly further out and the sheet spreads and breaks up as it falls. Where it lands, about half bounce
+// back up a little as spray; the rest are gone into the pool. Then it leaves the lip again.
+float3 dropAt(VoxelLip lip, uint i, float time, out float speed, out bool shown)
+{
+    float fall = sqrt(2.0 * (lip.drop + DROP_UNDER) / DROP_GRAVITY);
+    float period = fall + DROP_SPLASH;
+    float t = frac(time / period + dropRandom(i, 0)) * period;
+    float2 across = float2(-lip.out.y, lip.out.x);
+    float2 start = lerp(lip.a, lip.b, dropRandom(i, 1) * 1.2 - 0.1) - lip.out * dropRandom(i, 2) * 0.15;
+    float out = lip.speed * (0.8 + 0.4 * dropRandom(i, 3));
+    float aside = (dropRandom(i, 4) - 0.5) * 0.5;
+    shown = true;
+    if (t < fall)
+    {
+        speed = length(float2(out, DROP_GRAVITY * t));
+        float2 xz = start + lip.out * out * t + across * aside * t;
+        return float3(xz.x, lip.top - 0.5 * DROP_GRAVITY * t * t, xz.y);
+    }
+    // Spray off the pool where it landed.
+    float after = t - fall;
+    float2 landed = start + lip.out * out * fall + across * aside * fall;
+    float up = 1.0 + 2.5 * dropRandom(i, 5);
+    float y = 0.5 * up * after - 0.5 * DROP_GRAVITY * after * after;
+    shown = dropRandom(i, 6) < 0.5 && y > -0.05;
+    speed = 8.0;
+    float2 xz = landed + lip.out * (0.4 + 1.2 * dropRandom(i, 7)) * after + across * (dropRandom(i, 8) - 0.5) * 1.5 * after;
+    return float3(xz.x, lip.top - lip.drop + y, xz.y);
+}
+
+struct VoxelDropOut
+{
+    float4 position : SV_Position;
+    float3 world : POSITION;
+    nointerpolation float3 normal : NORMAL;
+    float4 currentClip : CURRENT_CLIP;
+    float4 previousClip : PREVIOUS_CLIP;
+    nointerpolation float white : WHITE;
+};
+
+// A corner of the cube of voxel of water `vertexId / 36` thrown over a piece of lip (buffers()->voxelWater from
+// push.list on, read as VoxelLip): as large as the volume's voxels, half as large again as it breaks up into spray.
+[shader("vertex")]
+VoxelDropOut voxelDropVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    VoxelLip lip = ((VoxelLip*)buffers()->voxelWater)[push.list + vertexId / (36u * LIP_DROPS)];
+    uint drop = vertexId / 36u;
+    uint corner = vertexId % 36u;
+    float speed;
+    bool shown;
+    float3 middle = dropAt(lip, drop, frame->time, speed, shown);
+    float speedBefore;
+    bool shownBefore;
+    float3 before = dropAt(lip, drop, frame->time - frame->deltaTime, speedBefore, shownBefore);
+    VoxelDropOut o;
+    if (!shown)
+    {
+        o.position = float4(2.0, 2.0, 0.5, 1.0);
+        o.world = 0.0;
+        o.normal = float3(0.0, 1.0, 0.0);
+        o.currentClip = o.position;
+        o.previousClip = o.position;
+        o.white = 0.0;
+        return o;
+    }
+    // A cube's six faces, two triangles each: the face's axis and side, then the corner across it.
+    uint face = corner / 6u;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(1, 0), uint2(1, 1), uint2(0, 1) };
+    uint2 c = corners[corner % 6u];
+    uint axis = face >> 1;
+    float side = (face & 1u) == 0 ? 0.5 : -0.5;
+    float3 normal = 0.0;
+    normal[axis] = side * 2.0;
+    float3 local = 0.0;
+    local[axis] = side;
+    local[(axis + 1) % 3] = float(c.x) - 0.5;
+    local[(axis + 2) % 3] = float(c.y) - 0.5;
+    // Whiter the faster it falls, each its own, some staying clear water longer.
+    float white = smoothstep(2.0, 7.0, speed) * (0.55 + 0.45 * dropRandom(drop, 9));
+    float size = lip.voxel * (1.0 + 0.5 * white);
+    float3 world = middle + local * size;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.normal = normal;
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    float3 last = (shownBefore && distance(before, middle) < 1.0) ? before + local * size : world;
+    o.previousClip = transform(frame->prevViewProj, float4(last, 1.0));
+    o.white = white;
+    return o;
+}
+
+// A voxel of water thrown over a waterfall's lip, its colour by how fast it falls: the water's own green-blue as it
+// leaves the lip, white as it speeds up and breaks into spray; lit by the sky and the sun, and the sun through it from
+// behind.
+[shader("fragment")]
+FragmentOut voxelDropFragment(VoxelDropOut input)
+{
+    Frame* frame = push.frame;
+    float3 n = normalize(input.normal);
+    float3 l = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float shadow = sunShadow(frame, input.world, n);
+    float3 albedo = lerp(float3(0.1, 0.32, 0.32), float3(0.82, 0.88, 0.9), input.white);
+    Surface s;
+    s.normal = n;
+    s.view = towardsEye(frame, input.world);
+    s.roughness = 0.5;
+    s.diffuse = albedo;
+    s.f0 = float3(0.02);
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    float wrapped = saturate((dot(n, l) + 0.5) / 1.5) + 0.35 * saturate(-dot(n, l));
+    float3 color = albedo * (ambient + sunLight * shadow * wrapped / PI);
+    float2 pixel = input.position.xy;
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), eyeDistance(frame, input.world));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
 // The colours of the water over a Voxel Volume's rivers and lakes: a world of blocks' water block's own colour, a lake's
 // green, as its look is made from it (blockWaterLook).
 BlockWaterLook voxelWaterLook()

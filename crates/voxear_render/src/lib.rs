@@ -2901,8 +2901,9 @@ struct ViewSetup {
     /// What endless volumes' making writes this frame, which the voxel passes read.
     voxel_pools: Vec<graph::BufferId>,
     /// The water over endless volumes' rivers and lakes: its buffer's
-    /// address, how many squares it has, and how many of waterfalls after.
-    voxel_water: (u64, u32, u32),
+    /// address, and how many squares it has, then of waterfalls and of their
+    /// lips after.
+    voxel_water: (u64, [u32; 3]),
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
@@ -4133,15 +4134,16 @@ impl View {
         let block_water = view_blocks.as_ref().filter(|blocks| blocks.has_water()).cloned();
         // And the water over Voxel Volumes' rivers, and their ground under the sea, which its floor is drawn from.
         let voxel_water = water::VoxelWater {
-            squares: setup.voxel_water.1,
-            falls: setup.voxel_water.2,
+            squares: setup.voxel_water.1[0],
+            falls: setup.voxel_water.1[1],
+            lips: setup.voxel_water.1[2],
             floor: view_voxels.as_ref().map(|view| view.pools.clone()),
         };
         let wet = extracted.ocean.is_some()
             || extracted.water_bodies.pools > 0
             || !extracted.water_bodies.streams.is_empty()
             || block_water.is_some()
-            || voxel_water.squares + voxel_water.falls > 0;
+            || voxel_water.squares + voxel_water.falls + voxel_water.lips > 0;
         // Through a Portal, only the water of worlds of blocks, and only while some of it shows there.
         let shown = portal.is_none_or(|pass| pass.water && block_water.is_some());
         let water = match wet && !wireframe && shown {

@@ -485,12 +485,31 @@ pub struct GpuVoxelWater {
 pub(crate) struct ColumnWater {
     pub squares: Vec<GpuVoxelWater>,
     pub falls: Vec<GpuVoxelWater>,
+    pub lips: Vec<GpuVoxelLip>,
 }
 
 impl ColumnWater {
     pub fn is_empty(&self) -> bool {
-        self.squares.is_empty() && self.falls.is_empty()
+        self.squares.is_empty() && self.falls.is_empty() && self.lips.is_empty()
     }
+}
+
+/// A piece of a waterfall's lip, half a metre or less, as `voxelDropVertex`
+/// in `shaders/water.slang` throws voxels of water over it: where it runs,
+/// from `a` to `b` along X and Z in the world; how high the fall's top is
+/// in the world, how far it falls, how fast the water leaves the lip, and
+/// how large a voxel is; and which way out from the cliff it falls.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuVoxelLip {
+    pub a: [f32; 2],
+    pub b: [f32; 2],
+    pub top: f32,
+    pub drop: f32,
+    pub speed: f32,
+    pub voxel: f32,
+    pub out: [f32; 2],
+    pub pad: [f32; 2],
 }
 
 /// How far below a waterfall its pool churns, in points of the grid.
@@ -703,6 +722,25 @@ pub(crate) fn water_quads(
                 });
                 let looks =
                     f32::from_bits(bytes(turns.map(|t| if t >= 255.5 / 256.0 { 0.0 } else { t * 256.0 / 255.0 })));
+                // The lip, where the square's corners before the fall are: a side of it, or a corner.
+                let lip: Vec<usize> = (0..4).filter(|&k| ats[k] == 0.0 && wet(at(points[k].0, points[k].1))).collect();
+                if !lip.is_empty() {
+                    let place = |k: usize| [x + (k & 1) as f32 * step, z + (k >> 1) as f32 * step];
+                    let (a, b) = match lip[..] {
+                        [k, m, ..] if k ^ m != 3 => (place(k), place(m)),
+                        [k, ..] => (place(k), place(k)),
+                        [] => unreachable!(),
+                    };
+                    let way = turns.iter().sum::<f32>() / 4.0;
+                    let ways: Vec<f32> = turns.iter().map(|t| t * std::f32::consts::TAU).collect();
+                    let (cx, cz) = ways.iter().fold((0.0, 0.0), |(x, z), w| (x + w.cos(), z + w.sin()));
+                    let out = if cx.hypot(cz) > 1e-3 {
+                        [cx / cx.hypot(cz), cz / cx.hypot(cz)]
+                    } else {
+                        [(way * std::f32::consts::TAU).cos(), (way * std::f32::consts::TAU).sin()]
+                    };
+                    made.lips.push(GpuVoxelLip { a, b, top: height(top), drop, speed, voxel, out, pad: [0.0; 2] });
+                }
                 made.falls.push(GpuVoxelWater {
                     corner: [x, z],
                     size: step,

@@ -259,6 +259,75 @@ fn without_rivers(world: &WorldGen) -> WorldGen {
     WorldGen::new(world.seed(), world.scale(), world.sea_level(), graph)
 }
 
+/// Where in `world` a river's water stands at least `deep` metres over its
+/// bed, the nearest the middle of those looked at, every 8 m within 640 m:
+/// the place, and how high its water and its bed are.
+fn river_in(world: &WorldGen, deep: f32) -> ([f32; 2], f32, f32) {
+    let (mut xs, mut zs) = (Vec::new(), Vec::new());
+    for j in 0..160 {
+        for i in 0..160 {
+            xs.push(i as f32 * 8.0 - 640.0);
+            zs.push(j as f32 * 8.0 - 640.0);
+        }
+    }
+    let (water, _) = world.water(&xs, &zs).expect("its water wired in");
+    let mut heights = vec![0.0; xs.len()];
+    world.heights(&xs, &zs, &mut heights);
+    let found = (0..xs.len())
+        .filter(|&i| water[i] - heights[i] > deep)
+        .min_by(|&a, &b| xs[a].hypot(zs[a]).total_cmp(&xs[b].hypot(zs[b])))
+        .expect("a river deep enough");
+    ([xs[found], zs[found]], water[found], heights[found])
+}
+
+#[test]
+fn an_endless_volumes_ground_is_cut_by_its_generators_rivers_with_their_water_over_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let rivered = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&rivered, 0.8);
+    // Straight down from 8 m over the river's water, the volume's floor 24 m under its bed.
+    let scene = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    let mut bare = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    for volume in bare.query::<&mut VoxelVolume>() {
+        volume.generator.as_mut().unwrap().world = Arc::new(rivered.without_rivers());
+    }
+    let volume = |scene: &World| scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let camera = scene.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.position;
+    // The ray worked out on the CPU meets the bed the rivers cut, as deep as the generator makes it.
+    let down = -Vec3::Y;
+    let hit = voxear_render::voxel_raycast(&volume(&scene), Vec3::ZERO, camera, down, 100.0).expect("the bed");
+    let uncut = voxear_render::voxel_raycast(&volume(&bare), Vec3::ZERO, camera, down, 100.0).expect("the ground");
+    eprintln!(
+        "river at {x} {z}: water {water:.2}, bed {bed:.2}; met at {:.2}, uncut {:.2}",
+        hit.point.y, uncut.point.y
+    );
+    assert!((hit.point.y - 24.0).abs() < 0.25, "the ray meets the bed at {:.2}, not 24", hit.point.y);
+    assert!(uncut.point.y > hit.point.y + 0.5, "the ground without the rivers stands higher");
+    let cut = render(&mut renderer, &scene, 3);
+    let squares = renderer.stats().voxels.water_squares;
+    keep_image("river from above.png", &cut);
+    let uncut_pixels = render(&mut renderer, &bare, 3);
+    keep_image("river taken out from above.png", &uncut_pixels);
+    assert!(squares > 0, "water over the river");
+    assert_eq!(renderer.stats().voxels.water_squares, 0, "no water without the rivers");
+    let middle = |a: &[u8], b: &[u8]| {
+        (0..40)
+            .flat_map(|dy| (0..40).map(move |dx| (WIDTH / 2 + dx - 20, HEIGHT / 2 + dy - 20)))
+            .filter(|&(x, y)| (0..3).any(|i| (rgb_at(a, x, y)[i] - rgb_at(b, x, y)[i]).abs() > 20))
+            .count()
+    };
+    let changed = middle(&cut, &uncut_pixels);
+    assert!(changed > 800, "the river shows under the camera: {changed} of 1600 pixels changed");
+    // A ball of rock filled where the ray met the bed stands up out of the water under the camera.
+    let mut filled = scene;
+    filled.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits =
+        Arc::new(vec![VoxelEdit::ball(hit.point, water - bed + 0.6, Some(VoxelMaterial::Rock))]);
+    let rock = render(&mut renderer, &filled, 3);
+    keep_image("river filled from above.png", &rock);
+    let risen = middle(&cut, &rock);
+    assert!(risen > 400, "the rock filled where the ray met the bed shows: {risen} of 1600 pixels changed");
+}
+
 fn starter(name: &str) -> WorldGen {
     let found = starters().into_iter().find(|starter| starter.name == name).expect("a starter of that name");
     found.world(7, 1.0)
@@ -455,18 +524,22 @@ fn the_biome_an_endless_volume_picks_on_the_gpu_is_the_world_of_blocks_on_the_cp
     let places: Vec<[f32; 2]> =
         (0..8192).map(|i| [(i % 128) as f32 * 9.7 - 300.0, (i / 128) as f32 * 11.3 - 500.0]).collect();
     let picked = renderer.biomes_on_gpu(&world, &voxel_biomes, &places).expect("biomes on the GPU");
-    let (mut same, mut seen) = (0, [0usize; 5]);
+    let (mut same, mut twins, mut seen) = (0, 0, [0usize; 5]);
     for (at, &[x, z]) in places.iter().enumerate() {
         let height = world.height_at(x, z);
         let (temperature, humidity) = world.climate(x, z, height);
         let place = Place { temperature, humidity, above_sea: height - world.sea_level(), sunk: 0.0 };
         let cpu = biomes.index_at(x, z, place).map_or(-1, |index| index as i32);
         same += usize::from(cpu == picked[at]);
+        // And the CPU's own twin of the GPU's, as collision and rays place trees by.
+        let twin = voxel_biomes.biome_of(x, z, temperature, humidity, height - world.sea_level());
+        twins += usize::from(twin.map_or(-1, |index| index as i32) == cpu);
         if let Ok(index) = usize::try_from(cpu) {
             seen[index] += 1;
         }
     }
-    eprintln!("{same} of {} the same; the CPU's biomes {seen:?}", places.len());
+    eprintln!("{same} of {} the same, {twins} on the CPU's twin; the CPU's biomes {seen:?}", places.len());
+    assert!(twins * 1000 >= places.len() * 995, "{twins} of {} the same on the CPU's twin", places.len());
     assert!(seen.iter().filter(|&&count| count > 0).count() >= 3, "several biomes: {seen:?}");
     // A place on a border may fall either side of it by a rounding.
     assert!(same * 1000 >= places.len() * 995, "{same} of {} the same", places.len());
@@ -495,6 +568,91 @@ fn generated_view(world: Arc<WorldGen>, x: f32, z: f32, height: f32, pitch: f32)
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
     scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
     scene
+}
+
+#[test]
+fn the_water_of_an_endless_volumes_rivers_is_found_where_it_is_drawn_with_its_current() {
+    let rivered = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&rivered, 0.8);
+    let scene = generated_view(rivered.clone(), x, z, 8.0, 90.0);
+    let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    // The volume's floor is 24 m under the river's bed.
+    let (top, bottom) = (24.0 + water - bed, 24.0);
+    let at = |y: f32| voxear_render::voxel_water_at(&volume, Vec3::ZERO, Vec3::new(x, y, z));
+    let found = at(bottom + 0.1).expect("the river's water");
+    assert!((found.height - top).abs() < 0.15, "its surface at {:.2}, not {top:.2}", found.height);
+    // Its current runs as the generator's does there, worked out from the points its water is drawn from.
+    let [cx, cz] = rivered.current(x, z).expect("its current");
+    let current = Vec3::new(cx, 0.0, cz);
+    eprintln!("river at {x} {z}: surface {:.2} of {top:.2}, current {} of {current}", found.height, found.current);
+    if current.length() > 0.5 {
+        assert!(found.current.normalize().dot(current.normalize()) > 0.8, "{} along {current}", found.current);
+    }
+    assert!((found.current.length() - current.length()).abs() < 0.6, "{} as fast as {current}", found.current);
+    // Between the points, read smoothly from them, as near the generator's own water.
+    let (bx, bz) = (x + 0.23, z + 0.31);
+    let (own, _) = rivered.water(&[bx], &[bz]).unwrap();
+    let between = voxear_render::voxel_water_at(&volume, Vec3::ZERO, Vec3::new(bx, bottom + 0.1, bz)).unwrap();
+    assert!((between.height - (24.0 + own[0] - bed)).abs() < 0.1, "{} between the points", between.height);
+    // Over it the same surface; deep under its bed, none; nor on a hill far from water, nor under the floor.
+    assert_eq!(at(top + 20.0).map(|water| water.height), Some(found.height));
+    assert!(at(bottom - 3.0).is_none(), "no water 3 m under the bed");
+    assert!(voxear_render::voxel_water_at(&volume, Vec3::ZERO, Vec3::new(x, -1.0, z)).is_none());
+    let hill = (0..4000)
+        .map(|i| [(i % 64) as f32 * 9.0 - 300.0, (i / 64) as f32 * 9.0 - 300.0])
+        .max_by(|a, b| rivered.height_at(a[0], a[1]).total_cmp(&rivered.height_at(b[0], b[1])))
+        .unwrap();
+    let up = Vec3::new(hill[0], 24.0 + rivered.height_at(hill[0], hill[1]) - bed + 1.0, hill[1]);
+    assert!(voxear_render::voxel_water_at(&volume, Vec3::ZERO, up).is_none(), "no water on the hilltop at {hill:?}");
+    // Without rivers, none.
+    let mut bare = volume.clone();
+    bare.generator.as_mut().unwrap().world = Arc::new(rivered.without_rivers());
+    assert!(voxear_render::voxel_water_at(&bare, Vec3::ZERO, Vec3::new(x, bottom + 0.1, z)).is_none());
+}
+
+#[test]
+fn an_endless_volume_has_its_generators_sea_where_the_level_has_no_ocean() {
+    let Some(mut renderer) = renderer() else { return };
+    let islands = Arc::new(starter("Archipelago"));
+    let sea = islands.sea_level();
+    // A shore with the sea 3 m deep 24 m off towards +x, seen from 3 m over the sea, looking out across it.
+    let coast = (0..160_000)
+        .map(|i| [(i % 400) as f32 * 4.0 - 800.0, (i / 400) as f32 * 4.0 - 800.0])
+        .find(|&[x, z]| (islands.height_at(x, z) - sea).abs() < 0.5 && islands.height_at(x + 24.0, z) < sea - 3.0)
+        .expect("a shore");
+    let from = [coast[0] - 6.0, coast[1]];
+    let mut scene =
+        generated_view(islands.clone(), from[0], from[1], sea - islands.height_at(from[0], from[1]) + 3.0, 12.0);
+    let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+    camera.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
+    let (volume, floor) = {
+        let (entity, volume) = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap();
+        (entity, volume.generator.as_ref().unwrap().floor)
+    };
+    let seas = voxear_render::ocean::seas(&scene);
+    assert_eq!(seas.len(), 1, "the volume's sea");
+    assert_eq!((seas[0].entity, seas[0].position.y), (volume, sea - floor));
+    let with_sea = render(&mut renderer, &scene, 3);
+    keep_image("generated sea.png", &with_sea);
+    scene.get_mut::<VoxelVolume>(volume).unwrap().sea = false;
+    assert!(voxear_render::ocean::seas(&scene).is_empty());
+    let without = render(&mut renderer, &scene, 3);
+    keep_image("generated sea turned off.png", &without);
+    // Out across the water, under the horizon: the sea's water where there was its floor.
+    let (w, h) = (WIDTH as usize, HEIGHT as usize);
+    let (mut changed, mut bluer, mut all) = (0, 0, 0);
+    for y in h * 55 / 100..h * 70 / 100 {
+        for x in w / 4..w * 3 / 4 {
+            let at = (y * w + x) * 4;
+            let (a, b) = (&with_sea[at..at + 3], &without[at..at + 3]);
+            all += 1;
+            changed += usize::from(a.iter().zip(b).map(|(a, b)| a.abs_diff(*b) as u32).sum::<u32>() > 24);
+            bluer += usize::from(i32::from(a[2]) - i32::from(a[0]) > i32::from(b[2]) - i32::from(b[0]));
+        }
+    }
+    eprintln!("out to sea: {changed} of {all} pixels changed, {bluer} bluer");
+    assert!(changed * 2 > all, "the sea shows: {changed} of {all} pixels changed");
+    assert!(bluer * 2 > all, "the sea's water is bluer than its floor: {bluer} of {all}");
 }
 
 #[test]
@@ -625,6 +783,168 @@ fn measure_an_endless_volume_made_by_a_generator() {
                 making[making.len() - 1],
                 median / most as f32,
                 most
+            );
+        }
+    }
+}
+
+/// Pictures and timings of rivers and a coast in endless volumes, at
+/// 1920×1080, for comparing by eye: a river with its rivers cut and drawn
+/// and one without, and a coast. Each still view's passes are the least of
+/// 60 frames; a column's making is the least of the frames making the
+/// window over again, each making as many columns as a frame makes at most.
+/// Run by hand: `cargo test -p voxear_render --test voxels rivers_and_a_coast -- --ignored --nocapture`,
+/// with `VOXEAR_TEST_OUTPUT` naming a folder for the pictures.
+#[test]
+#[ignore]
+fn measure_rivers_and_a_coast() {
+    let (w, h) = (1920, 1080);
+    let Ok(mut renderer) = Renderer::new_offscreen(w, h, &RendererSettings::default()) else { return };
+    let keep = |name: &str, pixels: &[u8]| {
+        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, w, h);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(pixels).unwrap();
+        }
+    };
+    let hills = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&hills, 1.2);
+    let islands = Arc::new(starter("Archipelago"));
+    let sea = islands.sea_level();
+    // A shore: ground within half a metre of the sea, with the sea 3 m deep 24 m off towards +x.
+    let coast = (0..160_000)
+        .map(|i| [(i % 400) as f32 * 4.0 - 800.0, (i / 400) as f32 * 4.0 - 800.0])
+        .find(|&[x, z]| (islands.height_at(x, z) - sea).abs() < 0.5 && islands.height_at(x + 24.0, z) < sea - 3.0)
+        .expect("a shore");
+    // A waterfall in the mountains, more than 4 m high, found along X: its place, its top and its foot, and which way
+    // along X its water runs on below it.
+    let alpine = Arc::new(starter("Alpine"));
+    let fall = {
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..400 * 400).map(|at| ((at % 400) as f32 * 6.0 - 1200.0, (at / 400) as f32 * 6.0 - 1200.0)).unzip();
+        let (level, _) = alpine.water(&xs, &zs).unwrap();
+        let wet = |at: usize| level[at] > -1000.0;
+        (0..xs.len())
+            .filter(|&at| wet(at) && at % 400 + 1 < 400 && wet(at + 1))
+            .find_map(|at| {
+                let line: (Vec<f32>, Vec<f32>) = (0..=12).map(|k| (xs[at] + k as f32 * 0.5, zs[at])).unzip();
+                let (top, falls) = alpine.water(&line.0, &line.1).unwrap();
+                let k = (0..line.0.len()).find(|&k| falls[k] > 4.0)?;
+                let (near, _) = alpine.water(&[line.0[k] - 3.0, line.0[k] + 3.0], &[line.1[k]; 2]).unwrap();
+                Some((line.0[k], line.1[k], top[k], top[k] - falls[k], if near[1] < near[0] { 1.0 } else { -1.0 }))
+            })
+            .expect("a waterfall")
+    };
+    let which = std::env::var("RIVER_CASES").unwrap_or_else(|_| "river,bare,trees,coast".into());
+    for case in which.split(',') {
+        let mut scene = match case {
+            "coast" => {
+                // From 3 m over the sea at the shore, looking out across it.
+                let mut scene = generated_view(
+                    islands.clone(),
+                    coast[0] - 6.0,
+                    coast[1],
+                    sea - islands.height_at(coast[0] - 6.0, coast[1]) + 3.0,
+                    12.0,
+                );
+                // Its sea is the generator's, at its sea level.
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                camera.rotation =
+                    Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
+                scene
+            }
+            "falls" => {
+                // From 18 m downstream at 3 m over its pool, looking back up at it.
+                let (fx, fz, top, foot, down) = fall;
+                let x = fx + down * 18.0;
+                eprintln!("falls at {fx} {fz}: from {top:.1} to {foot:.1}");
+                let mut scene = generated_view(alpine.clone(), x, fz, foot + 3.0 - alpine.height_at(x, fz), -8.0);
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                let turn = if down > 0.0 { -std::f32::consts::FRAC_PI_2 } else { std::f32::consts::FRAC_PI_2 };
+                camera.rotation = Quat::from_rotation_y(turn) * Quat::from_rotation_x(-8f32.to_radians());
+                scene
+            }
+            "falls-side" => {
+                // From 12 m off to its side and downstream, 4 m over its pool, looking at its middle.
+                let (fx, fz, top, foot, down) = fall;
+                let (x, z) = (fx + down * 9.0, fz + 9.0);
+                let mut scene = generated_view(alpine.clone(), x, z, 0.0, 0.0);
+                let floor =
+                    scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
+                let eye = Vec3::new(x, foot + 4.0 - floor, z);
+                let to = Vec3::new(fx, (top + foot) * 0.5 - floor, fz) - eye;
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                camera.position = eye;
+                camera.rotation =
+                    Quat::from_rotation_y(to.x.atan2(to.z)) * Quat::from_rotation_x((-to.y).atan2(to.x.hypot(to.z)));
+                scene
+            }
+            // From 6 m over the river's water, looking 35° down.
+            _ => generated_view(hills.clone(), x, z, water - bed + 6.0, 35.0),
+        };
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.reach = 64.0;
+            if case == "bare" {
+                volume.generator.as_mut().unwrap().world = Arc::new(hills.without_rivers());
+            }
+            if case == "trees" {
+                volume.trees = oaks_and_pines();
+            }
+        }
+        let started = std::time::Instant::now();
+        renderer.render(&scene, 0.0).unwrap();
+        assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(120)).unwrap());
+        let window = started.elapsed().as_secs_f32();
+        let mut least: std::collections::BTreeMap<String, f32> = Default::default();
+        let mut frame = f32::MAX;
+        for i in 0..90 {
+            renderer.render(&scene, i as f32 / 60.0).unwrap();
+            if i >= 30 {
+                for (pass, ms) in renderer.timings() {
+                    if pass.contains("oxel") || pass.contains("Water") || pass.contains("Sea floor") {
+                        let kept = least.entry(pass.clone()).or_insert(f32::MAX);
+                        *kept = kept.min(*ms);
+                    }
+                }
+                frame = frame.min(renderer.gpu_frame_ms());
+            }
+        }
+        keep(&format!("{case}.png"), &renderer.read_pixels().unwrap().2);
+        let stats = renderer.stats().voxels;
+        eprintln!(
+            "{case}: window made in {window:.2} s, {} MB, {} squares of water",
+            stats.bytes / 1_000_000,
+            stats.water_squares
+        );
+        eprintln!("{case}: still view, least of 60: frame {frame:.2} ms, {least:?}");
+        // The window made over again, as a changed floor makes it: each frame's making over its columns.
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.generator.as_mut().unwrap().floor += 1e-3;
+        }
+        let mut each = Vec::new();
+        let mut columns = Vec::new();
+        for i in 0..200 {
+            renderer.render(&scene, 2.0 + i as f32 / 60.0).unwrap();
+            columns.push(renderer.stats().voxels.columns_made);
+            if let Some((_, ms)) = renderer.timings().iter().find(|(pass, _)| pass == "Voxel world making") {
+                each.push(*ms);
+            }
+            if !renderer.voxel_volumes_making() && i > 10 {
+                break;
+            }
+        }
+        let most = columns.iter().copied().max().unwrap_or(1).max(1);
+        // Only the frames well inside the run, where every frame made as many columns as it may.
+        let full = columns.iter().filter(|&&c| c == most).count();
+        let mut kept: Vec<f32> = each.iter().skip(4).take(full.saturating_sub(8)).copied().collect();
+        kept.sort_by(f32::total_cmp);
+        if !kept.is_empty() {
+            eprintln!(
+                "{case}: making again, {} frames of {most} columns: a column least {:.3} ms, median {:.3} ms",
+                kept.len(),
+                kept[0] / most as f32,
+                kept[kept.len() / 2] / most as f32
             );
         }
     }
@@ -928,6 +1248,53 @@ fn a_ray_worked_out_on_the_cpu_meets_the_ground_the_gpu_draws() {
         assert!(changed > 25, "{name}: the pit where the ray met the ground changes {changed} of 81 pixels");
         assert!(took.as_millis() < 50, "{name}: a ray takes {took:?}");
     }
+}
+
+#[test]
+fn the_cpus_trees_stand_where_the_gpu_draws_them() {
+    let Some(mut renderer) = renderer() else { return };
+    // A wood from 20 m over it, straight down, its leaves red and its wood blue, in still air.
+    let mut trees = oaks_and_pines();
+    for kind in &mut trees {
+        (kind.wood, kind.leaves) = ([40, 40, 230], [230, 40, 40]);
+    }
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = generated_view(hills, 8.0, 8.0, 20.0, 90.0);
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = trees;
+    scene.spawn((WindZone { strength: 0.0, ..WindZone::default() }, Transform::default()));
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("cpu trees from above.png", &pixels);
+    let (camera, place) = scene.query::<(&Camera, &Transform)>().into_iter().next().map(|(c, t)| (c.clone(), t.clone())).unwrap();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let bare = VoxelVolume { trees: Vec::new(), ..volume.clone() };
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let tan = (camera.fov_y_for(aspect) * 0.5).tan();
+    let (forward, up) = (place.rotation * Vec3::Z, place.rotation * Vec3::Y);
+    let right = up.cross(forward);
+    let (mut agree, mut all, mut gpu_trees, mut cpu_trees) = (0, 0, 0, 0);
+    let started = std::time::Instant::now();
+    for py in (6..HEIGHT).step_by(12) {
+        for px in (6..WIDTH).step_by(12) {
+            let x = ((px as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0) * tan * aspect;
+            let y = (1.0 - (py as f32 + 0.5) / HEIGHT as f32 * 2.0) * tan;
+            let d = (forward + right * x + up * y).normalize();
+            let ray = |volume: &VoxelVolume| voxear_render::voxel_raycast(volume, Vec3::ZERO, place.position, d, 200.0);
+            let (Some(hit), Some(ground)) = (ray(&volume), ray(&bare)) else { continue };
+            let cpu = hit.distance < ground.distance - 0.1;
+            // Red leaves and blue wood, lit or in shadow: most of the pixel's light red, or blue. Inside the crowns
+            // the shade is black, which the ground in the sun never is.
+            let [r, g, b] = rgb_at(&pixels, px, py).map(|c| c as f32);
+            let sum = (r + g + b).max(1.0);
+            let gpu = sum <= 6.0 || r / sum > 0.5 || b / sum > 0.5;
+            all += 1;
+            agree += usize::from(cpu == gpu);
+            gpu_trees += usize::from(gpu);
+            cpu_trees += usize::from(cpu);
+        }
+    }
+    eprintln!("{agree} of {all} agree; trees at {gpu_trees} on the GPU, {cpu_trees} on the CPU, in {:?}", started.elapsed());
+    assert!(gpu_trees * 4 > all, "the wood covers the view: {gpu_trees} of {all}");
+    assert!(agree * 100 >= all * 95, "the CPU's trees are the GPU's: {agree} of {all} agree");
 }
 
 fn with_trees(mut scene: World) -> World {

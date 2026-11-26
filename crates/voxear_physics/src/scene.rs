@@ -49,8 +49,10 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Layer, Layers, Parent, Plant, PlantSet, Plants, Transform, Trunk, WorldTransform};
 
 mod vehicles;
+mod voxels;
 
 pub use vehicles::draw_vehicle_debug;
+pub use voxels::{CHUNK as VOXEL_CHUNK, VoxelCollider, VoxelSolids};
 
 use crate::{
     BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
@@ -725,6 +727,8 @@ pub struct PhysicsScene {
     plants: HashMap<Entity, PlantBodies>,
     /// Each plant trunk's body's plant, by its number in its Obj's plants.
     plant_bodies: HashMap<BodyId, u32>,
+    /// Each Voxel Collider's bodies, a mesh for each chunk round what moves.
+    voxel_bodies: HashMap<Entity, voxels::VoxelBodies>,
 }
 
 /// The most an Obj far from the middle can be from its body after the
@@ -893,6 +897,7 @@ impl PhysicsScene {
             block_worlds: HashMap::new(),
             plants: HashMap::new(),
             plant_bodies: HashMap::new(),
+            voxel_bodies: HashMap::new(),
         }
     }
 
@@ -1082,6 +1087,9 @@ impl PhysicsScene {
         for kept in self.block_worlds.values_mut() {
             kept.corner += by;
         }
+        for kept in self.voxel_bodies.values_mut() {
+            kept.shift(by);
+        }
         for (entity, kept) in &mut self.plants {
             kept.model.w_axis += by.extend(0.0);
             // As the Obj's transforms will be worked out at the end of the frame.
@@ -1122,6 +1130,7 @@ impl PhysicsScene {
         self.sync_block_worlds(world);
         self.sync_plants(world);
         self.sync_characters(world);
+        self.sync_voxels(world);
         self.sync_joints(world);
         self.sync_vehicles(world);
     }
@@ -1876,6 +1885,7 @@ impl PhysicsScene {
             || self.characters.contains_key(&entity)
             || self.terrains.contains_key(&entity)
             || self.block_worlds.contains_key(&entity)
+            || self.voxel_bodies.contains_key(&entity)
             || self.plants.contains_key(&entity)
         {
             return;

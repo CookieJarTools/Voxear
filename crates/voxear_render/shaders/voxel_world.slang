@@ -138,6 +138,9 @@ struct WorldMake
     uint* prints;
     // A world of blocks' biomes and the places of their blocks' colours, where the generator has any (biomeOf).
     uint* biomes;
+    // A generator's rivers, laid in from the CPU (src/voxel_volume/rivers.rs): for each slot of a window of columns
+    // a little wider than the volume's, `riverWindow` a side, the column it holds and its points; none without rivers.
+    uint* rivers;
     float height;
     float hills;
     float hillSpacing;
@@ -181,6 +184,8 @@ struct WorldMake
     uint brickPages;
     uint editCount;
     uint editPad;
+    uint riverWindow;
+    uint riverPad;
     WorldJob jobs[MAX_JOBS];
 };
 
@@ -261,6 +266,54 @@ static const uint GROUND_SAND = 2;
 static const uint GROUND_SNOW = 3;
 static const uint GROUND_GRAVEL = 4;
 
+// A generator's rivers (src/voxel_volume/rivers.rs): each column's points RIVER_STEP voxels apart, from one step back
+// of its corner, RIVER_GRID a side; a column's entry holds where it is, whether the rivers change anything there, then
+// how much they raise the ground at each point (cut it down where less than nothing), then how high their water
+// stands there, in metres of the generator's world.
+static const int RIVER_GRID = 11;
+static const int RIVER_STEP = 8;
+static const uint RIVER_WORDS = 4 + 2 * 11 * 11;
+static const float NO_RIVER_WATER = -1.0e6;
+
+// The point a voxel column `x` of a column lies after along an axis, and how far on to the next, as the CPU reads it.
+int riverBetween(int x, out float f)
+{
+    float u = (float(x) + 0.5) * (1.0 / float(RIVER_STEP)) + 1.0;
+    float i = clamp(floor(u), 0.0, float(RIVER_GRID - 2));
+    f = u - i;
+    return int(i);
+}
+
+// What the rivers make of voxel column (x, z) of the world: in x, how many metres they raise its ground, read between
+// the four points round it as the CPU reads them; in y, how high the highest water among those points stands, or
+// NO_RIVER_WATER where there is none.
+float2 riverAt(WorldMake* make, int x, int z)
+{
+    uint w = make->riverWindow;
+    if (w == 0)
+    {
+        return float2(0.0, NO_RIVER_WATER);
+    }
+    int2 c = int2(x >> 6, z >> 6);
+    uint2 slot = uint2(uint(c.x + int(w) * 65536), uint(c.y + int(w) * 65536)) % w;
+    uint* entry = make->rivers + (slot.y * w + slot.x) * RIVER_WORDS;
+    if (int(entry[0]) != c.x || int(entry[1]) != c.y || entry[2] == 0)
+    {
+        return float2(0.0, NO_RIVER_WATER);
+    }
+    float fx;
+    float fz;
+    int i = riverBetween(x - c.x * 64, fx);
+    int j = riverBetween(z - c.y * 64, fz);
+    uint at = uint(j * RIVER_GRID + i);
+    float* cut = (float*)(entry + 4);
+    float* water = cut + RIVER_GRID * RIVER_GRID;
+    float low = cut[at] + (cut[at + 1] - cut[at]) * fx;
+    float high = cut[at + RIVER_GRID] + (cut[at + RIVER_GRID + 1] - cut[at + RIVER_GRID]) * fx;
+    float wet = max(max(water[at], water[at + 1]), max(water[at + RIVER_GRID], water[at + RIVER_GRID + 1]));
+    return float2(low + (high - low) * fz, wet);
+}
+
 int heightOf(WorldMake* make, uint job, int x, int z)
 {
     return make->heights[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
@@ -328,7 +381,8 @@ float densityWith(WorldMake* make, int3 p, uint* carried)
         slots[s] = 0.0;
     }
     runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carried, slots);
-    return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)];
+    // The rivers' cut moves the ground's surface down by as much, as how far into it a voxel is goes by metres.
+    return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)] + riverAt(make, p.x, p.z).x;
 }
 
 // How far into the ground of the Volume a voxel is, in metres (out of it where negative): column (x, z) of a
@@ -370,14 +424,20 @@ int voxelsUp(WorldMake* make, float height)
 }
 
 // What the ground is where it is `h` voxels high and its height changes by `across` voxels over four, as warm, wet
-// and rocky as the generator says.
-uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness, bool rock)
+// and rocky as the generator says, a river's or a lake's water `water` metres high over it (NO_RIVER_WATER for none):
+// gravel under it, and sand along its edge.
+uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness, bool rock, float water)
 {
     float slope = float(across) / 4.0;
-    float above = float(h) * make->voxel + make->floor - make->seaLevel;
+    float top = float(h) * make->voxel + make->floor;
+    float above = top - make->seaLevel;
     if (rock || slope > 1.0)
     {
         return GROUND_ROCK;
+    }
+    if (water > top - 0.1)
+    {
+        return water > top + 0.3 ? GROUND_GRAVEL : GROUND_SAND;
     }
     if (above < -0.5)
     {
@@ -479,13 +539,14 @@ int biomeOf(WorldMake* make, float x, float z, float warmth, float wetness, floa
 }
 
 // What the ground is at voxel column `voxel` of the world, `h` voxels high where its height changes by `across`
-// voxels over four, as warm, wet and rocky as the generator says: of its biome's blocks where the generator is a world
+// voxels over four, as warm, wet and rocky as the generator says, a river's or lake's water `water` metres high: of its biome's blocks where the generator is a world
 // of blocks' (BiomeBlocks::at), else grass, rock, sand, snow or gravel.
-uint groundAt(WorldMake* make, int2 voxel, int h, int across, float warmth, float wetness, bool rock)
+uint groundAt(WorldMake* make, int2 voxel, int h, int across, float warmth, float wetness, bool rock, float water)
 {
-    if (make->biomes == nullptr)
+    // A river's or a lake's bed is its sand or gravel, whatever biome it runs through.
+    if (make->biomes == nullptr || water > float(h) * make->voxel + make->floor - 0.1)
     {
-        return groundKind(make, h, across, warmth, wetness, rock);
+        return groundKind(make, h, across, warmth, wetness, rock, water);
     }
     float v = make->voxel;
     float x = (float(voxel.x) + 0.5) * v + make->atX;
@@ -494,7 +555,7 @@ uint groundAt(WorldMake* make, int2 voxel, int h, int across, float warmth, floa
     int biome = biomeOf(make, x, z, warmth, wetness, above);
     if (biome < 0)
     {
-        return groundKind(make, h, across, warmth, wetness, rock);
+        return groundKind(make, h, across, warmth, wetness, rock, water);
     }
     uint* r = make->biomes + make->biomes[8] + uint(biome) * BIOME_WORDS;
     uint kind = BIOME_OWN;
@@ -549,7 +610,7 @@ uint groundOf(WorldMake* make, uint job, int x, int z)
     float warmth = float(climate & 255u) - 128.0;
     float wetness = float((climate >> 8) & 255u) / 255.0;
     int2 voxel = make->jobs[job].column * 64 + int2(x, z);
-    return groundAt(make, voxel, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0);
+    return groundAt(make, voxel, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0, riverAt(make, voxel.x, voxel.y).y);
 }
 
 uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
@@ -737,7 +798,8 @@ void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
         return;
     }
     Generated made = runColumn(make, x, z, make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount);
-    make->heights[job * SIDE * SIDE + id.x] = voxelsUp(make, made.height);
+    // The rivers' cut, laid in from the CPU, over the ground the program made without them.
+    make->heights[job * SIDE * SIDE + id.x] = voxelsUp(make, made.height + riverAt(make, x, z).x);
     uint warmth = uint(clamp(round(made.warmth) + 128.0, 0.0, 255.0));
     uint wetness = uint(clamp(made.wetness * 255.0, 0.0, 255.0));
     uint rock = made.rock > 0.5 ? 1u : 0u;
@@ -941,18 +1003,19 @@ bool grassAt(WorldMake* make, int2 foot, uint* carried, out int h)
         h = heightAt(make, foot.x, foot.y);
         return h >= 0 && h < tall - 1;
     }
-    int east = voxelsUp(make, runColumn(make, foot.x + 2, foot.y, carried).height);
-    int west = voxelsUp(make, runColumn(make, foot.x - 2, foot.y, carried).height);
-    int north = voxelsUp(make, runColumn(make, foot.x, foot.y + 2, carried).height);
-    int south = voxelsUp(make, runColumn(make, foot.x, foot.y - 2, carried).height);
+    int east = voxelsUp(make, runColumn(make, foot.x + 2, foot.y, carried).height + riverAt(make, foot.x + 2, foot.y).x);
+    int west = voxelsUp(make, runColumn(make, foot.x - 2, foot.y, carried).height + riverAt(make, foot.x - 2, foot.y).x);
+    int north = voxelsUp(make, runColumn(make, foot.x, foot.y + 2, carried).height + riverAt(make, foot.x, foot.y + 2).x);
+    int south = voxelsUp(make, runColumn(make, foot.x, foot.y - 2, carried).height + riverAt(make, foot.x, foot.y - 2).x);
     Generated made = runColumn(make, foot.x, foot.y, carried);
-    h = voxelsUp(make, made.height);
+    float2 river = riverAt(make, foot.x, foot.y);
+    h = voxelsUp(make, made.height + river.x);
     if (h < 0 || h >= tall - 1)
     {
         return false;
     }
     int across = max(abs(east - west), abs(north - south));
-    if (!growsOn(make, groundAt(make, foot, h, across, made.warmth, made.wetness, made.rock > 0.5)))
+    if (!growsOn(make, groundAt(make, foot, h, across, made.warmth, made.wetness, made.rock > 0.5, river.y)))
     {
         return false;
     }

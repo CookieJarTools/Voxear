@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 98;
+pub(crate) const API_VERSION: u32 = 99;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -639,6 +639,12 @@ pub(crate) struct NativeApi {
     /// degrees about X, Y and Z; 1 once asked for.
     pub voxel_print:
         unsafe extern "C" fn(print: *const u8, length: i32, at: *const [f32; 3], rotation: *const [f32; 3]) -> i32,
+    /// `Voxels.WaterAt`: the water of an endless Voxel Volume's rivers and lakes at a place, 1 with its height and
+    /// current in `water` and the volume's Obj in `obj`, else 0.
+    pub voxel_water: unsafe extern "C" fn(at: *const [f32; 3], water: *mut [f32; 4], obj: *mut u64) -> i32,
+    /// `Voxels.Sea`: turns endless Voxel Volumes' generators' seas off or on (`on` 0 or 1) or asks (-1); 1 with the
+    /// sea's height in `level` where one has a sea now, else 0.
+    pub voxel_sea: unsafe extern "C" fn(on: i32, level: *mut f32) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2391,6 +2397,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         voxel_edit: crate::voxels::voxel_edit,
         voxel_raycast: crate::voxels::voxel_raycast,
         voxel_print: crate::voxels::voxel_print,
+        voxel_water: crate::voxels::voxel_water,
+        voxel_sea: crate::voxels::voxel_sea,
     }
 }
 

@@ -50,6 +50,11 @@ const RINGED_POOL: f32 = POOL_QUADS as f32 * SPACING;
 /// `shaders/water.slang`.
 const STREAM_ACROSS: u32 = 16;
 const STREAM_ALONG: u32 = 4;
+/// How many quads a side a square of a Voxel Volume's waterfall is drawn
+/// with, and how many sheets deep, as `FALL_QUADS` and `FALL_SHEETS` in
+/// `shaders/water.slang`.
+const FALL_QUADS: u32 = 8;
+const FALL_SHEETS: u32 = 2;
 /// Lava's spatter: how many blobs a bursting bubble throws up at most, and
 /// how wide the squares of lava its bubbles rise in are, in metres; as
 /// `SPATTER_BLOBS` in `shaders/water.slang` and `BUBBLE_CELL` in
@@ -299,8 +304,25 @@ pub struct Water {
     /// Whether the camera is under the top of a world of blocks' sea, whose
     /// swell is then drawn from where it is (`blockSeaInsideFragment`).
     inside: bool,
+    /// How many squares of water lie over Voxel Volumes' rivers, and where
+    /// each pixel's view leaves the water when no world of blocks' water
+    /// finds it: none there, as the squares have no undersides. And what
+    /// the voxels' sea floor reads, where it has any.
+    voxel_water: (u32, u32, Option<ImageId>),
+    voxel_floor: Option<Vec<BufferId>>,
     /// The trails on the water round the camera, when there are any.
     pub(crate) trails: Option<Trails>,
+}
+
+/// What a view draws of endless Voxel Volumes with the water: how many
+/// squares of water lie over their rivers and lakes, how many their
+/// waterfalls pour over after those, and, where it has
+/// volumes, what making their columns writes this frame, which their sea
+/// floor is drawn from.
+pub(crate) struct VoxelWater {
+    pub squares: u32,
+    pub falls: u32,
+    pub floor: Option<Vec<BufferId>>,
 }
 
 /// A frame's trails on the water (see `water_trails`): the two images they
@@ -346,10 +368,10 @@ impl Water {
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
         (buffers, slot): (&mut OceanBuffers, usize),
-        (found, bodies, blocks, origin): (
+        (found, bodies, (blocks, voxels), origin): (
             Option<(Ocean, f32, SeaState)>,
             &WaterBodies,
-            Option<crate::blocks::ViewBlocks>,
+            (Option<crate::blocks::ViewBlocks>, VoxelWater),
             voxear_core::math::I64Vec3,
         ),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
@@ -438,7 +460,16 @@ impl Water {
         let blocks = blocks.filter(crate::blocks::ViewBlocks::has_water);
         let layered = bodies.pools as usize + bodies.streams.len();
         let clear = blocks.is_some()
+            || voxels.squares + voxels.falls > 0
             || bodies.bodies[..layered].iter().any(|body| body.liquid == crate::water_bodies::Liquid::Water as u32);
+        let voxel_exits = match voxels.squares + voxels.falls > 0 && blocks.is_none() {
+            true => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32_SFLOAT, usage);
+                Some(fg.create_image(gpu, bindless, "voxel water exits", desc)?)
+            }
+            false => None,
+        };
         let blocks = match blocks {
             Some(blocks) => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
@@ -544,7 +575,9 @@ impl Water {
             pattern: (pattern, pattern_new),
             caustics,
             under,
-            layered: layered > 0 || blocks.is_some(),
+            layered: layered > 0 || blocks.is_some() || voxels.squares + voxels.falls > 0,
+            voxel_water: (voxels.squares, voxels.falls, voxel_exits),
+            voxel_floor: voxels.floor,
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -829,7 +862,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, trails, dry, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, trails, dry, voxel_water, voxel_floor, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -855,7 +888,10 @@ pub fn record(
     let (floor_depth, floor_across) = floor_depth;
     if !floor_draws.is_empty() {
         let slices: Vec<u32> = floor_draws.iter().map(|(slice, _)| *slice).collect();
-        fg.add_pass("Sea floor", &[(floor_image, ImageAccess::DepthAttachment)], &[], move |ctx| {
+        // Voxel Volumes' ground too, walked straight down and up through them, once their columns are made.
+        let floor_reads: Vec<_> = voxel_floor.iter().flatten().map(|&id| (id, BufferAccess::ShaderRead)).collect();
+        let voxels = voxel_floor.is_some();
+        fg.add_pass("Sea floor", &[(floor_image, ImageAccess::DepthAttachment)], &floor_reads, move |ctx| {
             let depth = attachment(ctx.view(floor_image), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
             let side = vk::Extent2D { width: FLOOR_TEXELS * 4, height: FLOOR_TEXELS * 4 };
             begin_rendering(ctx, side, &[], Some(&depth));
@@ -890,6 +926,18 @@ pub fn record(
                         ctx.bindless.push(ctx.gpu, ctx.cmd, &draw);
                         unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, g.index_count, 1, g.first_index, 0, 0) };
                     }
+                }
+            }
+            // The voxels' highest over the meshes', and their lowest beside it: a triangle over each slice.
+            let voxel_passes = [(pipelines.sea_floor_voxels, 0, 0), (pipelines.sea_floor_voxels_under, 2, 1)];
+            for (pipeline, beside, list) in voxel_passes.into_iter().filter(|_| voxels) {
+                bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+                for (slice, _) in &floor_draws {
+                    let tile = [slice % 2 + beside, slice / 2].map(|t| (t * FLOOR_TEXELS) as i32);
+                    let offset = vk::Offset2D { x: tile[0], y: tile[1] };
+                    set_viewport(ctx, offset, vk::Extent2D { width: FLOOR_TEXELS, height: FLOOR_TEXELS });
+                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: *slice, list, ..push });
+                    unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
                 }
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -963,6 +1011,7 @@ pub fn record(
         dry_walls: (dry.map_or_else(Vec::new, |(_, meshes)| meshes), index_buffer),
         blocks: None,
         inside: false,
+        voxel_water: (0, 0, None),
     };
     // With no sea and no Dry Area's walls it draws nothing, and its copy is wanted only under the water, or by lava,
     // which draws over it: a world of blocks' water alone needs none, and skips a copy of the whole picture.
@@ -976,10 +1025,30 @@ pub fn record(
         if let Some((view, exits)) = &blocks {
             record_block_exits(fg, (pipelines, push), view, (*exits, depth, size));
         }
+        // The water over Voxel Volumes' rivers has only tops, so the view leaves it nowhere they find.
+        if let (_, _, Some(exits)) = voxel_water {
+            fg.add_pass("Water exits (voxels)", &[(exits, ImageAccess::ColorAttachment)], &[], move |ctx| {
+                let clear = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0; 4] } };
+                let color = [attachment(ctx.view(exits), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(clear))];
+                begin_rendering(ctx, vk::Extent2D { width: size[0], height: size[1] }, &color, None);
+                unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+            });
+        }
+        // Drawn with the worlds of blocks' exits where there are any, else with its own.
+        let voxel_water = (voxel_water.0, voxel_water.1, voxel_water.2.or(blocks.as_ref().map(|(_, exits)| *exits)));
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
         let dry_walls = (Vec::new(), index_buffer);
-        let draws =
-            Draws { sea: false, pools: pool_draws, streams, spatter, walls: (0, pools), dry_walls, blocks, inside };
+        let draws = Draws {
+            sea: false,
+            pools: pool_draws,
+            streams,
+            spatter,
+            walls: (0, pools),
+            dry_walls,
+            blocks,
+            inside,
+            voxel_water,
+        };
         match &second {
             Some((copy, copy_texture, copy_mips, depth_copy)) => {
                 record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
@@ -1079,6 +1148,10 @@ struct Draws {
     /// The swell of the blocks' sea the camera is under the top of, from
     /// where it is.
     inside: bool,
+    /// How many squares of water lie over Voxel Volumes' rivers, how many
+    /// their waterfalls pour over, and where each pixel's view leaves the
+    /// water.
+    voxel_water: (u32, u32, Option<ImageId>),
 }
 
 /// How far each pixel's view goes before it leaves the worlds of blocks'
@@ -1144,6 +1217,13 @@ fn record_layer(
         reads.extend(view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)));
         exits_texture = fg.texture(*exits).0;
     }
+    if let (squares, falls, Some(exits)) = draws.voxel_water
+        && squares + falls > 0
+        && draws.blocks.is_none()
+    {
+        images.push((exits, ImageAccess::Sampled));
+        exits_texture = fg.texture(exits).0;
+    }
     let extent = vk::Extent2D { width: size[0], height: size[1] };
     let push = Push { texture: copy_texture.0, textures: [0, depth_copy_texture.0, exits_texture, 0], ..push };
     fg.add_pass("Water", &images, &reads, move |ctx| {
@@ -1185,6 +1265,22 @@ fn record_layer(
                 bind(ctx, pipelines.block_sea_inside, vk::PipelineBindPoint::GRAPHICS, &push);
                 unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
             }
+        }
+        // The water over Voxel Volumes' rivers and lakes, six corners a square.
+        if draws.voxel_water.0 > 0 {
+            bind(ctx, pipelines.voxel_water, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, draws.voxel_water.0 * 6, 1, 0, 0) };
+        }
+        // And their waterfalls, each square they pour over a fine grid of quads, two sheets deep, from after those.
+        if draws.voxel_water.1 > 0 {
+            bind(
+                ctx,
+                pipelines.voxel_falls,
+                vk::PipelineBindPoint::GRAPHICS,
+                &Push { list: draws.voxel_water.0, ..push },
+            );
+            let vertices = draws.voxel_water.1 * FALL_QUADS * FALL_QUADS * FALL_SHEETS * 6;
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
         }
         // Walls of water: six faces of each body's box.
         let (first, count) = draws.walls;

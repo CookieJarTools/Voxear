@@ -23,8 +23,10 @@ use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelBiomes, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint,
-    VoxelTrees, VoxelVolume, print, trees,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelBiomes, VoxelEdit, VoxelGenerator, VoxelGround,
+    VoxelPrint, VoxelTrees, VoxelVolume, print,
+    rivers::{self, ColumnWater, GpuVoxelWater, LaidRivers},
+    trees,
 };
 use crate::pipelines::Pipelines;
 
@@ -145,6 +147,7 @@ struct GpuWorldMake {
     job_edits: u64,
     prints: u64,
     biomes: u64,
+    rivers: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -177,6 +180,8 @@ struct GpuWorldMake {
     brick_pages: u32,
     edit_count: u32,
     edit_pad: u32,
+    river_window: u32,
+    river_pad: u32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -261,6 +266,13 @@ pub(crate) struct Endless {
     window_sector: [i32; 3],
     /// Its corner in the world, which its sectors count from.
     corner: Vec3,
+    /// Its generator's rivers, where it runs any; whether columns are
+    /// waiting on their points; and the water over each slot's column, with
+    /// a count of its changes.
+    rivers: Option<LaidRivers>,
+    waiting: bool,
+    water: Vec<ColumnWater>,
+    water_changes: u64,
 }
 
 /// How many voxel metres a sector column is a side.
@@ -474,6 +486,29 @@ fn plants_of(volume: &VoxelVolume) -> (Vec<VoxelTrees>, u32) {
     (kinds.map(|kind| VoxelTrees { per_hectare: 1.0, ..kind.clone() }).collect(), volume.voxels_per_metre)
 }
 
+/// How far the trees' feet a column's trees may stand on reach round it,
+/// in columns: a tree's crown reaches as far as its kinds' furthest and a
+/// block and a half, from a foot anywhere in its cell.
+fn tree_ring(volume: &VoxelVolume, forest: Option<&(Buffer, u32, f32)>) -> u32 {
+    forest.map_or(0, |(_, _, reach)| ((reach + 1.5 + trees::CELL) / sector_metres(volume)).ceil() as u32)
+}
+
+/// The rivers `volume`'s generator lays into its columns, where its program
+/// runs on the GPU (`runs`) and its graph runs any, for a window `window`
+/// columns a side: its table reaching a column further round, for the
+/// heights' border, and as far again as its trees may stand.
+fn laid_rivers(
+    gpu: &Gpu,
+    volume: &VoxelVolume,
+    runs: bool,
+    window: u32,
+    forest: Option<&(Buffer, u32, f32)>,
+) -> Result<Option<LaidRivers>> {
+    let layer = volume.generator.as_ref().filter(|_| runs).and_then(|g| rivers::layer_of(g, volume.voxels_per_metre));
+    let Some(layer) = layer else { return Ok(None) };
+    Ok(Some(LaidRivers::new(gpu, layer, window, 1 + tree_ring(volume, forest))?))
+}
+
 /// A program's buffer, and its Volume's cells' program and what each column
 /// carries up to them, where it has a Volume.
 #[allow(clippy::type_complexity)]
@@ -645,7 +680,12 @@ impl Endless {
             jobs: Vec::new(),
             window_sector: [0; 3],
             corner: Vec3::ZERO,
+            rivers: None,
+            waiting: false,
+            water: vec![ColumnWater::default(); (window * window) as usize],
+            water_changes: 0,
         };
+        endless.rivers = laid_rivers(gpu, volume, endless.program.is_some(), window, endless.forest.as_ref())?;
         // No column is made yet, and no frame reads what the edits' buffers took the place of.
         for buffer in endless.set_edits(gpu, &volume.edits)? {
             gpu.destroy_buffer(buffer);
@@ -794,8 +834,12 @@ impl Endless {
         gone.push(std::mem::replace(&mut self.palette, palette));
         gone.extend(std::mem::replace(&mut self.forest, forest).map(|(buffer, _, _)| buffer));
         gone.extend(std::mem::replace(&mut self.biomes, biomes));
+        let laid = laid_rivers(gpu, volume, self.program.is_some(), self.window, self.forest.as_ref())?;
+        gone.extend(std::mem::replace(&mut self.rivers, laid).map(|rivers| rivers.table));
         self.from = volume.clone();
         self.made.iter_mut().for_each(|made| *made = None);
+        self.water.iter_mut().for_each(|water| *water = ColumnWater::default());
+        self.water_changes += 1;
         Ok(Some(gone))
     }
 
@@ -826,11 +870,19 @@ impl Endless {
     /// picks the columns to make this frame: those in the window that their
     /// slots do not hold, the nearest first.
     pub fn follow(&mut self, corner: Vec3, camera: Vec3) {
+        let moved = self.corner != corner;
         self.corner = corner;
         let metres = sector_metres(&self.from);
         let at = ((camera - corner) / metres).floor();
         let half = (self.window / 2) as i32;
         self.window_sector = [at.x as i32 - half, 0, at.z as i32 - half];
+        if let Some(rivers) = &mut self.rivers {
+            let least = [self.window_sector[0], self.window_sector[2]];
+            rivers.follow(least, self.window, [at.x as i32, at.z as i32]);
+        }
+        if moved {
+            self.lay_water_again();
+        }
         let w = self.window as i32;
         let mut wanted: Vec<(i32, [i32; 2])> = Vec::new();
         for dz in 0..w {
@@ -849,11 +901,60 @@ impl Endless {
             (false, true) => MAX_TREE_JOBS,
             (false, false) => MAX_JOBS,
         };
-        for (_, column) in wanted.into_iter().take(most) {
+        // A column is made once the rivers' points round it are laid in.
+        let rivers = self.rivers.as_ref();
+        let wanted_any = !wanted.is_empty();
+        let ready: Vec<[i32; 2]> = wanted
+            .into_iter()
+            .filter(|(_, column)| rivers.is_none_or(|rivers| rivers.ready_for(*column)))
+            .take(most)
+            .map(|(_, column)| column)
+            .collect();
+        for column in ready {
             let slot = self.slot_of(column);
             self.made[slot as usize] = Some(column);
             self.jobs.push((column, slot));
+            self.lay_water(column, slot);
         }
+        self.waiting = wanted_any && self.jobs.is_empty();
+    }
+
+    /// Lays the water of the rivers over column `column` in slot `slot`, as
+    /// it is made.
+    fn lay_water(&mut self, column: [i32; 2], slot: u32) {
+        let quads = match &self.rivers {
+            Some(rivers) => {
+                let grid = rivers.layer.grid(column);
+                let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
+                let floor = self.from.generator.as_ref().map_or(0.0, |generator| generator.floor);
+                rivers::water_quads(&grid, column, (self.corner, floor, voxel))
+            }
+            None => ColumnWater::default(),
+        };
+        let kept = &mut self.water[slot as usize];
+        if !(kept.is_empty() && quads.is_empty()) {
+            *kept = quads;
+            self.water_changes += 1;
+        }
+    }
+
+    /// Lays the water over every column made again, as the volume moved.
+    fn lay_water_again(&mut self) {
+        for slot in 0..self.made.len() {
+            if let Some(column) = self.made[slot].filter(|_| !self.water[slot].is_empty()) {
+                self.lay_water(column, slot as u32);
+            }
+        }
+    }
+
+    /// The water over its rivers and lakes, each square in the world, then
+    /// the squares its waterfalls pour over, and how many times it has
+    /// changed.
+    #[allow(clippy::type_complexity)]
+    pub fn water(&self) -> ((impl Iterator<Item = &GpuVoxelWater>, impl Iterator<Item = &GpuVoxelWater>), u64) {
+        let squares = self.water.iter().flat_map(|water| &water.squares);
+        let falls = self.water.iter().flat_map(|water| &water.falls);
+        ((squares, falls), self.water_changes)
     }
 
     fn slot_of(&self, column: [i32; 2]) -> u32 {
@@ -869,9 +970,14 @@ impl Endless {
         (words[2] != 0).then_some(self.grow)
     }
 
+    /// How many columns are made this frame.
+    pub fn making_now(&self) -> u32 {
+        self.jobs.len() as u32
+    }
+
     /// Whether any column of the window is still to be made.
     pub fn unfinished(&self) -> bool {
-        !self.jobs.is_empty()
+        !self.jobs.is_empty() || self.waiting
     }
 
     /// The volume as the walk reads it this frame, and its corner.
@@ -980,6 +1086,9 @@ impl Endless {
             edits: self.edit_buffer.as_ref().map_or(0, |buffer| buffer.address),
             job_edits: self.job_edits.address,
             prints: self.print_buffer.as_ref().map_or(0, |buffer| buffer.address),
+            rivers: self.rivers.as_ref().map_or(0, |rivers| rivers.table.address),
+            river_window: self.rivers.as_ref().map_or(0, |rivers| rivers.window),
+            river_pad: 0,
             edit_count: self.edits.len() as u32,
             edit_pad: 0,
             brick_pages: self.room.brick_pages,
@@ -1123,6 +1232,7 @@ impl Endless {
         all.extend(self.program.map(|(buffer, _)| buffer));
         all.extend(self.volume.into_iter().flat_map(|(words, carried)| [words, carried]));
         all.extend(self.makes);
+        all.extend(self.rivers.map(|rivers| rivers.table));
         all
     }
 }

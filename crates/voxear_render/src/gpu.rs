@@ -1369,6 +1369,8 @@ pub struct GpuBuffers {
     pub baked_matrices: u64,
     /// This view's Voxel Volumes (see `voxel_volume`).
     pub voxel_volumes: u64,
+    /// The water over endless Voxel Volumes' rivers and lakes.
+    pub voxel_water: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1812,7 +1814,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 81 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 82 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
         assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);

@@ -68,4 +68,4 @@ pub use landmass::{Climate, Erosion, Field, Landmass, Preset, Sample, Warp, smoo
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};
 pub use starters::{Starter, starters};
 pub use voxels::OwnVoxels;
-pub use world::{Carried, Cells, PreviewArea, Volume, WorldGen};
+pub use world::{Carried, Cells, PreviewArea, Volume, WorldGen, current_between};

@@ -453,7 +453,7 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "voxels.raycast",
-        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed, not its grass, flowers or trees. `obj` is null where it meets none.",
+        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed and its trees, not its grass or flowers. `obj` is null where it meets none.",
         args: &[
             arg("from", ArgKind::Vector, "Where the ray starts, in metres, in the world."),
             arg("direction", ArgKind::Vector, "Which way it goes."),
@@ -462,6 +462,16 @@ pub const CALLS: &[CallInfo] = &[
         ],
         changes: false,
         returns: "{ obj, point, normal, distance }",
+    },
+    CallInfo {
+        name: "voxels.water_at",
+        about: "The water of an endless Voxel Volume's rivers and lakes at a point of the world, in metres, or of `obj`'s alone, as a script's Voxels.WaterAt finds it: how high its surface stands, and which way and how fast its current runs, in metres a second, nothing on a lake. `obj` is null where none has water there. Its sea is not asked: it stands at the generator's sea level while the volume's `sea` field is on.",
+        args: &[
+            arg("at", ArgKind::Vector, "The point, in metres, in the world."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: false,
+        returns: "{ obj, height, current }",
     },
     CallInfo {
         name: "voxels.carve",

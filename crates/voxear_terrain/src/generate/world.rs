@@ -695,6 +695,47 @@ impl WorldGen {
         Some((water, falls))
     }
 
+    /// Whether its graph runs rivers down its ground: has a Rivers node.
+    pub fn has_rivers(&self) -> bool {
+        self.graph.nodes.iter().any(|node| matches!(node.kind, super::NodeKind::Rivers(_)))
+    }
+
+    /// The same generator with every Rivers node passing its ground
+    /// through, as its program on the GPU runs it: what is wired out of a
+    /// node's Height comes from what is wired into its Ground, nothing comes
+    /// of its Water, Falls and Banks, and the Output has no water. With [`WorldGen::heights`] of
+    /// both, what the rivers do to the ground at a place is the difference.
+    pub fn without_rivers(&self) -> Self {
+        use super::nodes::Rivers;
+        let mut graph = self.graph.clone();
+        let rivers: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, super::NodeKind::Rivers(_)))
+            .map(|node| node.id)
+            .collect();
+        for node in rivers {
+            let ground = graph.link_into(node, Rivers::GROUND).copied();
+            let out: Vec<_> = graph.links.iter().filter(|link| link.from == node).copied().collect();
+            for link in out {
+                graph.disconnect(link.to, link.input);
+                if let (Rivers::HEIGHT, Some(ground)) = (link.output, ground) {
+                    graph.connect(ground.from, ground.output, link.to, link.input);
+                }
+            }
+            graph.remove(node);
+        }
+        // Nor water at all, though what was wired into the Output's Water and Falls took more than the rivers'.
+        if let Some(output) = graph.output().map(|node| node.id) {
+            graph.disconnect(output, super::nodes::Output::WATER);
+            graph.disconnect(output, super::nodes::Output::FALLS);
+        }
+        let mut world = self.with_graph(graph);
+        world.land = self.land.clone();
+        world.corner_volume = self.corner_volume;
+        world
+    }
+
     /// Which way and how fast water flows at `(x, z)`, in metres a second
     /// along x and z: down the slope of the water wired into the Output's
     /// Water, faster the steeper it falls. None where there is no water
@@ -705,24 +746,7 @@ impl WorldGen {
         let xs = [x, x - STEP, x + STEP, x, x];
         let zs = [z, z, z, z - STEP, z + STEP];
         let (water, _) = self.water(&xs, &zs)?;
-        if water[0] <= super::nodes::NO_WATER * 0.5 {
-            return None;
-        }
-        // Where a neighbour has no water, the slope is read from this side alone.
-        let slope = |low: usize, high: usize| match (water[low] > water[0] - 50.0, water[high] > water[0] - 50.0) {
-            (true, true) => (water[high] - water[low]) / (2.0 * STEP),
-            (true, false) => (water[0] - water[low]) / STEP,
-            (false, true) => (water[high] - water[0]) / STEP,
-            (false, false) => 0.0,
-        };
-        let (gx, gz) = (slope(1, 2), slope(3, 4));
-        let steep = (gx * gx + gz * gz).sqrt();
-        if steep < 1e-5 {
-            return Some([0.0, 0.0]);
-        }
-        // A river running nearly level still moves; one falling steeply runs fast.
-        let speed = (6.0 * steep.sqrt()).clamp(0.4, 4.0);
-        Some([-gx / steep * speed, -gz / steep * speed])
+        current_between([water[0], water[1], water[2], water[3], water[4]], STEP)
     }
 
     /// How far under the land round about ground `heights[i]` metres high
@@ -781,6 +805,32 @@ impl WorldGen {
         let file = File { seed, scale, sea_level, preview, nodes, links, exposed, comments };
         toml::to_string(&file).unwrap_or_default()
     }
+}
+
+/// Which way and how fast water flows, in metres a second along x and z,
+/// from how high it stands at a place and `step` metres either side of it
+/// along x then z (`[here, -x, +x, -z, +z]`), as [`WorldGen::current`]
+/// works it out: down its slope, faster the steeper it falls. None where
+/// there is no water at the place; where a side has none, the slope is read
+/// from the other alone, and nothing where it lies level.
+pub fn current_between(water: [f32; 5], step: f32) -> Option<[f32; 2]> {
+    if water[0] <= super::nodes::NO_WATER * 0.5 {
+        return None;
+    }
+    let slope = |low: usize, high: usize| match (water[low] > water[0] - 50.0, water[high] > water[0] - 50.0) {
+        (true, true) => (water[high] - water[low]) / (2.0 * step),
+        (true, false) => (water[0] - water[low]) / step,
+        (false, true) => (water[high] - water[0]) / step,
+        (false, false) => 0.0,
+    };
+    let (gx, gz) = (slope(1, 2), slope(3, 4));
+    let steep = (gx * gx + gz * gz).sqrt();
+    if steep < 1e-5 {
+        return Some([0.0, 0.0]);
+    }
+    // A river running nearly level still moves; one falling steeply runs fast.
+    let speed = (6.0 * steep.sqrt()).clamp(0.4, 4.0);
+    Some([-gx / steep * speed, -gz / steep * speed])
 }
 
 #[cfg(test)]
@@ -1310,3 +1360,4 @@ cooling = 6.5
         assert!(WorldGen::parse(&twice).is_err(), "{twice}");
     }
 }
+

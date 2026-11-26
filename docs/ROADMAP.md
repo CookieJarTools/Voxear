@@ -4651,8 +4651,9 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   tread 4 cm). Its ground is its biomes': the one painted, else the nearest by climate, borders ragged as the
   world's, each laying its own top, under, deep, steep and shore blocks in their blocks' colours, grass in its top
   block's colour where that is green; the GPU picks the CPU's biome at 8192 places of 8192, and collision places
-  trees by the same. Not yet: rock layers; the Realm's Spires and Arches; a volume taller than 16 sectors (64 m at 16
-  voxels a metre); ground drawn streaked tens of kilometres from the volume's Obj.
+  trees by the same. Since (2026-11-26): ground tens of kilometres from the volume's Obj is drawn as near it, each
+  pixel's ray worked out from the camera's own place, not from two places of the world a few centimetres apart.
+  Not yet: rock layers; the Realm's Spires and Arches; a volume taller than 16 sectors (64 m at 16 voxels a metre).
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.

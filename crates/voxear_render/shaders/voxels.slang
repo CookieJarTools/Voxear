@@ -472,7 +472,9 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
     for (uint v = 0; v < volumes->count; v++)
     {
         VoxelVolume volume = volumes->volumes[v];
-        float3 o = (from + d * start - volume.corner) / volume.voxel;
+        // The corner taken from the camera first: far from the world's middle a place along the ray is a few millimetres
+        // out, each pixel's its own way.
+        float3 o = (from - volume.corner + d * start) / volume.voxel;
         VoxelHit hit;
         float far = (nearest.metres - start) / volume.voxel;
         // A ring's walk starts on the edge it passes over, so its first cell is the one past it. Worked out here, and
@@ -751,8 +753,8 @@ float3 voxelNormal(VoxelHit hit, float3 d)
 float3 voxelRay(Frame* frame, float2 pixel)
 {
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
-    float4 nearPoint = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
-    float4 farther = transform(frame->invViewProj, float4(ndc, 0.5, 1.0));
+    float4 nearPoint = transform(frame->eyeRays, float4(ndc, 1.0, 1.0));
+    float4 farther = transform(frame->eyeRays, float4(ndc, 0.5, 1.0));
     return normalize(farther.xyz / farther.w - nearPoint.xyz / nearPoint.w);
 }
 

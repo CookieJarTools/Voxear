@@ -1257,8 +1257,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 144);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 104 + 144 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 160);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 104 + 160 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

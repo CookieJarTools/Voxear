@@ -942,7 +942,7 @@ fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_on
     let entity = link::resolve_obj(&editor.game, &volume).unwrap();
     let edits =
         |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
-    assert!(edits(&editor)[0].print.is_some());
+    assert!(edits(&editor)[0].print().is_some());
     // The CPU's ray meets it over the ground, coming down on its middle.
     let down = json!({ "from": [4.0, 30.0, 4.0], "direction": [0.0, -1.0, 0.0], "obj": volume });
     let met = done(&mut editor, &mut renderer, "voxels.raycast", down);
@@ -1046,7 +1046,7 @@ fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_
     frames(&mut editor, &mut renderer, 2);
     let printed = editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
     assert_eq!(printed.len(), 1, "one print for a click and a drag");
-    assert!(printed[0].print.is_some());
+    assert!(printed[0].print().is_some());
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert_eq!(edits(&editor), 0, "the print taken back");
 }

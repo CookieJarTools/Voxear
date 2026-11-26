@@ -608,9 +608,13 @@ mod tests {
     #[test]
     fn a_box_holds_its_voxels_and_clears_over_its_top() {
         // Two metres by half a metre tall by a metre, its foot's middle at (4, 1, 4), clearing a metre over it.
-        let edit =
-            VoxelEdit::boxed(Vec3::new(4.0, 1.0, 4.0), Vec3::new(2.0, 0.5, 1.0), Quat::IDENTITY, Some(VoxelMaterial::Cobbles))
-                .clearing(1.0);
+        let edit = VoxelEdit::boxed(
+            Vec3::new(4.0, 1.0, 4.0),
+            Vec3::new(2.0, 0.5, 1.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Cobbles),
+        )
+        .clearing(1.0);
         let (low, high) = edit.reach();
         assert_eq!((low, high), (Vec3::new(3.0, 1.0, 3.5), Vec3::new(5.0, 2.5, 4.5)));
         let all = (IVec3::new(32, 0, 40), IVec3::new(96, 64, 88));
@@ -630,10 +634,21 @@ mod tests {
 
     #[test]
     fn a_bank_rises_along_its_length_and_a_slab_is_half_a_metre() {
-        let bank = VoxelEdit::ramp(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 2.0, 4.0), Quat::IDENTITY, Some(VoxelMaterial::Dirt));
+        let bank = VoxelEdit::ramp(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 2.0, 4.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Dirt),
+        );
         let tall_at = |z: i32| (0..40).filter(|&y| bank.held(IVec3::new(0, y, z), VOXEL, 0).solid()).count();
         // Along its 64 voxels its top rises from nothing to 32 voxels.
-        assert!(tall_at(-32) <= 1 && tall_at(31) >= 31 && tall_at(0) == 16, "{} {} {}", tall_at(-32), tall_at(0), tall_at(31));
+        assert!(
+            tall_at(-32) <= 1 && tall_at(31) >= 31 && tall_at(0) == 16,
+            "{} {} {}",
+            tall_at(-32),
+            tall_at(0),
+            tall_at(31)
+        );
         let slab = VoxelEdit::slab(Vec3::new(1.0, 2.0, 1.0), 1.0, 1.0, Some(VoxelMaterial::Flagstones));
         let (low, high) = slab.reach();
         assert_eq!(high.y - low.y, 0.5);
@@ -652,22 +667,30 @@ mod tests {
         let cover = VoxelEdit::cover(outline, 2.0 / 16.0, Some(VoxelMaterial::Cobbles)).clearing(1.0 / 16.0);
         for ground in [10, 30] {
             let at = |y| cover.held(IVec3::new(4, y, 4), VOXEL, ground);
-            assert_eq!([at(ground - 2), at(ground - 1), at(ground), at(ground + 1), at(ground + 2)], [
-                VoxelHeld::Not,
-                VoxelHeld::Fill(VoxelMaterial::Cobbles),
-                VoxelHeld::Fill(VoxelMaterial::Cobbles),
-                VoxelHeld::Air,
-                VoxelHeld::Not
-            ]);
+            assert_eq!(
+                [at(ground - 2), at(ground - 1), at(ground), at(ground + 1), at(ground + 2)],
+                [
+                    VoxelHeld::Not,
+                    VoxelHeld::Fill(VoxelMaterial::Cobbles),
+                    VoxelHeld::Fill(VoxelMaterial::Cobbles),
+                    VoxelHeld::Air,
+                    VoxelHeld::Not
+                ]
+            );
         }
     }
 
     #[test]
     fn a_fitted_print_clears_the_ground_inside_it_and_stands_on_a_footing() {
         // A hut 2 m a side and 2 m tall, a voxel's shell, its origin at its foot's middle.
-        let hut = VoxelPrint::from_voxels([32, 32, 32], 16, Vec3::new(16.0, 0.0, 16.0), vec![[200; 4]], Default::default(), |c| {
-            u8::from(c[0] == 0 || c[0] == 31 || c[2] == 0 || c[2] == 31 || c[1] == 31)
-        });
+        let hut = VoxelPrint::from_voxels(
+            [32, 32, 32],
+            16,
+            Vec3::new(16.0, 0.0, 16.0),
+            vec![[200; 4]],
+            Default::default(),
+            |c| u8::from(c[0] == 0 || c[0] == 31 || c[2] == 0 || c[2] == 31 || c[1] == 31),
+        );
         let edit = VoxelEdit::printed(Arc::new(hut), Vec3::new(4.0, 2.0, 4.0), Quat::IDENTITY);
         let middle = IVec3::new(64, 40, 64);
         // The ground's top 4 voxels over the hut's foot (at 32): plain, its inside is left as it is.

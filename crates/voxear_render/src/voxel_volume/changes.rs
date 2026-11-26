@@ -203,7 +203,8 @@ impl VoxelChanges {
             boxes.push((low, low.map(|a| a + BRICK - 1)));
         };
         for (brick, changed) in &self.bricks {
-            let same = older.bricks.get(brick).is_some_and(|old| (Arc::ptr_eq(old, changed) || old == changed) && same_kinds);
+            let same =
+                older.bricks.get(brick).is_some_and(|old| (Arc::ptr_eq(old, changed) || old == changed) && same_kinds);
             if !same {
                 note(brick);
             }

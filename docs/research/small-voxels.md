@@ -1475,6 +1475,12 @@ stages, each measured before the next.
   third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
   what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
   again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Loads shared as the voxels hold.** A node is each part of a brick whose built voxels touch, not the brick, so
+    two walls through the same bricks bear apart; a join is between two parts, its springs as stiff as its weakest
+    section (its area along and across, its second moment, worked out from where its voxels lie, for bending and
+    turning) and its load passing through that section's middle. A stone slab on three timber posts: notching the
+    middle post to a quarter of its section moves 6.7% of what it bears onto the outer two. At-rest loads are kept
+    by brick, way and the part's first voxel, and found by the face where a dig moved that voxel.
   - **Joins as strong as their thinnest voxels.** A join between two bricks bears what the plane with the fewest
     pairs of built voxels across it, within 5 voxels of their face, bears: its area for pull, push and shear, and its
     section modulus, worked out from where those voxels lie (least about either way across), for bending; a pushed

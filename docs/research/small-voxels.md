@@ -1454,9 +1454,14 @@ stages, each measured before the next.
   third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
   what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
   again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Breaking where it is thinnest.** Each broken face's crack goes through the plane, up to 5 voxels either side
+    of the face across both bricks, with the fewest pairs of built voxels across it in the face's square (nearest
+    the face of equals): a notch three voxels into a brick of an overloaded beam breaks there, 1 of its 1,541 fallen
+    voxels from before the notch. The bricks gathered round a change are those before it and after it, else what a
+    change adds (a stone laid on a beam) was taken as a fixed support holding it up.
   - **Cracks through the voxels.** A loose part takes the voxels of its bricks and of the bricks it broke from on its
-    side of a crack surface through each face between them: smooth noise on a 4-voxel lattice in the face's plane
-    plus a voxel of roughness, up to 3 voxels either way, the same from both sides. Voxels a crack leaves in loose
+    side of a crack surface through each face between them, centred where it is thinnest: smooth noise on a 4-voxel lattice in the face's plane
+    plus a voxel of roughness, up to 2.5 voxels either way, the same from both sides. Voxels a crack leaves in loose
     bricks touching nothing that stands go too (checked over every brick gone so far). On the blown house, 1,230 of
     the faces between what fell and what stands cut through bricks and 385 lie on brick faces (before: all of them).
   - **Measured** (development build, shared CPU). A house of 1,068 bricks, 2,158 joins: paths 0.16 ms, solve 90 ms.

@@ -82,7 +82,7 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 A generator's **Rivers** node finds its rivers, lakes and waterfalls on the CPU, over the grid of points it works them out from. They are laid into the volume's ground as it is made:
 
 - **The ground is cut for them.** For each 4 m column, the CPU works out how much the rivers lower the ground (or raise it, in the low rim that holds a river in) at points half a metre apart, and how high their water stands. The GPU adds that change, read smoothly between the points, to the height its graph made. Riverbeds are gravel, sand along the water's edge, and nothing grows under the water.
-- **The water is drawn over them**, as a world of blocks' rivers and lakes are: still where a lake lies level, its ripples carried downstream where a river flows, a line of foam where it meets the bank, and the reflections and the view of the bed through it. Where a river drops over a cliff, its water leaves the lip and curves down into the pool below, pale and torn into white strands lower down, and churns the pool white where it lands.
+- **The water is drawn**, as voxels of water as it comes (see Water of voxels, below), or smooth, as a world of blocks' rivers and lakes are: still where a lake lies level, its ripples carried downstream where a river flows, a line of foam where it meets the bank, and the reflections and the view of the bed through it. Where a river drops over a cliff, its water leaves the lip and curves down into the pool below, pale and torn into white strands lower down, and churns the pool white where it lands.
 - **Rays and changes meet the same ground.** `Voxels.Raycast` reads the same points, so it meets the riverbed the GPU draws, and a ball carved or filled lands where the ray met it.
 - **Things float and swim in them.** The game's water reads the same points too: a crate or a boat with a Buoyancy floats on a river or a lake and drifts down its current, a character wading a river is pushed along by it as its **Water Push** says, and one in deeper water swims. Its current runs down the water's slope, faster the steeper, as the generator's does; a lake lies still.
 
@@ -104,8 +104,8 @@ if (Voxels.WaterAt(floatAt, out var river))
 
 A volume's **Water** sets how its rivers and lakes are drawn:
 
-- **Smooth**, as it comes: a smooth surface over the voxels, as described above.
-- **Voxels**: the water is voxels as small as the ground's, so it steps where the ground steps and its edges are the voxels' own.
+- **Voxels**, as it comes: the water is voxels as small as the ground's, so it steps where the ground steps and its edges are the voxels' own.
+- **Smooth**: a smooth surface over the voxels, as described above.
   - Each voxel is shaded by how deep the water is under it, from sandy where it is shallow to deep green-blue, with ripples, reflections and glints over it, and foam where it meets the bank.
   - Where its top drops a voxel down a sloping river, the step's side is lit as the top, so the river reads as one surface.
   - A waterfall is voxels of water thrown over its lip, each falling as thrown water falls, blue-green as it leaves the lip and whiter the faster it falls. They spread and break up lower down, and some splash back up off the pool, which churns white where they land.
@@ -113,7 +113,7 @@ A volume's **Water** sets how its rivers and lakes are drawn:
 
 Water of voxels costs no more than smooth water. A river at 1920 × 1080 on an RTX 3070 is 8.6 ms a frame against 10.5, and a waterfall 8.7 against 9.9. Making a column costs the same either way.
 
-A script sets it with `Voxels.WaterLook = VoxelWaterLook.Voxels`, for every endless volume. `vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "water", "value": "Voxels"}`. The scene writes `water = "voxels"`, and nothing while it is smooth.
+A script sets it with `Voxels.WaterLook = VoxelWaterLook.Smooth`, for every endless volume. `vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "water", "value": "Smooth"}`. The scene writes `water = "smooth"`, and nothing while it is voxels.
 
 ### The sea
 

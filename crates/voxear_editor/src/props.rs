@@ -7311,15 +7311,15 @@ mod tests {
         let data = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
         assert_eq!((data.generator_floor, data.generator_at), (Some(42.0), [10.0, -5.0]));
         // Its generator's sea is on until turned off.
-        let smooth = data.water == voxear_render::VoxelWaterLook::Smooth;
+        let voxels = data.water == voxear_render::VoxelWaterLook::Voxels;
         assert!(shown.contains(&Prop::VoxelSea) && data.sea, "{shown:?}");
         assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelSea, Value::Toggle(false)));
         assert!(!world.get::<voxear_render::VoxelVolume>(volume).unwrap().sea);
-        // Its rivers smooth until drawn as voxels.
-        assert!(shown.contains(&Prop::VoxelWater) && smooth, "{shown:?}");
-        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelWater, Value::Choice(1, Vec::new())));
+        // Its rivers voxels of water until drawn smooth.
+        assert!(shown.contains(&Prop::VoxelWater) && voxels, "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelWater, Value::Choice(0, Vec::new())));
         let drawn = world.get::<voxear_render::VoxelVolume>(volume).unwrap().water;
-        assert_eq!(drawn, voxear_render::VoxelWaterLook::Voxels);
+        assert_eq!(drawn, voxear_render::VoxelWaterLook::Smooth);
         // Its trees: a row of a plant and how many to a hectare for each kind, then one to add another.
         assert!(shown.contains(&Prop::VoxelTreeAdd) && !shown.contains(&Prop::VoxelTreePlant(0)), "{shown:?}");
         let oaks =

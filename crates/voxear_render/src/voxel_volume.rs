@@ -116,10 +116,10 @@ pub struct VoxelVolume {
 pub enum VoxelWaterLook {
     /// A smooth surface over the voxels, rippling and flowing, its
     /// waterfalls curving down from their lips.
-    #[default]
     Smooth,
-    /// Voxels of water, as small as the ground's: a layer at the water's
-    /// top, and its waterfalls blocks of falling water.
+    /// Voxels of water, as small as the ground's, shaded by how deep they
+    /// are; its waterfalls voxels of water thrown over their lips.
+    #[default]
     Voxels,
 }
 
@@ -394,7 +394,7 @@ impl Default for VoxelVolume {
             edits: Arc::default(),
             changes: Arc::default(),
             sea: true,
-            water: VoxelWaterLook::Smooth,
+            water: VoxelWaterLook::Voxels,
         }
     }
 }

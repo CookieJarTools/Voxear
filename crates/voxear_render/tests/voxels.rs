@@ -579,6 +579,25 @@ fn measure_rivers_and_a_coast() {
         .map(|i| [(i % 400) as f32 * 4.0 - 800.0, (i / 400) as f32 * 4.0 - 800.0])
         .find(|&[x, z]| (islands.height_at(x, z) - sea).abs() < 0.5 && islands.height_at(x + 24.0, z) < sea - 3.0)
         .expect("a shore");
+    // A waterfall in the mountains, more than 4 m high, found along X: its place, its top and its foot, and which way
+    // along X its water runs on below it.
+    let alpine = Arc::new(starter("Alpine"));
+    let fall = {
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..400 * 400).map(|at| ((at % 400) as f32 * 6.0 - 1200.0, (at / 400) as f32 * 6.0 - 1200.0)).unzip();
+        let (level, _) = alpine.water(&xs, &zs).unwrap();
+        let wet = |at: usize| level[at] > -1000.0;
+        (0..xs.len())
+            .filter(|&at| wet(at) && at % 400 + 1 < 400 && wet(at + 1))
+            .find_map(|at| {
+                let line: (Vec<f32>, Vec<f32>) = (0..=12).map(|k| (xs[at] + k as f32 * 0.5, zs[at])).unzip();
+                let (top, falls) = alpine.water(&line.0, &line.1).unwrap();
+                let k = (0..line.0.len()).find(|&k| falls[k] > 4.0)?;
+                let (near, _) = alpine.water(&[line.0[k] - 3.0, line.0[k] + 3.0], &[line.1[k]; 2]).unwrap();
+                Some((line.0[k], line.1[k], top[k], top[k] - falls[k], if near[1] < near[0] { 1.0 } else { -1.0 }))
+            })
+            .expect("a waterfall")
+    };
     let which = std::env::var("RIVER_CASES").unwrap_or_else(|_| "river,bare,trees,coast".into());
     for case in which.split(',') {
         let mut scene = match case {
@@ -600,6 +619,17 @@ fn measure_rivers_and_a_coast() {
                 let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
                 camera.rotation =
                     Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
+                scene
+            }
+            "falls" => {
+                // From 18 m downstream at 3 m over its pool, looking back up at it.
+                let (fx, fz, top, foot, down) = fall;
+                let x = fx + down * 18.0;
+                eprintln!("falls at {fx} {fz}: from {top:.1} to {foot:.1}");
+                let mut scene = generated_view(alpine.clone(), x, fz, foot + 3.0 - alpine.height_at(x, fz), -8.0);
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                let turn = if down > 0.0 { -std::f32::consts::FRAC_PI_2 } else { std::f32::consts::FRAC_PI_2 };
+                camera.rotation = Quat::from_rotation_y(turn) * Quat::from_rotation_x(-8f32.to_radians());
                 scene
             }
             // From 6 m over the river's water, looking 35° down.

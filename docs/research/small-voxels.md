@@ -889,6 +889,13 @@ in from the CPU, as streamed worlds of blocks take them: as a change of height t
 
 ![A shore of Archipelago, before and after](../images/small-voxels/shore-before-after.webp)
 
+![A waterfall 7.6 m high in Alpine, from its pool](../images/small-voxels/waterfall.webp)
+
+A fall's face was first drawn as a world of blocks' falling water is, and read as tinted glass: the cut bed showed
+through it and its threads were grey with the sun behind. A river's fall drops metres at a time, so its face is now
+mostly pale, hiding what is behind it, and lit through by the sun behind as spray is. Its foot churns only in the
+squares beside it, half a metre out.
+
 Not done:
 
 - **Water as a voxel material**, so a pit carved below a river's level or beside it fills. The squares are the

@@ -73,6 +73,7 @@ pub mod storm_sounds;
 pub mod storms;
 pub mod voxel_prints;
 pub mod voxel_mobs;
+pub mod voxel_nav;
 pub mod voxel_collapse;
 pub mod voxel_felling;
 pub mod voxel_volumes;

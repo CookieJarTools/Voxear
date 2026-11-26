@@ -202,3 +202,57 @@ fn a_mob_on_a_volume_walks_the_ways_a_navigation_set_in_the_world_finds() {
     assert!(left_line, "it went by the corner the ways gave, now at {at} from {start}");
     assert!(Vec3::new(at.x - start.x - 4.0, 0.0, at.z - start.z - 4.0).length() < 1.0, "it got there: {at}");
 }
+
+#[test]
+fn a_mob_sent_past_a_wall_on_a_volume_walks_round_it_by_the_ways_found_over_its_voxels() {
+    let (_dir, mut game) = game();
+    let placed = voxear_scene::Placement { position: Vec3::new(-10.0, 50.0, 0.0), rotation: Default::default() };
+    let sheep = game.instantiate("Mobs/Sheep.prefab", None, Some(placed), None).unwrap();
+    game.engine.world.get_mut::<BlockMob>(sheep).unwrap().wander = 0.0;
+    // Down on the ground: still for half a second.
+    let (mut still, mut last) = (0, placed.position);
+    for _ in 0..60 * 20 {
+        game.tick(1.0 / 60.0, None);
+        let at = game.engine.world.get::<Transform>(sheep).unwrap().position;
+        still = if (at - last).length() < 1e-3 { still + 1 } else { 0 };
+        last = at;
+        if still > 30 {
+            break;
+        }
+    }
+    assert!(still > 30, "it came to rest on the ground, at {last}");
+    let start = game.engine.world.get::<Transform>(sheep).unwrap().position;
+    // A wall of rock 3 m east of it, 2.5 m tall and 10 m long across its way.
+    let wall = voxear_engine::voxel_volumes::VoxelEditData::boxed(
+        (start + Vec3::new(3.0, -1.0, 1.5)).to_array(),
+        [0.5, 3.5, 10.0],
+        [0.0; 3],
+        Some(VoxelMaterial::Rock),
+    );
+    assert_eq!(voxear_engine::voxel_volumes::shape_edit(&mut game.engine.world, &wall, None), 1);
+    // A game's ticks here come faster than the cells are made: each waits for them.
+    let tick = |game: &mut Game| {
+        game.tick(1.0 / 60.0, None);
+        voxear_engine::voxel_nav::settle(&mut game.engine.world, std::time::Duration::from_secs(30));
+    };
+    tick(&mut game);
+    let goal = start + Vec3::new(6.0, 0.0, 0.0);
+    game.engine.world.get_mut::<BlockMob>(sheep).unwrap().move_to(goal);
+    let (mut through, mut round) = (false, false);
+    let mut last = start;
+    for _ in 0..60 * 30 {
+        tick(&mut game);
+        let at = game.engine.world.get::<Transform>(sheep).unwrap().position;
+        let wall_x = start.x + 3.0;
+        if (last.x - wall_x).signum() != (at.x - wall_x).signum() {
+            through |= (at.z - start.z - 1.5).abs() < 4.8;
+            round |= at.z - start.z < -3.0 || at.z - start.z > 6.2;
+        }
+        last = at;
+    }
+    let at = game.engine.world.get::<Transform>(sheep).unwrap().position;
+    assert!(!through, "it never walked through the wall, now at {at} from {start}");
+    assert!(round, "it went round an end of the wall, now at {at} from {start}");
+    let off = Vec3::new(at.x - goal.x, 0.0, at.z - goal.z).length();
+    assert!(off < 1.0, "it got there: {at} for {goal}");
+}

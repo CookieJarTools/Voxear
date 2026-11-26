@@ -4212,6 +4212,12 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     and not a cliff, round its holes and what stands on it; a kilometre of terrain baked, and kept small; an old
     `.nav` read; agents round a wall and up a terrain hill, by both ways of moving; a vine and a ladder climbed up
     a cliff and down, and not by what does not climb; an agent climbing a vine by both ways of moving.
+  - [x] **Ways over endless Voxel Volumes** (`voxear_engine::voxel_nav`, through `voxel_ways`): a volume's voxels
+    gathered into quarter-metre cells, solid where collision finds anything within a quarter of a metre, walked as
+    a world of blocks one cell wide; cells made in columns 8 m a side round each agent and along each way asked for,
+    on threads of their own, again where the volume changes. A column takes 75 ms on a volume's own hills and
+    0.28 s on a generator's rolling hills; a 25 m way 0.3 ms. Tests: ways round a wall and round its other end once that is shut, round a pit, a mob walking round a
+    wall on a generator's hills.
 - Crowds: hundreds of characters near and thousands in the world, in stages (the research, measured limits and
   the plan: `docs/research/crowds.md`):
   - [x] **Box characters posed by their bones where they are drawn.** A skinned mesh whose every vertex is bound
@@ -4689,7 +4695,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   do, and spawns mobs from prefabs on its ground round the player. Block Mobs walk a volume's ground straight to
   where they are sent and wander it. Inspector rows, `vox editor call field.set`, and the scene's `cover`, `mobs`,
   `within` and `never_within`. The CPU keeps trees to the areas as the GPU does. Making a column costs what it did.
-  Not yet: ways found round obstacles on voxel ground, painted areas, harvesting.
+  Not yet: painted areas, harvesting.
 
 - **Edits for building (2026-11-26).** Endless volumes' edits are typed shapes, kept in order: balls; boxes turned
   any way (a slab is one half a metre tall); banks, boxes whose top slopes; areas, outlines of points across the
@@ -4789,6 +4795,13 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
   - Cracks wander through the voxels round the bricks' faces, so broken edges are ragged.
   - Designed, not built: a collapse over the network, 2 to 4 KB of piece snapshots for a house's corner.
+- **Ways over voxel ground (2026-11-26).** Nav Agents and Block Mobs on an endless Voxel Volume find their way round
+  walls, trunks and pits, up banks and through shallow water, with nothing baked. The voxels are gathered into
+  cells a quarter of a metre a side, solid where collision finds anything within a quarter of a metre, and walked
+  by the navigation of worlds of blocks: places, regions, ways pulled tight. Cells are made on threads of their own
+  in columns 8 m a side round each agent and along each way asked for, made again where the volume changes, and let
+  go where nothing walks. `Navigation.FindPath` and `vox editor call navigation.path` find them too. Not yet: deep
+  water swum, Nav Links, caves under a column's lowest ground, the Navigation gizmo.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -4533,9 +4533,17 @@ FragmentOut blockWaterLit(
     if (input.fall.x > 0.5)
     {
         float2 white = blockFallWhite(frame, at, face, input.fallen);
-        streaked = white.x;
         float wrapped = saturate((dot(face, l) + 0.6) / 1.6);
         float3 whiteLit = ambient + sunLight * shadow * wrapped / PI;
+        if (input.water.x == NOT_BLOCK_WATER)
+        {
+            // A Voxel Volume's river falls metres at a time, a curtain mostly of air and foam: pale through, hiding
+            // what is behind it, and glowing with the sun behind it, as spray does.
+            float broken = saturate(input.fallen / BLOCK_FALL_BROKEN);
+            white.y = max(white.y, 0.6 + 0.3 * broken);
+            whiteLit += sunLight * shadow * saturate(-dot(face, l)) * 0.5 / PI;
+        }
+        streaked = white.x;
         float3 pale = lerp(whiteLit, whiteLit * look.scatter / max(max(look.scatter.r, look.scatter.g), max(look.scatter.b, 1e-3)), 0.55);
         color = lerp(color, pale, white.y);
         color = lerp(color, whiteLit, white.x);

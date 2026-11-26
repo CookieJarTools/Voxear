@@ -11,7 +11,7 @@ use voxear_render::{
     VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint, VoxelPrintMaterial,
     VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
 };
-use voxear_render::{Ocean, Weather};
+use voxear_render::{GlobalIllumination, Ocean, Weather};
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
 use voxear_terrain::generate::{
@@ -2065,6 +2065,52 @@ fn voxels_shadow_the_sea_beside_them() {
     assert!(shadowed * 4 < open * 3, "the pillar's shadow on the sea: {shadowed} against {open}");
 }
 
+#[test]
+fn with_the_gi_on_its_probes_see_the_voxels_a_shut_room_dark_and_sun_in_at_its_door_bouncing_round_it() {
+    let Some(mut renderer) = renderer() else { return };
+    // As the room under a roof, lit by the GI's probes in place of the light kept round the camera, the sun low in
+    // the east so it shines in at the door onto the floor. Looking up from the floor at the ceiling, which takes only
+    // what bounces off that patch of sun.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut shot = |has: House, name: &str| {
+        let mut scene = printed_from_above(house(has), 2.6);
+        scene.spawn((MeshRenderer::new(cube, grey), Transform::from_position(Vec3::new(-6.0, 2.5, -6.0))));
+        let up = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        for (_, place) in scene.query::<(&Camera, &mut Transform)>() {
+            *place = Transform::new(Vec3::new(7.4, 2.4, 8.0), up, Vec3::ONE);
+        }
+        let towards_sun = Vec3::new(35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.0);
+        // A bright sun, so what bounces off its patch on the floor shows at this exposure.
+        for (light, place) in scene.query::<(&mut Light, &mut Transform)>() {
+            place.rotation = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+            light.intensity = 30.0;
+        }
+        let mut post = PostProcess::neutral();
+        post.anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+        post.global_illumination =
+            voxear_render::GlobalIllumination { enabled: true, probe_spacing: 0.5, ..Default::default() };
+        scene.insert_resource(post);
+        let pixels = render(&mut renderer, &scene, 200);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let sealed = shot(House { roof: true, ..House::default() }, "gi ceiling sealed.png");
+    let door = shot(House { roof: true, door: true, ..House::default() }, "gi ceiling with a door.png");
+    // The ceiling round the middle of the picture.
+    let ceiling = |pixels: &[u8]| {
+        let mut sum = 0;
+        for k in 0..25 {
+            let (x, y) = (WIDTH / 2 - 100 + (k % 5) * 50, HEIGHT / 2 - 60 + (k / 5) * 30);
+            sum += rgb_at(pixels, x, y).iter().sum::<i32>();
+        }
+        sum / 25
+    };
+    let (sealed, door) = (ceiling(&sealed), ceiling(&door));
+    assert!(sealed < 6, "shut under the roof, the ceiling dark: {sealed}");
+    assert!(door > sealed + 10, "the sun in at the door bouncing up to the ceiling: {door} against {sealed} shut");
+}
+
 /// A room 15 m square and 5 m tall sealed in stone a metre thick, as the
 /// blocks test's sealed room is, seen from a corner towards where its lamp,
 /// a metre cube of voxels glowing as a block of light 15 in the colour a
@@ -2176,6 +2222,14 @@ fn measure_a_street_of_houses() {
         ("post off", PostProcess::neutral(), false),
         ("post on", PostProcess::default(), false),
         ("at night with lamps", PostProcess::default(), true),
+        (
+            "with the GI",
+            PostProcess {
+                global_illumination: GlobalIllumination { enabled: true, ..Default::default() },
+                ..PostProcess::default()
+            },
+            false,
+        ),
     ];
     for (name, post, night) in cases {
         let mut scene = generated_view(hills.clone(), 8.0, 8.0, 20.0, 35.0);
@@ -2234,7 +2288,7 @@ fn measure_a_street_of_houses() {
                 frame = frame.min(renderer.gpu_frame_ms());
             }
         }
-        let voxels: Vec<_> = least.iter().filter(|(pass, _)| pass.contains("oxel")).collect();
+        let voxels: Vec<_> = least.iter().filter(|(pass, _)| pass.contains("oxel") || pass.contains("DDGI")).collect();
         let depth: f32 = least.iter().filter(|(pass, _)| pass.starts_with("Depth")).map(|(_, ms)| ms).sum();
         eprintln!("{name}: frame {frame:.2} ms, depth passes {depth:.2} ms, {voxels:?}");
         if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {

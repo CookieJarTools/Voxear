@@ -625,6 +625,8 @@ The light is kept round the camera on the GPU, a value for each half-metre brick
 
 Lamps (Light components) light the voxels as they light anything, and voxels stand in their way (see Shadows above).
 
+With **Global Illumination** on in the post-processing, its probes light rooms in place of the light kept round the camera. Their rays see the voxels: a room shut all round is dark, and sunlight coming in at a door or window bounces off the floor it falls on onto the walls and ceiling, in the colour of what it bounced off. Voxels that glow light the probes round them too. Light bounced through a door is dimmer than the sky's light spread through it without the GI, as it is in a real room. The probes are half a metre apart at their finest; a wall thinner than that may let a little light past. The probes' rays walking the voxels cost: the Profiler's **DDGI rays** goes from about 0.3 ms to 2.5 ms for a street of houses at 1920 × 1080 on an RTX 3070.
+
 ### Glass
 
 A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Only the nearest glass in a pixel is drawn, and far off, where the voxels are drawn two by two or a brick at a time, it is drawn as solid. The Profiler calls it **Glass (voxels)**.

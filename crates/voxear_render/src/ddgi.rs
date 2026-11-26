@@ -150,12 +150,14 @@ impl Probes {
 
 /// Records the rays and update passes, once the scene's top level is built.
 /// The rays' hits are lit by local lights through their shadows, and the
-/// sun and lights through glass, by `shadow_maps`.
+/// sun and lights through glass, by `shadow_maps`. The rays walk the view's
+/// Voxel Volumes too, which `voxels` (what their making writes) holds.
 pub fn record(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     probes: Probes,
     shadow_maps: &[ImageId],
+    voxels: &[crate::graph::BufferId],
 ) {
     let traced = if probes.software { Some(pipelines.ddgi_software) } else { pipelines.ddgi };
     let Some([rays_pipeline, update_pipeline]) = traced else {
@@ -172,7 +174,8 @@ pub fn record(
         (states, ImageAccess::Sampled),
     ];
     images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
-    fg.add_pass("DDGI rays", &images, &[], move |ctx| {
+    let reads: Vec<_> = voxels.iter().map(|&pool| (pool, crate::graph::BufferAccess::ShaderRead)).collect();
+    fg.add_pass("DDGI rays", &images, &reads, move |ctx| {
         bind(ctx, rays_pipeline, vk::PipelineBindPoint::COMPUTE, &trace);
         unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, groups, 1, 1) };
     });

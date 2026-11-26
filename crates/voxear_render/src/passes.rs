@@ -1003,7 +1003,8 @@ pub fn record(
         portal_surfaces(fg);
     }
     if let Some(probes) = frame.probes {
-        ddgi::record(fg, (pipelines, push), probes, &shadow_maps);
+        let voxels: Vec<_> = frame.voxels.iter().flat_map(|voxels| voxels.pools.iter().copied()).collect();
+        ddgi::record(fg, (pipelines, push), probes, &shadow_maps, &voxels);
     }
     if let Some((probe_frame, job, probe_pipelines)) = &frame.probe_job {
         // What the probe's rays meet is lit as the GI's rays' hits are: through the lights' shadows, and by the GI.

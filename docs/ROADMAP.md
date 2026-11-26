@@ -4754,7 +4754,9 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - The GI's probe rays walk the voxels: a voxel met is lit by the sun, lamps, the probes and its glow, and probes
     move out of walls. With the GI on, its probes light rooms in place of the light kept round the camera. On the street with the GI on, its rays' pass
     is 2.45 ms against 0.32 ms.
-  - Not yet: lamps tinted by glass.
+  - Lamps take the colour of glass of voxels they shine through; a brick holding glass is walked voxel by voxel at
+    any distance, so lamps' and the GI's rays pass it (night street: lamps' pass 0.93 → 0.99 ms).
+  - Not yet: more than the nearest glass in a pixel; the GI's rays taking glass's colour.
 - **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
   voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
   whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest

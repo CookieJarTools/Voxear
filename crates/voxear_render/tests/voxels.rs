@@ -2048,6 +2048,35 @@ fn the_sun_through_red_glass_falls_red() {
 }
 
 #[test]
+fn a_lamp_through_red_glass_lights_the_ground_outside_red() {
+    let Some(mut renderer) = renderer() else { return };
+    // At night, a roofed house with a white lamp inside, high by its west window: the ground 2 m outside the window,
+    // where the lamp's light comes down through it, seen from 10 m over the ground.
+    let height = 10.0;
+    let outside = (4.0, 8.0);
+    let mut shot = |window: bool, red_glass: bool, name: &str| {
+        let has = House { roof: true, window, red_glass, ..House::default() };
+        let mut scene = printed_from_above(house(has), height);
+        for light in scene.query::<&mut Light>() {
+            light.intensity = 0.0;
+        }
+        scene.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+        scene.spawn((Light::point(Vec3::ONE, 80.0, 9.0), Transform::from_position(Vec3::new(7.0, 4.4, 8.0))));
+        let pixels = render(&mut renderer, &scene, 6);
+        keep_image(name, &pixels);
+        mean_around(&pixels, height, outside, 3)
+    };
+    let wall = shot(false, false, "lamp behind a wall.png");
+    let clear = shot(true, false, "lamp through clear glass.png");
+    let red = shot(true, true, "lamp through red glass.png");
+    let sum = |c: [i32; 3]| c.iter().sum::<i32>();
+    // Through clear glass the lamp lights the grass outside, green; through red, as much red and far less green.
+    assert!(sum(clear) > sum(wall) + 40, "lit through clear glass: {clear:?} against {wall:?}");
+    assert!(red[1] * 10 < clear[1] * 6, "through red glass, less green: {red:?} against {clear:?}");
+    assert!(red[0] * clear[1] > clear[0] * red[1] * 3 / 2, "through red glass, redder: {red:?} against {clear:?}");
+}
+
+#[test]
 fn voxels_shadow_the_sea_beside_them() {
     let Some(mut renderer) = renderer() else { return };
     // The field's pillar moved to the volume's east edge, in calm sea half a metre deep: its shadow on the open

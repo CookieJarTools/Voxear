@@ -344,7 +344,9 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
             hit.cell = c;
             hit.brick = brick;
             hit.steps = i;
-            if (foot >= 8.0)
+            // A brick holding glass is walked voxel by voxel however coarse the walk, so light passes its glass.
+            bool glassy = (bits[19] & VOXEL_SEE_THROUGH) != 0u;
+            if (foot >= 8.0 && !glassy)
             {
                 hit.level = 2;
                 return true;
@@ -366,7 +368,7 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
                 }
                 size = 8;
             }
-            else if (foot >= 2.0)
+            else if (foot >= 2.0 && !glassy)
             {
                 int3 g = l >> 1;
                 if (voxelBit(bits + 16, uint(g.x + 4 * (g.y + 4 * g.z))))
@@ -928,23 +930,31 @@ bool voxelSunBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 w
     float wetThrough;
     float3 from = world + normal * lift;
     bool met = voxelsTraceDry(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, 3, nearVoxel, blocked, wetThrough, wetHit);
-    // Through glass, the sun takes the glass's colour as much as the glass is solid.
-    tint = 1.0;
-    if (!met && blocked.glassT >= 0.0)
-    {
-        uint packed = blocked.glassColour;
-        float solid = 1.0 - float(voxelKind(packed).x) / 16.0;
-        float3 colour = pow(float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0, 2.2);
-        colour /= max(max(colour.r, colour.g), max(colour.b, 1e-3));
-        tint = lerp(1.0, colour, saturate(solid * 2.0)) * (1.0 - 0.5 * solid);
-    }
+    tint = met ? 1.0 : voxelGlassTint(blocked);
     return met;
 }
 
-// Whether a voxel stands between `world` and lamp `light`, its ray started `lift` metres out along `normal`, walked
-// at the level the view's ray is, from a voxel `nearVoxel` metres across (0 for anything else).
-bool voxelLampBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 world, float3 normal, float metres, float lift, float nearVoxel, Light light)
+// The colour light takes through the glass a walk passed, as much as the glass is solid; white where it passed none.
+float3 voxelGlassTint(VoxelHit walked)
 {
+    if (walked.glassT < 0.0)
+    {
+        return 1.0;
+    }
+    uint packed = walked.glassColour;
+    float solid = 1.0 - float(voxelKind(packed).x) / 16.0;
+    float3 colour = pow(float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0, 2.2);
+    colour /= max(max(colour.r, colour.g), max(colour.b, 1e-3));
+    return lerp(1.0, colour, saturate(solid * 2.0)) * (1.0 - 0.5 * solid);
+}
+
+// Whether a voxel stands between `world` and lamp `light`, its ray started `lift` metres out along `normal`, walked
+// at the level the view's ray is, from a voxel `nearVoxel` metres across (0 for anything else). `blocked` is the walk,
+// with the glass it passed.
+bool voxelLampBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 world, float3 normal, float metres, float lift, float nearVoxel, Light light, out VoxelHit blocked)
+{
+    blocked = (VoxelHit)0;
+    blocked.glassT = -1.0;
     float3 from = world + normal * lift;
     float3 toLamp = light.position - from;
     float far = length(toLamp);
@@ -960,7 +970,6 @@ bool voxelLampBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 
         return false;
     }
     float foot = metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
-    VoxelHit blocked;
     VoxelHit wetHit;
     float wetThrough;
     // Stopped a little short of the lamp, so the voxels of a lantern round it are not in its way; walked coarser the
@@ -1248,12 +1257,13 @@ VoxelOut voxelOpaque(VoxelVertex input)
     for (uint i = 0; i < clusterLights; i++)
     {
         uint light = buffers()->clusters[clusterBase + 1 + i];
-        // Not through the voxels.
-        if (voxelLampOut(pixel, i))
+        // Not through the voxels, but through their glass, taking its colour.
+        float3 through = voxelLampThrough(pixel, i);
+        if (all(through <= 0.0))
         {
             continue;
         }
-        float3 wet = lampThroughWater(frame, buffers()->lights[light].position, world, water);
+        float3 wet = lampThroughWater(frame, buffers()->lights[light].position, world, water) * through;
         color += shadeLocalLight(s, buffers()->lights[light], world) * wet;
     }
 
@@ -1481,10 +1491,12 @@ float4 voxelShadowFragment(VoxelVertex input) : SV_Target
 }
 
 // Which of the first VOXEL_LAMP_BITS lamps of each pixel's cluster a voxel stands in the way of, a bit each, as a whole
-// number, for whatever the depth passes drew there: each lamp whose light reaches it traced to through the voxels. At
-// half the picture's size, each texel for the pixel at its corner, as a lamp's shadow is softer than the sun's.
+// number in red, for whatever the depth passes drew there: each lamp whose light reaches it traced to through the
+// voxels. Green holds which came through glass of voxels, and blue the colour of the first of those's glass, eight
+// bits a channel, which all of them take. At half the picture's size, each texel for the pixel at its corner, as a
+// lamp's shadow is softer than the sun's.
 [shader("fragment")]
-float voxelLampShadowFragment(VoxelVertex input) : SV_Target
+float4 voxelLampShadowFragment(VoxelVertex input) : SV_Target
 {
     Frame* frame = push.frame;
     VoxelVolumes* volumes = voxelVolumes();
@@ -1492,7 +1504,7 @@ float voxelLampShadowFragment(VoxelVertex input) : SV_Target
     float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(pixel), 0)).r;
     if (depth <= 0.0)
     {
-        return 0.0;
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
     uint cluster = clusterAt(frame, pixel, viewDepthOf(frame, depth));
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);
@@ -1504,18 +1516,30 @@ float voxelLampShadowFragment(VoxelVertex input) : SV_Target
     float near;
     if (count == 0u || !voxelShadowPixel(frame, volumes, pixel, world, normal, metres, lift, near))
     {
-        return 0.0;
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
     uint bits = 0;
+    uint glassBits = 0;
+    float3 tint = 1.0;
     for (uint i = 0; i < count; i++)
     {
         Light light = buffers()->lights[buffers()->clusters[clusterBase + 1 + i]];
-        if (voxelLampBlocked(frame, volumes, pixel, world, normal, metres, lift, near, light))
+        VoxelHit walked;
+        if (voxelLampBlocked(frame, volumes, pixel, world, normal, metres, lift, near, light, walked))
         {
             bits |= 1u << i;
         }
+        else if (walked.glassT >= 0.0)
+        {
+            if (glassBits == 0u)
+            {
+                tint = voxelGlassTint(walked);
+            }
+            glassBits |= 1u << i;
+        }
     }
-    return float(bits);
+    uint3 packed = uint3(round(saturate(tint) * 255.0));
+    return float4(float(bits), float(glassBits), float(packed.r | (packed.g << 8) | (packed.b << 16)), 0.0);
 }
 
 // ---------------------------------------------------------------- The sun's shadows of the voxels, from above

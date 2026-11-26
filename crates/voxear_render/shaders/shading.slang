@@ -1621,12 +1621,13 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
             continue;
         }
         // Dimmed by the water between, where either is under it.
-        // Not through the voxels, by the voxels' shadows pass.
-        if (voxelLampOut(input.position.xy, i))
+        // Not through the voxels, by the voxels' shadows pass, but through their glass, taking its colour.
+        float3 through = voxelLampThrough(input.position.xy, i);
+        if (all(through <= 0.0))
         {
             continue;
         }
-        float3 wet = lampThroughWater(frame, buffers()->lights[light].position, input.worldPosition, water);
+        float3 wet = lampThroughWater(frame, buffers()->lights[light].position, input.worldPosition, water) * through;
         if (customLit)
         {
             LightInput lamp = localLightInput(buffers()->lights[light], input.worldPosition, s.normal);

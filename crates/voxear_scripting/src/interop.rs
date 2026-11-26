@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 102;
+pub(crate) const API_VERSION: u32 = 103;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -673,16 +673,25 @@ pub(crate) struct NativeApi {
         toward: *const [f32; 3],
         pieces: i32,
         rest: i32,
-        done: *mut [i32; 3],
+        done: *mut [i32; 4],
         found: *mut [f32; 9],
         objs: *mut u64,
         room: i32,
+        mown: *mut [f32; 3],
+        mown_room: i32,
     ) -> i32,
     /// `Voxels.Raycast` meeting the grass, cover and crops too (`meets` 1): as `voxel_raycast`, 1 in `hit[7]` where it
     /// met cover.
     /// `Voxels.Piece`, `Voxels.Stamp` and `Voxels.Remove`: what felled piece `obj` is, in `info`, and with `act` 1
     /// stamped back where it lies, 2 taken away; 1, or 0 for an Obj that is not one.
     pub voxel_piece: unsafe extern "C" fn(obj: u64, act: i32, info: *mut [f32; 9]) -> i32,
+    /// `Voxels.Felled` and `Voxels.Regrow`: sets every endless Voxel Volume's felled trees' rest (`felled` 0 a body, 1
+    /// stamped) and grass's regrow time in seconds (`regrow`), -1 for either only asking; 1 with the first one's in
+    /// `found`, 0 for none.
+    pub voxel_cutting: unsafe extern "C" fn(felled: i32, regrow: f32, found: *mut [f32; 2]) -> i32,
+    /// `Voxels.Felling`: with `set` 1 sets every endless Voxel Volume's felling to `numbers` (push, rest after, press
+    /// depth, press to, wood density, clippings); 1 with the first one's in `numbers`, 0 for none.
+    pub voxel_felling: unsafe extern "C" fn(set: i32, numbers: *mut [f32; 6]) -> i32,
     pub voxel_raycast_meeting: unsafe extern "C" fn(
         origin: *const [f32; 3],
         direction: *const [f32; 3],
@@ -2450,6 +2459,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         voxel_water_look: crate::voxels::voxel_water_look,
         voxel_cut: crate::voxels::voxel_cut,
         voxel_piece: crate::voxels::voxel_piece,
+        voxel_cutting: crate::voxels::voxel_cutting,
+        voxel_felling: crate::voxels::voxel_felling,
         voxel_raycast_meeting: crate::voxels::voxel_raycast_meeting,
     }
 }

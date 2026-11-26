@@ -332,7 +332,8 @@ impl VoxelCutPiece {
 /// a body, 1 it is stamped back, 2 it is taken away). Gives how many
 /// volumes it reached, how many columns' grass and voxels of logs and leaves
 /// it cut, and how many pieces came loose; and the pieces.
-pub type VoxelCuts = fn(&mut World, &VoxelCutRequest, Option<[f32; 3]>, i32, i32) -> ([i32; 4], Vec<VoxelCutPiece>);
+pub type VoxelCuts =
+    fn(&mut World, &VoxelCutRequest, Option<[f32; 3]>, i32, i32) -> ([i32; 4], Vec<VoxelCutPiece>, Vec<[f32; 3]>);
 
 static CUTS: OnceLock<VoxelCuts> = OnceLock::new();
 
@@ -345,9 +346,10 @@ pub fn set_voxel_cuts(cuts: VoxelCuts) {
 /// 1 a ball (where and its radius), 2 a slice (where, the way it is square
 /// to, and its radius); `toward` the way across what comes loose falls, or
 /// null; `pieces` and `rest` as [`VoxelCuts`] takes them. Writes the
-/// columns, the voxels and the pieces cut into `done`, and the first `room`
-/// pieces' numbers into `found` and their Objs into `objs` (0 for one taken
-/// away). Gives how many volumes it reached, or -1.
+/// columns, the voxels, the pieces cut and the places grass was cut into
+/// `done`, the first `room` pieces' numbers into `found` and their Objs into
+/// `objs` (0 for one taken away), and the first `mown_room` places grass was
+/// cut into `mown`. Gives how many volumes it reached, or -1.
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe extern "C" fn voxel_cut(
     shape: i32,
@@ -356,10 +358,12 @@ pub(crate) unsafe extern "C" fn voxel_cut(
     toward: *const [f32; 3],
     pieces: i32,
     rest: i32,
-    done: *mut [i32; 3],
+    done: *mut [i32; 4],
     found: *mut [f32; 9],
     objs: *mut u64,
     room: i32,
+    mown: *mut [f32; 3],
+    mown_room: i32,
 ) -> i32 {
     let Some(cuts) = CUTS.get() else { return -1 };
     if numbers.is_null() || count < 0 || done.is_null() {
@@ -373,12 +377,17 @@ pub(crate) unsafe extern "C" fn voxel_cut(
         _ => return -1,
     };
     let toward = (!toward.is_null()).then(|| unsafe { *toward });
-    let Some(([reached, columns, voxels, felled], cut)) =
+    let Some(([reached, columns, voxels, felled], cut, places)) =
         with_world(|world| Some(cuts(world, &request, toward, pieces, rest)))
     else {
         return -1;
     };
-    unsafe { *done = [columns, voxels, felled] };
+    unsafe { *done = [columns, voxels, felled, places.len().min(i32::MAX as usize) as i32] };
+    if !mown.is_null() && mown_room > 0 {
+        for (i, place) in places.iter().take(mown_room as usize).enumerate() {
+            unsafe { *mown.add(i) = *place };
+        }
+    }
     if !found.is_null() && !objs.is_null() && room > 0 {
         for (i, piece) in cut.iter().take(room as usize).enumerate() {
             unsafe {
@@ -450,5 +459,60 @@ pub(crate) unsafe extern "C" fn voxel_raycast_meeting(
         *hit = [point[0], point[1], point[2], normal[0], normal[1], normal[2], distance, f32::from(u8::from(cover))];
         *obj = entity.to_bits();
     }
+    1
+}
+
+/// What answers `Voxels.Felled` and `Voxels.Regrow`: given a felled
+/// trees' rest's number (0 a body, 1 stamped; -1 only asks) and a regrow
+/// time in seconds (under 0 only asks), sets them on every endless Voxel
+/// Volume; gives the first one's, if there is one.
+pub type VoxelCutting = fn(&mut World, i32, f32) -> Option<(i32, f32)>;
+
+static CUTTING: OnceLock<VoxelCutting> = OnceLock::new();
+
+/// Sets what answers `Voxels.Felled` and `Voxels.Regrow`; the first set is
+/// kept.
+pub fn set_voxel_cutting(cutting: VoxelCutting) {
+    let _ = CUTTING.set(cutting);
+}
+
+/// `Voxels.Felled` and `Voxels.Regrow`: `felled` 0 or 1 sets the felled
+/// trees' rest, `regrow` 0 or more the regrow time, -1 for either only
+/// asks. 1 with the first endless volume's in `found`; 0 where there is
+/// none; -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_cutting(felled: i32, regrow: f32, found: *mut [f32; 2]) -> i32 {
+    let Some(cutting) = CUTTING.get() else { return -1 };
+    if found.is_null() {
+        return -1;
+    }
+    let Some((felled, regrow)) = with_world(|world| cutting(world, felled, regrow)) else { return 0 };
+    unsafe { *found = [felled as f32, regrow] };
+    1
+}
+
+/// What answers `Voxels.Felling`: given 1, sets how every endless Voxel
+/// Volume's felled trees fall and rest to `numbers` (the push, how long
+/// still to rest, how deep and to what share leaves are pressed, the wood's
+/// density, and 1 for clippings), and either way gives the first one's.
+pub type VoxelFellingCall = fn(&mut World, Option<[f32; 6]>) -> Option<[f32; 6]>;
+
+static FELLING: OnceLock<VoxelFellingCall> = OnceLock::new();
+
+/// Sets what answers `Voxels.Felling`; the first set is kept.
+pub fn set_voxel_felling(felling: VoxelFellingCall) {
+    let _ = FELLING.set(felling);
+}
+
+/// `Voxels.Felling`: `set` 1 sets every endless volume's to `numbers`, 0
+/// only asks; 1 with the first one's in `numbers`, 0 where there is none,
+/// -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_felling(set: i32, numbers: *mut [f32; 6]) -> i32 {
+    let Some(felling) = FELLING.get() else { return -1 };
+    if numbers.is_null() {
+        return -1;
+    }
+    let given = (set == 1).then(|| unsafe { *numbers });
+    let Some(found) = with_world(|world| felling(world, given)) else { return 0 };
+    unsafe { *numbers = found };
     1
 }

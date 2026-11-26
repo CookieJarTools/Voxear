@@ -120,6 +120,53 @@ pub struct VoxelVolume {
     /// How many seconds an endless volume's cut grass, cover and crops take
     /// to grow back: none for never.
     pub regrow: f32,
+    /// How its felled trees fall and rest, and what flies from cut grass.
+    pub felling: VoxelFelling,
+}
+
+/// How an endless Voxel Volume's felled trees fall and come to rest, and
+/// what flies up from its cut grass.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct VoxelFelling {
+    /// How fast a felled tree is set turning over the edge of its foot the
+    /// way it was cut, in radians a second: a slight push, gravity doing the
+    /// rest.
+    pub push: f32,
+    /// How long a felled piece must lie still to be at rest, in seconds.
+    pub rest_after: f32,
+    /// How far over the ground a resting crown's leaves are pressed down,
+    /// in metres, and to what share of that height.
+    pub press_depth: f32,
+    pub press_to: f32,
+    /// How heavy its wood is, in kilograms a cubic metre.
+    pub wood_density: f32,
+    /// Whether clippings fly up where grass is cut.
+    pub clippings: bool,
+}
+
+impl Default for VoxelFelling {
+    fn default() -> Self {
+        Self { push: 0.6, rest_after: 1.0, press_depth: 0.7, press_to: 0.45, wood_density: 650.0, clippings: true }
+    }
+}
+
+impl VoxelFelling {
+    /// These with every number kept to what makes sense.
+    pub fn kept(self) -> Self {
+        let keep = |value: f32, low: f32, high: f32, otherwise: f32| {
+            if value.is_finite() { value.clamp(low, high) } else { otherwise }
+        };
+        let made = Self::default();
+        Self {
+            push: keep(self.push, 0.0, 20.0, made.push),
+            rest_after: keep(self.rest_after, 0.0, 60.0, made.rest_after),
+            press_depth: keep(self.press_depth, 0.0, 10.0, made.press_depth),
+            press_to: keep(self.press_to, 0.0, 1.0, made.press_to),
+            wood_density: keep(self.wood_density, 1.0, 20_000.0, made.wood_density),
+            clippings: self.clippings,
+        }
+    }
 }
 
 /// What a tree felled in an endless Voxel Volume becomes once it has
@@ -431,6 +478,7 @@ impl Default for VoxelVolume {
             water: VoxelWaterLook::Voxels,
             felled: VoxelFelled::Body,
             regrow: 0.0,
+            felling: VoxelFelling::default(),
         }
     }
 }
@@ -455,6 +503,7 @@ impl PartialEq for VoxelVolume {
             && self.water == other.water
             && self.felled == other.felled
             && self.regrow == other.regrow
+            && self.felling == other.felling
             && (Arc::ptr_eq(&self.changes, &other.changes) || self.changes == other.changes)
     }
 }

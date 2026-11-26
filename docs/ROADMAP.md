@@ -4767,6 +4767,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - A slight push the way it was cut, and gravity falls it over its stump; its leaves are pressed against the ground
     where it rests. Grass is cut where the blade meets it, stubble left, clippings flying.
   - A felled tree is kept as its foot and stump height; GPU, collision and rays agree to the voxel.
+  - All of it from C#: `Voxels.Felled`, `Voxels.Regrow`, `Voxels.Felling` (push, rest, leaves pressed, wood density,
+    clippings), `VoxelCutDone.MownAt`.
   - Not yet: felling off the main thread (0.14 s a tree), bodies kept by a save.
 
 ## M13 — Virtualised geometry (Nanite-style)

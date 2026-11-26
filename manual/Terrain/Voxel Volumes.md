@@ -465,6 +465,19 @@ vox editor call voxels.raycast '{ "from": [12, 40, 9], "direction": [0, -1, 0], 
 vox editor call field.set '{ "obj": 7, "component": "voxel_volume", "field": "felled", "value": "Stamped" }'
 ```
 
+Scripts set the volume's settings too, every endless volume's at once:
+
+```csharp
+Voxels.Felled = VoxelFelled.Stamped;   // fallen trees become ground when they settle
+Voxels.Regrow = 600f;                  // cut grass grows back in ten minutes; 0 never
+// How trees fall and rest, and the game's own effect for cut grass in place of the clippings.
+Voxels.Felling = Voxels.Felling with { Push = 0.3f, WoodDensity = 900f, RestAfter = 0.5f, Clippings = false };
+var mowed = Voxels.Cut(swing, 1f);
+foreach (var at in mowed.MownAt) Particles.Play(ParticleEffect.Clippings, at);
+```
+
+`VoxelFelling` holds the push a felled tree is given the way it was cut (radians a second; gravity does the rest), how long it must lie still to be at rest, how deep and to what share its leaves are pressed against the ground, its wood's density (how heavy it is), and whether clippings fly from cut grass.
+
 The scene writes the volume's settings:
 
 ```toml
@@ -472,6 +485,10 @@ The scene writes the volume's settings:
 endless = true
 felled = "stamped"
 regrow = 600.0
+[obj.voxel_volume.felling]
+push = 0.3
+wood_density = 900.0
+clippings = false
 ```
 
 ### Saved in region files

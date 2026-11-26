@@ -114,7 +114,7 @@ use voxear_ecs::{Entity, World};
 use voxear_assets::AssetGuid;
 use voxear_render::{
     VoxelArea, VoxelAreaRules, VoxelBiomes, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator,
-    VoxelCut, VoxelFelled, VoxelGround, VoxelKind, VoxelMaterial, VoxelRayMeets, VoxelStamp, VoxelTrees, VoxelVolume,
+    VoxelCut, VoxelFelled, VoxelFelling, VoxelGround, VoxelKind, VoxelMaterial, VoxelRayMeets, VoxelStamp, VoxelTrees, VoxelVolume,
     VoxelWaterLook,
 };
 
@@ -189,6 +189,14 @@ pub struct VoxelVolumeData {
     /// never unless written.
     #[serde(skip_serializing_if = "is_nothing")]
     pub regrow: f32,
+    /// How its felled trees fall and rest, and whether clippings fly from cut
+    /// grass: `[obj.voxel_volume.felling]`, left out as it comes.
+    #[serde(skip_serializing_if = "is_usual_felling")]
+    pub felling: VoxelFelling,
+}
+
+fn is_usual_felling(felling: &VoxelFelling) -> bool {
+    *felling == VoxelFelling::default()
 }
 
 fn is_body(felled: &VoxelFelled) -> bool {
@@ -522,6 +530,7 @@ impl Default for VoxelVolumeData {
             water: made.water,
             felled: made.felled,
             regrow: made.regrow,
+            felling: made.felling,
         }
     }
 }
@@ -604,6 +613,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         water: data.water,
         felled: data.felled,
         regrow: data.regrow.max(0.0),
+        felling: data.felling.kept(),
     }
 }
 
@@ -785,6 +795,16 @@ pub(crate) fn register() {
             },
         }
     });
+    voxear_scripting::set_voxel_cutting(|world, felled, regrow| {
+        if let Some(&felled) = usize::try_from(felled).ok().and_then(|felled| VoxelFelled::ALL.get(felled)) {
+            set_felled(world, felled, None);
+        }
+        if regrow >= 0.0 {
+            set_regrow(world, regrow, None);
+        }
+        let felled_at = |felled: VoxelFelled| VoxelFelled::ALL.iter().position(|f| *f == felled).unwrap_or(0) as i32;
+        cutting(world).map(|(felled, regrow)| (felled_at(felled), regrow))
+    });
     voxear_scripting::set_voxel_water_look(|world, look| {
         if let Some(&look) = usize::try_from(look).ok().and_then(|look| VoxelWaterLook::ALL.get(look)) {
             set_water_look(world, look, None);
@@ -822,7 +842,16 @@ pub(crate) fn register() {
         };
         let done = crate::voxel_felling::cut(world, &cut, options, None);
         let counts = [done.reached, done.columns, done.voxels, done.pieces.len()].map(|n| n.min(i32::MAX as usize) as i32);
-        (counts, done.pieces.iter().map(script_piece).collect())
+        (counts, done.pieces.iter().map(script_piece).collect(), done.mown.iter().map(|at| at.to_array()).collect())
+    });
+    voxear_scripting::set_voxel_felling(|world, given| {
+        if let Some([push, rest_after, press_depth, press_to, wood_density, clippings]) = given {
+            let felling = VoxelFelling { push, rest_after, press_depth, press_to, wood_density, clippings: clippings != 0.0 };
+            set_felling(world, felling, None);
+        }
+        felling(world).map(|f| {
+            [f.push, f.rest_after, f.press_depth, f.press_to, f.wood_density, f32::from(u8::from(f.clippings))]
+        })
     });
     voxear_scripting::set_voxel_pieces(|world, entity, act| {
         let piece = crate::voxel_felling::piece(world, entity)?;
@@ -921,6 +950,77 @@ pub fn set_water_look(world: &mut World, look: VoxelWaterLook, only: Option<Enti
         }
     }
     reached.len()
+}
+
+/// Sets what every endless Voxel Volume's felled trees become at rest, or
+/// `only`'s alone, and its scene writes it: how many it reached.
+pub fn set_felled(world: &mut World, felled: VoxelFelled, only: Option<Entity>) -> usize {
+    let reached = endless_volumes(world, only);
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.felled = felled;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.felled = felled;
+        }
+    }
+    reached.len()
+}
+
+/// Sets how many seconds every endless Voxel Volume's cut grass takes to
+/// grow back, 0 for never, or `only`'s alone, and its scene writes it: how
+/// many it reached.
+pub fn set_regrow(world: &mut World, seconds: f32, only: Option<Entity>) -> usize {
+    let seconds = if seconds.is_finite() { seconds.clamp(0.0, 1.0e6) } else { 0.0 };
+    let reached = endless_volumes(world, only);
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.regrow = seconds;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.regrow = seconds;
+        }
+    }
+    reached.len()
+}
+
+/// Sets how every endless Voxel Volume's felled trees fall and rest, and
+/// whether clippings fly from its cut grass, or `only`'s alone, and its
+/// scene writes it: how many it reached.
+pub fn set_felling(world: &mut World, felling: VoxelFelling, only: Option<Entity>) -> usize {
+    let felling = felling.kept();
+    let reached = endless_volumes(world, only);
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.felling = felling;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.felling = felling;
+        }
+    }
+    reached.len()
+}
+
+/// How the first endless Voxel Volume's felled trees fall and rest, if
+/// there is one.
+pub fn felling(world: &World) -> Option<VoxelFelling> {
+    world.query_ref::<&VoxelVolume>().into_iter().find(|volume| volume.endless).map(|volume| volume.felling)
+}
+
+/// What the first endless Voxel Volume's felled trees become at rest, and
+/// how many seconds its cut grass takes to grow back, if there is one.
+pub fn cutting(world: &World) -> Option<(VoxelFelled, f32)> {
+    world.query_ref::<&VoxelVolume>().into_iter().find(|volume| volume.endless).map(|v| (v.felled, v.regrow))
+}
+
+/// The endless volumes of `world`, or `only` where it is one.
+fn endless_volumes(world: &World, only: Option<Entity>) -> Vec<Entity> {
+    world
+        .query_ref::<(Entity, &VoxelVolume)>()
+        .into_iter()
+        .filter(|(entity, volume)| volume.endless && only.is_none_or(|o| o == *entity))
+        .map(|(entity, _)| entity)
+        .collect()
 }
 
 /// How the first endless Voxel Volume draws its rivers and lakes, if there

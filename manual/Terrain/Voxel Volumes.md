@@ -47,7 +47,8 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Raised Land, Spires, Fins, Chasms, Slope Mask) makes the volume's own ground instead, and the Console names the node.
 - An endless volume's ground far from its Obj, as a world tens of kilometres across has it, is drawn streaked: put the volume's Obj near the camera and its **Offset** where the camera's ground lies in the generator's world.
-- An endless volume is at most 16 of its sectors tall, 64 voxels each: 64 m at 16 voxels a metre, 256 m at 4. Land higher than its top is cut off flat there.
+- An endless volume is at most 256 of its sectors tall, 64 voxels each: 1,024 m at 16 voxels a metre. Land higher than its top is cut off flat there. Give a world of mountains a tall volume and set its **Floor** under its lowest ground: for a world whose ground runs from 54 m under its sea to peaks of 576 m, a volume 640 m tall with its floor at -60 m holds all of it.
+- Each 4 m column keeps only the sectors round its own ground: 24 of them, 96 m at 16 voxels a metre, from the lowest that holds anything up. A height costs nearly nothing for that: on the same hills, a volume 512 m tall keeps 127 MB against 120 MB for one 48 m tall, and draws in the same time. Where a column's ground, its trees and what is built on it rise more than 96 m within its 4 m, the lowest of it is left out; the steepest columns of a mountainous world 51 km across rise 56 m.
 
 ### Rivers and lakes
 

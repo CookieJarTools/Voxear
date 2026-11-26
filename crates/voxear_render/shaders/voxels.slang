@@ -67,14 +67,16 @@ uint* voxelSector(VoxelVolume volume, int3 s)
     {
         return volume.sectors + uint((s.y * volume.sectorCount.z + s.z) * volume.sectorCount.x + s.x) * VOXEL_SECTOR_WORDS;
     }
-    // An endless volume's sectors are kept by where they are in the world, wrapping round its window; each slot's
-    // entry says which sector it holds, then holds it as a volume's sector is held.
+    // An endless volume's sectors are kept by where they are in the world, wrapping round its window and, up its
+    // columns, round the band of layers each keeps; each slot's entry says which sector it holds, then holds it as a
+    // volume's sector is held.
     int3 world = volume.windowSector + s;
     int w = volume.sectorCount.x;
     // Wrapped as the CPU wraps it (rem_euclid), from whole numbers made positive first: a remainder of a negative
     // number is not taken the same way everywhere.
     uint2 slot = uint2(uint(world.x + w * 65536), uint(world.z + w * 65536)) % uint(w);
-    uint* entry = volume.sectors + ((uint(s.y) * uint(w) + slot.y) * uint(w) + slot.x) * VOXEL_ENTRY_WORDS;
+    uint layer = uint(world.y) % volume.layers;
+    uint* entry = volume.sectors + ((layer * uint(w) + slot.y) * uint(w) + slot.x) * VOXEL_ENTRY_WORDS;
     if (int(entry[0]) != world.x || int(entry[1]) != world.y || int(entry[2]) != world.z)
     {
         return volume.emptySector;

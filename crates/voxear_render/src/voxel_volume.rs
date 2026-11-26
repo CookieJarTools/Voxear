@@ -556,6 +556,10 @@ pub(crate) struct GpuVoxelVolume {
     /// of no water voxels, and how many shades from shallow to deep.
     water: u32,
     shades: u32,
+    /// How many sectors of each of an endless volume's columns its window
+    /// keeps entries for, by their height wrapped.
+    layers: u32,
+    pad: u32,
 }
 
 /// A view's volumes (`VoxelVolumes` in shaders/common.slang).
@@ -974,6 +978,8 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         pages: 0,
         water: 0,
         shades: 0,
+        layers: 1,
+        pad: 0,
     };
     Ok(Resident { buffer, record, bytes: total as u64, bricks: packed.brick_count() })
 }
@@ -985,8 +991,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 104);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 104 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 112);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 112 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

@@ -4715,6 +4715,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   each brick keeping the bank most of its voxels are in. A print's colours in each tint, and a tinted fill's, go
   together into one bank, so sixty kinds of building of thirty colours each keep every colour; a print takes up to
   128.
+- **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
+  voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
+  whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest
+  ground made: a volume 512 m tall keeps 127 MB against 120 MB for one 48 m tall on the same hills, and draws in the
+  same time. The CPU's collision and rays leave out a generator's overhangs where the GPU does, so they meet the
+  ground drawn.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

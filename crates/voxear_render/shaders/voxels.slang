@@ -690,3 +690,43 @@ VoxelOut voxelOpaque(VoxelVertex input)
     o.depth = voxelDepthOf(frame, world);
     return o;
 }
+
+// ---------------------------------------------------------------- The sea floor
+
+// The sea floor round the camera as water.slang keeps it (floorDepth): slices FLOOR_TEXELS a side in one depth image,
+// two to a row, their tops in its left half and their undersides in its right, each texel as deep as its ground is
+// high, from FLOOR_REACH under the sea's level to FLOOR_CEILING over it.
+static const float VOXEL_FLOOR_REACH = 256.0;
+static const float VOXEL_FLOOR_CEILING = 4.0;
+static const float VOXEL_FLOOR_TEXELS = 256.0;
+
+// The voxels under each texel of slice push.level of the sea floor, seen from straight above, as the meshes there are
+// drawn (water.slang's floorVertex): with push.list 0, how high the highest voxel is, walked down from the floor's
+// ceiling, as high as the ceiling where the walk starts in the ground; with push.list 1, how high the lowest is,
+// walked up from the floor's reach. Nothing where the walk meets none.
+[shader("fragment")]
+float voxelFloorFragment(VoxelVertex input) : SV_Depth
+{
+    Frame* frame = push.frame;
+    uint slice = push.level;
+    bool under = push.list != 0;
+    float2 tile = float2(float(slice % 2 + (under ? 2 : 0)), float(slice / 2)) * VOXEL_FLOOR_TEXELS;
+    float4 placed = frame->ocean.floor[slice];
+    float2 uv = (input.position.xy - tile) / VOXEL_FLOOR_TEXELS;
+    float2 xz = placed.xy + uv * placed.z;
+    float level = frame->ocean.level;
+    float top = level + VOXEL_FLOOR_CEILING;
+    float bottom = level - VOXEL_FLOOR_REACH;
+    // Read to the voxels' groups at most, finer than a texel.
+    float foot = placed.z / VOXEL_FLOOR_TEXELS * 0.25;
+    // A hair off straight down, as the walk takes no ray wholly along an axis.
+    float3 d = normalize(float3(1e-5, under ? 1.0 : -1.0, 1e-5));
+    float3 from = float3(xz.x, under ? bottom : top, xz.y);
+    VoxelHit hit;
+    if (!voxelsTrace(voxelVolumes(), from, d, 0.0, top - bottom, foot, 0.0, hit))
+    {
+        discard;
+    }
+    float y = under ? bottom + hit.metres : top - hit.metres;
+    return saturate((y - level + VOXEL_FLOOR_REACH) / (VOXEL_FLOOR_REACH + VOXEL_FLOOR_CEILING));
+}

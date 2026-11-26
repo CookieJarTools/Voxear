@@ -835,6 +835,69 @@ ground, in order (`VoxelVolume::edits`), as the plan has edits go out over the n
 
 ![A pit carved out and a ball of rock filled, a bite carved out of the rock after](../images/small-voxels/edits-from-above.webp)
 
+## Rivers, lakes and the sea in endless ground (2026-11-26)
+
+A generator's **Rivers** node finds its rivers over a grid of points round each place, with what drains through
+each, on the CPU (`generate/nodes/rivers.rs`). The GPU's program passes its ground through. So the rivers are laid
+in from the CPU, as streamed worlds of blocks take them: as a change of height to add to the GPU's ground
+(`voxel_volume/rivers.rs`).
+
+- **Points, not voxels.** For each 4 m column, the CPU works out the generator's height with its rivers and
+  without them (`WorldGen::without_rivers`, the graph with every Rivers node passing its ground through, which is
+  the GPU's program), its water and its falls, at points eight voxels apart, from one step back of the column's
+  corner: 11 × 11 points, 121 places of the graph run three times. The difference is the rivers' cut. The GPU adds
+  it, read between the four points round each voxel column, to the height its program made; the CPU's ray reads the
+  same points the same way. A generator's Volume has the cut added to how far into it a voxel is, which moves its
+  surface by as much.
+- **A table of points the GPU reads.** Points are worked out on two to six threads of their own as columns come
+  near, the nearest first, and kept (8,192 columns at most, about 1.5 KB each). They are written into a table with a
+  slot for each column of a window wider than the volume's by a column, for the heights' border, and by as far as a
+  tree's crown reaches, as a tree's foot may stand in a column round the one being made and must stand at the same
+  height in each. A column is made once its points and those round it are in the table; a slot is written over only
+  frames after its last column left. Columns with no river near read a word and go on.
+- **The ground under the water.** Gravel under a river's or a lake's water, sand along its edge; no grass, flowers
+  or trees.
+- **The water drawn.** A square of water on each square of points with water at a corner, its dry corners as high
+  as its highest wet one, so the water reaches into the bank and the ground hides it there. The squares are drawn
+  as a world of blocks' water is (`voxelWaterVertex`, `blockWaterLit` in `shaders/water.slang`): ripples carried
+  downstream as fast as a generator's current runs, a line of foam where the water meets the ground, the bed seen
+  through it, reflections. A square whose corners stand over 0.3 m apart where the generator says water falls is a
+  waterfall's face, with white threads running down it; the squares beside its foot churn.
+- **The sea floor.** The map of the ground under the sea that calms waves over the shallows and lays foam along the
+  shore was drawn from meshes standing still. Voxel ground is drawn into it too: a fragment per texel of each slice
+  walks straight down through the volumes from the floor's ceiling, and straight up from its reach for the
+  underside (`voxelFloorFragment` in `shaders/voxels.slang`).
+
+- **Measured** (reach 64 m, 16 voxels a metre, 1920×1080, RTX 3070 shared with other sessions; each the least of 60
+  frames). The CPU's points: 0.7 ms of one core a column, 0.3 ms at a metre apart, which was too coarse for a stream
+  a few metres wide.
+
+  | Rolling Hills | Without rivers | With rivers |
+  |---|---|---|
+  | A column made, 16 a frame | 0.104 ms | 0.104 ms |
+  | Window made before the frames | 0.61 s | 0.61 s |
+  | Over the river: depth / lit voxels | 1.61 / 2.90 ms | 1.86 / 3.62 ms |
+  | Water drawn | none | 1.77 ms, 3,065 squares |
+
+  With 100 oaks and pines a hectare, a column takes 0.23 ms (least) to 0.34 ms (median), eight a frame, as before.
+  The lit voxels over the river cost more as their light is taken through the water. The sea floor's voxels add
+  0.025 ms on the frames a slice is drawn again. A test finds a river in Rolling Hills, meets its bed 2.6 m under the
+  ground without it with the CPU's ray, within a voxel of the generator's own bed, and fills a ball there that stands
+  out of the water in the GPU's picture.
+
+![A river cut into Rolling Hills, before and after](../images/small-voxels/river-before-after.webp)
+
+![A shore of Archipelago, before and after](../images/small-voxels/shore-before-after.webp)
+
+Not done:
+
+- **Water as a voxel material**, so a pit carved below a river's level or beside it fills. The squares are the
+  generator's water alone. The next step would be a material of water kept with the edits, made where an edit opens
+  ground below a neighbouring water height (from the points), drawn by the same squares at that height over the
+  carved voxels; flowing it on would be a simulation over the edits' bricks, cheap only for small pits.
+- Swimming, floating and currents in voxel rivers: the engine's water reads Pools, Streams and worlds of blocks.
+- Lakes and rivers of a Volume's caves: the points say nothing of what is under an overhang.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

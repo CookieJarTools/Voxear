@@ -4264,6 +4264,72 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     return blockWaterLit(frame, input, world.corner.xz, world.blockSize, look, sea, at, face, swollen, below);
 }
 
+// What a face of water drawn from no world of blocks has for its world: the water over a Voxel Volume's rivers.
+static const uint NOT_BLOCK_WATER = 0xFFFFFFFFu;
+
+// A corner of a square of water over an endless Voxel Volume's rivers and lakes (buffers()->voxelWater, six corners a
+// square), drawn as a world of blocks' water is: a still or flowing top, or where its corners stand far apart over a
+// waterfall, the fall's face, white threads running down it, and its foot churned beside it.
+[shader("vertex")]
+BlockWaterOut voxelWaterVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+    VoxelWater square = buffers()->voxelWater[vertexId / 6];
+    uint2 c = corners[vertexId % 6];
+    float4 h = square.heights;
+    float3 world = float3(square.corner.x + float(c.x) * square.size, h[c.y * 2 + c.x], square.corner.y + float(c.y) * square.size);
+    float2 slope = float2(h.y + h.w - h.x - h.z, h.z + h.w - h.x - h.y) * 0.5 / square.size;
+    float4 at = float4(world, 1.0);
+    BlockWaterOut o;
+    o.position = transform(frame->viewProj, at);
+    o.world = world;
+    bool falling = (square.fall & 1u) != 0;
+    // A top faces straight up, as a world of blocks' water does, so the squares' small slopes show no seams in what
+    // it reflects; a fall's face slopes as it pours.
+    o.normal = falling ? normalize(float3(-slope.x, 1.0, -slope.y)) : float3(0.0, 1.0, 0.0);
+    o.currentClip = transform(frame->unjitteredViewProj, at);
+    o.previousClip = transform(frame->prevViewProj, at);
+    o.water = uint2(NOT_BLOCK_WATER, 0);
+    o.flow = square.flow;
+    o.fall = float2(falling ? 1.0 : 0.0, float((square.fall >> 1) & 15u));
+    // How far it has fallen here, in metres from the fall's top: it breaks up as a block's falling water does.
+    o.fallen = falling ? max(max(h.x, h.y), max(h.z, h.w)) - world.y : 0.0;
+    o.lit = float2(1.0, 0.0);
+    return o;
+}
+
+// The colours of the water over a Voxel Volume's rivers and lakes: a world of blocks' water block's own colour, a lake's
+// green, as its look is made from it (blockWaterLook).
+BlockWaterLook voxelWaterLook()
+{
+    float4 worn = push.frame->ocean.blockWater;
+    float3 color = lerp(float3(0.04, 0.46, 0.33), worn.rgb, worn.a);
+    float3 own = color / max(max(max(color.r, color.g), color.b), 1e-3);
+    BlockWaterLook look;
+    look.deep = color;
+    look.scatter = 0.75 * sqrt(color);
+    look.absorb = -log(lerp(1.0, own, 0.55)) + 0.05;
+    return look;
+}
+
+// The water over a Voxel Volume's rivers and lakes where the view meets it, lit as a world of blocks' water is, the
+// squares' grid starting at the square's own corner.
+[shader("fragment")]
+FragmentOut voxelWaterFragment(BlockWaterOut input, uint primitive : SV_PrimitiveID)
+{
+    Frame* frame = push.frame;
+    if (keptDry(frame, input.world, BLOCK_WATER))
+    {
+        discard;
+    }
+    VoxelWater square = buffers()->voxelWater[primitive / 2];
+    float3 v = towardsEye(frame, input.world);
+    float3 face = normalize(input.normal);
+    bool below = dot(v, face) < 0.0;
+    return blockWaterLit(frame, input, square.corner, square.size, voxelWaterLook(), false, input.world, face, false, below);
+}
+
 // The camera's own world of blocks' water (waterSurface, water_bodies::block_water) where it is a rough sea and the
 // camera is under the top of it: its place among the Pools; -1 where there is none.
 int blockSeaAround(Frame* frame)
@@ -4340,10 +4406,17 @@ FragmentOut blockWaterLit(
     // Lit by the light kept for its world's blocks (blockAmbient in shading.slang): the sky's light and what it
     // reflects of its surroundings as much as its sky light lets in, its blocks' light over them, and the sun as its
     // sky light lets it in, past its shadows in their place.
-    BlockWorld world = buffers()->blockWorlds[input.water.x];
-    bool kept = (world.flags & BLOCKS_LIT) != 0;
-    float skyShare = kept ? blockSkyShare(input.lit.x, world.glow.w) : 1.0;
-    float3 glowLight = kept ? world.glow.rgb * blockGlowShare(input.lit.y) : 0.0;
+    // Water over a Voxel Volume's rivers is no world of blocks' and keeps no light of its own.
+    bool kept = false;
+    float4 worldGlow = 0.0;
+    if (input.water.x != NOT_BLOCK_WATER)
+    {
+        BlockWorld world = buffers()->blockWorlds[input.water.x];
+        kept = (world.flags & BLOCKS_LIT) != 0;
+        worldGlow = world.glow;
+    }
+    float skyShare = kept ? blockSkyShare(input.lit.x, worldGlow.w) : 1.0;
+    float3 glowLight = kept ? worldGlow.rgb * blockGlowShare(input.lit.y) : 0.0;
     if (kept)
     {
         shadow *= blockSunShare(input.lit.x, sunShadowsReach(frame, at));
@@ -4519,8 +4592,6 @@ FragmentOut blockWaterLit(
     color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
 #ifdef VOXEAR_PACK_WATER
     {
-        BlockWorld lit = buffers()->blockWorlds[input.water.x];
-        bool kept = (lit.flags & BLOCKS_LIT) != 0;
         WaterSurface packed;
         packed.position = at;
         packed.normal = n;

@@ -4644,6 +4644,13 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
   turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
   stays whole. Next: changed bricks in region files, edits over the network, collision.
+- **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
+  volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
+  column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.
+  Beds are gravel and sand; the water is drawn as a world of blocks' water is, flowing downstream, foaming at the bank,
+  waterfalls pouring down their faces; `Voxels.Raycast` and edits meet the cut bed. Voxel ground is in the sea floor
+  map, so waves calm over voxel shallows and foam on the shore. A column takes 0.104 ms with rivers as without.
+  Not yet: water filling a pit carved beside a river, swimming in voxel rivers (research/small-voxels.md).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

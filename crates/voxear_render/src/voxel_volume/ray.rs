@@ -1,7 +1,8 @@
 //! Where a ray meets an endless Voxel Volume's ground, worked out on the
 //! CPU as the GPU makes it (`shaders/voxel_world.slang`), to the voxel: its
 //! own ground's hills, or its generator's height, or its generator's Volume
-//! with its overhangs and caves; the floor solid; and its edits over that,
+//! with its overhangs and caves, cut by its rivers as the GPU's columns are
+//! (`voxel_volume/rivers.rs`); the floor solid; and its edits over that,
 //! in order, the Voxel Prints printed into it with them. Its grass, flowers and trees are not met, as the CPU does not
 //! make them. Every machine finds the same, as an edit sent over the network
 //! wants.
@@ -13,7 +14,7 @@ use std::collections::HashMap;
 
 use voxear_core::math::{IVec3, Vec3};
 
-use super::{MOST_VOXELS_A_METRE, VoxelVolume};
+use super::{MOST_VOXELS_A_METRE, VoxelVolume, rivers::RiverLayer};
 
 /// Where a ray met a volume's ground: the point, in the world, on the face
 /// of the voxel it met; which way that face looks; and how far along the
@@ -45,6 +46,8 @@ struct Ground<'a> {
     heights: HashMap<(i32, i32), i32>,
     /// What a generator's Volume's columns carry up to their cells.
     columns: HashMap<(i32, i32), Vec<f32>>,
+    /// Its generator's rivers, where it runs any.
+    rivers: Option<std::sync::Arc<RiverLayer>>,
 }
 
 impl Ground<'_> {
@@ -58,7 +61,11 @@ impl Ground<'_> {
         let (mx, mz) = ((x as f32 + 0.5) * v, (z as f32 + 0.5) * v);
         let h = match (&self.volume.generator, &self.volume.ground) {
             (Some(generator), _) => {
-                let height = generator.world.height_at(mx + generator.at[0], mz + generator.at[1]);
+                let (gx, gz) = (mx + generator.at[0], mz + generator.at[1]);
+                let height = match &self.rivers {
+                    Some(rivers) => rivers.bare().height_at(gx, gz) + self.cut(x, z),
+                    None => generator.world.height_at(gx, gz),
+                };
                 ((height - generator.floor) / v).floor() as i32
             }
             (None, Some(ground)) => (ground.height_at(mx, mz) / v).floor() as i32,
@@ -75,8 +82,11 @@ impl Ground<'_> {
         let volume = generator.world.volume()?;
         let v = self.voxel;
         let (gx, gz) = ((c.x as f32 + 0.5) * v + generator.at[0], (c.z as f32 + 0.5) * v + generator.at[1]);
+        // Carried up from the ground without the rivers, as the GPU's columns carry it, and the rivers' cut moving
+        // the surface after.
+        let bare = self.rivers.as_ref().map(|rivers| rivers.bare()).unwrap_or(&generator.world);
         let carried = self.columns.entry((c.x, c.z)).or_insert_with(|| {
-            let height = generator.world.height_at(gx, gz);
+            let height = bare.height_at(gx, gz);
             volume.carried(&[gx], &[gz], &[height]).rows().iter().map(|row| row[0]).collect()
         });
         let rows: Vec<&[f32]> = carried.iter().map(std::slice::from_ref).collect();
@@ -84,7 +94,20 @@ impl Ground<'_> {
         let (mut density, mut ground) = ([0.0], [0.0]);
         let cells = voxear_terrain::generate::Cells { x: &[gx], y: &[gy], z: &[gz], carried: &rows, size: v };
         volume.densities(cells, false, &mut density, &mut ground);
-        Some(density[0])
+        let cut = if self.rivers.is_some() { self.cut(c.x, c.z) } else { 0.0 };
+        Some(density[0] + cut)
+    }
+
+    /// How much the rivers raise the ground at voxel column (`x`, `z`), as
+    /// the GPU reads it from the points of the column it is in.
+    fn cut(&self, x: i32, z: i32) -> f32 {
+        let Some(rivers) = &self.rivers else { return 0.0 };
+        let column = [x.div_euclid(64), z.div_euclid(64)];
+        let grid = rivers.grid(column);
+        if !grid.laid {
+            return 0.0;
+        }
+        grid.cut_at(x - column[0] * 64, z - column[1] * 64)
     }
 
     /// Whether voxel `c` is solid as the ground makes it, before its edits.
@@ -145,7 +168,9 @@ pub fn raycast(volume: &VoxelVolume, corner: Vec3, origin: Vec3, direction: Vec3
     }
     let voxel = 1.0 / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
     let tall = (volume.size.y / voxel).ceil() as i32;
-    let mut ground = Ground { volume, voxel, tall, heights: HashMap::new(), columns: HashMap::new() };
+    let rivers =
+        volume.generator.as_ref().and_then(|generator| super::rivers::layer_of(generator, volume.voxels_per_metre));
+    let mut ground = Ground { volume, voxel, tall, heights: HashMap::new(), columns: HashMap::new(), rivers };
     let o = (origin - corner) / voxel;
     let reach = reach / voxel;
     // Into the volume's height: under its top, and over its floor, which is solid.

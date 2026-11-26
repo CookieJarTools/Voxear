@@ -1659,6 +1659,23 @@ mod tests {
     }
 
     #[test]
+    fn a_world_without_its_rivers_is_the_ground_its_rivers_are_given() {
+        for name in ["Rolling Hills", "Alpine"] {
+            let (world, plain) = with_and_without(name);
+            let bare = world.without_rivers();
+            assert!(world.has_rivers() && !bare.has_rivers(), "{name}");
+            let (xs, zs) = grid(-400.0, -400.0, 16.0, 50);
+            let (mut a, mut b, mut c) = (vec![0.0; xs.len()], vec![0.0; xs.len()], vec![0.0; xs.len()]);
+            bare.heights(&xs, &zs, &mut a);
+            plain.heights(&xs, &zs, &mut b);
+            world.heights(&xs, &zs, &mut c);
+            assert_eq!(a, b, "{name}: its ground as its Rivers node is given it");
+            assert!(a.iter().zip(&c).any(|(a, c)| a != c), "{name}: its rivers cut somewhere");
+            assert!(bare.water(&xs, &zs).is_none_or(|(water, _)| !water.iter().any(|&w| wet(w))), "{name}: no water");
+        }
+    }
+
+    #[test]
     fn a_river_meets_the_sea_through_its_mouth_and_raises_nothing_out_in_the_sea() {
         let (world, plain) = with_and_without("Archipelago");
         let sea = world.sea_level();

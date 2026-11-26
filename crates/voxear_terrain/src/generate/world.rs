@@ -695,6 +695,47 @@ impl WorldGen {
         Some((water, falls))
     }
 
+    /// Whether its graph runs rivers down its ground: has a Rivers node.
+    pub fn has_rivers(&self) -> bool {
+        self.graph.nodes.iter().any(|node| matches!(node.kind, super::NodeKind::Rivers(_)))
+    }
+
+    /// The same generator with every Rivers node passing its ground
+    /// through, as its program on the GPU runs it: what is wired out of a
+    /// node's Height comes from what is wired into its Ground, nothing comes
+    /// of its Water, Falls and Banks, and the Output has no water. With [`WorldGen::heights`] of
+    /// both, what the rivers do to the ground at a place is the difference.
+    pub fn without_rivers(&self) -> Self {
+        use super::nodes::Rivers;
+        let mut graph = self.graph.clone();
+        let rivers: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, super::NodeKind::Rivers(_)))
+            .map(|node| node.id)
+            .collect();
+        for node in rivers {
+            let ground = graph.link_into(node, Rivers::GROUND).copied();
+            let out: Vec<_> = graph.links.iter().filter(|link| link.from == node).copied().collect();
+            for link in out {
+                graph.disconnect(link.to, link.input);
+                if let (Rivers::HEIGHT, Some(ground)) = (link.output, ground) {
+                    graph.connect(ground.from, ground.output, link.to, link.input);
+                }
+            }
+            graph.remove(node);
+        }
+        // Nor water at all, though what was wired into the Output's Water and Falls took more than the rivers'.
+        if let Some(output) = graph.output().map(|node| node.id) {
+            graph.disconnect(output, super::nodes::Output::WATER);
+            graph.disconnect(output, super::nodes::Output::FALLS);
+        }
+        let mut world = self.with_graph(graph);
+        world.land = self.land.clone();
+        world.corner_volume = self.corner_volume;
+        world
+    }
+
     /// Which way and how fast water flows at `(x, z)`, in metres a second
     /// along x and z: down the slope of the water wired into the Output's
     /// Water, faster the steeper it falls. None where there is no water

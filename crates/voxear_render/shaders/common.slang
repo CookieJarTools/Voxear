@@ -2185,6 +2185,20 @@ struct VoxelVolumes
     VoxelVolume volumes[MAX_VOXEL_VOLUMES];
 };
 
+// A square of water over an endless Voxel Volume's rivers and lakes (src/voxel_volume/rivers.rs): its least corner
+// along x and z and how wide it is; whether it is a waterfall's face (bit 0) and the sides of it, a still top, that a
+// fall lands beside (bits 1 to 4: +x, -x, +z, -z); how high its corners are, (0, 0), (1, 0), (0, 1) and (1, 1); and
+// which way and how fast it flows, in metres a second.
+struct VoxelWater
+{
+    float2 corner;
+    float size;
+    uint fall;
+    float4 heights;
+    float2 flow;
+    float2 pad;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -2310,6 +2324,8 @@ struct Buffers
     float4* bakedMatrices;
     // This view's Voxel Volumes (voxels.slang).
     VoxelVolumes* voxelVolumes;
+    // The water over endless Voxel Volumes' rivers and lakes, a square at a time (voxelWaterVertex in water.slang).
+    VoxelWater* voxelWater;
 };
 
 static const uint INSTANCE_BONES_WEIGHED = 1;

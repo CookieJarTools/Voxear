@@ -42,6 +42,8 @@ static const float VOXEL_GRASS_LEAN = 0.2;
 static const float VOXEL_SWAY_MOST = 2.0;
 // How far a voxel's shadow is traced towards the sun, in metres.
 static const float VOXEL_SHADOW_REACH = 64.0;
+// How much coarser a lamp's shadow ray walks for each metre it goes, in metres of footprint.
+static const float VOXEL_LAMP_COARSENING = 0.06;
 // How brightly a voxel glowing at its brightest shines, times its colour.
 static const float VOXEL_GLOW_SHINE = 4.0;
 
@@ -543,6 +545,10 @@ bool voxelsPlainTrace(VoxelVolumes* volumes, float3 from, float3 d, float start,
     nearest = (VoxelHit)0;
     nearest.metres = reach;
     bool found = false;
+    // The nearest see-through voxel passed through, of any volume.
+    VoxelHit glass = (VoxelHit)0;
+    glass.glassT = -1.0;
+    glass.glassMetres = reach;
     for (uint v = 0; v < volumes->count; v++)
     {
         VoxelVolume volume = volumes->volumes[v];
@@ -568,6 +574,14 @@ bool voxelsPlainTrace(VoxelVolumes* volumes, float3 from, float3 d, float start,
         }
         bool met = voxelTrace(volume, o, d, far, (foot0 + begin * footScale) / volume.voxel, footScale, hit);
         nearest.steps += hit.steps;
+        if (hit.glassT >= 0.0 && begin + hit.glassT * volume.voxel < glass.glassMetres)
+        {
+            glass.glassT = hit.glassT;
+            glass.glassMetres = begin + hit.glassT * volume.voxel;
+            glass.glassAxis = hit.glassAxis;
+            glass.glassVolume = v;
+            glass.glassColour = hit.glassColour;
+        }
         if (met)
         {
             hit.metres = begin + hit.t * volume.voxel;
@@ -577,6 +591,12 @@ bool voxelsPlainTrace(VoxelVolumes* volumes, float3 from, float3 d, float start,
             found = true;
         }
     }
+    bool before = glass.glassT >= 0.0 && glass.glassMetres < nearest.metres;
+    nearest.glassT = before ? glass.glassT : -1.0;
+    nearest.glassMetres = glass.glassMetres;
+    nearest.glassAxis = glass.glassAxis;
+    nearest.glassVolume = glass.glassVolume;
+    nearest.glassColour = glass.glassColour;
     return found;
 }
 
@@ -889,7 +909,7 @@ float voxelLift(uint level)
 // Whether a voxel stands between `world`, `metres` from the camera through `pixel`, and the sun, its ray started
 // `lift` metres out along `normal` and walked at the level the view's ray is; from a voxel `nearVoxel` metres across,
 // 0 for anything else (voxelsPlainTrace).
-bool voxelSunBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 world, float3 normal, float metres, float lift, float nearVoxel)
+bool voxelSunBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 world, float3 normal, float metres, float lift, float nearVoxel, out float3 tint)
 {
     float foot = metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
     // Water of voxels lets the sun through to what is under it.
@@ -897,7 +917,46 @@ bool voxelSunBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 w
     VoxelHit wetHit;
     float wetThrough;
     float3 from = world + normal * lift;
-    return voxelsTraceDry(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, 3, nearVoxel, blocked, wetThrough, wetHit);
+    bool met = voxelsTraceDry(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, 3, nearVoxel, blocked, wetThrough, wetHit);
+    // Through glass, the sun takes the glass's colour as much as the glass is solid.
+    tint = 1.0;
+    if (!met && blocked.glassT >= 0.0)
+    {
+        uint packed = blocked.glassColour;
+        float solid = 1.0 - float(voxelKind(packed).x) / 16.0;
+        float3 colour = pow(float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0, 2.2);
+        colour /= max(max(colour.r, colour.g), max(colour.b, 1e-3));
+        tint = lerp(1.0, colour, saturate(solid * 2.0)) * (1.0 - 0.5 * solid);
+    }
+    return met;
+}
+
+// Whether a voxel stands between `world` and lamp `light`, its ray started `lift` metres out along `normal`, walked
+// at the level the view's ray is, from a voxel `nearVoxel` metres across (0 for anything else).
+bool voxelLampBlocked(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 world, float3 normal, float metres, float lift, float nearVoxel, Light light)
+{
+    float3 from = world + normal * lift;
+    float3 toLamp = light.position - from;
+    float far = length(toLamp);
+    // Past four fifths of its range a lamp's light is faint, and its shadow is not looked for. A surface turned from
+    // it takes none of its light anyway: it is marked in its way, so the pixels beside it on another surface, which
+    // read the same texel of the half-size mask, are not lit through a wall's edge.
+    if (dot(toLamp, normal) <= 0.0)
+    {
+        return true;
+    }
+    if (far > 0.8 * light.range || far < 0.05)
+    {
+        return false;
+    }
+    float foot = metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
+    VoxelHit blocked;
+    VoxelHit wetHit;
+    float wetThrough;
+    // Stopped a little short of the lamp, so the voxels of a lantern round it are not in its way; walked coarser the
+    // further it goes, as a lamp's shadow is softer than the sun's: two by two a few metres out, bricks further.
+    float reach = max(far - 0.15, 0.0);
+    return voxelsTraceDry(volumes, from, toLamp / far, 0.0, reach, foot, VOXEL_LAMP_COARSENING, 3, nearVoxel, blocked, wetThrough, wetHit);
 }
 
 struct VoxelVertex
@@ -1142,8 +1201,9 @@ VoxelOut voxelOpaque(VoxelVertex input)
     float shadow = facingSun ? min(sunShadow(frame, world, normal), contactShadow(frame, pixel)) : 0.0;
     // The voxels are in no shadow map: their shadow on themselves, and on each other, is traced through them, by the
     // voxels' shadows pass where it is drawn (read with the contact shadows), else here.
+    float3 voxelTint = 1.0;
     if (shadow > 0.0 && volumes->shadowMask == NO_TEXTURE
-        && voxelSunBlocked(frame, volumes, pixel, world, normal, hit.metres, voxelLift(hit.level) * volume.voxel, volume.voxel))
+        && voxelSunBlocked(frame, volumes, pixel, world, normal, hit.metres, voxelLift(hit.level) * volume.voxel, volume.voxel, voxelTint))
     {
         shadow = 0.0;
     }
@@ -1163,6 +1223,8 @@ VoxelOut voxelOpaque(VoxelVertex input)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, world);
     sunThrough *= glassSun(frame, world, normal);
+    // Through glass of voxels, its colour.
+    sunThrough *= volumes->shadowMask == NO_TEXTURE ? voxelTint : voxelSunTint(pixel);
     float3 skyUnder;
     WaterOver water = waterOverAt(frame, world);
     sunThrough *= underwaterSunUnder(frame, world, water, skyUnder);
@@ -1176,6 +1238,11 @@ VoxelOut voxelOpaque(VoxelVertex input)
     for (uint i = 0; i < clusterLights; i++)
     {
         uint light = buffers()->clusters[clusterBase + 1 + i];
+        // Not through the voxels.
+        if (voxelLampOut(pixel, i))
+        {
+            continue;
+        }
         float3 wet = lampThroughWater(frame, buffers()->lights[light].position, world, water);
         color += shadeLocalLight(s, buffers()->lights[light], world) * wet;
     }
@@ -1285,10 +1352,12 @@ VoxelGlassOut voxelGlass(VoxelVertex input)
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float shadow = dot(normal, -frame->sunDirection) > 0.0 ? sunShadow(frame, world, normal) : 0.0;
-    if (shadow > 0.0 && voxelSunBlocked(frame, volumes, pixel, world, normal, metres, 0.02 * volume.voxel, volume.voxel))
+    float3 tint = 1.0;
+    if (shadow > 0.0 && voxelSunBlocked(frame, volumes, pixel, world, normal, metres, 0.02 * volume.voxel, volume.voxel, tint))
     {
         shadow = 0.0;
     }
+    sunLight *= tint;
     float2 lit = float2(1.0, 0.0);
     float4 glow = 0.0;
     bool litHere = voxelLitAround(world, normal, lit, glow);
@@ -1334,30 +1403,33 @@ VoxelGlassOut voxelGlass(VoxelVertex input)
 // shadows (contactShadow). The voxels are in no shadow map, so their shadow is traced from each pixel instead, through
 // them towards the sun: from a voxel as its own lighting did, from anything else a voxel and a half out from its
 // surface, or more where a pixel is wider. push.textures holds the depth and the depth passes' surfaces.
-[shader("fragment")]
-float4 voxelShadowFragment(VoxelVertex input) : SV_Target
+// Where the depth passes drew at `pixel`, for the voxels' shadows: false over the sky. From a voxel the depth pass
+// met there, where nothing drawn after it is nearer, where its ray met it and its side, `near` its voxel's size, and
+// its shadow rays `lift` out as its own lighting started them; from anything else, its surface, a voxel and a half
+// out, or more where a pixel is wider.
+bool voxelShadowPixel(Frame* frame, VoxelVolumes* volumes, float2 pixel, out float3 world, out float3 normal, out float metres, out float lift, out float near)
 {
-    Frame* frame = push.frame;
-    float2 pixel = input.position.xy;
     int2 at = int2(pixel);
+    world = 0.0;
+    normal = float3(0.0, 1.0, 0.0);
+    metres = 0.0;
+    lift = 0.0;
+    near = 0.0;
     float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(at, 0)).r;
-    if (depth <= 0.0 || dot(frame->sunColor, frame->sunColor) <= 0.0)
+    if (depth <= 0.0)
     {
-        return 1.0;
+        return false;
     }
-    VoxelVolumes* volumes = voxelVolumes();
     float3 eye = voxelOrigin(frame, pixel);
     float3 d = voxelRay(frame, pixel);
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
     float4 placed = transform(frame->invViewProj, float4(ndc, depth, 1.0));
-    float3 world = placed.xyz / placed.w;
-    float metres = length(world - eye);
+    world = placed.xyz / placed.w;
+    metres = length(world - eye);
     float2 folded = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(at, 0)).rg;
-    float3 normal = octDecode(folded * 2.0 - 1.0);
-    // A voxel the depth pass met here, where nothing drawn after it is nearer: from where its ray met it.
+    normal = octDecode(folded * 2.0 - 1.0);
     float finest = volumes->volumes[volumes->count - 1].voxel;
-    float lift = max(1.5 * finest, 2.0 * metres * voxelPixelAngle(frame, pixel));
-    float near = 0.0;
+    lift = max(1.5 * finest, 2.0 * metres * voxelPixelAngle(frame, pixel));
     if (volumes->seenOn != 0u)
     {
         uint4 seen = volumes->seen[uint(at.y) * volumes->seenWidth + uint(at.x)];
@@ -1378,11 +1450,102 @@ float4 voxelShadowFragment(VoxelVertex input) : SV_Target
             near = voxel;
         }
     }
-    if (dot(normal, -frame->sunDirection) <= 0.0)
+    return true;
+}
+
+// Whether the sun reaches each pixel past the voxels, and the colour of the glass of voxels it came through, for
+// whatever the depth passes drew there: voxels, models, blocks, terrain and grass alike, 1 lit and 0 in a voxel's
+// shadow, which their lighting reads with the contact shadows (contactShadow). The voxels are in no shadow map, so
+// their shadow is traced from each pixel instead, through them towards the sun. push.textures holds the depth and the
+// depth passes' surfaces.
+[shader("fragment")]
+float4 voxelShadowFragment(VoxelVertex input) : SV_Target
+{
+    Frame* frame = push.frame;
+    VoxelVolumes* volumes = voxelVolumes();
+    float3 world;
+    float3 normal;
+    float metres;
+    float lift;
+    float near;
+    float2 pixel = input.position.xy;
+    if (!voxelShadowPixel(frame, volumes, pixel, world, normal, metres, lift, near)
+        || dot(frame->sunColor, frame->sunColor) <= 0.0 || dot(normal, -frame->sunDirection) <= 0.0)
     {
         return 1.0;
     }
-    return voxelSunBlocked(frame, volumes, pixel, world, normal, metres, lift, near) ? 0.0 : 1.0;
+    float3 tint;
+    bool blocked = voxelSunBlocked(frame, volumes, pixel, world, normal, metres, lift, near, tint);
+    return blocked ? float4(0.0, 1.0, 1.0, 1.0) : float4(1.0, tint);
+}
+
+// Which of the first VOXEL_LAMP_BITS lamps of each pixel's cluster a voxel stands in the way of, a bit each, as a whole
+// number, for whatever the depth passes drew there: each lamp whose light reaches it traced to through the voxels. At
+// half the picture's size, each texel for the pixel at its corner, as a lamp's shadow is softer than the sun's.
+[shader("fragment")]
+float voxelLampShadowFragment(VoxelVertex input) : SV_Target
+{
+    Frame* frame = push.frame;
+    VoxelVolumes* volumes = voxelVolumes();
+    float2 pixel = floor(input.position.xy) * 2.0 + 0.5;
+    float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(pixel), 0)).r;
+    if (depth <= 0.0)
+    {
+        return 0.0;
+    }
+    uint cluster = clusterAt(frame, pixel, viewDepthOf(frame, depth));
+    uint clusterBase = cluster * (frame->clusterMaxLights + 1);
+    uint count = min(buffers()->clusters[clusterBase], VOXEL_LAMP_BITS);
+    float3 world;
+    float3 normal;
+    float metres;
+    float lift;
+    float near;
+    if (count == 0u || !voxelShadowPixel(frame, volumes, pixel, world, normal, metres, lift, near))
+    {
+        return 0.0;
+    }
+    uint bits = 0;
+    for (uint i = 0; i < count; i++)
+    {
+        Light light = buffers()->lights[buffers()->clusters[clusterBase + 1 + i]];
+        if (voxelLampBlocked(frame, volumes, pixel, world, normal, metres, lift, near, light))
+        {
+            bits |= 1u << i;
+        }
+    }
+    return float(bits);
+}
+
+// ---------------------------------------------------------------- The sun's shadows of the voxels, from above
+
+// Whether the sun reaches each place round the camera past the voxels, for what has no pixel of the depth passes of
+// its own: fog, particles and water. A ray from each texel of a square VOXEL_SUN_MAP_SPAN metres a side, facing the
+// sun VOXEL_SUN_MAP_HEIGHT metres towards it from the camera, walked towards the ground through the voxels at a
+// group's or a brick's level, keeping how far it went (voxelSunLit in common.slang reads it).
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void voxelSunMap(uint3 id: SV_DispatchThreadID)
+{
+    Frame* frame = push.frame;
+    VoxelVolumes* volumes = voxelVolumes();
+    if (any(id.xy >= VOXEL_SUN_MAP) || volumes->sunMapOn == 0u)
+    {
+        return;
+    }
+    float3 origin;
+    float3 right;
+    float3 up;
+    voxelSunMapBasis(frame, origin, right, up);
+    float texel = VOXEL_SUN_MAP_SPAN / float(VOXEL_SUN_MAP);
+    float2 at = (float2(id.xy) + 0.5) * texel - 0.5 * VOXEL_SUN_MAP_SPAN;
+    float3 from = origin + right * at.x + up * at.y;
+    VoxelHit hit;
+    VoxelHit wetHit;
+    float wetThrough;
+    float reach = 2.0 * VOXEL_SUN_MAP_HEIGHT;
+    bool met = voxelsTraceDry(volumes, from, frame->sunDirection, 0.0, reach, texel, 0.0, 2, 0.0, hit, wetThrough, wetHit);
+    volumes->sunMap[id.y * VOXEL_SUN_MAP + id.x] = met ? hit.metres : 1e9;
 }
 
 // ---------------------------------------------------------------- The light kept round the camera

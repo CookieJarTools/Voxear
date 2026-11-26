@@ -237,10 +237,14 @@ pub struct Pipelines {
     pub voxel_forward: vk::Pipeline,
     /// The voxels' shadows on whatever the depth passes drew, traced from each pixel.
     pub voxel_shadows: vk::Pipeline,
+    /// Which lamps of each pixel's cluster the voxels stand in the way of.
+    pub voxel_lamp_shadows: vk::Pipeline,
     /// The voxels' see-through voxels over everything opaque.
     pub voxel_glass: vk::Pipeline,
     /// The light kept round the camera for the voxels: what lets it through each cell, and a step of spreading it.
     pub voxel_light_cells: vk::Pipeline,
+    /// The sun's shadows of the voxels round the camera, from above, for fog, particles and water.
+    pub voxel_sun_map: vk::Pipeline,
     pub voxel_light_sky: vk::Pipeline,
     pub voxel_light_spread: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
@@ -1083,6 +1087,7 @@ impl Pipelines {
             })?,
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
             voxel_light_cells: maker.compute("Voxel light cells", voxels, c"voxelLightCells")?,
+            voxel_sun_map: maker.compute("Voxel sun map", voxels, c"voxelSunMap")?,
             voxel_light_sky: maker.compute("Voxel light sky", voxels, c"voxelLightSky")?,
             voxel_light_spread: maker.compute("Voxel light spread", voxels, c"voxelLightSpread")?,
             voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
@@ -1143,9 +1148,14 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Glass (voxels)", voxels, c"voxelVertex", c"voxelGlass")
             })?,
             voxel_shadows: graphics(&GraphicsPipelineDesc {
-                color_formats: &[AO_FORMAT],
+                color_formats: &[crate::voxel_volume::SUN_SHADOW_FORMAT],
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Voxel shadows", voxels, c"voxelVertex", c"voxelShadowFragment")
+            })?,
+            voxel_lamp_shadows: graphics(&GraphicsPipelineDesc {
+                color_formats: &[crate::voxel_volume::LAMP_SHADOW_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Voxel lamp shadows", voxels, c"voxelVertex", c"voxelLampShadowFragment")
             })?,
             block_wireframe: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
@@ -1532,8 +1542,10 @@ impl Pipelines {
             self.voxel_depth,
             self.voxel_forward,
             self.voxel_shadows,
+            self.voxel_lamp_shadows,
             self.voxel_glass,
             self.voxel_light_cells,
+            self.voxel_sun_map,
             self.voxel_light_sky,
             self.voxel_light_spread,
             self.voxel_world_columns,

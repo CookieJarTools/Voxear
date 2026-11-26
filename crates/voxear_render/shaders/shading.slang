@@ -1573,6 +1573,8 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
     sunThrough *= glassSun(frame, input.worldPosition, s.normal);
+    // And glass of voxels, by the voxels' shadows pass.
+    sunThrough *= voxelSunTint(input.position.xy);
 #ifdef VOXEAR_PACK_SHADOWS
     // The light a pack's shadow filter lets through leaves, their colour.
     sunThrough *= facingSun ? packSunTint : 1.0;
@@ -1619,6 +1621,11 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
             continue;
         }
         // Dimmed by the water between, where either is under it.
+        // Not through the voxels, by the voxels' shadows pass.
+        if (voxelLampOut(input.position.xy, i))
+        {
+            continue;
+        }
         float3 wet = lampThroughWater(frame, buffers()->lights[light].position, input.worldPosition, water);
         if (customLit)
         {

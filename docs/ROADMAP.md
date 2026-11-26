@@ -4749,8 +4749,10 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
       behind, reflecting the sky, with the sun through it onto the floor.
   - Measured: a street of six houses with glass windows and a dozen figures at 1080p, the least of 60 frames, is
     7.0 ms against 6.6 ms before. Shadows are 2.3 ms, the light kept round the camera 0.3 ms, glass 0.1 ms.
-  - Not yet: lamps' light stopped by voxels, voxel shadows in fog and on particles and water, tinted sunlight through
-    glass, GI rays through voxels.
+  - Since: lamps are stopped by voxels, traced from each pixel to the first 24 lamps of its cluster at half size
+    (0.95 ms with twelve lamps over a street); the sun takes the colour of glass it comes through; fog, particles and
+    water take the voxels' shadows from a sun map 64 m across round the camera (0.12 ms).
+  - Not yet: GI rays through voxels; lamps tinted by glass.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

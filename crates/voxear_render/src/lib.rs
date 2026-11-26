@@ -3926,15 +3926,20 @@ impl View {
         if let Some(image) = contact_shadows {
             frame_data.post.contact_texture = fg.texture(image).0;
         }
-        // The voxels' shadows on everything, traced from each pixel once the depth passes have drawn it.
+        // The voxels' shadows on everything, the sun's and the lamps', traced from each pixel once the depth passes
+        // have drawn it.
         let mut view_voxels = view_voxels;
-        if let Some(view) = view_voxels.as_mut().filter(|_| extracted.has_sun && !wireframe) {
+        if let Some(view) = view_voxels.as_mut().filter(|_| !wireframe) {
             let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-            let desc = ImageDesc::new(extent.width, extent.height, pipelines::AO_FORMAT, usage);
-            let image = fg.create_image(gpu, bindless, "voxel shadows", desc)?;
-            view.shadow = Some(image);
+            let desc = ImageDesc::new(extent.width, extent.height, voxel_volume::SUN_SHADOW_FORMAT, usage);
+            let sun = fg.create_image(gpu, bindless, "voxel shadows", desc)?;
+            // At half the size: a lamp's shadow is softer than the sun's.
+            let half = (extent.width.div_ceil(2), extent.height.div_ceil(2));
+            let desc = ImageDesc::new(half.0, half.1, voxel_volume::LAMP_SHADOW_FORMAT, usage);
+            let lamps = fg.create_image(gpu, bindless, "voxel lamp shadows", desc)?;
+            view.shadow = Some((sun, lamps));
             if let Some([list, _]) = self.buffers[slot].voxels.as_ref() {
-                voxel_volume::set_shadow_mask(list, fg.texture(image).0);
+                voxel_volume::set_shadow_mask(list, fg.texture(sun).0, fg.texture(lamps).0);
             }
         }
         let voxel_shadows = view_voxels.as_ref().is_some_and(|view| view.shadow.is_some());

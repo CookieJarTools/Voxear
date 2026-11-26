@@ -2211,6 +2211,11 @@ struct VoxelVolumes
     // keeps what it met in `seen`: how far in metres, its side, volume and colour, and the frame's number and one.
     uint glassOn;
     uint4* glass;
+    // Which of the first lamps of each pixel's cluster the voxels stand in the way of (voxelShadowFragment): a texture,
+    // or NO_TEXTURE; and the sun's shadows of the voxels round the camera from above (voxelSunMap), where kept.
+    uint lampMask;
+    uint sunMapOn;
+    float* sunMap;
     VoxelVolume volumes[MAX_VOXEL_VOLUMES];
 };
 
@@ -2524,6 +2529,77 @@ bool voxelLightAround(float3 position, float3 normal, out float2 lit, out float3
     float most = max(max(tint.r, tint.g), max(tint.b, 1e-4));
     colour = tint / most;
     return true;
+}
+
+// How many lamps of a pixel's cluster the voxels' shadows pass looks for in the voxels' way, a bit each.
+static const uint VOXEL_LAMP_BITS = 24;
+
+// Whether the voxels stand between the pixel and the `i`th lamp of its cluster, as the voxels' shadows pass found.
+bool voxelLampOut(float2 pixel, uint i)
+{
+    VoxelVolumes* voxels = buffers()->voxelVolumes;
+    if (voxels == nullptr || voxels->count == 0 || voxels->lampMask == NO_TEXTURE || i >= VOXEL_LAMP_BITS)
+    {
+        return false;
+    }
+    // Kept at half the picture's size.
+    uint bits = uint(textures[NonUniformResourceIndex(voxels->lampMask)].Load(int3(int2(pixel) / 2, 0)).r);
+    return ((bits >> i) & 1u) != 0u;
+}
+
+// The colour of the glass of voxels the sun came through to the pixel, white where none.
+float3 voxelSunTint(float2 pixel)
+{
+    VoxelVolumes* voxels = buffers()->voxelVolumes;
+    if (voxels == nullptr || voxels->count == 0 || voxels->shadowMask == NO_TEXTURE)
+    {
+        return 1.0;
+    }
+    return textures[NonUniformResourceIndex(voxels->shadowMask)].Load(int3(int2(pixel), 0)).gba;
+}
+
+// The voxels' sun map (voxelSunMap in voxels.slang): VOXEL_SUN_MAP texels a side over a square VOXEL_SUN_MAP_SPAN
+// metres across, facing the sun VOXEL_SUN_MAP_HEIGHT metres towards it from the camera, on whole texels so it keeps
+// still as the camera moves.
+static const uint VOXEL_SUN_MAP = 256;
+static const float VOXEL_SUN_MAP_SPAN = 64.0;
+static const float VOXEL_SUN_MAP_HEIGHT = 64.0;
+
+void voxelSunMapBasis(Frame* frame, out float3 origin, out float3 right, out float3 up)
+{
+    float3 toSun = -frame->sunDirection;
+    right = normalize(cross(abs(toSun.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0), toSun));
+    up = cross(toSun, right);
+    float texel = VOXEL_SUN_MAP_SPAN / float(VOXEL_SUN_MAP);
+    float3 c = frame->cameraPosition;
+    origin = right * (floor(dot(c, right) / texel) * texel) + up * (floor(dot(c, up) / texel) * texel)
+        + toSun * (dot(c, toSun) + VOXEL_SUN_MAP_HEIGHT);
+}
+
+// Whether the sun reaches `position` past the voxels, by the sun map: 1 where it does, or past the map, 0 where not.
+// For fog, particles and water; what the depth passes drew takes the voxels' shadows pass's, to the voxel.
+float voxelSunLit(float3 position)
+{
+    VoxelVolumes* voxels = buffers()->voxelVolumes;
+    if (voxels == nullptr || voxels->count == 0 || voxels->sunMapOn == 0u)
+    {
+        return 1.0;
+    }
+    Frame* frame = push.frame;
+    float3 origin;
+    float3 right;
+    float3 up;
+    voxelSunMapBasis(frame, origin, right, up);
+    float3 off = position - origin;
+    float2 at = (float2(dot(off, right), dot(off, up)) / VOXEL_SUN_MAP_SPAN + 0.5) * float(VOXEL_SUN_MAP);
+    if (any(at < 0.0) || any(at >= float(VOXEL_SUN_MAP)))
+    {
+        return 1.0;
+    }
+    float along = dot(off, frame->sunDirection);
+    uint2 t = uint2(at);
+    // Half a metre's grace, as the map is a texel of 25 cm and its walk a group's or a brick's.
+    return voxels->sunMap[t.y * VOXEL_SUN_MAP + t.x] < along - 0.5 ? 0.0 : 1.0;
 }
 
 // How bright the voxels' glow is at its brightest, and how dark it is where none of the sky's light reaches, as the

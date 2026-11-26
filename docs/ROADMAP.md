@@ -4650,7 +4650,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   Beds are gravel and sand; the water is drawn as a world of blocks' water is, flowing downstream, foaming at the bank,
   waterfalls pouring down their faces; `Voxels.Raycast` and edits meet the cut bed. Voxel ground is in the sea floor
   map, so waves calm over voxel shallows and foam on the shore. A column takes 0.104 ms with rivers as without.
-  Not yet: water filling a pit carved beside a river, swimming in voxel rivers (research/small-voxels.md).
+  Since (2026-11-26): an endless volume with a generator has its sea, an Ocean at the generator's sea level where
+  the level has none (`ocean::seas`; **Sea** in the Inspector, `Voxels.Sea`, field `sea`), an Ocean on the volume's
+  Obj setting its look; and the game's water reads the rivers' and lakes' points, so crates and boats float and
+  drift down a river's current, characters wade and swim in it (`Voxels.WaterAt` in C#, `voxels.water_at`).
+  Not yet: water filling a pit carved beside a river; the sea calming what floats over voxel shallows, until bodies
+  collide with voxels; the sea stops nowhere inland, so a cave dug below its level is wet (research/small-voxels.md).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

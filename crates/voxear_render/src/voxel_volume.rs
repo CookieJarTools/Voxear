@@ -36,7 +36,7 @@ use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
-pub use rivers::GpuVoxelWater;
+pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;
@@ -77,6 +77,10 @@ pub struct VoxelVolume {
     /// printed into it, a later one over an earlier. Each column is made
     /// with those that reach it.
     pub edits: Arc<Vec<VoxelEdit>>,
+    /// Whether an endless volume with a generator has its generator's sea:
+    /// an Ocean at its sea level, filling the level, where the scene has no
+    /// Ocean of its own (see [`crate::ocean::seas`]).
+    pub sea: bool,
 }
 
 /// A change made to an endless Voxel Volume: a ball carved out of it, or
@@ -270,6 +274,7 @@ impl Default for VoxelVolume {
             generator: None,
             trees: Vec::new(),
             edits: Arc::default(),
+            sea: true,
         }
     }
 }
@@ -312,6 +317,15 @@ impl PartialEq for VoxelStamp {
 }
 
 impl VoxelVolume {
+    /// How high its generator's sea stands in the world, its corner at
+    /// `corner`: none unless it is endless, has a generator and its Sea on,
+    /// nor where the sea is under its floor.
+    pub fn sea_height(&self, corner: Vec3) -> Option<f32> {
+        let generator = self.generator.as_ref().filter(|_| self.endless && self.sea)?;
+        let over_floor = generator.world.sea_level() - generator.floor;
+        (over_floor > 0.0).then_some(corner.y + over_floor)
+    }
+
     /// How many voxels it measures along each side.
     pub fn voxel_size(&self) -> [u32; 3] {
         let per = self.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;

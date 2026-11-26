@@ -2,7 +2,9 @@
 //! way it faces, and how it flows, from the CPU's copy of its long waves
 //! (`voxear_render::OceanSampler`), the same waves the GPU draws and the same
 //! on every machine; and the same of Pools, Streams and worlds of blocks'
-//! water (`voxear_terrain::blocks::BlockWorld::water_over`). Moved on each tick,
+//! water (`voxear_terrain::blocks::BlockWorld::water_over`), and endless
+//! Voxel Volumes' rivers and lakes (`crate::voxel_volumes::water_at`), whose
+//! sea is an Ocean at their generator's sea level. Moved on each tick,
 //! before scripts run, from the level's first Ocean, and each Stream's points
 //! along its Path made again; scripts read it through `Water` in C#.
 //!
@@ -22,7 +24,7 @@ use voxear_physics::{
     Push,
     scene::{CharacterController, Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
-use voxear_render::{DryArea, DryShape, Liquid, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
+use voxear_render::{DryArea, DryShape, Liquid, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
 
 pub use voxear_physics::scene::Buoyancy;
@@ -84,12 +86,11 @@ pub fn update(world: &mut World, time: f64) {
     let zone = zone.map(|(rotation, strength)| {
         (rotation, weather.wind(WindZone { strength, ..WindZone::default() }).strength)
     });
-    let first = world.query_ref::<(Entity, &Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
-        |(entity, ocean, transform, at)| {
-            let (position, rotation) = placed(transform, at);
-            (entity, ocean.sea_blown(rotation, zone), ocean.transition, position.y, ocean.shores)
-        },
-    );
+    // The level's sea: its first Ocean, or an endless Voxel Volume's generator's.
+    let first = voxear_render::ocean::seas(world).into_iter().next().map(|sea| {
+        let ocean = sea.ocean;
+        (sea.entity, ocean.sea_blown(sea.rotation, zone), ocean.transition, sea.position.y, ocean.shores)
+    });
     let streams: Vec<(Vec<StreamPoint>, f32, Liquid)> = world
         .query_ref::<(&Stream, &Path, &Transform, Option<&WorldTransform>)>()
         .into_iter()
@@ -270,6 +271,11 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
         }
         return Some(WaterPoint { height, normal: Vec3::Y, flow, liquid: Liquid::Water });
     }
+    // Over an endless Voxel Volume's rivers and lakes: their surface, its current running down it.
+    let rivers = crate::voxel_volumes::water_at(world, at, None).filter(|(entity, _)| here(*entity));
+    if let Some((_, water)) = rivers {
+        return Some(WaterPoint { height: water.height, normal: Vec3::Y, flow: water.current, liquid: Liquid::Water });
+    }
     let query = world.resource::<WaterQuery>()?;
     let stream =
         query.streams.iter().find_map(|(points, depth, liquid)| Some((stream_over(points, *depth, at)?, *liquid)));
@@ -285,7 +291,8 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
 }
 
 /// How the water's current runs at `at`, in metres a second: a river's or a
-/// Stream's, or a world of blocks' water running out from what feeds it;
+/// Stream's, a world of blocks' water running out from what feeds it, or an
+/// endless Voxel Volume's rivers';
 /// none on the sea or a Pool, whose waves only carry it round and back.
 /// What trails on the water drift along with (see `crate::water_trails`).
 pub fn current(world: &World, at: Vec3) -> Vec3 {
@@ -299,6 +306,9 @@ pub fn current(world: &World, at: Vec3) -> Vec3 {
     });
     if let Some(flow) = block_flow {
         return flow;
+    }
+    if let Some((_, water)) = crate::voxel_volumes::water_at(world, at, None).filter(|(entity, _)| here(*entity)) {
+        return water.current;
     }
     let Some(query) = world.resource::<WaterQuery>() else { return Vec3::ZERO };
     query.streams.iter().find_map(|(points, depth, _)| stream_over(points, *depth, at)).map_or(Vec3::ZERO, |(_, flow)| flow)
@@ -680,7 +690,7 @@ pub fn wind_of(rotation: Quat) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use voxear_render::Weather;
+    use voxear_render::{Ocean, Weather};
 
     #[test]
     fn the_sea_is_asked_about_where_its_ocean_is_and_moves_with_time() {
@@ -954,6 +964,141 @@ mod tests {
         assert!(along(boulder) < along(crate_) * 0.2, "the boulder moved {} m", along(boulder));
         assert!(along(wading) > 2.0, "the character wading carried {} m", along(wading));
         assert!(along(standing).abs() < 0.05, "one with no water push stood its ground: {} m", along(standing));
+    }
+
+    /// A starter world generator, and an endless Voxel Volume of it whose
+    /// corner is at the world's middle, its floor 24 m under the generator's
+    /// ground at `(x, z)`: the generator's ground stands at `y + 24 - ground`.
+    fn generated(
+        world: &mut World,
+        name: &str,
+        at: [f32; 2],
+    ) -> (Entity, std::sync::Arc<voxear_terrain::generate::WorldGen>, f32) {
+        let starter = voxear_terrain::generate::starters().into_iter().find(|starter| starter.name == name).unwrap();
+        let generator = std::sync::Arc::new(starter.world(7, 1.0));
+        let floor = generator.height_at(at[0], at[1]) - 24.0;
+        let volume = voxear_render::VoxelVolume {
+            size: Vec3::new(16.0, 48.0, 16.0),
+            endless: true,
+            generator: Some(voxear_render::VoxelGenerator { world: generator.clone(), floor, at: [0.0, 0.0] }),
+            ..voxear_render::VoxelVolume::default()
+        };
+        (world.spawn((volume, Transform::default())), generator, floor)
+    }
+
+    /// A place over a river of `generator` at least `deep` metres deep,
+    /// running at least 1 m a second: where, its water's height and its bed's.
+    fn river_in(generator: &voxear_terrain::generate::WorldGen, deep: f32) -> ([f32; 2], f32, f32) {
+        let (mut xs, mut zs) = (Vec::new(), Vec::new());
+        for j in 0..160 {
+            for i in 0..160 {
+                xs.push(i as f32 * 8.0 - 640.0);
+                zs.push(j as f32 * 8.0 - 640.0);
+            }
+        }
+        let (water, _) = generator.water(&xs, &zs).expect("its water wired in");
+        let mut heights = vec![0.0; xs.len()];
+        generator.heights(&xs, &zs, &mut heights);
+        let running = |i: usize| {
+            generator.current(xs[i], zs[i]).is_some_and(|[x, z]| x.hypot(z) >= 1.0)
+                && generator.current(xs[i] + 4.0, zs[i]).is_some()
+                && generator.current(xs[i], zs[i] + 4.0).is_some()
+        };
+        let found = (0..xs.len())
+            .filter(|&i| water[i] - heights[i] > deep && running(i))
+            .min_by(|&a, &b| xs[a].hypot(zs[a]).total_cmp(&xs[b].hypot(zs[b])))
+            .expect("a river deep and fast enough");
+        ([xs[found], zs[found]], water[found], heights[found])
+    }
+
+    #[test]
+    fn a_crate_floats_down_a_voxel_volumes_river_and_a_character_wading_it_is_carried() {
+        let mut world = World::new();
+        let starter = voxear_terrain::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap();
+        let ([x, z], water, bed) = river_in(&starter.world(7, 1.0), 1.2);
+        let (volume, generator, floor) = generated(&mut world, "Rolling Hills", [x, z]);
+        world.get_mut::<voxear_render::VoxelVolume>(volume).unwrap().sea = false;
+        let (top, bottom) = (water - floor, bed - floor);
+        // The water's surface and current where the generator has them, read between the points its water is drawn from.
+        let found = sample(&world, Vec3::new(x, bottom + 0.2, z)).expect("the river's water");
+        let [cx, cz] = generator.current(x, z).unwrap();
+        let current = Vec3::new(cx, 0.0, cz);
+        eprintln!(
+            "river at {x} {z}: water {top:.2} bed {bottom:.2}; found {:.2} flowing {}, generator's {current}",
+            found.height, found.flow
+        );
+        assert!((found.height - top).abs() < 0.15, "its surface at {:.2}, not {top:.2}", found.height);
+        assert!(found.flow.dot(current) > 0.7 * current.length_squared(), "{} along {current}", found.flow);
+        assert_eq!(current(&world, Vec3::new(x, top, z)), found.flow);
+        assert!(sample(&world, Vec3::new(x, bottom - 3.0, z)).is_none(), "no water deep under its bed");
+        // A crate dropped in floats half under and rides the current; a character standing in it is carried.
+        let floating = crate_over(&mut world, Vec3::new(x, top + 1.0, z));
+        let bed_under = Collider { size: [6.0, 1.0, 6.0], ..Collider::default() };
+        world.spawn((bed_under, Transform::from_position(Vec3::new(x, bottom - 0.5, z))));
+        let wading = world.spawn((CharacterController::default(), Transform::from_position(Vec3::new(x, bottom, z))));
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        let mut heights = Vec::new();
+        for step in 0..90 {
+            update(&mut world, f64::from(step as f32 * dt));
+            voxear_scene::propagate_transforms(&mut world);
+            float(&world, &mut physics);
+            physics.step(&mut world, dt);
+            physics.move_character(&mut world, wading, Vec3::new(0.0, -5.0, 0.0), dt);
+            let at = world.get::<Transform>(floating).unwrap().position;
+            heights.push(at.y - sample(&world, at).map_or(f32::NAN, |water| water.height));
+        }
+        let along = |entity: Entity| {
+            let at = world.get::<Transform>(entity).unwrap().position;
+            (Vec3::new(at.x - x, 0.0, at.z - z)).dot(current.normalize())
+        };
+        let settled = heights[60..].iter().fold(0.0f32, |most, off| most.max(off.abs()));
+        eprintln!(
+            "crate carried {:.2} m, {settled:.2} m off the surface; character carried {:.2} m",
+            along(floating),
+            along(wading)
+        );
+        assert!(settled < 0.25, "the crate floats at the surface, its middle {settled:.2} m off it");
+        assert!(along(floating) > 1.0, "the crate carried {:.2} m downstream", along(floating));
+        assert!(along(wading) > 0.5, "the character wading carried {:.2} m", along(wading));
+    }
+
+    #[test]
+    fn an_endless_volumes_generator_has_its_sea_where_the_level_has_no_ocean() {
+        let mut world = World::new();
+        let (volume, generator, floor) = generated(&mut world, "Archipelago", [0.0, 0.0]);
+        let level = generator.sea_level() - floor;
+        // Out over open sea, deep under its level.
+        let out = (0..4000)
+            .map(|i| [(i % 64) as f32 * 31.0 - 1000.0, (i / 64) as f32 * 31.0 - 1000.0])
+            .find(|&[x, z]| generator.height_at(x, z) < generator.sea_level() - 20.0)
+            .expect("open sea");
+        update(&mut world, 0.0);
+        let seas = voxear_render::ocean::seas(&world);
+        assert_eq!(seas.len(), 1);
+        assert_eq!((seas[0].entity, seas[0].position.y), (volume, level));
+        let water = sample(&world, Vec3::new(out[0], level - 2.0, out[1])).expect("the sea");
+        assert!((water.height - level).abs() < 1.0, "its surface at {} near its level {level}", water.height);
+        let floating = crate_over(&mut world, Vec3::new(out[0], level + 1.0, out[1]));
+        play(&mut world, 5.0);
+        let y = world.get::<Transform>(floating).unwrap().position.y;
+        assert!((y - level).abs() < 0.5, "the crate floats at the sea's level {level}: {y}");
+        // Its Sea turned off, there is none; an Ocean of the level's own is its sea in place of the volume's.
+        assert_eq!(crate::voxel_volumes::set_sea(&mut world, false, None), 1);
+        update(&mut world, 5.0);
+        assert!(
+            voxear_render::ocean::seas(&world).is_empty()
+                && sample(&world, Vec3::new(out[0], level - 2.0, out[1])).is_none()
+        );
+        crate::voxel_volumes::set_sea(&mut world, true, None);
+        let own = world.spawn((Ocean::default(), Transform::from_position(Vec3::new(0.0, 7.0, 0.0))));
+        let seas = voxear_render::ocean::seas(&world);
+        assert_eq!((seas.len(), seas[0].entity, seas[0].position.y), (1, own, 7.0));
+        // On the volume's own Obj, an Ocean sets how its sea looks and stands at its level.
+        world.despawn(own);
+        world.insert(volume, Ocean { weather: Weather::Stormy, ..Ocean::default() });
+        let seas = voxear_render::ocean::seas(&world);
+        assert_eq!((seas.len(), seas[0].ocean.weather, seas[0].position.y), (1, Weather::Stormy, level));
     }
 
     #[test]

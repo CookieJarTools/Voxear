@@ -464,6 +464,16 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ obj, point, normal, distance }",
     },
     CallInfo {
+        name: "voxels.water_at",
+        about: "The water of an endless Voxel Volume's rivers and lakes at a point of the world, in metres, or of `obj`'s alone, as a script's Voxels.WaterAt finds it: how high its surface stands, and which way and how fast its current runs, in metres a second, nothing on a lake. `obj` is null where none has water there. Its sea is not asked: it stands at the generator's sea level while the volume's `sea` field is on.",
+        args: &[
+            arg("at", ArgKind::Vector, "The point, in metres, in the world."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: false,
+        returns: "{ obj, height, current }",
+    },
+    CallInfo {
         name: "voxels.carve",
         about: "Carves a ball round a point of the world, in metres, out of every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Carve does: its ground, grass, flowers and trees. The volume keeps it after what was changed in it before, and its scene saves it. One step to undo.",
         args: &[

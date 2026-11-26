@@ -1194,16 +1194,11 @@ pub fn extract(
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.
     let water_look = worn.map(|worn| worn.water).unwrap_or_default();
-    let seas = world
-        .query_ref::<(Entity, &crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>()
-        .without::<Destroying>();
-    let ocean =
-        seas.into_iter().find(|(entity, ..)| switched.is_active(*entity)).map(|(_, ocean, transform, at, now)| {
-            let (_, rotation, position) =
-                at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| w.0.to_scale_rotation_translation());
-            let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
-            (water_look.over_ocean(*ocean), position.y - offset.y, now.map_or_else(blown, |now| now.0))
-        });
+    let ocean = crate::ocean::seas(world).into_iter().find(|sea| switched.is_active(sea.entity)).map(|sea| {
+        let blown = || sea.ocean.sea_blown(sea.rotation, zone.map(|(zone, along)| (along, zone.strength)));
+        let now = world.get::<crate::SeaNow>(sea.entity);
+        (water_look.over_ocean(sea.ocean), sea.position.y - offset.y, now.map_or_else(blown, |now| now.0))
+    });
     // Pools, streams and lava are not drawn through a Portal.
     let water_bodies = match through {
         Some(_) => crate::water::WaterBodies::default(),
@@ -1654,11 +1649,8 @@ fn water_bodies(
         })
         .collect();
     // The water a Stream can run into: the sea, at its level, and each Pool of water.
-    let sea = world
-        .query_ref::<(Entity, &crate::Ocean, &Transform, Option<&WorldTransform>)>()
-        .into_iter()
-        .find(|(entity, ..)| switched.is_active(*entity))
-        .map(|(_, _, t, at)| placed(t, at).0.y);
+    let sea =
+        crate::ocean::seas(world).into_iter().find(|sea| switched.is_active(sea.entity)).map(|sea| sea.position.y);
     let ponds: Vec<(Pool, Vec3, Quat)> = world
         .query_ref::<(Entity, &Pool, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()

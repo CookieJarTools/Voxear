@@ -2,7 +2,7 @@
 order: 1
 ---
 
-An **Ocean** fills the level with sea at its Obj's height, out to the horizon. Add one to any Obj with **Add Component ▸ Water ▸ Ocean**, and move the Obj up or down to raise or lower the sea. Its wind blows along the Obj's blue arrow (+Z), so turn the Obj to turn the waves. A level has one sea: the first Ocean is used.
+An **Ocean** fills the level with sea at its Obj's height, out to the horizon. Add one to any Obj with **Add Component ▸ Water ▸ Ocean**, and move the Obj up or down to raise or lower the sea. Its wind blows along the Obj's blue arrow (+Z), so turn the Obj to turn the waves. A level has one sea: the first Ocean is used. An endless [[Voxel Volumes|Voxel Volume]] made by a world generator has the generator's sea without one, at its sea level.
 
 ## Weather
 

@@ -653,6 +653,7 @@ pub enum Prop {
     VoxelRoughness,
     VoxelEndless,
     VoxelReach,
+    VoxelDistance,
     /// An endless volume's world generator, how high its ground is at the
     /// volume's floor, and where the volume's corner lies in its world.
     VoxelGenerator,
@@ -1303,6 +1304,7 @@ impl Prop {
             | Prop::VoxelRoughness
             | Prop::VoxelEndless
             | Prop::VoxelReach
+            | Prop::VoxelDistance
             | Prop::VoxelGenerator
             | Prop::VoxelGeneratorFloor
             | Prop::VoxelGeneratorAt
@@ -1746,6 +1748,7 @@ impl Prop {
             Prop::VoxelRoughness => "roughness",
             Prop::VoxelEndless => "endless",
             Prop::VoxelReach => "reach",
+            Prop::VoxelDistance => "distance",
             Prop::VoxelGenerator => "generator",
             Prop::VoxelGeneratorFloor => "generator_floor",
             Prop::VoxelGeneratorAt => "generator_at",
@@ -2432,7 +2435,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             let generated = endless && source.is_some_and(|source| source.0.generator.is_some());
             let mut props = vec![Prop::VoxelSize, Prop::VoxelsPerMetre, Prop::VoxelRoughness, Prop::VoxelEndless];
             if endless {
-                props.extend([Prop::VoxelReach, Prop::VoxelGenerator]);
+                props.extend([Prop::VoxelReach, Prop::VoxelDistance, Prop::VoxelGenerator]);
             }
             if generated {
                 props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt, Prop::VoxelSea, Prop::VoxelWater]);
@@ -3088,6 +3091,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelRoughness => "Roughness",
         Prop::VoxelEndless => "Endless",
         Prop::VoxelReach => "Reach",
+        Prop::VoxelDistance => "Distance",
         Prop::VoxelGenerator => "Generator",
         Prop::VoxelGeneratorFloor => "Floor",
         Prop::VoxelGeneratorAt => "Offset",
@@ -4273,6 +4277,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelRoughness
         | Prop::VoxelEndless
         | Prop::VoxelReach
+        | Prop::VoxelDistance
         | Prop::VoxelSea
         | Prop::VoxelWater
         | Prop::VoxelGround
@@ -6437,6 +6442,7 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
         Prop::VoxelRoughness => Value::Number(data.roughness),
         Prop::VoxelEndless => Value::Toggle(data.endless),
         Prop::VoxelReach => Value::Number(data.reach),
+        Prop::VoxelDistance => Value::Number(data.distance),
         Prop::VoxelSea => Value::Toggle(data.sea),
         Prop::VoxelWater => Value::Choice(
             voxear_render::VoxelWaterLook::ALL.iter().position(|&look| look == data.water).unwrap_or(0),
@@ -6475,6 +6481,7 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         (Prop::VoxelRoughness, Value::Number(n)) => data.roughness = n.clamp(0.0, 1.0),
         (Prop::VoxelEndless, Value::Toggle(on)) => data.endless = on,
         (Prop::VoxelReach, Value::Number(n)) => data.reach = n.clamp(4.0, 512.0),
+        (Prop::VoxelDistance, Value::Number(n)) => data.distance = n.clamp(0.0, 8192.0),
         (Prop::VoxelSea, Value::Toggle(on)) => data.sea = on,
         (Prop::VoxelWater, Value::Choice(index, _)) => {
             data.water = voxear_render::VoxelWaterLook::ALL.get(index).copied().unwrap_or_default();
@@ -6501,6 +6508,7 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.ground = data.ground_on.then_some(data.ground);
         volume.endless = data.endless;
         volume.reach = data.reach;
+        volume.distance = data.distance;
         volume.sea = data.sea;
         volume.water = data.water;
         if let Some(generator) = &mut volume.generator {

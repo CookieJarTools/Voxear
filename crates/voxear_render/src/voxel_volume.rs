@@ -78,6 +78,11 @@ pub struct VoxelVolume {
     /// it is, and its stamps are left out.
     pub endless: bool,
     pub reach: f32,
+    /// How far an endless volume's ground is seen, in metres each way: past
+    /// its reach, in rings round it whose voxels are each twice the size of
+    /// the ring's inside it, as far as one voxel a metre and then as far as
+    /// this. None at or under its reach.
+    pub distance: f32,
     /// The world generator an endless volume's ground is made by, in place
     /// of its own ground's hills: none for those.
     pub generator: Option<VoxelGenerator>,
@@ -384,6 +389,7 @@ impl Default for VoxelVolume {
             stamps: Vec::new(),
             endless: false,
             reach: 64.0,
+            distance: 0.0,
             generator: None,
             trees: Vec::new(),
             cover: Vec::new(),
@@ -407,6 +413,7 @@ impl PartialEq for VoxelVolume {
             && self.stamps == other.stamps
             && self.endless == other.endless
             && self.reach == other.reach
+            && self.distance == other.distance
             && self.generator == other.generator
             && self.trees == other.trees
             && self.cover == other.cover
@@ -595,6 +602,14 @@ pub(crate) struct GpuVoxelVolume {
     /// of no water voxels, and how many shades from shallow to deep.
     water: u32,
     shades: u32,
+    /// A ring's hole: the box the ring inside it draws, which the walk
+    /// passes over, in its voxels from its corner along X and Z, least then
+    /// most; none where the most is not past the least.
+    hole: [f32; 4],
+    /// A ring's outer box, a square round the camera within what it has
+    /// made, past which it draws nothing: the hole of the ring round it. In
+    /// the same voxels; none where the most is not past the least.
+    outer: [f32; 4],
 }
 
 /// A view's volumes (`VoxelVolumes` in shaders/common.slang).
@@ -653,8 +668,9 @@ struct Making {
 pub(crate) struct VoxelVolumes {
     resident: HashMap<Entity, (VoxelVolume, Resident)>,
     making: HashMap<Entity, Making>,
-    /// Endless volumes, made on the GPU round the camera.
-    endless: HashMap<Entity, endless::Endless>,
+    /// Endless volumes, made on the GPU round the camera: each one's rings,
+    /// the finest first, itself.
+    endless: HashMap<Entity, Vec<endless::Endless>>,
     /// Each volume drawn this frame and its corner.
     drawn: Vec<(GpuVoxelVolume, Vec3)>,
     /// The water over endless volumes' rivers: how many times each one's
@@ -663,11 +679,16 @@ pub(crate) struct VoxelVolumes {
     water_seen: Vec<(Entity, u64)>,
     water_version: u64,
     water: Vec<(Option<Buffer>, u64, [u32; 3])>,
+    /// Whether they are being made outside the frames, as a game loads, so
+    /// rings make as many columns at a time as the finest.
+    pub loading: bool,
     /// The light kept round the camera, where the camera is, and how many
     /// times a volume has been made over, which lights it afresh.
     light: Option<light::LightGrid>,
     camera: Option<Vec3>,
     made_over: u64,
+    /// How many times a volume had been made over when all was last made.
+    settled: u64,
 }
 
 /// How many volumes are drawn, and their bricks and bytes on the GPU.
@@ -703,42 +724,30 @@ impl VoxelVolumes {
         for (entity, volume, corner) in found {
             seen.push(entity);
             if volume.endless {
-                let fits = self.endless.get(&entity).map(|made| endless::same_ground(&made.from, &volume));
-                let refitted = match (fits, self.endless.get_mut(&entity)) {
-                    (Some(false), Some(made)) => made.refit(gpu, &volume)?,
-                    _ => None,
-                };
-                match refitted {
-                    Some(gone) => {
-                        gone.into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
+                let rings = rings_of(&volume);
+                let made = self.endless.entry(entity).or_default();
+                // Rings no longer wanted are let go.
+                for old in made.drain(rings.len().min(made.len())..) {
+                    old.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
+                }
+                let mut inner = None;
+                let ringed = rings.len() > 1;
+                for (k, ring) in rings.iter().enumerate() {
+                    if made.len() <= k {
+                        made.push(endless::Endless::new(gpu, ring, volume.voxels_per_metre)?);
                         self.made_over += 1;
                     }
-                    None if fits != Some(true) => {
-                        let made = endless::Endless::new(gpu, &volume)?;
+                    if fit(gpu, frames, &mut made[k], ring, volume.voxels_per_metre)? {
                         self.made_over += 1;
-                        if let Some(old) = self.endless.insert(entity, made) {
-                            old.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
-                        }
                     }
-                    None => {}
-                }
-                // A room that ran short is made again half as large again: the window is made over.
-                if let Some(grow) = self.endless.get(&entity).and_then(endless::Endless::short) {
-                    tracing::info!("an endless Voxel Volume's room ran short: made again with half as much again");
-                    let made = endless::Endless::grown(gpu, &volume, grow * 1.5)?;
-                    self.made_over += 1;
-                    if let Some(old) = self.endless.insert(entity, made) {
-                        old.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
+                    made[k].follow(corner, camera.unwrap_or(corner), inner, self.loading);
+                    // Alone, with no ring round it, it draws all it has made.
+                    if !ringed {
+                        made[k].unbounded();
                     }
+                    inner = made[k].outer();
+                    self.drawn.push(made[k].drawn());
                 }
-                let made = self.endless.get_mut(&entity).expect("made above");
-                made.from.roughness = volume.roughness;
-                // New edits make the columns they reach again.
-                for buffer in made.set_edits(gpu, &volume.edits, &volume.changes)? {
-                    frames.retire(Retired::Buffer(buffer));
-                }
-                made.follow(corner, camera.unwrap_or(corner));
-                self.drawn.push(made.drawn());
                 continue;
             }
             let current = self.resident.get(&entity).is_some_and(|(made, _)| *made == volume);
@@ -764,7 +773,7 @@ impl VoxelVolumes {
         }
         let gone: Vec<Entity> = self.endless.keys().filter(|entity| !seen.contains(entity)).copied().collect();
         for entity in gone {
-            if let Some(made) = self.endless.remove(&entity) {
+            for made in self.endless.remove(&entity).into_iter().flatten() {
                 made.into_buffers().into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)));
             }
         }
@@ -789,7 +798,7 @@ impl VoxelVolumes {
     /// round the camera still to make.
     pub fn making(&self) -> bool {
         !self.making.is_empty()
-            || self.endless.values().any(|made| made.unfinished() || made.short().is_some())
+            || self.endless.values().flatten().any(|made| made.unfinished() || made.short().is_some())
     }
 
     /// Records the passes that make this frame's columns of endless volumes,
@@ -810,14 +819,20 @@ impl VoxelVolumes {
         if self.light.is_none() {
             self.light = Some(light::LightGrid::new(gpu)?);
         }
+        // Lit afresh each frame from a volume's being made over until its window is made, as light kept from
+        // columns half made would linger.
+        if self.made_over != self.settled {
+            self.settled = if self.making() { self.settled } else { self.made_over };
+        }
+        let fresh = self.made_over != self.settled;
         let grid = self.light.as_mut().expect("made above");
-        let view = grid.record(gpu, fg, pipelines, (slot, &pools), (&self.drawn, self.made_over), camera)?;
+        let view = grid.record(gpu, fg, pipelines, (slot, &pools), (&self.drawn, self.made_over, fresh), camera)?;
         Ok((pools, view))
     }
 
     fn record_making(&self, fg: &mut FrameGraph<'_>, pipelines: Pipelines, slot: usize) -> Vec<BufferId> {
         let mut pools = Vec::new();
-        for made in self.endless.values() {
+        for made in self.endless.values().flatten() {
             let ids: Vec<BufferId> = made.pools().iter().map(|buffer| fg.import_buffer(buffer)).collect();
             if let Some(make) = made.write(slot) {
                 let writes: Vec<_> = ids.iter().map(|&id| (id, BufferAccess::ComputeWrite)).collect();
@@ -834,7 +849,7 @@ impl VoxelVolumes {
     /// Makes what is left to make of the endless volumes round the camera
     /// now, outside the frames, as a game's loading does.
     pub fn make_endless_now(&self, gpu: &Gpu, (pipelines, bindless): (&Pipelines, &Bindless)) -> Result<()> {
-        for made in self.endless.values() {
+        for made in self.endless.values().flatten() {
             if let Some(make) = made.write(voxear_rhi::FRAMES_IN_FLIGHT) {
                 let recording = made.recording();
                 gpu.immediate(|cmd| recording.record(gpu, cmd, (pipelines, bindless), make))?;
@@ -852,7 +867,7 @@ impl VoxelVolumes {
         entity: Entity,
         cells: &[[i32; 3]],
     ) -> Result<Option<(Vec<u32>, Vec<[u8; 4]>)>> {
-        self.endless.get(&entity).map(|endless| endless.probe(gpu, made, cells)).transpose()
+        self.endless.get(&entity).and_then(|rings| rings.first()).map(|endless| endless.probe(gpu, made, cells)).transpose()
     }
 
     pub fn counts(&self) -> VoxelCounts {
@@ -861,9 +876,9 @@ impl VoxelVolumes {
             counts.bricks += resident.bricks as u64;
             counts.bytes += resident.bytes;
         }
-        counts.bytes += self.endless.values().map(endless::Endless::bytes).sum::<u64>();
-        counts.water_squares = self.endless.values().map(|made| made.water_squares().count() as u32).sum();
-        counts.columns_made = self.endless.values().map(endless::Endless::making_now).sum();
+        counts.bytes += self.endless.values().flatten().map(endless::Endless::bytes).sum::<u64>();
+        counts.water_squares = self.endless.values().flatten().map(|made| made.water_squares().count() as u32).sum();
+        counts.columns_made = self.endless.values().flatten().map(endless::Endless::making_now).sum();
         counts
     }
 
@@ -878,7 +893,7 @@ impl VoxelVolumes {
     /// written again where it changed.
     pub fn water(&mut self, gpu: &Gpu, slot: usize) -> Result<(u64, [u32; 3])> {
         let mut seen: Vec<(Entity, u64)> =
-            self.endless.iter().map(|(entity, made)| (*entity, made.water_changes())).collect();
+            self.endless.iter().filter_map(|(entity, rings)| Some((*entity, rings.first()?.water_changes()))).collect();
         seen.sort_unstable_by_key(|(entity, _)| entity.to_bits());
         if seen != self.water_seen {
             self.water_seen = seen;
@@ -890,14 +905,15 @@ impl VoxelVolumes {
         let version = self.water_version;
         if self.water[slot].1 != version {
             let mut squares: Vec<GpuVoxelWater> =
-                self.endless.values().flat_map(|made| made.water_squares().copied()).collect();
+                self.endless.values().flatten().flat_map(|made| made.water_squares().copied()).collect();
             let still = squares.len() as u32;
-            squares.extend(self.endless.values().flat_map(|made| made.water_falls().copied()));
+            squares.extend(self.endless.values().flatten().flat_map(|made| made.water_falls().copied()));
             let falls = squares.len() as u32 - still;
             // Waterfalls' lips after those, as many words each.
             squares.extend(
                 self.endless
                     .values()
+                    .flatten()
                     .flat_map(|made| made.water_lips().map(|lip| bytemuck::cast::<_, GpuVoxelWater>(*lip))),
             );
             let bytes = (squares.len() * size_of::<GpuVoxelWater>()).max(16) as u64;
@@ -970,6 +986,7 @@ pub(crate) fn gather(
     }
     let coarse_size = [size[0] / COARSE_STEP + 2, size[1] / COARSE_STEP + 2];
     let fits = u64::from(coarse_size[0]) * u64::from(coarse_size[1]) <= COARSE_ROOM;
+    let ringed = drawn.iter().any(|(record, _)| record.outer[2] > record.outer[0] || record.hole[2] > record.hole[0]);
     let mut volumes = volumes_record(drawn, offset);
     volumes.coarse_step = if fits { COARSE_STEP } else { 0 };
     volumes.coarse_size = coarse_size;
@@ -989,7 +1006,16 @@ pub(crate) fn gather(
     }
     buffer.write(0, std::slice::from_ref(&volumes));
     let light = light.map(|light| vec![light.light, light.cells]).unwrap_or_default();
-    Some(ViewVoxels { coarse_size, coarse_on: fits, coarse: None, seen: None, pools: Vec::new(), shadow: None, light })
+    Some(ViewVoxels {
+        coarse_size,
+        coarse_on: fits,
+        ringed,
+        coarse: None,
+        seen: None,
+        pools: Vec::new(),
+        shadow: None,
+        light,
+    })
 }
 
 /// Names `texture` as the voxels' shadows on everything in a view's volumes
@@ -1007,7 +1033,7 @@ impl VoxelVolumes {
         for (_, making) in self.making.drain() {
             let _ = making.job.join();
         }
-        for (_, made) in self.endless.drain() {
+        for made in self.endless.drain().flat_map(|(_, rings)| rings) {
             made.destroy(gpu);
         }
         for (buffer, _, _) in self.water.drain(..) {
@@ -1017,6 +1043,70 @@ impl VoxelVolumes {
             gpu.destroy_buffer(buffer);
         }
     }
+}
+
+/// The most rings an endless volume is seen in, itself the first.
+const MOST_RINGS: usize = 8;
+
+/// The volumes an endless volume is seen as, the finest first: itself, then
+/// past its reach as far as its distance, rings each with voxels twice the
+/// size of the one inside it and reaching twice as far, down to one voxel a
+/// metre, the last reaching as far as the distance. Flowers are left out of
+/// rings of voxels four times the size or more, where a flower is under a
+/// pixel.
+pub(crate) fn rings_of(volume: &VoxelVolume) -> Vec<VoxelVolume> {
+    let fine = volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+    let mut rings = vec![volume.clone()];
+    let (mut voxels, mut reach) = (fine, volume.reach);
+    while volume.distance > reach && voxels > 1 && rings.len() < MOST_RINGS {
+        voxels /= 2;
+        reach *= 2.0;
+        if voxels == 1 {
+            reach = reach.max(volume.distance);
+        }
+        let mut ring = VoxelVolume { voxels_per_metre: voxels, reach, distance: 0.0, ..volume.clone() };
+        if voxels * 4 <= fine
+            && let Some(ground) = ring.ground.as_mut()
+        {
+            ground.flowers = 0.0;
+        }
+        rings.push(ring);
+    }
+    rings
+}
+
+/// Fits an endless volume's ring `made` to `volume`: its ground made again
+/// in its buffers, or in new ones where it needs others, as when its room
+/// ran short; then its edits. `fine` is the finest ring's voxels a metre.
+/// Gives whether it was made over, from its ground up.
+fn fit(gpu: &Gpu, frames: &mut Frames, made: &mut endless::Endless, volume: &VoxelVolume, fine: u32) -> Result<bool> {
+    let retire = |frames: &mut Frames, buffers: Vec<Buffer>| {
+        buffers.into_iter().for_each(|buffer| frames.retire(Retired::Buffer(buffer)))
+    };
+    let mut made_over = false;
+    if !endless::same_ground(&made.from, volume) || made.fine != fine {
+        made_over = true;
+        match made.refit(gpu, volume)? {
+            Some(gone) => retire(frames, gone),
+            None => {
+                let old = std::mem::replace(made, endless::Endless::new(gpu, volume, fine)?);
+                retire(frames, old.into_buffers());
+            }
+        }
+        made.fine = fine;
+    }
+    // A room that ran short is made again half as large again: the window is made over.
+    if let Some(grow) = made.short() {
+        tracing::info!("an endless Voxel Volume's room ran short: made again with half as much again");
+        let old = std::mem::replace(made, endless::Endless::grown(gpu, volume, grow * 1.5, fine)?);
+        retire(frames, old.into_buffers());
+        made_over = true;
+    }
+    made.from.roughness = volume.roughness;
+    // New edits make the columns they reach again.
+    let gone = made.set_edits(gpu, &volume.edits, &volume.changes)?;
+    retire(frames, gone);
+    Ok(made_over)
 }
 
 /// Where the first camera of `world` is, which endless volumes are made
@@ -1036,6 +1126,9 @@ fn camera_of(world: &World) -> Option<Vec3> {
 pub(crate) struct ViewVoxels {
     pub coarse_size: [u32; 2],
     pub coarse_on: bool,
+    /// Whether any volume is seen in rings, which only the depth pass's walk
+    /// draws: the view then draws its depth first.
+    pub ringed: bool,
     /// The coarse rays' buffer in the view's frame graph, and what the
     /// depth pass met in each pixel, where it is drawn.
     pub coarse: Option<crate::graph::BufferId>,
@@ -1096,6 +1189,8 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         pages: 0,
         water: 0,
         shades: 0,
+        hole: [0.0; 4],
+        outer: [0.0; 4],
     };
     Ok(Resident { buffer, record, bytes: total as u64, bricks: packed.brick_count() })
 }
@@ -1107,8 +1202,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 104);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 104 + 104 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 136);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 104 + 136 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

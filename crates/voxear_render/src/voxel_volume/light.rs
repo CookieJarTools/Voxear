@@ -96,7 +96,7 @@ impl LightGrid {
         fg: &mut FrameGraph<'_>,
         pipelines: Pipelines,
         (slot, pools): (usize, &[BufferId]),
-        (drawn, made_over): (&[(GpuVoxelVolume, Vec3)], u64),
+        (drawn, made_over, fresh): (&[(GpuVoxelVolume, Vec3)], u64, bool),
         camera: Vec3,
     ) -> Result<Option<LightView>> {
         // The cells are the bricks of the finest volume.
@@ -114,7 +114,7 @@ impl LightGrid {
         lit_from.push(made_over);
         let same = lit_from == self.lit_from;
         self.lit_from = lit_from;
-        let kept = self.last.filter(|(at, size, _)| same && at == corner && *size == cell);
+        let kept = self.last.filter(|(at, size, _)| same && !fresh && at == corner && *size == cell);
         let moved = kept.map_or(IVec3::ZERO, |(_, _, last)| origin - last);
         self.last = Some((*corner, cell, origin));
         while self.slots.len() <= slot {

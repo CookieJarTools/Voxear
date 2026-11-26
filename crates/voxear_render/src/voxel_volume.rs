@@ -723,8 +723,21 @@ pub(crate) struct GpuVoxelVolumes {
     light_size: [i32; 3],
     glass_on: u32,
     glass: u64,
+    lamp_mask: u32,
+    sun_map_on: u32,
+    sun_map: u64,
     volumes: [GpuVoxelVolume; MAX_VOXEL_VOLUMES],
 }
+
+/// The voxels' shadows pass's targets: the sun's, lit and the colour of the
+/// glass it came through, and which lamps of each pixel's cluster the
+/// voxels stand in the way of, a bit each, as a whole number.
+pub(crate) const SUN_SHADOW_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
+pub(crate) const LAMP_SHADOW_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+/// The sun map's texels a side (`VOXEL_SUN_MAP` in `shaders/common.slang`),
+/// and its bytes, kept after what the depth pass met.
+const SUN_MAP: u32 = 256;
+const SUN_MAP_BYTES: u64 = (SUN_MAP * SUN_MAP * 4) as u64;
 
 /// The size of a view's frame buffer of volumes.
 pub(crate) const FRAME_SIZE: u64 = size_of::<GpuVoxelVolumes>() as u64;
@@ -1061,6 +1074,9 @@ pub(crate) fn volumes_record(drawn: &[(GpuVoxelVolume, Vec3)], offset: Vec3) -> 
         light_size: [0; 3],
         glass_on: 0,
         glass: 0,
+        lamp_mask: crate::NO_TEXTURE,
+        sun_map_on: 0,
+        sun_map: 0,
         volumes: [GpuVoxelVolume::default(); MAX_VOXEL_VOLUMES],
     };
     let mut drawn: Vec<_> = drawn.iter().take(MAX_VOXEL_VOLUMES).collect();
@@ -1096,8 +1112,12 @@ pub(crate) fn gather(
     volumes.seen = seen.map_or(0, |seen| seen.address);
     volumes.seen_width = size[0];
     // The glass each pixel's ray passed through is kept after what it met.
+    let pixels = u64::from(size[0]) * u64::from(size[1]);
     volumes.glass_on = u32::from(seen.is_some());
-    volumes.glass = seen.map_or(0, |seen| seen.address + seen_bytes(size) / 2);
+    volumes.glass = seen.map_or(0, |seen| seen.address + pixels * 16);
+    // The sun map after them.
+    volumes.sun_map_on = u32::from(seen.is_some());
+    volumes.sun_map = seen.map_or(0, |seen| seen.address + pixels * 32);
     if let Some(light) = light {
         volumes.light = light.light_address;
         volumes.light_cells = light.cells_address;
@@ -1121,8 +1141,9 @@ pub(crate) fn gather(
 
 /// Names `texture` as the voxels' shadows on everything in a view's volumes
 /// written to `buffer` by [`gather`].
-pub(crate) fn set_shadow_mask(buffer: &Buffer, texture: u32) {
-    buffer.write(std::mem::offset_of!(GpuVoxelVolumes, shadow_mask) as u64, &[texture]);
+pub(crate) fn set_shadow_mask(buffer: &Buffer, sun: u32, lamps: u32) {
+    buffer.write(std::mem::offset_of!(GpuVoxelVolumes, shadow_mask) as u64, &[sun]);
+    buffer.write(std::mem::offset_of!(GpuVoxelVolumes, lamp_mask) as u64, &[lamps]);
 }
 
 impl VoxelVolumes {
@@ -1238,16 +1259,16 @@ pub(crate) struct ViewVoxels {
     /// passes read.
     pub pools: Vec<crate::graph::BufferId>,
     /// Whether the sun reaches each pixel past the voxels, traced from
-    /// whatever the depth passes drew there, where the sun is up.
-    pub shadow: Option<ImageId>,
+    /// whatever the depth passes drew there, and which of its lamps do.
+    pub shadow: Option<(ImageId, ImageId)>,
     /// The light kept round the camera, which whatever is lit by it reads.
     pub light: Vec<BufferId>,
 }
 
 /// The bytes a view keeps of what its depth pass met, and the glass it
-/// passed through on the way, for a picture `size` pixels.
+/// passed through on the way, for a picture `size` pixels; and its sun map.
 pub(crate) fn seen_bytes(size: [u32; 2]) -> u64 {
-    u64::from(size[0]) * u64::from(size[1]) * 16 * 2
+    u64::from(size[0]) * u64::from(size[1]) * 16 * 2 + SUN_MAP_BYTES
 }
 
 /// A volume's sectors, bricks, materials and palette in one buffer on the GPU.
@@ -1307,7 +1328,7 @@ mod tests {
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
         assert_eq!(size_of::<GpuVoxelVolume>(), 160);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 104 + 160 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 120 + 160 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]
@@ -1447,18 +1468,34 @@ pub(crate) fn record_shadows(
     view: &ViewVoxels,
     (depth, surface): (ImageId, ImageId),
 ) {
-    let Some(target) = view.shadow else { return };
+    let Some((sun, lamps)) = view.shadow else { return };
     let push = Push { textures: [fg.texture(depth).0, fg.texture(surface).0, 0, 0], ..push };
     let mut reads: Vec<_> = view.pools.iter().map(|&pool| (pool, BufferAccess::ShaderRead)).collect();
     reads.extend(view.seen.map(|seen| (seen, BufferAccess::ShaderRead)));
-    let images = [(depth, ImageAccess::Sampled), (surface, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
-    fg.add_pass("Voxel shadows", &images, &reads, move |ctx| {
-        let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-        let color = [attachment(ctx.view(target), layout, None)];
-        begin_rendering(ctx, ctx.extent(target), &color, None);
-        bind(ctx, pipelines.voxel_shadows, vk::PipelineBindPoint::GRAPHICS, &push);
-        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
-        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    // The sun's, then the lamps': apart, so the sun's pass carries nothing of the lamps' walks where there are none.
+    for (name, pipeline, target) in [
+        ("Voxel shadows", pipelines.voxel_shadows, sun),
+        ("Voxel lamp shadows", pipelines.voxel_lamp_shadows, lamps),
+    ] {
+        let images = [(depth, ImageAccess::Sampled), (surface, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+        fg.add_pass(name, &images, &reads, move |ctx| {
+            let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            let color = [attachment(ctx.view(target), layout, None)];
+            begin_rendering(ctx, ctx.extent(target), &color, None);
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    // The sun's shadows of the voxels round the camera from above, for fog, particles and water, kept after what
+    // the depth pass met.
+    let Some(seen) = view.seen else { return };
+    let mut access: Vec<_> = view.pools.iter().map(|&pool| (pool, BufferAccess::ShaderRead)).collect();
+    access.push((seen, BufferAccess::ComputeWrite));
+    let groups = SUN_MAP.div_ceil(8);
+    fg.add_pass("Voxel sun map", &[], &access, move |ctx| {
+        bind(ctx, pipelines.voxel_sun_map, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, groups, groups, 1) };
     });
 }
 

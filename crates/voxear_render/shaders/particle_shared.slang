@@ -95,7 +95,7 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     {
         ambient = ddgiLightAround(frame, world, toCamera, ambient);
     }
-    float3 lit = sunLight * sunShadow(frame, world, -frame->sunDirection);
+    float3 lit = sunLight * (sunShadow(frame, world, -frame->sunDirection) * voxelSunLit(world));
     float2 pixel = (clip.xy / clip.w * 0.5 + 0.5) * float2(frame->viewport);
     uint base = clusterAt(frame, pixel, max(clipViewDepth(frame, clip), frame->near)) * (frame->clusterMaxLights + 1);
     for (uint i = 0; i < buffers()->clusters[base]; i++)
@@ -126,7 +126,7 @@ void particleLightSix(Frame* frame, float3 world, float4 clip, float3 right, flo
         six[side] = ambient;
     }
     float3 toSun = -frame->sunDirection;
-    float3 sun = sunLight * sunShadow(frame, world, toSun) / PI;
+    float3 sun = sunLight * (sunShadow(frame, world, toSun) * voxelSunLit(world)) / PI;
     for (uint side = 0; side < 6; side++)
     {
         six[side] += sun * saturate(dot(toSun, sides[side]));

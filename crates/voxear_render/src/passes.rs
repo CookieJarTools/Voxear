@@ -332,7 +332,12 @@ pub fn record(
     let grounds = frame.terrain.iter().flat_map(|terrains| &terrains.heights);
     let grounds = grounds.map(|&id| (id, BufferAccess::ShaderRead));
     // And what is lit by the light kept round the camera for the voxels reads it.
-    let voxel_light = frame.voxels.iter().flat_map(|voxels| &voxels.light).map(|&id| (id, BufferAccess::ShaderRead));
+    // And the voxels' sun map, which fog, particles and water read, kept with what the voxels' depth pass met.
+    let voxel_light = frame
+        .voxels
+        .iter()
+        .flat_map(|voxels| voxels.light.iter().chain(&voxels.seen))
+        .map(|&id| (id, BufferAccess::ShaderRead));
     let shading_buffers: Vec<_> =
         edge_buffers.iter().copied().chain(counted).chain(grounds).chain(voxel_light).collect();
     drawing.extend(counted);
@@ -656,7 +661,9 @@ pub fn record(
         images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
-        images.extend(voxel_shadows.map(|shadows| (shadows, ImageAccess::Sampled)));
+        images.extend(
+            voxel_shadows.into_iter().flat_map(|(sun, lamps)| [(sun, ImageAccess::Sampled), (lamps, ImageAccess::Sampled)]),
+        );
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
         // The GI's probes, which shading and reflections read.
         images.extend(frame.probes.into_iter().flat_map(|probes| {

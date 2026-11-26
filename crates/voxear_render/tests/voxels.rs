@@ -2094,50 +2094,68 @@ fn voxels_shadow_the_sea_beside_them() {
     assert!(shadowed * 4 < open * 3, "the pillar's shadow on the sea: {shadowed} against {open}");
 }
 
+/// The house `has`, roofed, lit by the GI's probes in place of the light kept round the camera, the sun low and bright
+/// from `towards_sun`, seen looking up from its floor at its ceiling: the mean colour of 25 pixels of the ceiling
+/// round the middle of the picture, which takes only what bounces.
+fn gi_ceiling(renderer: &mut Renderer, has: House, towards_sun: Vec3, name: &str) -> [i32; 3] {
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut scene = printed_from_above(house(has), 2.6);
+    scene.spawn((MeshRenderer::new(cube, grey), Transform::from_position(Vec3::new(-6.0, 2.5, -6.0))));
+    let up = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    for (_, place) in scene.query::<(&Camera, &mut Transform)>() {
+        *place = Transform::new(Vec3::new(7.4, 2.4, 8.0), up, Vec3::ONE);
+    }
+    // A bright sun, so what bounces off its patch on the floor shows at this exposure.
+    for (light, place) in scene.query::<(&mut Light, &mut Transform)>() {
+        place.rotation = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+        light.intensity = 30.0;
+    }
+    let mut post = PostProcess::neutral();
+    post.anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    post.global_illumination =
+        voxear_render::GlobalIllumination { enabled: true, probe_spacing: 0.5, ..Default::default() };
+    scene.insert_resource(post);
+    let pixels = render(renderer, &scene, 200);
+    keep_image(name, &pixels);
+    let mut sum = [0; 3];
+    for k in 0..25 {
+        let (x, y) = (WIDTH / 2 - 100 + (k % 5) * 50, HEIGHT / 2 - 60 + (k / 5) * 30);
+        let c = rgb_at(&pixels, x, y);
+        for (total, c) in sum.iter_mut().zip(c) {
+            *total += c;
+        }
+    }
+    sum.map(|c| c / 25)
+}
+
 #[test]
 fn with_the_gi_on_its_probes_see_the_voxels_a_shut_room_dark_and_sun_in_at_its_door_bouncing_round_it() {
     let Some(mut renderer) = renderer() else { return };
-    // As the room under a roof, lit by the GI's probes in place of the light kept round the camera, the sun low in
-    // the east so it shines in at the door onto the floor. Looking up from the floor at the ceiling, which takes only
-    // what bounces off that patch of sun.
-    let cube = renderer.primitive(Primitive::Cube).unwrap();
-    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let mut shot = |has: House, name: &str| {
-        let mut scene = printed_from_above(house(has), 2.6);
-        scene.spawn((MeshRenderer::new(cube, grey), Transform::from_position(Vec3::new(-6.0, 2.5, -6.0))));
-        let up = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-        for (_, place) in scene.query::<(&Camera, &mut Transform)>() {
-            *place = Transform::new(Vec3::new(7.4, 2.4, 8.0), up, Vec3::ONE);
-        }
-        let towards_sun = Vec3::new(35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.0);
-        // A bright sun, so what bounces off its patch on the floor shows at this exposure.
-        for (light, place) in scene.query::<(&mut Light, &mut Transform)>() {
-            place.rotation = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
-            light.intensity = 30.0;
-        }
-        let mut post = PostProcess::neutral();
-        post.anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
-        post.global_illumination =
-            voxear_render::GlobalIllumination { enabled: true, probe_spacing: 0.5, ..Default::default() };
-        scene.insert_resource(post);
-        let pixels = render(&mut renderer, &scene, 200);
-        keep_image(name, &pixels);
-        pixels
-    };
-    let sealed = shot(House { roof: true, ..House::default() }, "gi ceiling sealed.png");
-    let door = shot(House { roof: true, door: true, ..House::default() }, "gi ceiling with a door.png");
-    // The ceiling round the middle of the picture.
-    let ceiling = |pixels: &[u8]| {
-        let mut sum = 0;
-        for k in 0..25 {
-            let (x, y) = (WIDTH / 2 - 100 + (k % 5) * 50, HEIGHT / 2 - 60 + (k / 5) * 30);
-            sum += rgb_at(pixels, x, y).iter().sum::<i32>();
-        }
-        sum / 25
-    };
-    let (sealed, door) = (ceiling(&sealed), ceiling(&door));
+    // The sun low in the east, so it shines in at the door onto the floor.
+    let towards_sun = Vec3::new(35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.0);
+    let sealed = House { roof: true, ..House::default() };
+    let sealed = gi_ceiling(&mut renderer, sealed, towards_sun, "gi ceiling sealed.png").iter().sum::<i32>();
+    let door = House { roof: true, door: true, ..House::default() };
+    let door = gi_ceiling(&mut renderer, door, towards_sun, "gi ceiling with a door.png").iter().sum::<i32>();
     assert!(sealed < 6, "shut under the roof, the ceiling dark: {sealed}");
     assert!(door > sealed + 10, "the sun in at the door bouncing up to the ceiling: {door} against {sealed} shut");
+}
+
+#[test]
+fn with_the_gi_on_the_sun_through_red_glass_bounces_red() {
+    let Some(mut renderer) = renderer() else { return };
+    // The sun low in the west, in at the window onto the floor, and the ceiling over it lit by what bounces.
+    let towards_sun = Vec3::new(-35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.0);
+    let mut shot = |red_glass: bool, name: &str| {
+        let has = House { roof: true, window: true, red_glass, ..House::default() };
+        gi_ceiling(&mut renderer, has, towards_sun, name)
+    };
+    let clear = shot(false, "gi ceiling clear window.png");
+    let red = shot(true, "gi ceiling red window.png");
+    // Through clear glass the ceiling takes the green of the grass floor; through red, as red as it is green or more.
+    assert!(clear[1] > clear[0] && clear[1] > 4, "through clear glass, green: {clear:?}");
+    assert!(red[0] * clear[1] > clear[0] * red[1] * 2, "through red glass, redder: {red:?} against {clear:?}");
 }
 
 /// A room 15 m square and 5 m tall sealed in stone a metre thick, as the

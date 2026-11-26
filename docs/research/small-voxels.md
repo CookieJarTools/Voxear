@@ -1268,10 +1268,14 @@ Since, the same day:
   two a few metres out, so no lamp shone through a window: a brick marked see-through is now walked voxel by voxel
   at any level, which lets the GI's rays through glass too. Street, least of 60, three runs: at night the lamps'
   pass 0.93 → 0.99 ms, the frame 8.23 → 8.39 ms; by day unchanged; the GI's rays 2.46 → 2.65 ms.
+- **The GI's rays take the colour of glass.** A probe's ray, whatever it met past glass of voxels, takes the first
+  glass's colour, and so does the sun's ray from what it met (`ddgiSunThrough` in `ddgi.slang`). Sun through a red
+  window bounces dim red round the room, where through clear glass it bounces the floor's green; on master the two
+  were the same. The GI's rays' pass 2.70 → 2.80 ms on the street.
 
 Not done:
 
-- **Glass**: only the nearest glass in a pixel is drawn; the GI's rays pass it without its colour.
+- **Glass**: only the nearest glass in a pixel is drawn.
 - **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
   commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
   walk's, not the light's.
@@ -1471,6 +1475,19 @@ stages, each measured before the next.
   third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
   what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
   again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Loads shared as the voxels hold.** A node is each part of a brick whose built voxels touch, not the brick, so
+    two walls through the same bricks bear apart; a join is between two parts, its springs as stiff as its weakest
+    section (its area along and across, its second moment, worked out from where its voxels lie, for bending and
+    turning) and its load passing through that section's middle. A stone slab on three timber posts: notching the
+    middle post to a quarter of its section moves 6.7% of what it bears onto the outer two. At-rest loads are kept
+    by brick, way and the part's first voxel, and found by the face where a dig moved that voxel.
+  - **Joins as strong as their thinnest voxels.** A join between two bricks bears what the plane with the fewest
+    pairs of built voxels across it, within 5 voxels of their face, bears: its area for pull, push and shear, and its
+    section modulus, worked out from where those voxels lie (least about either way across), for bending; a pushed
+    join holds bending until the push leaves the section's kern (modulus over area). The same small stone on a beam's
+    end leaves the whole beam standing and breaks a beam notched three voxels into a brick (1,557 voxels fall), which
+    the faces alone saw as the same beam. Reading the sections took the blown corner's settling from about 190 to 280
+    ms (development build).
   - **Breaking where it is thinnest.** Each broken face's crack goes through the plane, up to 5 voxels either side
     of the face across both bricks, with the fewest pairs of built voxels across it in the face's square (nearest
     the face of equals): a notch three voxels into a brick of an overloaded beam breaks there, 1 of its 1,541 fallen

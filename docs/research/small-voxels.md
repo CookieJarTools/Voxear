@@ -910,7 +910,6 @@ Not done:
   generator's water alone. The next step would be a material of water kept with the edits, made where an edit opens
   ground below a neighbouring water height (from the points), drawn by the same squares at that height over the
   carved voxels; flowing it on would be a simulation over the edits' bricks, cheap only for small pits.
-- Swimming, floating and currents in voxel rivers: the engine's water reads Pools, Streams and worlds of blocks.
 - Lakes and rivers of a Volume's caves: the points say nothing of what is under an overhang.
 
 ## Stage 7 begun: collision (2026-11-26)
@@ -948,6 +947,47 @@ the CPU. Physics needs the solid voxels near what moves, and only there.
   - One fault on the way: the chunks wanted at once were measured from where a mover would be in half a second,
     not from where it was, so they came due as soon as they were asked for.
 - **Not yet.** Volumes of a set size; physics rays meet only the chunks made round what moves; navigation.
+
+## The sea, and floating and swimming in voxel water (2026-11-26)
+
+The renders above added an Ocean by hand at the generator's sea level, and the engine's water (`voxear_engine::water`)
+read Oceans, Pools, Streams and worlds of blocks but not the voxel rivers.
+
+- **The sea is the generator's.** An endless volume with a generator has a **Sea** setting, on unless turned off.
+  `voxear_render::ocean::seas` lists the level's seas, the first of them used: each Ocean at its Obj's place, but one
+  on an endless generated volume's Obj stands at the generator's sea level; then, where the level has no Ocean, each
+  such volume's sea as a default Ocean at `corner.y + sea_level - floor`. The renderer's sea, its Streams' mouths,
+  its spray and the engine's water sampler all ask it, so nothing else changed. A sea under the volume's floor is
+  never made.
+- **The water's points are read on the CPU.** `RiverGrid` now keeps the generator's ground with its rivers at each
+  point as well as the water. `voxel_volume::rivers::water_at` reads the four points round a place as the water's
+  squares are drawn: a dry corner as high as the highest wet one, so the water meets the bank where the ground hides
+  it. It is found over the water and under it to a metre into the bed, not deeper, so a cave under a river stays dry.
+  Its current is the generator's (`WorldGen::current`, now `current_between` over five heights a metre apart), read
+  from the same points, not run through the graph again: a column's points are worked out once, on the river
+  threads, and kept.
+- **The engine's water asks it** after Pools and worlds of blocks and before Streams and the sea, so a Buoyancy
+  floats on it and drifts with its current, a Character Controller wading it is carried, and everything that reads
+  `water::sample` (wakes, splashes, heat) sees it. C# has `Voxels.WaterAt` and `Voxels.Sea`/`SeaLevel`;
+  `vox editor call voxels.water_at`.
+- **Interpolated, not the highest of four.** `Ground::river` (`solid.rs`) gives the highest water of the four points
+  round a column, as the GPU's `riverAt` reads it for grass and trees. What floats reads the points interpolated, as
+  the water's squares are drawn, so it rides the surface seen, not a step at each point.
+
+Measured on Rolling Hills (seed 7) at 16 voxels a metre:
+
+- A river 1.6 m deep: the surface found where the generator has it, to the centimetre, and between the points within
+  10 cm of the generator's own water; its current the generator's.
+- A crate dropped in settles with its middle 2 cm off the surface and drifts 1.84 m down a 1.1 m/s current in 3 s;
+  a character standing in it is carried 2.97 m.
+- Archipelago's coast, seen from 3 m over the sea: the sea's water in 17,272 of 17,280 pixels out to sea that showed
+  its floor with the Sea off.
+
+![The generator's sea at an Archipelago shore](../images/small-voxels/generated-sea.webp)
+
+Not done: what floats over voxel shallows feels the ground only within the chunks made for collision round it, a few
+metres, so the sea calms it less than it is drawn; the sea standing under the ground inland, so a cave dug below sea
+level is under water where the Sea is on; waterfalls pushing down what is under them.
 
 ## Kept elsewhere
 

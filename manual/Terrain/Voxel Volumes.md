@@ -26,6 +26,7 @@ An endless volume can take its ground from one of the project's [[Generator Grap
 
 - **Floor**: how high the generator's ground is at the volume's floor, in metres of the generator's world. Until it is set, it is worked out from the generator: the ground at the volume's corner stands two fifths of the way up the volume.
 - **Offset**: where the volume's corner lies in the generator's world, in metres along X and Z.
+- **Sea**: whether the generator's sea fills the level at its sea level. On unless turned off; see [The sea](#the-sea).
 
 Each column's ground is what a world of blocks with no biomes of its own would lay there, from the generator's height and climate:
 
@@ -49,8 +50,31 @@ A generator's **Rivers** node finds its rivers, lakes and waterfalls on the CPU,
 - **The ground is cut for them.** For each 4 m column, the CPU works out how much the rivers lower the ground (or raise it, in the low rim that holds a river in) at points half a metre apart, and how high their water stands. The GPU adds that change, read smoothly between the points, to the height its graph made. Riverbeds are gravel, sand along the water's edge, and nothing grows under the water.
 - **The water is drawn over them**, as a world of blocks' rivers and lakes are: still where a lake lies level, its ripples carried downstream where a river flows, a line of foam where it meets the bank, and the reflections and the view of the bed through it. Where a river drops over a cliff, its water leaves the lip and curves down into the pool below, pale and torn into white strands lower down, and churns the pool white where it lands.
 - **Rays and changes meet the same ground.** `Voxels.Raycast` reads the same points, so it meets the riverbed the GPU draws, and a ball carved or filled lands where the ray met it.
+- **Things float and swim in them.** The game's water reads the same points too: a crate or a boat with a Buoyancy floats on a river or a lake and drifts down its current, a character wading a river is pushed along by it as its **Water Push** says, and one in deeper water swims. Its current runs down the water's slope, faster the steeper, as the generator's does; a lake lies still.
 
 The points are worked out on threads of their own as columns come into view, about 0.7 ms of one CPU core for each column, and a column is made once its points and those of the columns round it are ready. A column far from any river costs the GPU nothing more. Water stands only where the generator puts it: a pit carved below a river's level stays dry.
+
+A script asks about the water at a place with `Voxels.WaterAt`: how high its surface stands and which way its current runs. It is found over the water, and under it down to a metre into the riverbed; not on dry ground, or deeper.
+
+```csharp
+// A fishing float rides the river downstream.
+if (Voxels.WaterAt(floatAt, out var river))
+{
+    floatAt = floatAt with { Y = river.Height } + river.Current * Time.DeltaTime;
+}
+```
+
+`Water.TrySample` reads it as well, with the sea and every other water, and `vox editor call voxels.water_at '{ "at": [12, 30, -4] }'` finds the same.
+
+### The sea
+
+An endless volume with a generator has the generator's sea: an [[The Ocean|Ocean]] filling the level at the generator's **Sea Level**, its waves, foam and shores as an Ocean as it comes has them. Crates and ships float on it and characters swim in it as on any Ocean. Its waves are drawn calmer over the volume's shallows; what floats there feels only the ground made for collision a few metres round it, so it rides them a little rougher than they look. There is no Ocean to add by hand.
+
+- An **Ocean of the level's own** is the sea in place of the volume's, standing where its Obj is.
+- An **Ocean on the volume's Obj** sets how the sea looks and moves, its weather, wind and colours, and it stands at the generator's sea level, not at the Obj's place.
+- Turn the volume's **Sea** off for none: inland, say, where the generator's sea would lie only under the ground. A sea under the volume's floor is never drawn.
+
+A script turns it off with `Voxels.Sea = false`, and `Voxels.SeaLevel` says how high it stands in the world. `vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "sea", "value": false}`. The scene writes `sea = false`, and nothing while it is on.
 
 Overhangs and caves cost more: every brick from the volume's floor up is asked about, though most are passed over as solid rock or open air at a look at their corners. An Alpine slope with a world's own overhangs, tunnels and chambers takes about 0.5 ms a column, four columns a frame, and about 65 MB at a reach of 64 m; the ground round a camera standing still is made in about two and a half seconds.
 
@@ -203,6 +227,6 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - Its voxels cast no shadow onto meshes, blocks or terrain.
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
-- An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it, and you can't swim in it or float on it yet.
+- An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A volume of a set size doesn't collide yet; an endless one does.

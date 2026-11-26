@@ -19,6 +19,8 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use voxear_terrain::generate::{WorldGen, nodes::NO_WATER};
 
+use voxear_core::math::Vec3;
+
 use super::{MOST_VOXELS_A_METRE, VoxelGenerator};
 
 /// How many points a column's grid has a side: one every [`GRID_STEP`]
@@ -40,6 +42,9 @@ const MOST_KEPT: usize = 8192;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RiverGrid {
     pub cut: [f32; GRID_POINTS],
+    /// How high the generator's ground stands there with its rivers, in
+    /// metres of its world: the bed under their water.
+    pub ground: [f32; GRID_POINTS],
     pub water: [f32; GRID_POINTS],
     pub falls: [f32; GRID_POINTS],
     /// Whether the rivers change anything here: a cut or water anywhere.
@@ -49,7 +54,13 @@ pub(crate) struct RiverGrid {
 impl RiverGrid {
     /// A grid where the rivers change nothing.
     pub fn dry() -> Self {
-        Self { cut: [0.0; GRID_POINTS], water: [NO_WATER; GRID_POINTS], falls: [0.0; GRID_POINTS], laid: false }
+        Self {
+            cut: [0.0; GRID_POINTS],
+            ground: [0.0; GRID_POINTS],
+            water: [NO_WATER; GRID_POINTS],
+            falls: [0.0; GRID_POINTS],
+            laid: false,
+        }
     }
 
     /// How much the rivers raise the ground at voxel column (`x`, `z`) of
@@ -230,12 +241,87 @@ impl RiverLayer {
         self.bare.heights(&xs, &zs, &mut ground);
         let mut grid = RiverGrid::dry();
         for at in 0..GRID_POINTS {
+            grid.ground[at] = cut[at];
             grid.cut[at] = cut[at] - ground[at];
             grid.water[at] = water[at];
             grid.falls[at] = falls[at];
         }
         grid.laid = grid.cut.iter().any(|&cut| cut != 0.0) || grid.water.iter().any(|&water| wet(water));
         grid
+    }
+}
+
+/// How far under a river's bed a place still has its water over it, in
+/// metres: the voxels of its bed, and a little more.
+const UNDER_BED: f32 = 1.0;
+
+/// The water of an endless Voxel Volume's rivers and lakes at a place: how
+/// high its surface stands in the world, and which way and how fast its
+/// current runs, in metres a second along X and Z (nothing where it lies
+/// level, as a lake does), as [`WorldGen::current`] works it out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxelWaterPoint {
+    pub height: f32,
+    pub current: Vec3,
+}
+
+/// The water of the rivers and lakes of the endless volume `volume`, its
+/// corner at `corner`, at `at` in the world, read between the points the
+/// GPU's ground is cut and its water drawn from: its surface over the
+/// place, under it, or as far over it as the ground lets it be, and its
+/// current. None where its generator runs no rivers, where none has water
+/// there, under the volume's floor, or more than a metre under the bed.
+///
+/// A square of points with water at a corner has water all over, its dry
+/// corners as high as its highest wet one, as [`water_quads`] draws it.
+pub fn water_at(volume: &super::VoxelVolume, corner: Vec3, at: Vec3) -> Option<VoxelWaterPoint> {
+    let generator = volume.generator.as_ref().filter(|_| volume.endless)?;
+    let layer = layer_of(generator, volume.voxels_per_metre)?;
+    let voxel = layer.voxel;
+    if at.y < corner.y {
+        return None;
+    }
+    // In voxels from the volume's corner, along X and Z.
+    let (x, z) = ((at.x - corner.x) / voxel, (at.z - corner.z) / voxel);
+    let (water, bed) = layer.water_between(x, z)?;
+    let height = |water: f32| corner.y + water - generator.floor;
+    if at.y < height(bed) - UNDER_BED {
+        return None;
+    }
+    // Its height a metre either way along each axis, for its current.
+    let step = 1.0 / voxel;
+    let side = |dx: f32, dz: f32| layer.water_between(x + dx, z + dz).map_or(NO_WATER, |(water, _)| water);
+    let around = [water, side(-step, 0.0), side(step, 0.0), side(0.0, -step), side(0.0, step)];
+    let [cx, cz] = voxear_terrain::generate::current_between(around, 1.0).unwrap_or([0.0; 2]);
+    Some(VoxelWaterPoint { height: height(water), current: Vec3::new(cx, 0.0, cz) })
+}
+
+impl RiverLayer {
+    /// How high the water stands at (`x`, `z`), in voxels from the
+    /// volume's corner, and the bed under it, in metres of the generator's
+    /// world, read between the four points round it: none where none of
+    /// them has water.
+    fn water_between(&self, x: f32, z: f32) -> Option<(f32, f32)> {
+        let column = [(x / 64.0).floor() as i32, (z / 64.0).floor() as i32];
+        let grid = self.grid(column);
+        let along = |x: f32, column: i32| {
+            let u = (x - (column * 64) as f32) / GRID_STEP as f32 + 1.0;
+            let i = u.floor().clamp(0.0, (GRID - 2) as f32);
+            (i as usize, u - i)
+        };
+        let ((i, fx), (j, fz)) = (along(x, column[0]), along(z, column[1]));
+        let points = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)].map(|(i, j)| j * GRID + i);
+        let highest = points.iter().map(|&at| grid.water[at]).filter(|&water| wet(water)).fold(f32::MIN, f32::max);
+        if highest == f32::MIN {
+            return None;
+        }
+        let read = |values: [f32; 4]| {
+            let low = values[0] + (values[1] - values[0]) * fx;
+            let high = values[2] + (values[3] - values[2]) * fx;
+            low + (high - low) * fz
+        };
+        let water = read(points.map(|at| if wet(grid.water[at]) { grid.water[at] } else { highest }));
+        Some((water, read(points.map(|at| grid.ground[at]))))
     }
 }
 

@@ -1619,6 +1619,63 @@ fn dungeons_project() -> tempfile::TempDir {
 }
 
 #[test]
+fn a_tool_finds_the_water_of_an_endless_voxel_volumes_rivers_and_turns_its_sea_off() {
+    let starters = voxear_terrain::generate::starters();
+    let hills = starters.iter().find(|starter| starter.name == "Rolling Hills").unwrap().world(7, 1.0);
+    assert!(hills.has_rivers());
+    // A river at least 0.8 m deep, near the world's middle.
+    let (mut xs, mut zs) = (Vec::new(), Vec::new());
+    for i in 0..160 * 160 {
+        xs.push((i % 160) as f32 * 8.0 - 640.0);
+        zs.push((i / 160) as f32 * 8.0 - 640.0);
+    }
+    let (water, _) = hills.water(&xs, &zs).expect("its water");
+    let mut heights = vec![0.0; xs.len()];
+    hills.heights(&xs, &zs, &mut heights);
+    let river = (0..xs.len())
+        .filter(|&i| water[i] - heights[i] > 0.8)
+        .min_by(|&a, &b| xs[a].hypot(zs[a]).total_cmp(&xs[b].hypot(zs[b])))
+        .expect("a river");
+    let (x, z, top) = (xs[river], zs[river], 24.0 + water[river] - heights[river]);
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let scene = format!(
+        "format = 1\n\n[[obj]]\nid = 1\nname = \"Ground\"\n[obj.voxel_volume]\nsize = [16.0, 48.0, 16.0]\n\
+         endless = true\ngenerator = \"Worlds/Hills.worldgen\"\ngenerator_floor = {}\n",
+        heights[river] - 24.0
+    );
+    let files = [
+        ("voxear.toml", "[project]\nname = \"Rivers\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Ground.scene\"\n".into()),
+        ("Scenes/Ground.scene", scene),
+        ("Worlds/Hills.worldgen", hills.to_text()),
+    ];
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    frames(&mut editor, &mut renderer, 2);
+    let found = done(&mut editor, &mut renderer, "voxels.water_at", json!({ "at": [x, 24.2, z] }));
+    assert!(!found["obj"].is_null(), "{found}");
+    let height = found["height"].as_f64().unwrap() as f32;
+    assert!((height - top).abs() < 0.15, "its surface at {height}, not {top}: {found}");
+    assert_eq!(found["current"].as_array().map(Vec::len), Some(3), "{found}");
+    let none = done(&mut editor, &mut renderer, "voxels.water_at", json!({ "at": [x, 10.0, z] }));
+    assert!(none["obj"].is_null() && none["height"].is_null(), "deep under the bed: {none}");
+    // Its generator's sea is on until a tool turns it off.
+    let volume = found["obj"].clone();
+    let entity = link::resolve_obj(&editor.game, &volume).unwrap();
+    let sea = |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().sea;
+    assert!(sea(&editor));
+    let off = json!({ "obj": volume, "component": "voxel_volume", "field": "sea", "value": false });
+    done(&mut editor, &mut renderer, "field.set", off);
+    assert!(!sea(&editor), "the sea turned off");
+    let source = editor.game.engine.world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).unwrap();
+    assert!(!source.0.sea, "and its scene writes it so");
+}
+
+#[test]
 fn a_dungeons_gate_opens_its_dimension_in_the_editor_and_its_way_out_goes_back() {
     let dir = dungeons_project();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

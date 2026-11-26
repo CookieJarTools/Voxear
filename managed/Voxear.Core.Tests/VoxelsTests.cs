@@ -12,6 +12,9 @@ internal static class VoxelsTests
 		Check.True(Voxels.Fill(Vector3.Zero, 1f, VoxelMaterial.Rock) == 0, "no volume to fill");
 		Check.True(!Voxels.Raycast(Vector3.Zero, -Vector3.UnitY, out var hit) && hit == default, "no ground to meet");
 		Check.True(!Voxels.Print(VoxelPrint.Load("Prints/Crate.voxprint"), Vector3.Zero, 90f), "no volume to print into");
+		Check.True(!Voxels.WaterAt(Vector3.Zero, out var water) && water == default, "no river to find");
+		Voxels.Sea = true;
+		Check.True(!Voxels.Sea && float.IsNaN(Voxels.SeaLevel), "no sea");
 	}
 
 	[Test]

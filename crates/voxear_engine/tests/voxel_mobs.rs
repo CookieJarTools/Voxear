@@ -155,3 +155,50 @@ fn mobs_spawn_on_a_volumes_ground_round_the_camera_within_their_area_and_wander_
     let now = spawned(&game);
     assert!(now.iter().all(|(_, at)| at.x < -500.0), "those left behind are gone: {now:?}");
 }
+
+/// Ways that go by a corner of their own, counting how often they are asked.
+struct ByCorner(std::sync::atomic::AtomicUsize);
+
+impl voxear_engine::voxel_ways::VoxelWays for ByCorner {
+    fn way(
+        &self,
+        _: &voxear_ecs::World,
+        _: voxear_scene::DimensionId,
+        from: Vec3,
+        to: Vec3,
+        _: f32,
+        _: f32,
+    ) -> Option<voxear_engine::voxel_ways::VoxelWay> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let corner = Vec3::new(from.x, to.y, to.z);
+        Some(voxear_engine::voxel_ways::VoxelWay { corners: vec![from, corner, to], complete: true })
+    }
+}
+
+#[test]
+fn a_mob_on_a_volume_walks_the_ways_a_navigation_set_in_the_world_finds() {
+    let (dir, mut game) = game();
+    let ways = std::sync::Arc::new(ByCorner(std::sync::atomic::AtomicUsize::new(0)));
+    voxear_engine::voxel_ways::set(&mut game.engine.world, ways.clone());
+    let placed = voxear_scene::Placement { position: Vec3::new(-10.0, 50.0, 0.0), rotation: Default::default() };
+    let _ = dir;
+    let sheep = game.instantiate("Mobs/Sheep.prefab", None, Some(placed), None).unwrap();
+    // Down on the ground first, then sent east and north.
+    for _ in 0..120 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let start = game.engine.world.get::<Transform>(sheep).unwrap().position;
+    game.engine.world.get_mut::<BlockMob>(sheep).unwrap().move_to(start + Vec3::new(4.0, 0.0, 4.0));
+    let mut left_line = false;
+    for _ in 0..240 {
+        game.tick(1.0 / 60.0, None);
+        let at = game.engine.world.get::<Transform>(sheep).unwrap().position;
+        // Going by the corner, it first walks north along its own X.
+        left_line |= (at.z - start.z) > 1.0 && (at.x - start.x).abs() < 0.5;
+    }
+    let asked = ways.0.load(std::sync::atomic::Ordering::Relaxed);
+    let at = game.engine.world.get::<Transform>(sheep).unwrap().position;
+    assert!(asked > 0, "the navigation set was asked");
+    assert!(left_line, "it went by the corner the ways gave, now at {at} from {start}");
+    assert!(Vec3::new(at.x - start.x - 4.0, 0.0, at.z - start.z - 4.0).length() < 1.0, "it got there: {at}");
+}

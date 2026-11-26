@@ -74,6 +74,7 @@ pub mod storms;
 pub mod voxel_prints;
 pub mod voxel_mobs;
 pub mod voxel_volumes;
+pub mod voxel_ways;
 pub mod tick_smoothing;
 pub use voxear_localization as localization;
 pub use voxear_physics::scene as physics;

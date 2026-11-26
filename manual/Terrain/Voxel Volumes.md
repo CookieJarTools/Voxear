@@ -197,7 +197,7 @@ An endless volume can spawn mobs on its ground round the player while the game p
 - **Near** and **Far**: they spawn no nearer the player than Near and no further than Far, in metres, on ground no steeper than 45°. Once the player is a fifth again further than Far from one, it is taken away, and another comes nearer.
 - **Within** and **Not Within**: Area Tags, as for trees: sheep set Within a Pasture tag spawn only in the pastures.
 
-The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume walks straight to where it's sent and wanders about where it was spawned, picking places it can stand. It doesn't yet find a way round what is in its way: one that can't get somewhere within 12 seconds gives up and picks somewhere else.
+The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume walks straight to where it's sent and wanders about where it was spawned, picking places it can stand. It doesn't yet find a way round what is in its way: one that can't get somewhere within 12 seconds gives up and picks somewhere else. A navigation of voxel ground can be put in the engine through `voxear_engine::voxel_ways`: every agent on a volume walks the ways it finds.
 
 ```toml
 [[obj.voxel_volume.mobs]]

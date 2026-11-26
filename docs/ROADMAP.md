@@ -4782,7 +4782,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     corner blown out sags and falls in.
   - Pieces that hit hard dig what they hit, small ones and those past Most Pieces are dust, and each is stamped back
     where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
-  - Designed, not built: a collapse over the network, about 1 KB of piece snapshots for a house's corner.
+  - Cracks wander through the voxels round the bricks' faces, so broken edges are ragged.
+  - Designed, not built: a collapse over the network, 2 to 4 KB of piece snapshots for a house's corner.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

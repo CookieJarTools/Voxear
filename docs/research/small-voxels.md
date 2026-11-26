@@ -1454,6 +1454,11 @@ stages, each measured before the next.
   third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
   what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
   again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Cracks through the voxels.** A loose part takes the voxels of its bricks and of the bricks it broke from on its
+    side of a crack surface through each face between them: smooth noise on a 4-voxel lattice in the face's plane
+    plus a voxel of roughness, up to 3 voxels either way, the same from both sides. Voxels a crack leaves in loose
+    bricks touching nothing that stands go too (checked over every brick gone so far). On the blown house, 1,230 of
+    the faces between what fell and what stands cut through bricks and 385 lie on brick faces (before: all of them).
   - **Measured** (development build, shared CPU). A house of 1,068 bricks, 2,158 joins: paths 0.16 ms, solve 90 ms.
     A 5 × 4 m brick house with a plank roof, its corner blown out by a 3.6 m ball: 241 bricks, 476 joins, 13 rounds;
     Solved breaks 72 joins and lets 12,876 voxels go in 9 releases, 148 ms all told, 35 ms of it solving; Paths 50
@@ -1496,9 +1501,9 @@ the bodies' falls are not, as the physics library isn't bit-for-bit alike across
   machine stamps the piece there, the server too from the same quantised pose, so the voxels placed are the same
   everywhere without being sent (12 bytes a piece).
 - **Measured** (engine test `measure_how_many_bytes_a_house_falling_in_costs_over_the_network`, the same house and
-  blast, a snapshot every 3 steps, answers 100 ms behind): 6 pieces falling at most, all stamped; 857 to 1,287 bytes
-  for the whole collapse over three runs, at most 57 bytes in one snapshot, 340 to 430 bytes a second while pieces
-  fell. The blast itself is an edit of about 20 bytes. A player joining after gets the region files' changed bricks,
+  blast, a snapshot every 3 steps, answers 100 ms behind): 6 pieces falling at most, all stamped; 2.4 to 4.4 KB for
+  the whole collapse over three runs with ragged cracks (0.9 to 1.3 KB before, the pieces then square and quicker to
+  rest), at most 66 bytes in one snapshot, 640 to 940 bytes a second while pieces fell. The blast itself is an edit of about 20 bytes. A player joining after gets the region files' changed bricks,
   as for any other dig.
 - Not built: the messages, ordering the blasts and the stamps among other edits, and pieces chipping each other the
   same everywhere (chips are the server's alone in this design, and would go as small digs of the piece).

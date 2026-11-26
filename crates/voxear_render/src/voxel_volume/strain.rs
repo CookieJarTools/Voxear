@@ -23,7 +23,7 @@ use voxear_core::math::{IVec3, Vec3};
 
 use super::{
     VoxelPiece,
-    collapse::{AIR, BUILT, Grid, HOLDS, SIDES, VoxelStuff, piece_of},
+    collapse::{BUILT, Grid, HOLDS, SIDES, VoxelStuff, piece_of},
 };
 
 /// How the loads on what is built are found.
@@ -909,6 +909,7 @@ pub(super) fn strain(
     done.joins = graph.joins.len();
     let mut solver: Option<Solver> = None;
     let mut round = VoxelRound::default();
+    let bricks_at: HashMap<IVec3, usize> = graph.nodes.iter().enumerate().map(|(i, node)| (node.brick, i)).collect();
     // How near each join came to breaking, at the last loads found.
     let mut strained = vec![0.0; graph.joins.len()];
     for _ in 0..MOST_ROUNDS {
@@ -933,23 +934,19 @@ pub(super) fn strain(
                         solver.forget(&graph, i);
                     }
                 }
+                // Each part's voxels, the crack between it and what it broke from wandering through the voxels
+                // either side of their bricks' faces.
+                let members: HashSet<usize> = set.iter().copied().collect();
                 for part in parts {
-                    let mut voxels: Vec<IVec3> = Vec::new();
-                    for i in part {
-                        let b = graph.nodes[i].brick;
-                        for z in 0..8 {
-                            for y in 0..8 {
-                                for x in 0..8 {
-                                    let c = b * 8 + IVec3::new(x, y, z);
-                                    if after.class(c) == BUILT {
-                                        voxels.push(c);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let voxels = cracked(after, &graph, &bricks_at, &members, &part);
                     take_set(after, voxels, &mut round);
                 }
+            }
+            // What cracks left in the bricks come loose, this round or before, held to nothing that stands, goes too.
+            let gone: HashSet<usize> = (0..graph.nodes.len()).filter(|&i| graph.nodes[i].gone).collect();
+            let left = stranded(after, &graph, &bricks_at, &gone);
+            if !left.is_empty() {
+                take_set(after, left, &mut round);
             }
             if !round.dig.is_empty() || round.broken > 0 {
                 done.loose.push(std::mem::take(&mut round));
@@ -1048,6 +1045,162 @@ fn split(graph: &Graph, set: &[usize], strained: &[f64]) -> Vec<Vec<usize>> {
     parts
 }
 
+/// How far a crack wanders from the face between two bricks, in voxels,
+/// each way.
+const CRACK: f32 = 3.0;
+
+/// How far the crack through the face of bricks square to axis `axis`, at
+/// `face` voxels along it, lies from the face toward the higher side, at
+/// (`u`, `w`) along the other two: smooth over a few voxels, rough at
+/// each, the same from either side.
+fn crack_at(axis: usize, face: i32, u: i32, w: i32) -> f32 {
+    const SPAN: i32 = 4;
+    let seed = 0xC4AC_u32.wrapping_add(axis as u32 * 977);
+    let corner = |a: i32, b: i32| super::ground::hash(a, b, face, seed) as f32 / u32::MAX as f32 * 2.0 - 1.0;
+    let (cu, cw) = (u.div_euclid(SPAN), w.div_euclid(SPAN));
+    let (fu, fw) = ((u.rem_euclid(SPAN) as f32 + 0.5) / SPAN as f32, (w.rem_euclid(SPAN) as f32 + 0.5) / SPAN as f32);
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    let (eu, ew) = (ease(fu), ease(fw));
+    let low = corner(cu, cw) + (corner(cu + 1, cw) - corner(cu, cw)) * eu;
+    let high = corner(cu, cw + 1) + (corner(cu + 1, cw + 1) - corner(cu, cw + 1)) * eu;
+    let smooth = low + (high - low) * ew;
+    let rough = super::ground::hash(u, w, face, seed ^ 0x5EED) as f32 / u32::MAX as f32 - 0.5;
+    (smooth * (CRACK - 0.6) + rough * 1.2).clamp(-CRACK, CRACK)
+}
+
+/// Whether the node of brick `brick` is still among what may be cracked
+/// apart: standing, or of the set `members` coming loose.
+fn crackable(
+    graph: &Graph,
+    bricks_at: &HashMap<IVec3, usize>,
+    members: &HashSet<usize>,
+    brick: IVec3,
+) -> Option<usize> {
+    let &k = bricks_at.get(&brick)?;
+    (members.contains(&k) || !graph.nodes[k].gone).then_some(k)
+}
+
+/// The built voxels that come loose with the bricks of `part`: those of its
+/// bricks, and of the bricks beside them it broke from, on its side of the
+/// crack through each face between them ([`crack_at`]), not its bricks'
+/// faces themselves.
+fn cracked(
+    grid: &mut Grid,
+    graph: &Graph,
+    bricks_at: &HashMap<IVec3, usize>,
+    members: &HashSet<usize>,
+    part: &[usize],
+) -> Vec<IVec3> {
+    let mine: HashSet<IVec3> = part.iter().map(|&i| graph.nodes[i].brick).collect();
+    let mut near: Vec<IVec3> = mine.iter().copied().collect();
+    for b in &mine {
+        for side in SIDES {
+            let n = *b + side;
+            if !mine.contains(&n) && crackable(graph, bricks_at, members, n).is_some() && !near.contains(&n) {
+                near.push(n);
+            }
+        }
+    }
+    let mut voxels = Vec::new();
+    for b in near {
+        let own = mine.contains(&b);
+        for z in 0..8 {
+            for y in 0..8 {
+                for x in 0..8 {
+                    let l = IVec3::new(x, y, z);
+                    let c = b * 8 + l;
+                    if grid.class(c) != BUILT {
+                        continue;
+                    }
+                    // The nearest face to a brick on the other side of the crack, within its wander.
+                    let mut nearest: Option<(f32, usize, i32, bool)> = None;
+                    for axis in 0..3 {
+                        for high in [false, true] {
+                            let far = if high { 8.0 - (l[axis] as f32 + 0.5) } else { l[axis] as f32 + 0.5 };
+                            if far > CRACK + 0.5 || nearest.is_some_and(|(d, ..)| d <= far) {
+                                continue;
+                            }
+                            let mut step = IVec3::ZERO;
+                            step[axis] = if high { 1 } else { -1 };
+                            let other = b + step;
+                            if crackable(graph, bricks_at, members, other).is_none() || mine.contains(&other) == own {
+                                continue;
+                            }
+                            let face = (b[axis] + i32::from(high)) * 8;
+                            nearest = Some((far, axis, face, high));
+                        }
+                    }
+                    let goes = match nearest {
+                        None => own,
+                        Some((far, axis, face, high)) => {
+                            let (u, w) = match axis {
+                                0 => (c.y, c.z),
+                                1 => (c.x, c.z),
+                                _ => (c.x, c.y),
+                            };
+                            // How far up the axis from the face, and the crack's place there: the part is the side
+                            // the crack leaves it.
+                            let up = c[axis] as f32 + 0.5 - face as f32;
+                            let crack = crack_at(axis, face, u, w);
+                            let part_is_up = own != high;
+                            if part_is_up { up > crack } else { up < crack }
+                        }
+                    };
+                    if goes {
+                        voxels.push(c);
+                    }
+                }
+            }
+        }
+    }
+    voxels
+}
+
+/// The built voxels cracks left in the bricks of `members`, which have
+/// come loose, that touch nothing that holds or a built voxel of a brick
+/// still standing, through each other or at once.
+fn stranded(grid: &mut Grid, graph: &Graph, bricks_at: &HashMap<IVec3, usize>, members: &HashSet<usize>) -> Vec<IVec3> {
+    let mut left: Vec<IVec3> = Vec::new();
+    for &i in members {
+        let b = graph.nodes[i].brick;
+        for z in 0..8 {
+            for y in 0..8 {
+                for x in 0..8 {
+                    let c = b * 8 + IVec3::new(x, y, z);
+                    if grid.class(c) == BUILT {
+                        left.push(c);
+                    }
+                }
+            }
+        }
+    }
+    if left.is_empty() {
+        return left;
+    }
+    let all: HashSet<IVec3> = left.iter().copied().collect();
+    let standing = |c: IVec3| bricks_at.get(&c.div_euclid(IVec3::splat(8))).is_some_and(|&k| !graph.nodes[k].gone);
+    let mut held: HashSet<IVec3> = HashSet::new();
+    let mut queue: Vec<IVec3> = Vec::new();
+    for &c in &left {
+        let touches = SIDES.iter().any(|side| {
+            let n = c + *side;
+            !all.contains(&n) && (grid.class(n) == HOLDS || (standing(n) && grid.class(n) == BUILT))
+        });
+        if touches && held.insert(c) {
+            queue.push(c);
+        }
+    }
+    while let Some(c) = queue.pop() {
+        for side in SIDES {
+            let n = c + side;
+            if all.contains(&n) && held.insert(n) {
+                queue.push(n);
+            }
+        }
+    }
+    left.into_iter().filter(|c| !held.contains(c)).collect()
+}
+
 /// Takes `voxels` out of `grid` into `round`: each set of them that touch
 /// a piece, or crumbs where too few.
 fn take_set(grid: &mut Grid, voxels: Vec<IVec3>, round: &mut VoxelRound) {
@@ -1081,7 +1234,6 @@ fn take_set(grid: &mut Grid, voxels: Vec<IVec3>, round: &mut VoxelRound) {
     for c in &voxels {
         grid.take(*c);
     }
-    let _ = AIR;
 }
 
 #[cfg(test)]
@@ -1212,6 +1364,44 @@ mod tests {
             let all = joins_of(&volume, &near);
             assert!(all > 0);
         }
+    }
+
+    #[test]
+    fn what_gives_way_cracks_through_the_voxels_not_along_its_bricks_faces() {
+        let mut volume = flat();
+        house(&mut volume, Vec3::new(4.0, 1.0, 4.0), 5.0, 4.0, 2.5);
+        let blast = super::super::collapse::VoxelBlast { at: Vec3::new(4.0, 2.5, 4.0), radius: 1.8 };
+        let (_, dug, _) = super::super::collapse::blast_dig(&volume, blast);
+        let dug: HashSet<IVec3> = dug.into_iter().collect();
+        let mut memory = VoxelStrainMemory::default();
+        let (_, done) = super::super::collapse::blast(&volume, blast, &mut memory);
+        let loose: HashSet<IVec3> =
+            done.settled.strain.loose.iter().flat_map(|round| round.dig.iter().copied()).collect();
+        assert!(loose.len() > 3000, "{}", loose.len());
+        // Where what came loose meets what stands, the faces between them: on the bricks' faces, or through them.
+        let mut was = Grid::new(&volume, None);
+        let (mut on_faces, mut through) = (0, 0);
+        for c in &loose {
+            for side in SIDES {
+                let n = *c + side;
+                if loose.contains(&n) || dug.contains(&n) || was.class(n) != BUILT {
+                    continue;
+                }
+                let across = if side.cmplt(IVec3::ZERO).any() { *c } else { n };
+                let axis = (0..3).find(|&a| side[a] != 0).unwrap();
+                if across[axis].rem_euclid(8) == 0 { on_faces += 1 } else { through += 1 }
+            }
+        }
+        eprintln!("cracks: {through} faces through bricks, {on_faces} on their faces");
+        assert!(through > on_faces, "the crack wanders through the voxels: {through} through, {on_faces} on faces");
+        // Nothing left floating: every built voxel left in the bricks that came loose still touches what stands.
+        let mut after = (*volume.changes).clone();
+        for c in dug.iter().chain(&loose) {
+            after.set(*c, None);
+        }
+        let left = VoxelVolume { changes: std::sync::Arc::new(after), ..volume.clone() };
+        let (_, again) = super::super::collapse::loosen(&left, &loose.iter().copied().collect::<Vec<_>>());
+        assert_eq!(again.loose, 0, "nothing hangs from nothing after the cracks");
     }
 
     #[test]

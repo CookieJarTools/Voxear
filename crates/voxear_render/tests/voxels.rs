@@ -8,7 +8,8 @@ use voxear_ecs::World;
 use voxear_render::{
     AmbientOcclusion, AntiAliasing, AntiAliasingMode, BoxBone, BoxModel, Camera, Light, MaterialDesc, MeshRenderer,
     ModelBox, PostProcess, Primitive, Renderer, RendererSettings, Sky, VoxelEdit, VoxelGenerator, VoxelGround,
-    VoxelMaterial, VoxelPrint, VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
+    VoxelMaterial, VoxelPrint, VoxelPrintMaterial, VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels,
+    WindZone,
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
@@ -1202,4 +1203,139 @@ fn an_endless_volume_shows_its_generators_overhangs_and_caves() {
         .expect("a cave under the ground");
     let pixels = render(&mut renderer, &generated_view(world, cave[0], cave[1], -4.0, 5.0), 3);
     keep_image("generated inside a cave.png", &pixels);
+}
+
+/// What a house of [`house`] has.
+#[derive(Clone, Copy, Default)]
+struct House {
+    roof: bool,
+    door: bool,
+    lantern: bool,
+    window: bool,
+}
+
+/// A house 4 m square and 3 m tall printed on flat endless ground at
+/// `(8, 2, 8)`: stone walls a quarter of a metre thick, with what `has`
+/// says: a roof as thick; a door 1 m wide and 2 m tall in its east wall; a
+/// lantern of glowing voxels in its north-west corner on the floor; and a
+/// pane of glass 1 m square in its west wall.
+fn house(has: House) -> Arc<VoxelPrint> {
+    let House { roof, door: doorway, lantern, window } = has;
+    let stone = [150, 146, 138, 255];
+    let flame = [255, 186, 80, 255];
+    let glass = [196, 222, 230, 255];
+    let mut settings = VoxelPrintSettings::default();
+    settings.materials = vec![
+        VoxelPrintMaterial { colour: [255, 186, 80], glass: 0, light: 14 },
+        VoxelPrintMaterial { colour: [196, 222, 230], glass: 12, light: 0 },
+    ];
+    let print = VoxelPrint::from_voxels(
+        [64, 48, 64],
+        16,
+        Vec3::new(32.0, 0.0, 32.0),
+        vec![stone, flame, glass],
+        settings,
+        |c| {
+            let [x, y, z] = c.map(|a| a as i32);
+            let wall = x < 4 || x >= 60 || z < 4 || z >= 60;
+            let top = y >= 44;
+            let door = doorway && x >= 60 && (24..40).contains(&z) && y < 32;
+            let pane = x < 4 && (24..40).contains(&z) && (16..32).contains(&y);
+            let lamp = (6..10).contains(&x) && (6..10).contains(&z) && y < 6;
+            if lantern && lamp {
+                2
+            } else if window && pane {
+                3
+            } else if (wall && !door) || (roof && top) {
+                1
+            } else {
+                0
+            }
+        },
+    );
+    Arc::new(print)
+}
+
+/// Flat endless ground 2 m up with `print` printed at `(8, 2, 8)`, seen
+/// straight down from `height` metres over the ground there, the sun low in
+/// the west, and the sky's light all round.
+fn printed_from_above(print: Arc<VoxelPrint>, height: f32) -> World {
+    let mut world = World::new();
+    let ground = VoxelGround { height: 2.0, hills: 0.0, grass: 0.0, flowers: 0.0, ..VoxelGround::default() };
+    let edits = Arc::new(vec![VoxelEdit::printed(print, Vec3::new(8.0, 2.0, 8.0), Quat::IDENTITY)]);
+    let volume = VoxelVolume {
+        size: Vec3::new(16.0, 8.0, 16.0),
+        ground: Some(ground),
+        endless: true,
+        reach: 24.0,
+        edits,
+        ..VoxelVolume::default()
+    };
+    world.spawn((volume, Transform::default()));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((
+        Camera { near: 0.05, ..Camera::default() },
+        Transform::new(Vec3::new(8.0, 2.0 + height, 8.0), down, Vec3::ONE),
+    ));
+    let towards_sun = Vec3::new(-35f32.to_radians().cos(), 35f32.to_radians().sin(), 0.0);
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    world
+}
+
+/// The mean of the pixels within `r` of where `(x, z)` on the ground is,
+/// seen from `height` metres over it.
+fn mean_around(pixels: &[u8], height: f32, (x, z): (f32, f32), r: i32) -> [i32; 3] {
+    let (px, py) = from_above(height, x, z);
+    let mut sum = [0; 3];
+    let mut n = 0;
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let c = rgb_at(pixels, (px as i32 + dx) as u32, (py as i32 + dy) as u32);
+            (0..3).for_each(|i| sum[i] += c[i]);
+            n += 1;
+        }
+    }
+    sum.map(|v| v / n)
+}
+
+#[test]
+fn a_room_under_a_roof_is_dark_but_for_its_door_and_its_lantern() {
+    let Some(mut renderer) = renderer() else { return };
+    // Seen from just under where the roof is, 2.6 m over the floor: the floor's middle and the corner by the lantern.
+    let height = 2.6;
+    let middle = (7.6, 8.4);
+    let corner = (6.6, 6.6);
+    let mut shot = |has: House, name: &str| {
+        let pixels = render(&mut renderer, &printed_from_above(house(has), height), 12);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let open = shot(House::default(), "room open to the sky.png");
+    let sealed = shot(House { roof: true, ..House::default() }, "room sealed.png");
+    let door = shot(House { roof: true, door: true, ..House::default() }, "room with a door.png");
+    let lit = shot(House { roof: true, lantern: true, ..House::default() }, "room sealed with a lantern.png");
+    let sum = |c: [i32; 3]| c.iter().sum::<i32>();
+    let at = |pixels: &[u8], (x, z): (f32, f32)| sum(mean_around(pixels, height, (x, z), 4));
+    let (open_middle, sealed_middle) = (at(&open, middle), at(&sealed, middle));
+    assert!(
+        sealed_middle * 4 < open_middle,
+        "sealed under the roof: {sealed_middle} against {open_middle} open to the sky"
+    );
+    // A door lets some of the sky in: the floor by it lighter than by the far wall, which is lighter than sealed.
+    let (by_door, far) = (at(&door, (9.4, 8.0)), at(&door, (6.6, 8.0)));
+    assert!(
+        by_door > far && far > sealed_middle,
+        "by the door {by_door}, at the far wall {far}, sealed {sealed_middle}"
+    );
+    // The lantern lights the floor round it, warm, and the corner across the room less.
+    let by_lantern = mean_around(&lit, height, corner, 4);
+    let [r, _, b] = by_lantern;
+    assert!(sum(by_lantern) > at(&sealed, corner) * 3, "by the lantern: {by_lantern:?}");
+    assert!(r > b + 20, "the lantern's light is warm: {by_lantern:?}");
+    let across = at(&lit, (9.4, 9.4));
+    assert!(across < sum(by_lantern), "across the room {across}, by the lantern {}", sum(by_lantern));
 }

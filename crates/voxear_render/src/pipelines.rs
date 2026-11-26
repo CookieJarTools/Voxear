@@ -234,6 +234,10 @@ pub struct Pipelines {
     pub voxel_forward: vk::Pipeline,
     /// The voxels' shadows on whatever the depth passes drew, traced from each pixel.
     pub voxel_shadows: vk::Pipeline,
+    /// The light kept round the camera for the voxels: what lets it through each cell, and a step of spreading it.
+    pub voxel_light_cells: vk::Pipeline,
+    pub voxel_light_sky: vk::Pipeline,
+    pub voxel_light_spread: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
     pub voxel_world_columns: vk::Pipeline,
     pub voxel_world_tops: vk::Pipeline,
@@ -1054,6 +1058,9 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
+            voxel_light_cells: maker.compute("Voxel light cells", voxels, c"voxelLightCells")?,
+            voxel_light_sky: maker.compute("Voxel light sky", voxels, c"voxelLightSky")?,
+            voxel_light_spread: maker.compute("Voxel light spread", voxels, c"voxelLightSpread")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
             voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
@@ -1491,6 +1498,9 @@ impl Pipelines {
             self.voxel_depth,
             self.voxel_forward,
             self.voxel_shadows,
+            self.voxel_light_cells,
+            self.voxel_light_sky,
+            self.voxel_light_spread,
             self.voxel_world_columns,
             self.voxel_world_tops,
             self.voxel_world_trees,

@@ -20,7 +20,9 @@
 pub mod bricks;
 mod endless;
 pub(crate) use endless::generated_at;
+pub(crate) use light::LightView;
 mod ground;
+mod light;
 pub mod print;
 mod ray;
 mod rivers;
@@ -36,7 +38,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
 pub use ground::{GROUND_COLORS, VoxelGround};
-pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
+pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
 pub use solid::VoxelSolids;
 pub use rivers::GpuVoxelWater;
@@ -391,7 +393,8 @@ fn stamp_into(
             voxels.each(|cell, color| {
                 let local = -reach + (Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32) + 0.5) * each;
                 let middle = to_volume.transform_point3(local) * per_metre;
-                let place = place_of(palette, places, model.voxel_color(color));
+                let [r, g, b, alpha] = model.voxel_color(color);
+                let place = place_of(palette, places, [r, g, b, kind_byte(alpha, 0)]);
                 let low = (middle - half * per_metre).round();
                 let high = (middle + half * per_metre).round();
                 let (low, high) = (low.as_ivec3(), high.as_ivec3().max(low.as_ivec3() + 1));
@@ -405,6 +408,25 @@ fn stamp_into(
             });
         }
     }
+}
+
+/// The fourth byte of a colour of a volume's palette, for a colour `alpha`
+/// solid (255 solid, less see-through, as glass) that glows `glow` (0 for
+/// none, up to 15, as a block's light): 255 for a plain solid voxel. On the
+/// GPU, 255 less it is the kind over the colour's red, green and blue, how
+/// see-through in its low four bits and how bright it glows in its high
+/// four (`voxelKind` in `shaders/voxels.slang`).
+pub fn kind_byte(alpha: u8, glow: u8) -> u8 {
+    let see = (u32::from(255 - alpha) * 15 + 127) / 255;
+    // A colour solid but a little is still see-through.
+    let see = if alpha < 255 { see.max(1) } else { 0 };
+    255 - (see | u32::from(glow.min(15)) << 4) as u8
+}
+
+/// A colour of a volume's palette as the GPU reads it: its red, green and
+/// blue, and its kind over them ([`kind_byte`]).
+pub(crate) fn palette_word(colour: [u8; 4]) -> u32 {
+    u32::from(colour[0]) | u32::from(colour[1]) << 8 | u32::from(colour[2]) << 16 | u32::from(255 - colour[3]) << 24
 }
 
 /// A volume as the shaders read it (`VoxelVolume` in shaders/common.slang).
@@ -438,6 +460,13 @@ pub(crate) struct GpuVoxelVolumes {
     seen: u64,
     seen_width: u32,
     shadow_mask: u32,
+    light: u64,
+    light_cells: u64,
+    light_corner: [f32; 3],
+    light_cell: f32,
+    light_size: [i32; 3],
+    glass_on: u32,
+    glass: u64,
     volumes: [GpuVoxelVolume; MAX_VOXEL_VOLUMES],
 }
 
@@ -484,6 +513,9 @@ pub(crate) struct VoxelVolumes {
     water_seen: Vec<(Entity, u64)>,
     water_version: u64,
     water: Vec<(Option<Buffer>, u64, u32)>,
+    /// The light kept round the camera, and where the camera is.
+    light: Option<light::LightGrid>,
+    camera: Option<Vec3>,
 }
 
 /// How many volumes are drawn, and their bricks and bytes on the GPU.
@@ -515,6 +547,7 @@ impl VoxelVolumes {
             })
             .collect();
         let camera = camera_of(world);
+        self.camera = camera;
         for (entity, volume, corner) in found {
             seen.push(entity);
             if volume.endless {
@@ -602,9 +635,29 @@ impl VoxelVolumes {
     }
 
     /// Records the passes that make this frame's columns of endless volumes,
-    /// for frame slot `slot`, and gives the buffers they write, which the
-    /// voxel passes read.
-    pub fn record(&self, fg: &mut FrameGraph<'_>, pipelines: Pipelines, slot: usize) -> Vec<BufferId> {
+    /// for frame slot `slot`, and that light the cells round the camera
+    /// after them; gives the buffers the making writes, which the voxel
+    /// passes read, and the light the views read.
+    pub fn record(
+        &mut self,
+        gpu: &Gpu,
+        fg: &mut FrameGraph<'_>,
+        pipelines: Pipelines,
+        slot: usize,
+    ) -> Result<(Vec<BufferId>, Option<light::LightView>)> {
+        let pools = self.record_making(fg, pipelines, slot);
+        let Some(camera) = self.camera.filter(|_| !self.drawn.is_empty()) else {
+            return Ok((pools, None));
+        };
+        if self.light.is_none() {
+            self.light = Some(light::LightGrid::new(gpu)?);
+        }
+        let grid = self.light.as_mut().expect("made above");
+        let view = grid.record(gpu, fg, pipelines, (slot, &pools), &self.drawn, camera)?;
+        Ok((pools, view))
+    }
+
+    fn record_making(&self, fg: &mut FrameGraph<'_>, pipelines: Pipelines, slot: usize) -> Vec<BufferId> {
         let mut pools = Vec::new();
         for made in self.endless.values() {
             let ids: Vec<BufferId> = made.pools().iter().map(|buffer| fg.import_buffer(buffer)).collect();
@@ -688,43 +741,70 @@ impl VoxelVolumes {
     }
 }
 
+/// Volumes `drawn` as the shaders read them, their corners `offset` from
+/// where they are, with nothing else set: the coarsest first, so the coarse
+/// rays' margin is a brick of the coarsest that is nearest the camera.
+pub(crate) fn volumes_record(drawn: &[(GpuVoxelVolume, Vec3)], offset: Vec3) -> GpuVoxelVolumes {
+    let mut volumes = GpuVoxelVolumes {
+        count: drawn.len().min(MAX_VOXEL_VOLUMES) as u32,
+        coarse_step: 0,
+        coarse_size: [0; 2],
+        coarse: 0,
+        lod_scale: LOD_SCALE,
+        seen_on: 0,
+        seen: 0,
+        seen_width: 0,
+        shadow_mask: crate::NO_TEXTURE,
+        light: 0,
+        light_cells: 0,
+        light_corner: [0.0; 3],
+        light_cell: 0.0,
+        light_size: [0; 3],
+        glass_on: 0,
+        glass: 0,
+        volumes: [GpuVoxelVolume::default(); MAX_VOXEL_VOLUMES],
+    };
+    let mut drawn: Vec<_> = drawn.iter().take(MAX_VOXEL_VOLUMES).collect();
+    drawn.sort_by(|a, b| b.0.voxel.total_cmp(&a.0.voxel));
+    for (slot, (record, corner)) in drawn.into_iter().enumerate() {
+        volumes.volumes[slot] = GpuVoxelVolume { corner: (*corner - offset).to_array(), ..*record };
+    }
+    volumes
+}
+
 /// Writes a view's volumes, `drawn`, into `buffer`, their corners `offset`
 /// from where they are (a view through a Portal's), with its coarse rays in
-/// `coarse` for a picture `size` pixels: what the view's voxel passes draw,
-/// or `None` with none.
+/// `coarse` for a picture `size` pixels and the light kept round the camera:
+/// what the view's voxel passes draw, or `None` with none.
 pub(crate) fn gather(
     drawn: &[(GpuVoxelVolume, Vec3)],
     (buffer, coarse, seen): (&Buffer, &Buffer, Option<&Buffer>),
     size: [u32; 2],
     offset: Vec3,
+    light: Option<light::LightView>,
 ) -> Option<ViewVoxels> {
-    {
-        if drawn.is_empty() {
-            return None;
-        }
-        let coarse_size = [size[0] / COARSE_STEP + 2, size[1] / COARSE_STEP + 2];
-        let fits = u64::from(coarse_size[0]) * u64::from(coarse_size[1]) <= COARSE_ROOM;
-        let mut volumes = GpuVoxelVolumes {
-            count: drawn.len().min(MAX_VOXEL_VOLUMES) as u32,
-            coarse_step: if fits { COARSE_STEP } else { 0 },
-            coarse_size,
-            coarse: coarse.address,
-            lod_scale: LOD_SCALE,
-            seen_on: u32::from(seen.is_some()),
-            seen: seen.map_or(0, |seen| seen.address),
-            seen_width: size[0],
-            shadow_mask: crate::NO_TEXTURE,
-            volumes: [GpuVoxelVolume::default(); MAX_VOXEL_VOLUMES],
-        };
-        // The finest first, so the coarse rays' margin is a brick of the coarsest that is nearest the camera.
-        let mut drawn: Vec<_> = drawn.iter().take(MAX_VOXEL_VOLUMES).collect();
-        drawn.sort_by(|a, b| b.0.voxel.total_cmp(&a.0.voxel));
-        for (slot, (record, corner)) in drawn.into_iter().enumerate() {
-            volumes.volumes[slot] = GpuVoxelVolume { corner: (*corner - offset).to_array(), ..*record };
-        }
-        buffer.write(0, std::slice::from_ref(&volumes));
-        Some(ViewVoxels { coarse_size, coarse_on: fits, coarse: None, seen: None, pools: Vec::new(), shadow: None })
+    if drawn.is_empty() {
+        return None;
     }
+    let coarse_size = [size[0] / COARSE_STEP + 2, size[1] / COARSE_STEP + 2];
+    let fits = u64::from(coarse_size[0]) * u64::from(coarse_size[1]) <= COARSE_ROOM;
+    let mut volumes = volumes_record(drawn, offset);
+    volumes.coarse_step = if fits { COARSE_STEP } else { 0 };
+    volumes.coarse_size = coarse_size;
+    volumes.coarse = coarse.address;
+    volumes.seen_on = u32::from(seen.is_some());
+    volumes.seen = seen.map_or(0, |seen| seen.address);
+    volumes.seen_width = size[0];
+    if let Some(light) = light {
+        volumes.light = light.light_address;
+        volumes.light_cells = light.cells_address;
+        volumes.light_corner = (light.corner - offset).to_array();
+        volumes.light_cell = light.cell;
+        volumes.light_size = light::LIGHT_CELLS;
+    }
+    buffer.write(0, std::slice::from_ref(&volumes));
+    let light = light.map(|light| vec![light.light, light.cells]).unwrap_or_default();
+    Some(ViewVoxels { coarse_size, coarse_on: fits, coarse: None, seen: None, pools: Vec::new(), shadow: None, light })
 }
 
 /// Names `texture` as the voxels' shadows on everything in a view's volumes
@@ -747,6 +827,9 @@ impl VoxelVolumes {
         }
         for (buffer, _, _) in self.water.drain(..) {
             buffer.into_iter().for_each(|buffer| gpu.destroy_buffer(buffer));
+        }
+        for buffer in self.light.take().map(light::LightGrid::into_buffers).unwrap_or_default() {
+            gpu.destroy_buffer(buffer);
         }
     }
 }
@@ -778,6 +861,8 @@ pub(crate) struct ViewVoxels {
     /// Whether the sun reaches each pixel past the voxels, traced from
     /// whatever the depth passes drew there, where the sun is up.
     pub shadow: Option<ImageId>,
+    /// The light kept round the camera, which whatever is lit by it reads.
+    pub light: Vec<BufferId>,
 }
 
 /// The bytes a view keeps of what its depth pass met, for a picture `size`
@@ -791,8 +876,7 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
     let align = |n: usize| n.div_ceil(16) * 16;
     let sectors = bytemuck::cast_slice::<u32, u8>(&packed.sectors);
     let bricks = bytemuck::cast_slice::<u32, u8>(&packed.bricks);
-    let colours: Vec<u32> =
-        palette.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+    let colours: Vec<u32> = palette.iter().copied().map(palette_word).collect();
     let colours = bytemuck::cast_slice::<u32, u8>(&colours);
     let at = [0, align(sectors.len()), align(sectors.len()) + align(bricks.len())];
     let palette_at = at[2] + align(packed.materials.len());
@@ -836,7 +920,7 @@ mod tests {
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
         assert_eq!(size_of::<GpuVoxelVolume>(), 96);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 96 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 104 + 96 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

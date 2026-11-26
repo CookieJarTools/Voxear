@@ -331,7 +331,10 @@ pub fn record(
     // Models blending into the ground read the terrains' heights and shares too.
     let grounds = frame.terrain.iter().flat_map(|terrains| &terrains.heights);
     let grounds = grounds.map(|&id| (id, BufferAccess::ShaderRead));
-    let shading_buffers: Vec<_> = edge_buffers.iter().copied().chain(counted).chain(grounds).collect();
+    // And what is lit by the light kept round the camera for the voxels reads it.
+    let voxel_light = frame.voxels.iter().flat_map(|voxels| &voxels.light).map(|&id| (id, BufferAccess::ShaderRead));
+    let shading_buffers: Vec<_> =
+        edge_buffers.iter().copied().chain(counted).chain(grounds).chain(voxel_light).collect();
     drawing.extend(counted);
 
     let (count_handle, stats_handle) = (draws.count_handle, draws.stats_handle);

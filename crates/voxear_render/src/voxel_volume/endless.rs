@@ -394,8 +394,7 @@ fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow:
 
 /// A palette's colours in a buffer the GPU reads.
 fn palette_buffer(gpu: &Gpu, colours: &[[u8; 4]]) -> Result<Buffer> {
-    let words: Vec<u32> =
-        colours.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+    let words: Vec<u32> = colours.iter().copied().map(super::palette_word).collect();
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
@@ -735,7 +734,9 @@ impl Endless {
             if self.prints.iter().any(|(print, _)| print.id == printed.print.id) {
                 continue;
             }
-            let places = printed.print.palette.iter().map(|&colour| place_in(&mut self.colours, colour)).collect();
+            let print = &printed.print;
+            let places =
+                (0..print.palette.len()).map(|i| place_in(&mut self.colours, print.volume_colour(i))).collect();
             self.prints.push((printed.print.clone(), places));
             added = true;
         }
@@ -1187,7 +1188,7 @@ impl Endless {
 /// The place of `colour` in a palette, added where there is room, else the
 /// nearest the palette has.
 fn place_in(colours: &mut Vec<[u8; 4]>, colour: [u8; 4]) -> u8 {
-    if let Some(at) = colours.iter().position(|c| c[..3] == colour[..3]) {
+    if let Some(at) = colours.iter().position(|c| *c == colour) {
         return at as u8;
     }
     if colours.len() < MOST_COLOURS {

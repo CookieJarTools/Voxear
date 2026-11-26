@@ -91,6 +91,24 @@ pub struct VoxelPrintSettings {
     /// Pictures its parts are coloured from, in place of their own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pictures: Vec<VoxelPrintPicture>,
+    /// Colours of its voxels made glass, seen through, or lights, glowing
+    /// as a lantern's flame does and lighting what is round them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<VoxelPrintMaterial>,
+}
+
+/// A colour of a print's voxels made glass or a light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxelPrintMaterial {
+    /// The colour, red, green and blue as sRGB.
+    pub colour: [u8; 3],
+    /// How see-through, from 0, solid, to 15, as clear as glass is made:
+    /// 12 for a window.
+    pub glass: u8,
+    /// How brightly it glows, from 0, not at all, to 15, as a block's light:
+    /// a step less of it for each metre from it.
+    pub light: u8,
 }
 
 impl Default for VoxelPrintSettings {
@@ -102,6 +120,7 @@ impl Default for VoxelPrintSettings {
             colours: 32,
             fill: VoxelPrintFill::Solid,
             pictures: Vec::new(),
+            materials: Vec::new(),
         }
     }
 }
@@ -192,6 +211,18 @@ impl VoxelPrint {
         };
         print.id = print.hash_of();
         print
+    }
+
+    /// Colour `place` of its palette as a volume's palette keeps it: its
+    /// red, green and blue, and over them how see-through it is, by its
+    /// alpha or its settings' materials, and how it glows, by those
+    /// ([`kind_byte`](super::kind_byte)).
+    pub fn volume_colour(&self, place: usize) -> [u8; 4] {
+        let [r, g, b, alpha] = self.palette.get(place).copied().unwrap_or([200, 200, 200, 255]);
+        let material = self.settings.materials.iter().find(|material| material.colour == [r, g, b]);
+        let (glass, light) = material.map_or((0, 0), |material| (material.glass.min(15), material.light));
+        let alpha = alpha.min(255 - glass * 17);
+        [r, g, b, super::kind_byte(alpha, light)]
     }
 
     /// How many bricks its box is along each side.

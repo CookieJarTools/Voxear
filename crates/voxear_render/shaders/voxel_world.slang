@@ -74,6 +74,10 @@ static const uint LEAFY = 1u << 24;
 // What moves a brick in the wind, two bits over that mark (VOXEL_SWAY_SHIFT in voxels.slang); and a voxel that keeps
 // still.
 static const uint SWAY_SHIFT = 25u;
+// A brick with a voxel that glows, and one with a voxel that is see-through, marked over that (VOXEL_GLOWS and
+// VOXEL_SEE_THROUGH in voxels.slang): by the kind over a palette colour's red, green and blue.
+static const uint GLOWS = 1u << 27;
+static const uint SEE_THROUGH = 1u << 28;
 static const uint SWAY_STILL = 0u;
 static const uint SWAY_GRASS = 1u;
 static const uint SWAY_LEAVES = 2u;
@@ -1350,6 +1354,8 @@ groupshared uint sharedGroupCounts[64];
 groupshared uint sharedTreeVoxels;
 // Which of SWAY_STILL, SWAY_GRASS and SWAY_LEAVES its voxels are, a bit each.
 groupshared uint sharedSway;
+// The kinds of its voxels' colours, or'd together: whether any glows or is see-through.
+groupshared uint sharedKinds;
 // The edits that reach the brick and its border, in the order they were made.
 groupshared uint sharedEdits[MOST_BRICK_EDITS];
 groupshared uint sharedEditCount;
@@ -1442,6 +1448,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedOwn = 0;
         sharedTreeVoxels = 0;
         sharedSway = 0;
+        sharedKinds = 0;
         sharedEditCount = 0;
     }
     GroupMemoryBarrierWithGroupSync();
@@ -1701,6 +1708,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         InterlockedAdd(sharedSum[1], (colour >> 8) & 255u);
         InterlockedAdd(sharedSum[2], (colour >> 16) & 255u);
         InterlockedAdd(sharedSum[3], 1u);
+        InterlockedOr(sharedKinds, colour >> 24);
     }
     GroupMemoryBarrierWithGroupSync();
     if (index == 0)
@@ -1785,7 +1793,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         // A brick with any ground or wood stays still in the wind; else its leaves sway, or its grass leans.
         uint sway = (sharedSway & (1u << SWAY_STILL)) != 0 ? 0u : ((sharedSway & (1u << SWAY_LEAVES)) != 0 ? SWAY_LEAVES : SWAY_GRASS);
         record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u)
-            | (sway << SWAY_SHIFT);
+            | (sway << SWAY_SHIFT) | ((sharedKinds & 0xF0u) != 0u ? GLOWS : 0u) | ((sharedKinds & 0x0Fu) != 0u ? SEE_THROUGH : 0u);
     }
     else if (index == 20)
     {

@@ -54,7 +54,40 @@ struct VoxelHit
     int brick;
     uint level;
     int steps;
+    // The first see-through voxel the ray passed through on its way, as glass is: how far along it, as `t` is (-1 for
+    // none) and in metres, its side, its volume and its colour's palette word.
+    float glassT;
+    float glassMetres;
+    int glassAxis;
+    uint glassVolume;
+    uint glassColour;
 };
+
+// A brick with a voxel that glows, and one with a voxel that is see-through, marked over its average colour
+// (src/voxel_volume/bricks.rs, voxel_world.slang).
+static const uint VOXEL_GLOWS = 1u << 27;
+static const uint VOXEL_SEE_THROUGH = 1u << 28;
+
+// How a voxel's colour's kind says it is see-through, from 0 for solid to 15, and how bright it glows, 0 to 15
+// (voxel_volume::kind_byte).
+uint2 voxelKind(uint packed)
+{
+    return uint2((packed >> 24) & 15u, packed >> 28);
+}
+
+// The palette word of the voxel at `l` in a brick, `bits` its words: its colour and its kind.
+uint voxelPaletteAt(VoxelVolume volume, uint* bits, int3 l)
+{
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
+    for (uint k = 0; k < (index >> 5); k++)
+    {
+        before += countbits(bits[k]);
+    }
+    uint at = bits[18] + before;
+    uint material = (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
+    return volume.palette[material];
+}
 
 bool voxelBit(uint* words, uint index)
 {
@@ -228,6 +261,7 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
 {
     hit = (VoxelHit)0;
     hit.axis = -1;
+    hit.glassT = -1.0;
     d = select(abs(d) < 1e-7, select(d < 0.0, -1e-7, 1e-7), d);
     float3 inv = 1.0 / d;
     int3 dims = volume.sectorCount * 64;
@@ -318,8 +352,19 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
             {
                 if (voxelBit(bits, uint(l.x + 8 * (l.y + 8 * l.z))))
                 {
-                    hit.level = 0;
-                    return true;
+                    // A see-through voxel is passed through, the first kept; else the ray stops.
+                    uint glass = (bits[19] & VOXEL_SEE_THROUGH) != 0u ? voxelPaletteAt(volume, bits, l) : 0u;
+                    if (voxelKind(glass).x == 0u)
+                    {
+                        hit.level = 0;
+                        return true;
+                    }
+                    if (hit.glassT < 0.0)
+                    {
+                        hit.glassT = t;
+                        hit.glassAxis = axis;
+                        hit.glassColour = glass;
+                    }
                 }
                 size = 1;
             }
@@ -346,6 +391,10 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
     nearest = (VoxelHit)0;
     nearest.metres = reach;
     bool found = false;
+    // The nearest see-through voxel passed through, of any volume.
+    VoxelHit glass = (VoxelHit)0;
+    glass.glassT = -1.0;
+    glass.glassMetres = reach;
     for (uint v = 0; v < volumes->count; v++)
     {
         VoxelVolume volume = volumes->volumes[v];
@@ -358,6 +407,14 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
         }
         bool met = voxelTrace(volume, o, d, far, (foot0 + start * footScale) / volume.voxel, footScale, hit);
         nearest.steps += hit.steps;
+        if (hit.glassT >= 0.0 && start + hit.glassT * volume.voxel < glass.glassMetres)
+        {
+            glass.glassT = hit.glassT;
+            glass.glassMetres = start + hit.glassT * volume.voxel;
+            glass.glassAxis = hit.glassAxis;
+            glass.glassVolume = v;
+            glass.glassColour = hit.glassColour;
+        }
         if (met)
         {
             hit.metres = start + hit.t * volume.voxel;
@@ -367,6 +424,12 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
             found = true;
         }
     }
+    bool before = glass.glassT >= 0.0 && glass.glassMetres < nearest.metres;
+    nearest.glassT = before ? glass.glassT : -1.0;
+    nearest.glassMetres = glass.glassMetres;
+    nearest.glassAxis = glass.glassAxis;
+    nearest.glassVolume = glass.glassVolume;
+    nearest.glassColour = glass.glassColour;
     return found;
 }
 
@@ -395,15 +458,7 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
                 }
             }
         }
-        uint index = uint(l.x + 8 * (l.y + 8 * l.z));
-        uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
-        for (uint k = 0; k < (index >> 5); k++)
-        {
-            before += countbits(bits[k]);
-        }
-        uint at = bits[18] + before;
-        uint material = (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
-        packed = volume.palette[material];
+        packed = voxelPaletteAt(volume, bits, l);
     }
     float3 srgb = float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0;
     // Each voxel a shade of its own, so a field of one colour still reads as small cubes.
@@ -634,6 +689,11 @@ VoxelOut voxelOpaque(VoxelVertex input)
     {
         shadow *= blockSunShare(blockLit.x, sunShadowsReach(frame, world));
     }
+    // Else by the light kept round the camera for the voxels: their traced shadows keep the sun out.
+    else
+    {
+        blockLitHere = voxelLitAround(world, normal, blockLit, blockGlow);
+    }
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, world);
@@ -667,6 +727,12 @@ VoxelOut voxelOpaque(VoxelVertex input)
     float found;
     float3 reflected = environmentReflection(frame, pixel, world, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere, found);
     float specularOcclusion = lerp(occlusion.specular, 1.0, found);
+    // What it reflects of its surroundings is as dark as the light kept round it leaves it, as a block's face is.
+    if (blockLitHere)
+    {
+        float3 round = reflected * blockSkyShare(blockLit.x, blockGlow.w) + blockGlow.rgb * blockGlowShare(blockLit.y);
+        reflected = lerp(round, reflected, found);
+    }
     color += ambient * s.diffuse * occlusion.diffuse;
     color += reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
 
@@ -756,6 +822,334 @@ float4 voxelShadowFragment(VoxelVertex input) : SV_Target
         return 1.0;
     }
     return voxelSunBlocked(frame, volumes, pixel, world, normal, metres, lift) ? 0.0 : 1.0;
+}
+
+// ---------------------------------------------------------------- The light kept round the camera
+
+// Light from the sky and from glowing voxels, kept round the camera a cell a brick (src/voxel_volume/light.rs), as the
+// light kept for blocks is a byte a block: the sky's falls straight down through open air, and both spread a step less
+// a cell sideways, up, and through what lets only some through, so a cellar and a room under a roof are dark but for
+// what comes in at their doors and windows and their lanterns. What lets light through a cell is worked out from its
+// brick's voxels each frame (voxelLightCells), then the light is spread a few steps a frame (voxelLightSpread), from
+// last frame's moved as the camera moved.
+
+// The glow of a level, a fifteenth of the most for a level as blocks' light, falls a level a metre: a thirtieth a cell.
+static const float VOXEL_LIGHT_STEP = 1.0 / 30.0;
+// Its second word, over its glow's colour: how brightly it glows, and whether the sky is open over it, for the top row.
+// And whether the sky reaches it straight down, open all the way (voxelLightSky).
+static const uint VOXEL_CELL_GLOW_SHIFT = 16u;
+static const uint VOXEL_CELL_SKY = 1u << 20;
+static const uint VOXEL_CELL_OPEN_SKY = 1u << 21;
+
+struct VoxelLightGrid
+{
+    // The volumes, at their own places.
+    VoxelVolumes* volumes;
+    uint* lightA;
+    uint* lightB;
+    uint2* cells;
+    float3 corner;
+    float cell;
+    int3 size;
+    uint pad;
+    // Where cell 0 was last frame, less where it is now, in cells; and whether last frame's light is to be read.
+    int3 moved;
+    uint kept;
+};
+
+VoxelLightGrid* voxelLightGrid()
+{
+    return (VoxelLightGrid*)(uint64_t(push.textures.x) | (uint64_t(push.textures.y) << 32));
+}
+
+// The voxels of the cell round `middle`, of all the volumes, as one brick's bits, see-through voxels left out: none
+// where no volume has a brick there. A volume keeps only the voxels of its ground that open air is beside, so what is
+// past the sides of a volume's window or under its floor, with no volume there, is taken as solid, all its bits set;
+// over the volumes is open sky. With `glows`, the brightest glow of its voxels and that voxel's colour.
+void voxelCellBits(VoxelVolumes* volumes, float3 middle, bool glows, out uint bits[16], out uint glow, out uint3 colour)
+{
+    for (uint w = 0; w < 16; w++)
+    {
+        bits[w] = 0u;
+    }
+    glow = 0;
+    colour = 0;
+    bool inside = false;
+    bool under = false;
+    for (uint v = 0; v < volumes->count; v++)
+    {
+        VoxelVolume volume = volumes->volumes[v];
+        int3 b = int3(floor((middle - volume.corner) / (volume.voxel * 8.0)));
+        int brick = voxelBrickAt(volume, b);
+        if (brick == -2)
+        {
+            under = under || b.y < volume.sectorCount.y * 8;
+            continue;
+        }
+        inside = true;
+        if (brick < 0)
+        {
+            continue;
+        }
+        uint* words = volume.bricks + uint(brick) * VOXEL_BRICK_WORDS;
+        uint marks = words[19];
+        if ((marks & (VOXEL_GLOWS | VOXEL_SEE_THROUGH)) == 0u || (!glows && (marks & VOXEL_SEE_THROUGH) == 0u))
+        {
+            for (uint w = 0; w < 16; w++)
+            {
+                bits[w] |= words[w];
+            }
+            continue;
+        }
+        // Glass lets light through, and a glowing voxel gives it: their voxels looked at one by one.
+        uint at = words[18];
+        for (uint w = 0; w < 16; w++)
+        {
+            uint left = words[w];
+            uint kept = left;
+            while (left != 0u)
+            {
+                uint bit = firstbitlow(left);
+                left &= left - 1u;
+                uint material = (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
+                at++;
+                uint packed = volume.palette[material];
+                uint2 kind = voxelKind(packed);
+                if (kind.x != 0u)
+                {
+                    kept &= ~(1u << bit);
+                }
+                if (glows && kind.y > glow)
+                {
+                    glow = kind.y;
+                    colour = uint3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u);
+                }
+            }
+            bits[w] |= kept;
+        }
+    }
+    if (!inside && under)
+    {
+        for (uint w = 0; w < 16; w++)
+        {
+            bits[w] = 0xFFFFFFFFu;
+        }
+    }
+}
+
+// Which of the 64 lines from side `side` of a brick to its middle, half its width, meet none of its voxels `bits`, a
+// bit a line, the sides in the order +x, -x, +y, -y, +z, -z: lines along x by their y and z, along y by their x and z,
+// along z by their x and y, each first plus eight times the second.
+uint2 voxelOpenHalf(uint bits[16], uint side)
+{
+    uint2 open = 0u;
+    if (side < 2u)
+    {
+        // A row of eight along x is a byte, its low four the -x half.
+        uint half = side == 0u ? 0xF0u : 0x0Fu;
+        for (uint w = 0; w < 16; w++)
+        {
+            for (uint b = 0; b < 4; b++)
+            {
+                uint line = w * 4u + b;
+                bool clear = ((bits[w] >> (b * 8u)) & half) == 0u;
+                open[line >> 5] |= clear ? 1u << (line & 31u) : 0u;
+            }
+        }
+    }
+    else if (side < 4u)
+    {
+        // The four rows of a word are the lower or upper half of one z.
+        for (uint z = 0; z < 8; z++)
+        {
+            uint v = bits[z * 2u + (side == 2u ? 1u : 0u)];
+            uint rows = (v | (v >> 8) | (v >> 16) | (v >> 24)) & 0xFFu;
+            uint line = z * 8u;
+            open[line >> 5] |= (~rows & 0xFFu) << (line & 31u);
+        }
+    }
+    else
+    {
+        // The words of the lower four z, or of the upper four, or'd together: the even ones the lower rows of y.
+        uint from = side == 4u ? 8u : 0u;
+        uint2 any = 0u;
+        for (uint w = 0; w < 8; w++)
+        {
+            any[w & 1u] |= bits[from + w];
+        }
+        open = ~any;
+    }
+    return open;
+}
+
+// Each cell of the light kept round the camera: how much light passes between it and the cell after it along x, y and
+// z, by the lines open from the middle of one to the middle of the other; how much of it is open; how brightly and in
+// what colour its voxels glow; and for the top row, whether the sky is open over it.
+[shader("compute")]
+[numthreads(4, 4, 4)]
+void voxelLightCells(uint3 id: SV_DispatchThreadID)
+{
+    VoxelLightGrid* grid = voxelLightGrid();
+    if (any(int3(id) >= grid->size))
+    {
+        return;
+    }
+    VoxelVolumes* volumes = grid->volumes;
+    float3 middle = grid->corner + (float3(id) + 0.5) * grid->cell;
+    uint own[16];
+    uint glow;
+    uint3 glowColour;
+    voxelCellBits(volumes, middle, true, own, glow, glowColour);
+    uint solid = 0;
+    for (uint w = 0; w < 16; w++)
+    {
+        solid += countbits(own[w]);
+    }
+    uint first = 0;
+    bool closed = true;
+    for (uint axis = 0; axis < 3; axis++)
+    {
+        float3 step = 0.0;
+        step[axis] = grid->cell;
+        uint next[16];
+        uint nGlow;
+        uint3 nColour;
+        voxelCellBits(volumes, middle + step, false, next, nGlow, nColour);
+        uint2 through = voxelOpenHalf(own, axis * 2u) & voxelOpenHalf(next, axis * 2u + 1u);
+        uint lines = countbits(through.x) + countbits(through.y);
+        first |= ((lines * 15u + 63u) / 64u) << (axis * 4u);
+        // Open from its middle to any side, by its own halves: else it is solid.
+        closed = closed && all(voxelOpenHalf(own, axis * 2u) == 0u) && all(voxelOpenHalf(own, axis * 2u + 1u) == 0u);
+    }
+    uint open = closed ? 0u : max((15u * (512u - solid) + 511u) / 512u, 1u);
+    first |= open << VOXEL_CELL_OPEN_SHIFT;
+    uint second = glow << VOXEL_CELL_GLOW_SHIFT;
+    // The top row: open to the sky where no brick stands over the cell above it, up to the volumes' tops.
+    if (int(id.y) == grid->size.y - 1)
+    {
+        bool sky = true;
+        for (uint v = 0; v < volumes->count && sky; v++)
+        {
+            VoxelVolume volume = volumes->volumes[v];
+            int3 b = int3(floor((middle - volume.corner) / (volume.voxel * 8.0)));
+            for (int y = max(b.y + 2, 0); y < volume.sectorCount.y * 8 && sky; y++)
+            {
+                int found = voxelBrickAt(volume, int3(b.x, y, b.z));
+                sky = found == -1;
+                if (found == -2)
+                {
+                    sky = true;
+                    break;
+                }
+            }
+        }
+        second |= sky ? VOXEL_CELL_SKY : 0u;
+    }
+    // Its glow's colour as light, bright as its brightest channel, in 5, 6 and 5 bits.
+    float3 linear = pow(float3(glowColour) / 255.0, 2.2);
+    linear /= max(max(linear.r, linear.g), max(linear.b, 1e-4));
+    uint hue = (uint(linear.r * 31.0 + 0.5) << 11) | (uint(linear.g * 63.0 + 0.5) << 5) | uint(linear.b * 31.0 + 0.5);
+    uint index = uint((int(id.y) * grid->size.z + int(id.z)) * grid->size.x + int(id.x));
+    grid->cells[index] = uint2(first, second | hue);
+}
+
+// Whether the sky reaches each cell straight down, from over the top row where it is open, through every side between
+// two cells open all the way: a thread a column, from the top down, afresh each frame.
+[shader("compute")]
+[numthreads(8, 1, 8)]
+void voxelLightSky(uint3 id: SV_DispatchThreadID)
+{
+    VoxelLightGrid* grid = voxelLightGrid();
+    int3 size = grid->size;
+    if (int(id.x) >= size.x || int(id.z) >= size.z)
+    {
+        return;
+    }
+    uint layer = uint(size.x * size.z);
+    uint index = uint(size.y - 1) * layer + uint(int(id.z) * size.x + int(id.x));
+    bool open = (grid->cells[index].y & VOXEL_CELL_SKY) != 0u;
+    for (int y = size.y - 1; y >= 0; y--)
+    {
+        uint2 cell = grid->cells[index];
+        // Into it from the one over it.
+        open = open && ((cell.x >> 4) & 15u) == 15u;
+        if (open)
+        {
+            grid->cells[index].y = cell.y | VOXEL_CELL_OPEN_SKY;
+        }
+        index -= layer;
+    }
+}
+
+// One step of spreading the light kept round the camera: each cell the most of its neighbours' less a step, all the
+// sky's where it reaches it straight down, and each cell's own glow. Read from push.level's light, written to the
+// other; with push.list, read from where last frame's cells were.
+[shader("compute")]
+[numthreads(4, 4, 4)]
+void voxelLightSpread(uint3 id: SV_DispatchThreadID)
+{
+    VoxelLightGrid* grid = voxelLightGrid();
+    int3 size = grid->size;
+    if (any(int3(id) >= size))
+    {
+        return;
+    }
+    uint* from = push.level == 0 ? grid->lightA : grid->lightB;
+    uint* to = push.level == 0 ? grid->lightB : grid->lightA;
+    int3 c = int3(id);
+    uint index = uint((c.y * size.z + c.z) * size.x + c.x);
+    uint2 own = grid->cells[index];
+    if (((own.x >> VOXEL_CELL_OPEN_SHIFT) & 15u) == 0u)
+    {
+        to[index] = 0u;
+        return;
+    }
+    int3 moved = push.list != 0 ? grid->moved : int3(0);
+    bool kept = push.list == 0 || grid->kept != 0u;
+    float sky = (own.y & VOXEL_CELL_OPEN_SKY) != 0u ? 1.0 : 0.0;
+    float glow = float((own.y >> VOXEL_CELL_GLOW_SHIFT) & 15u) / 15.0;
+    uint hue = own.y & 0xFFFFu;
+    for (uint k = 0; k < 6; k++)
+    {
+        // Each side, +x, -x, +y, -y, +z, -z: how much passes to the cell after is kept with the cell before.
+        uint axis = k / 2u;
+        int3 n = c;
+        n[axis] += (k & 1u) == 0u ? 1 : -1;
+        if (any(n < int3(0)) || any(n >= size))
+        {
+            continue;
+        }
+        uint nIndex = uint((n.y * size.z + n.z) * size.x + n.x);
+        uint before = (k & 1u) == 0u ? own.x : grid->cells[nIndex].x;
+        float pass = float((before >> (axis * 4u)) & 15u) / 15.0;
+        if (pass <= 0.0)
+        {
+            continue;
+        }
+        float nSky = 0.0;
+        float nGlow = 0.0;
+        uint nHue = 0;
+        int3 o = n + moved;
+        if (kept && all(o >= int3(0)) && all(o < size))
+        {
+            uint light = from[uint((o.y * size.z + o.z) * size.x + o.x)];
+            nSky = float(light & 255u) / 255.0;
+            nGlow = float((light >> 8) & 255u) / 255.0;
+            nHue = light >> 16;
+        }
+        // Light through what lets only some of it through loses more on the way.
+        float lost = VOXEL_LIGHT_STEP * (1.0 + 2.0 * (1.0 - pass));
+        sky = max(sky, nSky - lost);
+        float g = nGlow - lost;
+        if (g > glow)
+        {
+            glow = g;
+            hue = nHue;
+        }
+    }
+    uint s = uint(saturate(sky) * 255.0 + 0.5);
+    uint g = uint(saturate(glow) * 255.0 + 0.5);
+    to[index] = s | (g << 8) | ((g > 0u ? hue : 0u) << 16);
 }
 
 // ---------------------------------------------------------------- The sea floor

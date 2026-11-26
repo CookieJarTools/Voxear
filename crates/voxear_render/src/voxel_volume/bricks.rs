@@ -118,6 +118,7 @@ impl Builder {
                 let mut words = [0u32; BRICK_WORDS];
                 let mut sum = [0u32; 3];
                 let mut counted = 0u32;
+                let mut kinds = 0u32;
                 words[18] = materials.len() as u32;
                 for (index, &cell) in cells.iter().enumerate() {
                     if cell == 0 {
@@ -132,11 +133,14 @@ impl Builder {
                     for a in 0..3 {
                         sum[a] += u32::from(colour[a]);
                     }
+                    kinds |= u32::from(255 - colour[3]);
                     counted += 1;
                 }
                 solid += u64::from(counted);
                 let average = sum.map(|a| a / counted.max(1));
                 words[19] = average[0] | (average[1] << 8) | (average[2] << 16);
+                words[19] |= if kinds & 0xF0 != 0 { GLOWS } else { 0 };
+                words[19] |= if kinds & 0x0F != 0 { SEE_THROUGH } else { 0 };
                 bricks.extend_from_slice(&words);
             }
         }
@@ -183,6 +187,11 @@ pub fn loosely_kept(seed: u32, group: u32) -> bool {
 
 /// The mark of a brick of leaves, over its average colour.
 pub const LEAFY: u32 = 1 << 24;
+/// The marks of a brick with a voxel that glows, and with one that is
+/// see-through (`VOXEL_GLOWS` and `VOXEL_SEE_THROUGH` in
+/// `shaders/voxels.slang`), over the mark of leaves and how it sways.
+pub const GLOWS: u32 = 1 << 27;
+pub const SEE_THROUGH: u32 = 1 << 28;
 /// The mark, over its average colour and the mark of leaves, of a brick of
 /// leaves that sways whole in the wind (`VOXEL_SWAY_SHIFT` in
 /// `shaders/voxels.slang`). A brick with ground or wood in it stays still;

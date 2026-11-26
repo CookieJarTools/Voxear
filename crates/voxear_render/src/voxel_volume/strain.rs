@@ -893,7 +893,14 @@ pub(super) fn strain(
         return done;
     }
     let started = std::time::Instant::now();
-    let bricks = bricks_round(before, near);
+    // Round what was built before the change and after it, as what a change adds bears on what was there.
+    let mut bricks = bricks_round(before, near);
+    let had: HashSet<IVec3> = bricks.iter().copied().collect();
+    for b in bricks_round(after, near) {
+        if !had.contains(&b) && bricks.len() < MOST_STRAIN_BRICKS * 2 {
+            bricks.push(b);
+        }
+    }
     if bricks.is_empty() {
         return done;
     }
@@ -909,6 +916,7 @@ pub(super) fn strain(
     done.joins = graph.joins.len();
     let mut solver: Option<Solver> = None;
     let mut round = VoxelRound::default();
+    let mut breaks = Breaks::new();
     let bricks_at: HashMap<IVec3, usize> = graph.nodes.iter().enumerate().map(|(i, node)| (node.brick, i)).collect();
     // How near each join came to breaking, at the last loads found.
     let mut strained = vec![0.0; graph.joins.len()];
@@ -938,7 +946,7 @@ pub(super) fn strain(
                 // either side of their bricks' faces.
                 let members: HashSet<usize> = set.iter().copied().collect();
                 for part in parts {
-                    let voxels = cracked(after, &graph, &bricks_at, &members, &part);
+                    let voxels = cracked(after, &graph, &bricks_at, &members, &part, &mut breaks);
                     take_set(after, voxels, &mut round);
                 }
             }
@@ -1045,9 +1053,50 @@ fn split(graph: &Graph, set: &[usize], strained: &[f64]) -> Vec<Vec<usize>> {
     parts
 }
 
-/// How far a crack wanders from the face between two bricks, in voxels,
-/// each way.
-const CRACK: f32 = 3.0;
+/// How far a crack wanders from where it goes through, in voxels, each
+/// way; and how far from the face between two bricks it may go through,
+/// where what holds them together is thinnest.
+const CRACK: f32 = 2.5;
+const SHIFT: i32 = 5;
+
+/// Where a crack goes through each face it breaks, by the face's axis, its
+/// place along it and its bricks' corner across it: so many voxels up the
+/// axis from the face.
+type Breaks = HashMap<(usize, i32, IVec3), f32>;
+
+/// Where between the bricks either side of the face square to `axis` at
+/// `face` voxels, across from `corner` (a brick's least voxel), what holds
+/// them together is thinnest: the plane, in voxels up the axis from the
+/// face, with fewest pairs of built voxels across it within the face's
+/// square, the nearest the face of those.
+fn weakest(grid: &mut Grid, axis: usize, face: i32, corner: IVec3) -> f32 {
+    let (a, b) = match axis {
+        0 => (1, 2),
+        1 => (0, 2),
+        _ => (0, 1),
+    };
+    let mut best = (u32::MAX, 0i32);
+    for k in (-SHIFT..=SHIFT).map(|k: i32| k) {
+        let mut bond = 0;
+        for i in 0..8 {
+            for j in 0..8 {
+                let mut c = corner;
+                c[a] += i;
+                c[b] += j;
+                c[axis] = face + k;
+                let mut under = c;
+                under[axis] -= 1;
+                if grid.class(c) == BUILT && grid.class(under) == BUILT {
+                    bond += 1;
+                }
+            }
+        }
+        if bond < best.0 || (bond == best.0 && k.abs() < best.1.abs()) {
+            best = (bond, k);
+        }
+    }
+    best.1 as f32
+}
 
 /// How far the crack through the face of bricks square to axis `axis`, at
 /// `face` voxels along it, lies from the face toward the higher side, at
@@ -1090,6 +1139,7 @@ fn cracked(
     bricks_at: &HashMap<IVec3, usize>,
     members: &HashSet<usize>,
     part: &[usize],
+    breaks: &mut Breaks,
 ) -> Vec<IVec3> {
     let mine: HashSet<IVec3> = part.iter().map(|&i| graph.nodes[i].brick).collect();
     let mut near: Vec<IVec3> = mine.iter().copied().collect();
@@ -1117,7 +1167,7 @@ fn cracked(
                     for axis in 0..3 {
                         for high in [false, true] {
                             let far = if high { 8.0 - (l[axis] as f32 + 0.5) } else { l[axis] as f32 + 0.5 };
-                            if far > CRACK + 0.5 || nearest.is_some_and(|(d, ..)| d <= far) {
+                            if far > SHIFT as f32 + CRACK + 0.5 || nearest.is_some_and(|(d, ..)| d <= far) {
                                 continue;
                             }
                             let mut step = IVec3::ZERO;
@@ -1141,7 +1191,11 @@ fn cracked(
                             // How far up the axis from the face, and the crack's place there: the part is the side
                             // the crack leaves it.
                             let up = c[axis] as f32 + 0.5 - face as f32;
-                            let crack = crack_at(axis, face, u, w);
+                            let mut across = b * 8;
+                            across[axis] = 0;
+                            let through =
+                                *breaks.entry((axis, face, across)).or_insert_with(|| weakest(grid, axis, face, b * 8));
+                            let crack = (through + crack_at(axis, face, u, w)).clamp(-7.5, 7.5);
                             let part_is_up = own != high;
                             if part_is_up { up > crack } else { up < crack }
                         }
@@ -1402,6 +1456,60 @@ mod tests {
         let left = VoxelVolume { changes: std::sync::Arc::new(after), ..volume.clone() };
         let (_, again) = super::super::collapse::loosen(&left, &loose.iter().copied().collect::<Vec<_>>());
         assert_eq!(again.loose, 0, "nothing hangs from nothing after the cracks");
+    }
+
+    #[test]
+    fn a_beam_overloaded_breaks_where_it_is_thinnest_not_at_its_bricks_faces() {
+        use crate::{VoxelKind, VoxelMaterial};
+        let mut volume = flat();
+        let edits = std::sync::Arc::make_mut(&mut volume.edits);
+        // A wall, and a beam of planks two metres out of it, half a metre square.
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(4.0, 1.0, 4.0),
+            Vec3::new(0.5, 4.0, 2.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Ashlar),
+        ));
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(5.25, 3.0, 4.25),
+            Vec3::new(2.0, 0.5, 0.5),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Planks),
+        ));
+        // Notched three voxels into a brick, x 75 of the brick from 72 to 79: two rows of eight left across it.
+        let mut changes = (*volume.changes).clone();
+        for y in 48..54 {
+            for z in 64..72 {
+                changes.set(IVec3::new(75, y, z), None);
+            }
+        }
+        volume.changes = std::sync::Arc::new(changes);
+        // A stone laid on its end, which it bears no more.
+        let mut loaded = (*volume.changes).clone();
+        let stone = VoxelKind { material: VoxelMaterial::Ashlar, tint: None };
+        let mut placed = Vec::new();
+        for x in 92..100 {
+            for y in 56..104 {
+                for z in 64..72 {
+                    loaded.set(IVec3::new(x, y, z), Some(stone));
+                    placed.push(IVec3::new(x, y, z));
+                }
+            }
+        }
+        let after = VoxelVolume { changes: std::sync::Arc::new(loaded), ..volume.clone() };
+        let (mut a, mut b) = (Grid::new(&volume, None), Grid::new(&after, None));
+        let mut memory = VoxelStrainMemory::default();
+        let done = strain(VoxelStrain::Solved, &mut a, &mut b, &placed, &mut memory);
+        let loose: Vec<IVec3> = done.loose.iter().flat_map(|round| round.dig.iter().copied()).collect();
+        assert!(done.broken > 0 && !loose.is_empty(), "{done:?}");
+        // What fell breaks off at the notch, its crack wandering a little about it, not at the bricks' faces at 72
+        // or 80: of the three layers of the beam before the notch, a few voxels at most go with it.
+        let beam: Vec<&IVec3> = loose.iter().filter(|c| c.y < 56).collect();
+        let from = beam.iter().map(|c| c.x).min().unwrap();
+        let before = beam.iter().filter(|c| c.x < 75).count();
+        eprintln!("the beam broke at x {from}, {} voxels of it fell, {before} of them before the notch", beam.len());
+        assert!(from > 72 && before < 24, "broke at {from}, {before} before the notch");
+        assert!(beam.iter().any(|c| c.x == 76) && beam.len() > 1000, "the beam past the notch fell");
     }
 
     #[test]

@@ -1445,6 +1445,9 @@ impl Inspector {
                 if let Prop::World(field) = value {
                     meta.tooltip = Some(crate::world_props::tooltip(*field).to_string());
                 }
+                if let Prop::VoxelGrowth(field) = value {
+                    meta.tooltip = Some(crate::voxel_growth_props::tooltip(*field).to_string());
+                }
                 if let Prop::WhenUnloaded = value {
                     meta.tooltip = Some(crate::fit_props::STREAMS_TOOLTIP.to_string());
                 }
@@ -3349,6 +3352,7 @@ pub(crate) fn field_tooltip(types: &ScriptTypes, prop: &Prop) -> Option<String> 
         Prop::Road(field) => crate::road_props::road_tooltip(*field),
         Prop::PrefabBrush(field) => crate::road_props::brush_tooltip(*field),
         Prop::VoxelBrush(field) => crate::voxel_brush::tooltip(*field),
+        Prop::VoxelGrowth(field) => crate::voxel_growth_props::tooltip(*field),
         Prop::Placement(field) => crate::road_props::placement_tooltip(*field),
         Prop::AreaFill(field) => crate::road_props::area_tooltip(*field),
         Prop::World(field) => crate::world_props::tooltip(*field),

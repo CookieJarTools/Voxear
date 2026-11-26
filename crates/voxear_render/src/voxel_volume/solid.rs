@@ -17,10 +17,19 @@ use std::{
 use voxear_core::math::{IVec3, Vec3};
 
 use super::{
-    MOST_VOXELS_A_METRE, VoxelGround, VoxelVolume,
+    MOST_VOXELS_A_METRE, VoxelEdit, VoxelGround, VoxelHeld, VoxelShape, VoxelVolume,
+    edit::Fixed,
+    growth::{self, Growth},
     rivers::{self, RiverLayer},
     trees::{self, AIR, GROUND, LOG, Tree, Woods},
 };
+
+/// What the ground is at a column, as the GPU's tops pass numbers it.
+pub(super) const GRASS: u32 = 0;
+pub(super) const ROCK: u32 = 1;
+pub(super) const SAND: u32 = 2;
+pub(super) const SNOW: u32 = 3;
+pub(super) const GRAVEL: u32 = 4;
 
 /// How far a ray's step looks for trees, in voxels.
 const TREE_LOOK: f32 = 96.0;
@@ -43,10 +52,12 @@ pub(super) struct Ground<'a> {
     cells: HashMap<(i32, i32), Option<Tree>>,
     /// Trees placed kept between one ground and the next of the same volume.
     shared: Option<&'a Mutex<Cells>>,
-    /// The footprints of the prints printed into it, by print.
-    footprints: HashMap<usize, Vec<u32>>,
     /// Its generator's rivers, where it runs any.
     rivers: Option<Arc<RiverLayer>>,
+    /// Each edit asked about, in whole numbers, by its place in the list.
+    fixed: HashMap<usize, Fixed>,
+    /// The World Areas its trees keep within or out of, where any does.
+    growth: Option<Growth>,
 }
 
 /// The tree each cell holds, where it has one.
@@ -71,11 +82,14 @@ impl<'a> Ground<'a> {
             columns,
             cells,
             shared: None,
-            footprints: HashMap::new(),
+            fixed: HashMap::new(),
             rivers: volume
                 .generator
                 .as_ref()
                 .and_then(|generator| rivers::layer_of(generator, volume.voxels_per_metre)),
+            growth: growth::growing(&volume.trees)
+                .any(|kind| !kind.areas.within.is_empty() || !kind.areas.never.is_empty())
+                .then(|| Growth::new(&volume.areas, &volume.trees, &volume.cover, voxel)),
         }
     }
 
@@ -198,14 +212,15 @@ impl<'a> Ground<'a> {
         }
     }
 
-    /// Whether the ground at each voxel column of `feet` grows grass, by
-    /// the rules the GPU's tops pass has (`grassAt`), and how high it is
-    /// there.
-    fn grass_at(&mut self, feet: &[[i32; 2]]) -> Vec<Option<i32>> {
+    /// What the ground is at each voxel column of `feet`, by the rules the
+    /// GPU's tops pass has (`groundKind`, numbered as there: grass, rock,
+    /// sand, snow, gravel), and how high it is there: none where its top is
+    /// out of the volume's columns.
+    pub fn kinds_at(&mut self, feet: &[[i32; 2]]) -> Vec<Option<(i32, u32)>> {
         let Some(generator) = self.volume.generator.clone() else {
             return feet
                 .iter()
-                .map(|&[x, z]| Some(self.height(x, z)).filter(|&h| h >= 0 && h < self.rows - 1))
+                .map(|&[x, z]| Some(self.height(x, z)).filter(|&h| h >= 0 && h < self.rows - 1).map(|h| (h, GRASS)))
                 .collect();
         };
         if feet.is_empty() {
@@ -241,22 +256,56 @@ impl<'a> Ground<'a> {
                 ((height - generator.floor) / v).floor() as i32
             };
             let h = at(0);
+            if h < 0 || h >= self.rows - 1 {
+                found.push(None);
+                continue;
+            }
             let across = (at(1) - at(2)).abs().max((at(3) - at(4)).abs());
             let top = h as f32 * v + generator.floor;
             let (warm, wet) = (warmth[i], wetness[i]);
             let rocky = rock.as_ref().is_some_and(|rock| rock[i]);
+            let water = self.river(x, z).1;
+            let above = top - sea;
             // Under a river's or a lake's water, or along its edge, is gravel and sand.
-            let watered = self.river(x, z).1 > top - 0.1;
-            let bare = rocky
-                || across as f32 / 4.0 > 1.0
-                || watered
-                || top - sea < 1.0
-                || warm < 0.0
-                || (wet < 0.12 && warm > 18.0);
-            if h < 0 || h >= self.rows - 1 || bare {
+            // On a world of blocks' biome's ground, as the GPU's tops pass has it: grass where its own ground's top
+            // block grows grass, else rock; a river's or a lake's bed is its sand or gravel all the same.
+            let biome = generator.biomes.as_deref().filter(|_| water <= top - 0.1).and_then(|biomes| {
+                let grows = biomes.biome_of(fx[i], fz[i], warm, wet, above)?;
+                Some(biomes.grows(grows, rocky, across, above))
+            });
+            let kind = if let Some(grows) = biome {
+                if grows { GRASS } else { ROCK }
+            } else if rocky || across as f32 / 4.0 > 1.0 {
+                ROCK
+            } else if water > top - 0.1 {
+                if water > top + 0.3 { GRAVEL } else { SAND }
+            } else if above < -0.5 {
+                GRAVEL
+            } else if above < 1.0 {
+                SAND
+            } else if warm < 0.0 {
+                SNOW
+            } else if wet < 0.12 && warm > 18.0 {
+                SAND
+            } else {
+                GRASS
+            };
+            found.push(Some((h, kind)));
+        }
+        found
+    }
+
+    /// Whether the ground at each voxel column of `feet` grows grass, by
+    /// the rules the GPU's tops pass has (`grassAt`), and how high it is
+    /// there.
+    fn grass_at(&mut self, feet: &[[i32; 2]]) -> Vec<Option<i32>> {
+        let kinds = self.kinds_at(feet);
+        let mut found = Vec::with_capacity(feet.len());
+        for (&[x, z], kind) in feet.iter().zip(kinds) {
+            let Some((h, GRASS)) = kind else {
                 found.push(None);
                 continue;
-            }
+            };
             // Where the Volume moved the ground, or hollowed it under the foot, nothing is planted.
             found.push(match self.densities(x, h, z, 2) {
                 Some(d) => (d[0] > 0.0 && d[1] <= 0.0).then_some(h),
@@ -304,7 +353,9 @@ impl<'a> Ground<'a> {
         for (cell, tree) in held {
             let tree = tree.and_then(|(model, foot)| {
                 let h = grass.next().flatten()?;
-                self.foot_kept(IVec3::new(foot[0], h, foot[1])).then(|| woods.stood(model, foot, h))
+                let kind = model / (4 * trees::VARIANTS as usize);
+                let allowed = self.growth.as_ref().is_none_or(|growth| growth.tree_allowed(kind, foot, h));
+                (allowed && self.foot_kept(IVec3::new(foot[0], h, foot[1]))).then(|| woods.stood(model, foot, h))
             });
             placed.push((cell, tree));
         }
@@ -315,28 +366,38 @@ impl<'a> Ground<'a> {
     }
 
     /// Whether a tree whose foot is on the ground's top voxel `top` grows,
-    /// for the edits, as the GPU finds it (`footKept`): not where its top
-    /// is carved out (and not filled again after), nor where a print stands
-    /// over it.
+    /// for the edits and the voxels set one at a time over them, as the GPU
+    /// finds it (`footKept`): not where a print
+    /// stands over it, nor where its top is carved out (and not filled
+    /// again after), nor where the voxel over it is filled (and not carved
+    /// out again after), as by a street laid over the ground.
     fn foot_kept(&mut self, top: IVec3) -> bool {
-        let mut ground = true;
+        let (mut ground, mut buried) = (true, false);
         for e in self.edits_near(top, top + IVec3::Y) {
             let edit = &self.volume.edits[e];
-            if let Some(printed) = &edit.print {
-                let print = &printed.print;
-                let footprint = self.footprints.entry(Arc::as_ptr(print) as usize).or_insert_with(|| print.footprint());
-                let scale = print.voxels_per_metre as f32 * self.voxel;
-                let off = (top + IVec3::Y).as_vec3() + 0.5 - edit.at / self.voxel;
-                let c = (printed.rotation.inverse() * off * scale + print.origin).floor().as_ivec3();
-                let tall = print.size[1] as i32;
-                if c.y < tall && c.y >= -tall && print.covers(c.x, c.z, footprint) {
+            if edit.print().is_some() {
+                if edit.covers(top + IVec3::Y, self.voxel) {
                     return false;
                 }
-            } else if edit.holds(top, self.voxel) != 0 {
-                ground = edit.fill.is_some();
+                continue;
+            }
+            match edit.held(top, self.voxel, top.y) {
+                VoxelHeld::Not => {}
+                held => ground = held.solid(),
+            }
+            match edit.held(top + IVec3::Y, self.voxel, top.y) {
+                VoxelHeld::Not => {}
+                held => buried = held.solid(),
             }
         }
-        ground
+        // The voxels set one at a time, which go after every edit.
+        if let Some(held) = self.volume.changes.get(top) {
+            ground = held.solid();
+        }
+        if let Some(held) = self.volume.changes.get(top + IVec3::Y) {
+            buried = held.solid();
+        }
+        ground && !buried
     }
 
     /// The trees whose boxes reach the box of voxels from `low` to `high`.
@@ -375,14 +436,24 @@ impl<'a> Ground<'a> {
     /// What voxel `c` is, `trees` those that may reach it, and `edits` the
     /// indices of the edits that may: the ground as it is made, a tree's
     /// voxel where the ground leaves none, and each edit over it in turn
-    /// (a print's solid voxels and a ball filled are ground, a ball carved
+    /// (a print's solid voxels and a shape filled are ground, a shape carved
     /// out is air).
     pub fn kind(&mut self, c: IVec3, trees: &[Tree], edits: &[usize]) -> u8 {
         let mut kind = if self.made(c) { GROUND } else { self.tree_at(trees, c) };
+        // A voxel set one at a time goes over everything.
+        if let Some(held) = self.volume.changes.get(c) {
+            return if held.solid() { GROUND } else { AIR };
+        }
+        if edits.is_empty() {
+            return kind;
+        }
+        let h = self.height(c.x, c.z);
+        let (volume, voxel) = (self.volume, self.voxel);
         for &e in edits {
-            let edit = &self.volume.edits[e];
-            if edit.holds(c, self.voxel) != 0 {
-                kind = if edit.print.is_some() || edit.fill.is_some() { GROUND } else { AIR };
+            let fixed = self.fixed.entry(e).or_insert_with(|| Fixed::of(&volume.edits[e], voxel));
+            match fixed.held(&volume.edits[e], c, h) {
+                VoxelHeld::Not => {}
+                held => kind = if held.solid() { GROUND } else { AIR },
             }
         }
         kind
@@ -418,9 +489,17 @@ impl<'a> Ground<'a> {
             None => (p.y - (self.height(c.x, c.z) + 1) as f32) * super::ray::HEIGHT_STEP,
         };
         let world = p * self.voxel;
-        let fills = self.volume.edits.iter().filter(|edit| edit.fill.is_some() || edit.print.is_some());
-        let near = fills.map(|edit| (world.distance(edit.at) - edit.radius) / self.voxel).fold(f32::MAX, f32::min);
+        let fills = self.volume.edits.iter().filter(|edit| edit.fills());
+        let near = fills.map(|edit| distance_to(edit, world) / self.voxel).fold(f32::MAX, f32::min);
         let mut clear = ground.min(near - 1.0).min(p.y);
+        // Voxels placed one at a time, in the columns of bricks round it.
+        if !self.volume.changes.is_empty() && clear > 0.0 {
+            let brick = c.to_array().map(|a| a.div_euclid(8));
+            clear = match self.volume.changes.placed_near(brick[0], brick[2], 4) {
+                Some(across) => clear.min(across - 1.0),
+                None => clear.min(32.0),
+            };
+        }
         if let Some(woods) = self.woods
             && clear > 0.0
         {
@@ -436,6 +515,26 @@ impl<'a> Ground<'a> {
         }
         clear
     }
+}
+
+/// What the ground of an endless volume is under (`x`, `z`), in metres from
+/// its corner, as its generator or its own ground makes it, before what was
+/// changed in it: how high its top is over the volume's floor, in metres,
+/// and what it is. None where its top is out of the volume.
+pub fn ground_at(volume: &VoxelVolume, x: f32, z: f32) -> Option<(f32, super::VoxelMaterial)> {
+    use super::VoxelMaterial;
+    let mut ground = Ground::new(volume, None);
+    let v = ground.voxel;
+    let column = [(x / v).floor() as i32, (z / v).floor() as i32];
+    let (h, kind) = ground.kinds_at(&[column]).pop().flatten()?;
+    let material = match kind {
+        ROCK => VoxelMaterial::Rock,
+        SAND => VoxelMaterial::Sand,
+        SNOW => VoxelMaterial::Snow,
+        GRAVEL => VoxelMaterial::Gravel,
+        _ => VoxelMaterial::Grass,
+    };
+    Some(((h + 1) as f32 * v, material))
 }
 
 /// What an endless Voxel Volume's voxels are, as the CPU finds them, for
@@ -471,6 +570,15 @@ impl VoxelSolids {
         &self.volume
     }
 
+    /// The ground's height in each voxel column of the box from `low`,
+    /// `size` columns a side, X fastest: its top voxel, as the GPU's columns
+    /// have it, before the edits.
+    pub fn heights(&self, low: [i32; 2], size: [i32; 2]) -> Vec<i32> {
+        let mut ground = Ground::new(&self.volume, self.woods.as_deref());
+        ground.heights_for(low[0], low[1], size);
+        (0..size[1]).flat_map(|z| (0..size[0]).map(move |x| (x, z))).map(|(x, z)| ground.height(low[0] + x, low[1] + z)).collect()
+    }
+
     /// How large a voxel is, in metres.
     pub fn voxel(&self) -> f32 {
         1.0 / self.volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32
@@ -497,8 +605,10 @@ impl VoxelSolids {
         let over = volume.as_ref().map_or(0.0, |volume| volume.reach());
         let (tall, voxel) = (ground.tall, ground.voxel);
         let index = |x: i32, y: i32, z: i32| (x + size.x * (y + size.y * z)) as usize;
-        // Which voxels an edit carved out, which no log fills.
+        // Which voxels an edit carved out, which no log fills; and the edits in whole numbers.
         let mut edited = vec![false; count];
+        let fixed: Vec<(&super::VoxelEdit, Fixed)> =
+            edits.iter().map(|&e| (&self.volume.edits[e], Fixed::of(&self.volume.edits[e], voxel))).collect();
         // A voxel an edit carved, for the logs to leave out.
         const EDITED: u8 = 255;
         for z in 0..size.z {
@@ -524,11 +634,14 @@ impl VoxelSolids {
                         None => volume.is_none(),
                     };
                     let mut kind = if made { GROUND } else { AIR };
-                    for &e in &edits {
-                        let edit = &self.volume.edits[e];
-                        if edit.holds(IVec3::new(wx, wy, wz), voxel) != 0 {
-                            kind = if edit.print.is_some() || edit.fill.is_some() { GROUND } else { EDITED };
+                    for (edit, fixed) in &fixed {
+                        match fixed.held(edit, IVec3::new(wx, wy, wz), h) {
+                            VoxelHeld::Not => {}
+                            held => kind = if held.solid() { GROUND } else { EDITED },
                         }
+                    }
+                    if let Some(held) = self.volume.changes.get(IVec3::new(wx, wy, wz)) {
+                        kind = if held.solid() { GROUND } else { EDITED };
                     }
                     solid[index(x, y, z)] = kind == GROUND;
                     edited[index(x, y, z)] = kind == EDITED;
@@ -585,12 +698,14 @@ impl VoxelSolids {
             && new.size.y == old.size.y
             && new.ground == old.ground
             && new.generator == old.generator
+            && (Arc::ptr_eq(&new.areas, &old.areas) || new.areas == old.areas)
             && same_trees;
         if !same {
             return None;
         }
+        let changes = new.changes.changed_from(&old.changes);
         if Arc::ptr_eq(&new.edits, &old.edits) || new.edits == old.edits {
-            return Some(Vec::new());
+            return Some(changes);
         }
         // An edit added or taken away at the end, as a brush and its undo do; anything else changes all.
         let shared = new.edits.iter().zip(old.edits.iter()).take_while(|(a, b)| a == b).count();
@@ -603,8 +718,18 @@ impl VoxelSolids {
                 (most / v).ceil().as_ivec3().to_array().map(|a| a + 1),
             )
         });
-        Some(boxes.collect())
+        Some(boxes.chain(changes).collect())
     }
+}
+
+/// How far point `p` (in metres) is from what edit `edit` may fill, in
+/// metres: from a ball's sphere, else from the box it reaches.
+fn distance_to(edit: &VoxelEdit, p: Vec3) -> f32 {
+    if let VoxelShape::Ball { at, radius } = edit.shape {
+        return p.distance(at) - radius;
+    }
+    let (low, high) = edit.reach();
+    (low - p).max(p - high).max(Vec3::ZERO).length()
 }
 
 #[cfg(test)]
@@ -620,7 +745,7 @@ mod tests {
 
     fn wood() -> Vec<VoxelTrees> {
         let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
-        vec![VoxelTrees { plant: Arc::new(oak), per_hectare: 120.0, wood: [100, 70, 50], leaves: [70, 120, 40] }]
+        vec![VoxelTrees { plant: Arc::new(oak), per_hectare: 120.0, wood: [100, 70, 50], leaves: [70, 120, 40], areas: Default::default() }]
     }
 
     fn hills() -> VoxelVolume {
@@ -689,7 +814,7 @@ mod tests {
         let floor = alpine.height_at(40.0, 40.0) - 20.0;
         let generated = VoxelVolume {
             size: Vec3::new(16.0, 48.0, 16.0),
-            generator: Some(VoxelGenerator { world: alpine, floor, at: [0.0, 0.0] }),
+            generator: Some(VoxelGenerator { world: alpine, floor, at: [0.0, 0.0], biomes: None }),
             ..hills()
         };
         let low = [40 * 16 - 17, 20 * 16 - 17, 40 * 16 - 17];

@@ -745,10 +745,7 @@ pub(crate) fn gather(
     systems.drain(..over);
     let (mut gpus, counts): (Vec<GpuParticleSystem>, Vec<Drawn>) =
         systems.into_iter().map(|(_, gpu, drawn)| (gpu, drawn)).unzip();
-    let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>();
-    let sea = seas.without::<Destroying>().into_iter().next().map(|(ocean, transform, at)| {
-        (ocean.spray, at.map_or(transform.position.y, |w| w.0.w_axis.y))
-    });
+    let sea = crate::ocean::seas(world).into_iter().next().map(|sea| (sea.ocean.spray, sea.position.y));
     let spray = sea.filter(|(amount, _)| *amount > 0.0).map(|(amount, level)| {
         let drops = sea_spray(amount);
         gpus.push(gpu(&drops, Mat4::from_translation(Vec3::new(0.0, level, 0.0)), time, None));

@@ -859,6 +859,39 @@ fn a_tool_carves_and_fills_an_endless_voxel_volume_each_one_step_to_undo() {
     let saved = done(&mut editor, &mut renderer, "save", json!({}));
     let scene = std::fs::read_to_string(dir.path().join(saved["saved"][0].as_str().unwrap())).unwrap();
     assert!(scene.contains("radius = 1.5") && !scene.contains("fill = \"rock\""), "the carve saved alone:\n{scene}");
+    // A cobbled box and a tinted area of flagstones, then voxels dug and placed, each one step to undo.
+    let boxed = json!({ "at": [4.0, 3.0, 4.0], "size": [2.0, 0.5, 2.0], "turn": 20, "material": "cobbles", "clear": 1.0 });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.box", boxed)["reached"], 1);
+    let area = json!({ "points": [[0, 0], [3, 0], [3, 3]], "low": 2.0, "high": 2.5, "material": "flagstones", "tint": [200, 60, 60] });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.area", area)["reached"], 1);
+    let paving = json!({ "points": [[0, 0], [3, 0], [3, 3]], "low": 2.0, "high": 2.5, "material": "lava" });
+    assert_eq!(ask(&mut editor, &mut renderer, "voxels.area", paving).unwrap_err().kind, ErrorKind::WrongValue);
+    let dug = done(&mut editor, &mut renderer, "voxels.dig", json!({ "points": [[4.03, 2.97, 4.03], [4.1, 2.97, 4.03]] }));
+    assert_eq!(dug["set"], 2);
+    let placed = json!({ "points": [[5.03, 3.03, 5.03]], "material": "bricks", "tint": [200, 40, 40] });
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.place", placed)["set"], 1);
+    let set = |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().changes.count();
+    assert_eq!(set(&editor), 3);
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(set(&editor), 2, "the placing taken back alone");
+    frames(&mut editor, &mut renderer, 5);
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let path = saved["saved"].as_array().unwrap().iter().filter_map(|p| p.as_str()).find(|p| !p.ends_with(".vxr")).unwrap().to_string();
+    let scene = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    for written in ["shape = \"box\"", "shape = \"area\"", "fill = \"cobbles\"", "tint = [200, 60, 60]", "regions = [[0, 0]]"] {
+        assert!(scene.contains(written), "{written} saved:\n{scene}");
+    }
+    let regions: Vec<_> = std::fs::read_dir(dir.path().join(format!("{path}.voxels")))
+        .unwrap()
+        .flatten()
+        .flat_map(|volume| std::fs::read_dir(volume.path()).unwrap().flatten().map(|file| file.path()))
+        .collect();
+    assert_eq!(regions.len(), 1, "one region file: {regions:?}");
+    // Opened again, the voxels dug come back from their region.
+    drop(editor);
+    let Some((_, editor)) = open(dir.path()) else { return };
+    let volume = editor.game.engine.world.query_ref::<&voxear_render::VoxelVolume>().into_iter().find(|v| v.endless).cloned();
+    assert_eq!(volume.map(|v| v.changes.count()), Some(2), "the voxels dug, read back");
 }
 
 #[test]
@@ -909,7 +942,7 @@ fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_on
     let entity = link::resolve_obj(&editor.game, &volume).unwrap();
     let edits =
         |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
-    assert!(edits(&editor)[0].print.is_some());
+    assert!(edits(&editor)[0].print().is_some());
     // Its first colour made glass: kept in its file, and the volume prints it so.
     let colour = info["settings"].clone();
     let (_, print) = editor.game.content.voxel_print("Models/Pyramid.voxprint").unwrap();
@@ -919,7 +952,7 @@ fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_on
     assert_eq!(set["materials"][0]["glass"], 14, "{set} (was {colour})");
     let info = done(&mut editor, &mut renderer, "voxel_prints.info", json!({ "print": "Models/Pyramid.voxprint" }));
     assert_eq!(info["settings"]["materials"][0]["glass"], 14, "{info}");
-    let printed = edits(&editor)[0].print.clone().unwrap();
+    let printed = edits(&editor)[0].print().cloned().unwrap();
     assert_eq!(printed.print.settings.materials.len(), 1, "printed again as it is now");
     // The CPU's ray meets it over the ground, coming down on its middle.
     let down = json!({ "from": [4.0, 30.0, 4.0], "direction": [0.0, -1.0, 0.0], "obj": volume });
@@ -1024,7 +1057,7 @@ fn a_brush_carves_an_endless_voxel_volume_where_the_pointer_meets_it_and_a_tool_
     frames(&mut editor, &mut renderer, 2);
     let printed = editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().edits.clone();
     assert_eq!(printed.len(), 1, "one print for a click and a drag");
-    assert!(printed[0].print.is_some());
+    assert!(printed[0].print().is_some());
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert_eq!(edits(&editor), 0, "the print taken back");
 }
@@ -1627,6 +1660,71 @@ fn dungeons_project() -> tempfile::TempDir {
         std::fs::write(path, text).unwrap();
     }
     dir
+}
+
+#[test]
+fn a_tool_finds_the_water_of_an_endless_voxel_volumes_rivers_and_turns_its_sea_off() {
+    let starters = voxear_terrain::generate::starters();
+    let hills = starters.iter().find(|starter| starter.name == "Rolling Hills").unwrap().world(7, 1.0);
+    assert!(hills.has_rivers());
+    // A river at least 0.8 m deep, near the world's middle.
+    let (mut xs, mut zs) = (Vec::new(), Vec::new());
+    for i in 0..160 * 160 {
+        xs.push((i % 160) as f32 * 8.0 - 640.0);
+        zs.push((i / 160) as f32 * 8.0 - 640.0);
+    }
+    let (water, _) = hills.water(&xs, &zs).expect("its water");
+    let mut heights = vec![0.0; xs.len()];
+    hills.heights(&xs, &zs, &mut heights);
+    let river = (0..xs.len())
+        .filter(|&i| water[i] - heights[i] > 0.8)
+        .min_by(|&a, &b| xs[a].hypot(zs[a]).total_cmp(&xs[b].hypot(zs[b])))
+        .expect("a river");
+    let (x, z, top) = (xs[river], zs[river], 24.0 + water[river] - heights[river]);
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let scene = format!(
+        "format = 1\n\n[[obj]]\nid = 1\nname = \"Ground\"\n[obj.voxel_volume]\nsize = [16.0, 48.0, 16.0]\n\
+         endless = true\ngenerator = \"Worlds/Hills.worldgen\"\ngenerator_floor = {}\n",
+        heights[river] - 24.0
+    );
+    let files = [
+        ("voxear.toml", "[project]\nname = \"Rivers\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Ground.scene\"\n".into()),
+        ("Scenes/Ground.scene", scene),
+        ("Worlds/Hills.worldgen", hills.to_text()),
+    ];
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    frames(&mut editor, &mut renderer, 2);
+    let found = done(&mut editor, &mut renderer, "voxels.water_at", json!({ "at": [x, 24.2, z] }));
+    assert!(!found["obj"].is_null(), "{found}");
+    let height = found["height"].as_f64().unwrap() as f32;
+    assert!((height - top).abs() < 0.15, "its surface at {height}, not {top}: {found}");
+    assert_eq!(found["current"].as_array().map(Vec::len), Some(3), "{found}");
+    let none = done(&mut editor, &mut renderer, "voxels.water_at", json!({ "at": [x, 10.0, z] }));
+    assert!(none["obj"].is_null() && none["height"].is_null(), "deep under the bed: {none}");
+    // Its generator's sea is on until a tool turns it off.
+    let volume = found["obj"].clone();
+    let entity = link::resolve_obj(&editor.game, &volume).unwrap();
+    let sea = |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().sea;
+    assert!(sea(&editor));
+    let off = json!({ "obj": volume, "component": "voxel_volume", "field": "sea", "value": false });
+    done(&mut editor, &mut renderer, "field.set", off);
+    assert!(!sea(&editor), "the sea turned off");
+    let source = editor.game.engine.world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).unwrap();
+    assert!(!source.0.sea, "and its scene writes it so");
+    // Its rivers voxels of water until drawn smooth, by the look's name.
+    let look = |editor: &Editor| editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().water;
+    assert_eq!(look(&editor), voxear_render::VoxelWaterLook::Voxels);
+    let smooth = json!({ "obj": volume, "component": "voxel_volume", "field": "water", "value": "Smooth" });
+    done(&mut editor, &mut renderer, "field.set", smooth);
+    assert_eq!(look(&editor), voxear_render::VoxelWaterLook::Smooth);
+    let source = editor.game.engine.world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).unwrap();
+    assert_eq!(source.0.water, voxear_render::VoxelWaterLook::Smooth, "and its scene writes it so");
 }
 
 #[test]

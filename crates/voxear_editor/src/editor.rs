@@ -2158,7 +2158,7 @@ impl Editor {
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
         let held = held.or_else(|| self.road_handles.end());
         let held = held.or_else(|| self.terrain_tools.end()).or_else(|| self.block_tools.end());
-        let held = held.or_else(|| self.voxel_tools.end());
+        let held = held.or_else(|| self.voxel_tools.end(&mut self.game));
         // A map brush's stroke: the world's painted maps before and after it, one step to undo.
         if let Some((world, before)) = self.block_tools.take_painted()
             && let Some(painted) = self.game.content.painted(world, false)

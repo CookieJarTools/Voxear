@@ -50,7 +50,9 @@ mod voxels;
 mod world;
 pub(crate) mod written_land;
 
-pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, WorldBiomes};
+pub use biomes::{
+    BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, GPU_BIOME_WORDS, GpuBiomes, WorldBiomes,
+};
 pub use land::{BiomeLand, Landform};
 pub use strata::{RockLayer, RockLayers, Strata};
 pub use areas::{Areas, Character, LevelPlan, Sites};
@@ -66,4 +68,4 @@ pub use landmass::{Climate, Erosion, Field, Landmass, Preset, Sample, Warp, smoo
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};
 pub use starters::{Starter, starters};
 pub use voxels::OwnVoxels;
-pub use world::{Carried, Cells, PreviewArea, Volume, WorldGen};
+pub use world::{Carried, Cells, PreviewArea, Volume, WorldGen, current_between};

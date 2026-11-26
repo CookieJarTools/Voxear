@@ -765,6 +765,60 @@ pub struct SeaNow(pub SeaState);
 
 impl Component for SeaNow {}
 
+/// A sea in the level: the Obj it is on, how it looks and moves, and where
+/// it stands and how it is turned in the world.
+#[derive(Clone, Copy, Debug)]
+pub struct PlacedSea {
+    pub entity: voxear_ecs::Entity,
+    pub ocean: Ocean,
+    pub position: Vec3,
+    pub rotation: Quat,
+}
+
+/// The level's seas, the first of them the sea everything uses: each Ocean,
+/// at its Obj's place, but for one on an endless Voxel Volume with a
+/// generator, which stands at the generator's sea level; then, where the
+/// level has no Ocean, the sea of each such volume with its Sea on, as an
+/// Ocean as it comes would make it. Those being destroyed are left out.
+pub fn seas(world: &voxear_ecs::World) -> Vec<PlacedSea> {
+    use voxear_scene::{Destroying, Transform, WorldTransform};
+    let placed = |transform: &Transform, at: Option<&WorldTransform>| {
+        at.map_or((transform.position, transform.rotation), |w| {
+            let (_, rotation, position) = w.0.to_scale_rotation_translation();
+            (position, rotation)
+        })
+    };
+    let volume_sea = |entity: voxear_ecs::Entity, position: Vec3| {
+        let volume = world.get::<crate::VoxelVolume>(entity)?;
+        let generator = volume.generator.as_ref().filter(|_| volume.endless)?;
+        Some(position.y + generator.world.sea_level() - generator.floor)
+    };
+    let oceans = world.query_ref::<(voxear_ecs::Entity, &Ocean, &Transform, Option<&WorldTransform>)>();
+    let mut seas: Vec<PlacedSea> = oceans
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(entity, ocean, transform, at)| {
+            let (mut position, rotation) = placed(transform, at);
+            if let Some(level) = volume_sea(entity, position) {
+                position.y = level;
+            }
+            PlacedSea { entity, ocean: *ocean, position, rotation }
+        })
+        .collect();
+    if !seas.is_empty() {
+        return seas;
+    }
+    let volumes = world.query_ref::<(voxear_ecs::Entity, &crate::VoxelVolume, &Transform, Option<&WorldTransform>)>();
+    for (entity, volume, transform, at) in volumes.without::<Destroying>().into_iter() {
+        let (mut position, rotation) = placed(transform, at);
+        if let Some(level) = volume.sea_height(position) {
+            position.y = level;
+            seas.push(PlacedSea { entity, ocean: Ocean::default(), position, rotation });
+        }
+    }
+    seas
+}
+
 /// The sea's long waves on the CPU, for how high it is at a point: the two
 /// longest cascades at 64×64, moved on to a moment. Their spectrum is made
 /// from the sea's waves alone; their height and choppiness are applied as

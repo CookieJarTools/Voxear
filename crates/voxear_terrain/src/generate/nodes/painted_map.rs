@@ -4,6 +4,7 @@
 //! made for the world; in a generator on its own, as its preview shows it,
 //! it is Default everywhere.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
@@ -108,6 +109,16 @@ struct Read {
 }
 
 impl Kernel for Read {
+    fn gpu(&self) -> Option<GpuStep> {
+        // The map as it is now, its pixels after the program's words: made again as it is painted.
+        let maps = self.painted.maps();
+        let data = std::sync::Arc::new(maps.map(self.map.kind()).gpu_words());
+        let key =
+            self.painted.id.rotate_left(7) ^ (self.map as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ maps.version;
+        let nearest = u32::from(self.map == PaintedMapKind::Biome);
+        Some(GpuStep::new(GpuOp::Painted).whole(nearest).number(self.default).reading(key, data))
+    }
+
     fn key(&self, key: &mut Key) {
         // Known by the maps' handle, not what they hold, which changes as they are painted.
         key.name("painted map").whole(self.map as u32).number(self.default).text(&self.painted.id.to_string());

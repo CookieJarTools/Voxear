@@ -4644,13 +4644,37 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
   turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
   stays whole. Next: changed bricks in region files, edits over the network.
+- **A world of blocks' ground on the GPU (2026-11-26).** An endless volume's **Generator** can be a generated world
+  of blocks: its ground generator as its chunks are made by it, its biomes' land and painted Land, Height and Biome
+  maps included, the maps beside the program (9 MB for the Realm's 51 km). Peaks, Plateaus (its canyons and ramps),
+  Smooth, World Edge and Painted Map now run on the GPU, each the CPU's to within millimetres (a plateau's stair
+  tread 4 cm). Its ground is its biomes': the one painted, else the nearest by climate, borders ragged as the
+  world's, each laying its own top, under, deep, steep and shore blocks in their blocks' colours, grass in its top
+  block's colour where that is green; the GPU picks the CPU's biome at 8192 places of 8192, and collision places
+  trees by the same. Not yet: rock layers; the Realm's Spires and Arches; a volume taller than 16 sectors (64 m at 16
+  voxels a metre); ground drawn streaked tens of kilometres from the volume's Obj.
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.
   Beds are gravel and sand; the water is drawn as a world of blocks' water is, flowing downstream, foaming at the bank,
   waterfalls pouring down their faces; `Voxels.Raycast` and edits meet the cut bed. Voxel ground is in the sea floor
   map, so waves calm over voxel shallows and foam on the shore. A column takes 0.104 ms with rivers as without.
-  Not yet: water filling a pit carved beside a river, swimming in voxel rivers (research/small-voxels.md).
+  Since (2026-11-26): an endless volume with a generator has its sea, an Ocean at the generator's sea level where
+  the level has none (`ocean::seas`; **Sea** in the Inspector, `Voxels.Sea`, field `sea`), an Ocean on the volume's
+  Obj setting its look; and the game's water reads the rivers' and lakes' points, so crates and boats float and
+  drift down a river's current, characters wade and swim in it (`Voxels.WaterAt` in C#, `voxels.water_at`).
+  Not yet: water filling a pit carved beside a river; the sea calming what floats over voxel shallows beyond the
+  collision chunks round it; the sea stops nowhere inland, so a cave dug below its level is wet (research/small-voxels.md).
+- **Waterfalls that fall (2026-11-26).** A voxel river's waterfall leaves its lip and curves down the cliff into its
+  pool, as thrown water falls, in two swaying sheets with ragged sides, the front one torn into strands lower down;
+  pale, lit through by the sun behind; its pool churned white over 3 m. Before, it was a flat wall standing out from
+  the cliff.
+- **Water of voxels (2026-11-26).** A volume's **Water** set to **Voxels** (Inspector, `water = "voxels"`,
+  `Voxels.WaterLook`, `field.set`) makes its rivers and lakes of voxels as small as the ground's. Each is shaded by how
+  deep the water is, its steps lit as its top, ripples drifting over it. Its waterfalls are voxels thrown over their
+  lips, falling as thrown water falls, whiter the faster they go, splashing off a churned pool. A whole frame costs
+  less than with smooth water: 8.6 ms over a river against 10.5. A first try that walked through the water to the bed
+  cost 4.4 ms more and striped sloping rivers. Voxels is the look a volume comes with; Smooth is the other.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A
@@ -4658,6 +4682,39 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   Rigidbodies and where they will be in half a second, nearest first on workers of their own; a change makes again
   only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
   Not yet: volumes of a set size, navigation.
+- **What grows where, and mobs (2026-11-26).** An endless Voxel Volume grows crops and ground cover of its own
+  voxels on the ground it is told (meadow grass, wheat, barley, flax and cabbages, in rows on ploughed earth), keeps
+  each kind of tree, crop and mob within or out of World Areas by their Area Tags, as structures in a world of blocks
+  do, and spawns mobs from prefabs on its ground round the player. Block Mobs walk a volume's ground straight to
+  where they are sent and wander it. Inspector rows, `vox editor call field.set`, and the scene's `cover`, `mobs`,
+  `within` and `never_within`. The CPU keeps trees to the areas as the GPU does. Making a column costs what it did.
+  Not yet: ways found round obstacles on voxel ground, painted areas, harvesting.
+
+- **Edits for building (2026-11-26).** Endless volumes' edits are typed shapes, kept in order: balls; boxes turned
+  any way (a slab is one half a metre tall); banks, boxes whose top slopes; areas, outlines of points across the
+  ground from one height to another; and covers, the ground's own top within an outline as deep as they say,
+  wherever it is. Each fills with a ground or a paving (cobbles, flagstones, bricks, planks, ashlar), laid in a
+  pattern of its own on the world's grid with joints and three shades, or carves out; and clears the air over its
+  top as far as it says. One edit paves a whole street. Fills and prints can be tinted, their colours shaded from
+  the tint as from their own average. Prints can be fitted to the ground: cleared inside down to their foot, on a
+  footing that reaches down to the ground in the columns they stand over. A column takes 4,096 edits, a brick 256.
+  The GPU works each out a voxel at a time (`editHeld`) and the CPU the same way (`VoxelEdit::held`): a probe that
+  reads an endless volume's voxels back from the GPU finds them the CPU's to the voxel. `Voxels.Box`, `CarveBox`,
+  `Slab`, `Ramp`, `Area`, `CarveArea`, `Cover` and `Print(…, fit, footing, tint)` in C#; `voxels.box`,
+  `voxels.ramp`, `voxels.area`, `voxels.cover` in `vox editor call`; the brush's Box, Area and Cover modes, its
+  Height, Clear, Snap and Tint, and Fit and Footing for prints. Every shape is worked out in whole numbers
+  (sixteenths of a voxel, turns in 4096ths), the same on both, after a first try in floats left two voxels in
+  131,328 at a turned box's edge differing.
+- **Digging and building a voxel at a time, saved in region files (2026-11-26).** Voxels dug out or placed in a
+  ground or paving (tinted or not) are kept brick by brick over everything the edits make, an edit a brick on the GPU
+  after all the others, and found the same on the CPU for collision, rays and trees. `Voxels.Dig`, `Voxels.Place`,
+  `Voxels.Restore` in C#, `voxels.dig`, `voxels.place`, `voxels.restore` in `vox editor call`, the brush's Dig and
+  Build. Saved with the scene in region files beside it, 64 m a side, a bit a voxel and a byte a voxel set, packed
+  with zstd: a 320-voxel tunnel over two regions is under 2 KB; a save writes only the regions that changed.
+- **Colours for a city (2026-11-26).** A volume holds 4,224 colours: 128 shared by every brick and 32 banks of 128,
+  each brick keeping the bank most of its voxels are in. A print's colours in each tint, and a tinted fill's, go
+  together into one bank, so sixty kinds of building of thirty colours each keep every colour; a print takes up to
+  128.
 - **Stage 6 begun (2026-11-26): shadows, light indoors and glass.**
   - **Voxels shadow everything.** After the depth passes, **Voxel shadows** traces a ray towards the sun from each
     pixel, through the voxels, whatever is drawn there. Models, blocks, terrain and grass take it with the contact
@@ -4670,9 +4727,9 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     - Ground under its kept skin, and what is past a volume's sides and under its floor, counts as solid.
     - Voxels, models and grass are lit by it as by block light: a room with its door shut is black, a lamp of
       voxels lights a room as a lamp block does.
-  - **Glowing and see-through voxels.** A colour's kind rides over its red, green and blue in the palette. A print's
+  - **Glowing and see-through voxels.** A colour's kind is kept after the palette's colours, a byte a place. A print's
     colours are made glass or lights in its Inspector's **Glass and Lights**, by `voxel_prints.materials`, or in its
-    settings.
+    settings. Water of voxels lets the light through as glass does.
     - Glowing voxels shine and light the cells round them in their own colour.
     - The walk passes through glass and keeps the first glass it met. **Glass (voxels)** draws it lit over what is
       behind, reflecting the sky, with the sun through it onto the floor.

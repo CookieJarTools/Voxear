@@ -15,12 +15,36 @@
 //! `.worldgen` in the project, `generator_floor` how high the generator's
 //! ground is at the volume's floor (left out, a little under its ground at
 //! the volume's corner), and `generator_at` where the volume's corner lies
-//! in the generator's world. Its trees are kinds of `.voxplant`, each as
+//! in the generator's world. Its generator's sea fills the level at the
+//! generator's sea level, as an Ocean would, unless it has `sea = false` or
+//! the level has an Ocean of its own (an Ocean on the volume's Obj stands
+//! at that level too). Its trees are kinds of `.voxplant`, each as
 //! many to a hectare as it says, scattered where its ground grows grass:
 //!
 //! [[obj.voxel_volume.trees]]
 //! plant = "Plants/Oak.voxplant"
 //! per_hectare = 40.0
+//!
+//! A kind of tree may keep within World Areas of some tags and out of
+//! those of others, each an Area Tag data asset, by its number:
+//!
+//! [[obj.voxel_volume.trees]]
+//! plant = "Plants/Apple.voxplant"
+//! per_hectare = 120.0
+//! within = ["…the Orchard tag's number…"]
+//!
+//! Crops and ground cover grow on the ground they say, each kind of its own
+//! voxels (`meadow_grass`, `wheat`, `barley`, `flax` or `cabbage`), the
+//! first that grows on a voxel column taking it in place of the grass:
+//!
+//! [[obj.voxel_volume.cover]]
+//! kind = "wheat"
+//! on = ["grass"]
+//! soil = "dirt"
+//! height = 0.9
+//! rows = 0.25
+//! density = 0.7
+//! within = ["…the Fields tag's number…"]
 //!
 //! [[obj.voxel_volume.stamps]]
 //! model = "Plants/Oak.boxmodel"
@@ -30,7 +54,8 @@
 //!
 //! An endless one keeps what was changed in it, in order: balls carved out
 //! of it, and filled with a ground (`dirt`, `grass`, `rock`, `sand`, `snow`
-//! or `gravel`), each its middle in metres from the volume's corner:
+//! or `gravel`) or a paving (`cobbles`, `flagstones`, `bricks`, `planks` or
+//! `ashlar`), each its middle in metres from the volume's corner:
 //!
 //! ```toml
 //! [[obj.voxel_volume.edits]]
@@ -43,15 +68,42 @@
 //! fill = "rock"
 //! ```
 //!
+//! Boxes and banks (a `shape` of `box` or `ramp`) are placed by the middle
+//! of their foot, `size` metres along their own X, Y and Z, turned as a
+//! print is; an `area` is an outline's `points` along X and Z from `low` up
+//! to `high`; a `cover` the ground's top `depth` metres deep within an
+//! outline, wherever the ground is. Each clears `clear` metres over its top,
+//! and is in `tint`'s colours where it has one:
+//!
+//! ```toml
+//! [[obj.voxel_volume.edits]]
+//! shape = "area"
+//! points = [[0.0, 0.0], [40.0, 0.0], [40.0, 6.0], [0.0, 6.0]]
+//! low = 23.75
+//! high = 24.0
+//! fill = "cobbles"
+//! clear = 3.0
+//!
+//! [[obj.voxel_volume.edits]]
+//! shape = "box"
+//! at = [12.0, 21.0, 9.0]
+//! size = [4.0, 2.5, 5.0]
+//! rotation = [0.0, 15.0, 0.0]
+//! ```
+//!
 //! A Voxel Print printed into it is an edit too, kept in the same order:
 //! the `.voxprint`, where its model's origin is, and how it is turned, in
-//! degrees about X, Y and Z, as an Obj's rotation is written:
+//! degrees about X, Y and Z, as an Obj's rotation is written; `fit` fits it
+//! to the ground on a footing of its `fill`, and `tint` shades its colours:
 //!
 //! ```toml
 //! [[obj.voxel_volume.edits]]
 //! print = "Prints/Sandbag Wall.voxprint"
 //! at = [10.0, 24.0, 6.0]
 //! rotation = [0.0, 30.0, 0.0]
+//! fit = true
+//! fill = "ashlar"
+//! tint = [200, 180, 150]
 //! ```
 
 use std::sync::Arc;
@@ -59,7 +111,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume};
+use voxear_assets::AssetGuid;
+use voxear_render::{
+    VoxelArea, VoxelAreaRules, VoxelBiomes, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator,
+    VoxelGround, VoxelKind, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
+};
 
 use crate::content::Content;
 
@@ -81,7 +137,8 @@ pub struct VoxelVolumeData {
     pub endless: bool,
     pub reach: f32,
     /// The world generator an endless volume's ground is made by, a
-    /// reference to a `.worldgen`: none for its own ground.
+    /// reference to a `.worldgen`, or to a generated world of blocks for
+    /// the ground its chunks are made of: none for its own ground.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generator: Option<String>,
     /// How high the generator's ground is at the volume's floor, in metres
@@ -95,27 +152,100 @@ pub struct VoxelVolumeData {
     /// The kinds of tree scattered through an endless volume's ground.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trees: Vec<VoxelTreesData>,
+    /// The crops and ground cover grown on an endless volume's ground.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cover: Vec<VoxelCoverData>,
+    /// The mobs that spawn on an endless volume's ground round the player.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mobs: Vec<crate::voxel_mobs::VoxelMobsData>,
     /// What was changed in an endless volume, in the order it was changed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<VoxelEditData>,
+    /// Where the voxels dug and placed one at a time are kept, a folder of
+    /// region files the scene's save writes, and which regions it has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changes: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<[i32; 2]>,
+    /// Whether an endless volume with a generator has its generator's sea,
+    /// where the level has no Ocean of its own: on unless written off.
+    #[serde(skip_serializing_if = "is_on")]
+    pub sea: bool,
+    /// How an endless volume's rivers and lakes are drawn: as voxels of
+    /// water, or smooth (`water = "smooth"`).
+    #[serde(skip_serializing_if = "is_voxels")]
+    pub water: VoxelWaterLook,
 }
 
-/// A change to an endless volume as a scene writes it: a ball, its middle
-/// in metres from the volume's corner, carved out or filled with a ground;
-/// or a Voxel Print, a reference to a `.voxprint`, its origin at `at` and
-/// turned `rotation` degrees about X, Y and Z.
+fn is_on(on: &bool) -> bool {
+    *on
+}
+
+fn is_voxels(look: &VoxelWaterLook) -> bool {
+    *look == VoxelWaterLook::Voxels
+}
+
+/// A change to an endless volume as a scene writes it, in metres from the
+/// volume's corner: a ball, a box, a bank, an area or a cover, carved out or
+/// filled with `fill`; or a Voxel Print, a reference to a `.voxprint`, its
+/// origin at `at` and turned `rotation` degrees about X, Y and Z.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoxelEditData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub print: Option<String>,
+    #[serde(skip_serializing_if = "VoxelEditShape::is_ball")]
+    pub shape: VoxelEditShape,
+    /// A ball's middle, or the middle of a box's, a bank's or a print's foot.
+    #[serde(skip_serializing_if = "is_origin3")]
     pub at: [f32; 3],
     #[serde(skip_serializing_if = "is_one_metre")]
     pub radius: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fill: Option<VoxelMaterial>,
+    /// A box's or a bank's size along its own X, Y and Z.
+    #[serde(skip_serializing_if = "is_unit")]
+    pub size: [f32; 3],
     #[serde(skip_serializing_if = "is_unturned")]
     pub rotation: [f32; 3],
+    /// An area's or a cover's outline, its points along X and Z; an area's
+    /// foot and top, and how deep a cover is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<[f32; 2]>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub low: f32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub high: f32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub depth: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill: Option<VoxelMaterial>,
+    /// The colour its fill or print takes, as sRGB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tint: Option<[u8; 3]>,
+    /// How far over its top it clears, in metres.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub clear: f32,
+    /// Whether a print is fitted to the ground, on a footing of its fill.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fit: bool,
+}
+
+/// The shape of an edit as a scene names it; a print is an edit with a
+/// `print`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelEditShape {
+    #[default]
+    Ball,
+    Box,
+    Ramp,
+    Area,
+    Cover,
+}
+
+impl VoxelEditShape {
+    fn is_ball(&self) -> bool {
+        *self == Self::Ball
+    }
 }
 
 /// A radius of a metre, as unwritten: a print's, which its box takes the
@@ -128,9 +258,36 @@ fn is_unturned(rotation: &[f32; 3]) -> bool {
     *rotation == [0.0; 3]
 }
 
+fn is_unit(size: &[f32; 3]) -> bool {
+    *size == [1.0; 3]
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
+
+fn is_origin3(at: &[f32; 3]) -> bool {
+    *at == [0.0; 3]
+}
+
 impl Default for VoxelEditData {
     fn default() -> Self {
-        Self { print: None, at: [0.0; 3], radius: 1.0, fill: None, rotation: [0.0; 3] }
+        Self {
+            print: None,
+            shape: VoxelEditShape::Ball,
+            at: [0.0; 3],
+            radius: 1.0,
+            size: [1.0; 3],
+            rotation: [0.0; 3],
+            points: Vec::new(),
+            low: 0.0,
+            high: 0.0,
+            depth: 0.0,
+            fill: None,
+            tint: None,
+            clear: 0.0,
+            fit: false,
+        }
     }
 }
 
@@ -140,10 +297,31 @@ impl VoxelEditData {
         Self { at, radius, fill, ..Self::default() }
     }
 
+    /// A box `size` metres, the middle of its foot at `at`, turned
+    /// `rotation` degrees about X, Y and Z, carved out or filled.
+    pub fn boxed(at: [f32; 3], size: [f32; 3], rotation: [f32; 3], fill: Option<VoxelMaterial>) -> Self {
+        Self { shape: VoxelEditShape::Box, at, size, rotation, fill, ..Self::default() }
+    }
+
+    /// A bank, as a box is placed, rising along its own Z.
+    pub fn ramp(at: [f32; 3], size: [f32; 3], rotation: [f32; 3], fill: Option<VoxelMaterial>) -> Self {
+        Self { shape: VoxelEditShape::Ramp, at, size, rotation, fill, ..Self::default() }
+    }
+
+    /// The outline `points` from `low` up to `high` metres.
+    pub fn area(points: Vec<[f32; 2]>, low: f32, high: f32, fill: Option<VoxelMaterial>) -> Self {
+        Self { shape: VoxelEditShape::Area, points, low, high, fill, ..Self::default() }
+    }
+
+    /// The ground's top `depth` metres within the outline `points`.
+    pub fn cover(points: Vec<[f32; 2]>, depth: f32, fill: Option<VoxelMaterial>) -> Self {
+        Self { shape: VoxelEditShape::Cover, points, depth, fill, ..Self::default() }
+    }
+
     /// A print, by its reference, its origin at `at`, turned `rotation`
     /// degrees about X, Y and Z.
     pub fn printed(print: String, at: [f32; 3], rotation: [f32; 3]) -> Self {
-        Self { print: Some(print), at, radius: 1.0, fill: None, rotation }
+        Self { print: Some(print), at, rotation, ..Self::default() }
     }
 
     /// How it is turned, as a scene writes an Obj's rotation.
@@ -152,17 +330,49 @@ impl VoxelEditData {
         Quat::from_euler(EulerRot::YXZ, y.to_radians(), x.to_radians(), z.to_radians())
     }
 
+    /// It moved by `by` metres: from the world into a volume whose corner is
+    /// at `-by`, say.
+    pub fn moved(&self, by: Vec3) -> Self {
+        let mut moved = self.clone();
+        moved.at = (Vec3::from(self.at) + by).to_array();
+        for point in &mut moved.points {
+            *point = [point[0] + by.x, point[1] + by.z];
+        }
+        if self.shape == VoxelEditShape::Area {
+            moved.low += by.y;
+            moved.high += by.y;
+        }
+        moved
+    }
+
     /// The edit the renderer makes, its print read from `content`: none,
     /// with a warning, for a print that cannot be read.
     pub fn made(&self, content: &mut Content) -> Option<VoxelEdit> {
-        let Some(reference) = &self.print else {
-            return Some(VoxelEdit::ball(Vec3::from(self.at), self.radius, self.fill));
+        let edit = match &self.print {
+            Some(reference) => {
+                let Some((_, print)) = content.voxel_print(reference) else {
+                    tracing::warn!("a Voxel Volume's print {reference} is not a Voxel Print in the project");
+                    return None;
+                };
+                let printed = VoxelEdit::printed(print, Vec3::from(self.at), self.turn());
+                if self.fit { printed.fitted(self.fill) } else { printed }
+            }
+            None => self.shaped(),
         };
-        let Some((_, print)) = content.voxel_print(reference) else {
-            tracing::warn!("a Voxel Volume's print {reference} is not a Voxel Print in the project");
-            return None;
+        Some(edit.tinted(self.tint))
+    }
+
+    /// The edit a shape makes, which needs nothing read: not a print's.
+    pub fn shaped(&self) -> VoxelEdit {
+        let at = Vec3::from(self.at);
+        let edit = match self.shape {
+            VoxelEditShape::Ball => VoxelEdit::ball(at, self.radius, self.fill),
+            VoxelEditShape::Box => VoxelEdit::boxed(at, Vec3::from(self.size), self.turn(), self.fill),
+            VoxelEditShape::Ramp => VoxelEdit::ramp(at, Vec3::from(self.size), self.turn(), self.fill),
+            VoxelEditShape::Area => VoxelEdit::area(self.points.clone(), self.low, self.high, self.fill),
+            VoxelEditShape::Cover => VoxelEdit::cover(self.points.clone(), self.depth, self.fill),
         };
-        Some(VoxelEdit::printed(print, Vec3::from(self.at), self.turn()))
+        edit.clearing(self.clear).tinted(self.tint)
     }
 }
 
@@ -173,11 +383,82 @@ impl VoxelEditData {
 pub struct VoxelTreesData {
     pub plant: String,
     pub per_hectare: f32,
+    /// The World Areas it grows in, by their tags (Area Tag data assets),
+    /// and those it never grows in: anywhere where it names none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<AssetGuid>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub never_within: Vec<AssetGuid>,
 }
 
 impl Default for VoxelTreesData {
     fn default() -> Self {
-        Self { plant: String::new(), per_hectare: 40.0 }
+        Self { plant: String::new(), per_hectare: 40.0, within: Vec::new(), never_within: Vec::new() }
+    }
+}
+
+/// The rules of what keeps within areas of the tags `within` and out of
+/// those of `never`, as the renderer reads them.
+pub fn area_rules(within: &[AssetGuid], never: &[AssetGuid]) -> VoxelAreaRules {
+    VoxelAreaRules {
+        within: within.iter().map(|tag| tag.to_u128()).collect(),
+        never: never.iter().map(|tag| tag.to_u128()).collect(),
+    }
+}
+
+/// A kind of crop or ground cover grown on an endless volume, as a scene
+/// writes it (see `voxear_render::VoxelCover`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxelCoverData {
+    pub kind: VoxelCoverKind,
+    /// The ground it grows on: grass where none.
+    pub on: Vec<VoxelMaterial>,
+    pub density: f32,
+    pub height: f32,
+    pub rows: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soil: Option<VoxelMaterial>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<AssetGuid>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub never_within: Vec<AssetGuid>,
+}
+
+impl Default for VoxelCoverData {
+    fn default() -> Self {
+        Self::of(VoxelCoverKind::default())
+    }
+}
+
+impl VoxelCoverData {
+    /// A kind as it is first grown: its own height, rows and density, crops
+    /// in ploughed earth, anywhere there is grass.
+    pub fn of(kind: VoxelCoverKind) -> Self {
+        let made = VoxelCover::of(kind);
+        Self {
+            kind,
+            on: made.on,
+            density: made.density,
+            height: made.height,
+            rows: made.rows,
+            soil: made.soil,
+            within: Vec::new(),
+            never_within: Vec::new(),
+        }
+    }
+
+    /// The cover the renderer grows.
+    pub fn made(&self) -> VoxelCover {
+        VoxelCover {
+            kind: self.kind,
+            on: self.on.clone(),
+            density: self.density.clamp(0.0, 1.0),
+            height: self.height.max(0.0),
+            rows: self.rows.max(0.0),
+            soil: self.soil,
+            areas: area_rules(&self.within, &self.never_within),
+        }
     }
 }
 
@@ -213,7 +494,13 @@ impl Default for VoxelVolumeData {
             generator_floor: None,
             generator_at: [0.0, 0.0],
             trees: Vec::new(),
+            cover: Vec::new(),
+            mobs: Vec::new(),
             edits: Vec::new(),
+            changes: None,
+            regions: Vec::new(),
+            sea: made.sea,
+            water: made.water,
         }
     }
 }
@@ -258,16 +545,19 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         }
     }
     let generator = data.generator.as_deref().and_then(|reference| {
-        let found = content.world_gen(reference);
+        let found = generator_of(content, reference);
         if found.is_none() {
-            tracing::warn!("a Voxel Volume's generator {reference} is not a world generator in the project");
+            tracing::warn!(
+                "a Voxel Volume's generator {reference} is not a world generator or a generated world of blocks in the project"
+            );
         }
         found
     });
-    let generator = generator.map(|world| VoxelGenerator {
+    let generator = generator.map(|(world, biomes)| VoxelGenerator {
         floor: data.generator_floor.unwrap_or_else(|| auto_floor(&world, data)),
         at: data.generator_at,
         world,
+        biomes,
     });
     let trees = data.trees.iter().filter_map(|kind| trees_of(content, kind)).collect();
     VoxelVolume {
@@ -280,13 +570,199 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         reach: data.reach,
         generator,
         trees,
+        cover: data.cover.iter().map(VoxelCoverData::made).collect(),
+        areas: Arc::default(),
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
+        changes: Arc::new(read_changes(content, data)),
+        sea: data.sea,
+        water: data.water,
     }
 }
 
-/// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Print` and `Voxels.Raycast` in scripts.
+/// The region file of region `at` in the folder `folder`.
+pub fn region_path(folder: &str, at: [i32; 2]) -> String {
+    format!("{folder}/r.{}.{}.vxr", at[0], at[1])
+}
+
+/// The voxels dug and placed in a volume `data` writes, read from its
+/// region files: none where it keeps none, with a warning for a region that
+/// cannot be read.
+fn read_changes(content: &mut Content, data: &VoxelVolumeData) -> VoxelChanges {
+    let mut changes = VoxelChanges::default();
+    let Some(folder) = &data.changes else { return changes };
+    for &region in &data.regions {
+        let path = region_path(folder, region);
+        match content.read(&path).and_then(|bytes| changes.read_region(&bytes)) {
+            Ok(()) => {}
+            Err(error) => tracing::warn!("a Voxel Volume's changes in {path} could not be read: {error:#}"),
+        }
+    }
+    changes
+}
+
+/// Writes the voxels dug and placed in each endless volume of `world` that
+/// `ids` names (its Objs and their ids in the scene at `scene`, a project
+/// path) into region files beside the scene, in `project`: a folder for
+/// each volume, `<scene>.voxels/<id>`, a file for each region of 128 bricks
+/// a side, only those that changed written and those gone taken away; and
+/// notes where in `objs`, the scene's Objs as it writes them. Gives the
+/// files written.
+pub fn save_changes(
+    world: &World,
+    (project, scene): (&std::path::Path, &str),
+    ids: &std::collections::HashMap<Entity, u32>,
+    objs: &mut [crate::scene_file::ObjData],
+) -> anyhow::Result<Vec<String>> {
+    use anyhow::Context;
+    let mut written = Vec::new();
+    for (&entity, &id) in ids {
+        let Some(volume) = world.get::<VoxelVolume>(entity).filter(|volume| volume.endless) else { continue };
+        let Some(data) = objs.iter_mut().find(|obj| obj.id == id).and_then(|obj| obj.voxel_volume.as_mut()) else {
+            continue;
+        };
+        let folder = format!("{scene}.voxels/{id}");
+        let on_disk = project.join(&folder);
+        let regions = volume.changes.regions();
+        data.regions = regions.iter().map(|(at, _)| *at).collect();
+        data.changes = (!regions.is_empty()).then(|| folder.clone());
+        if regions.is_empty() && !on_disk.is_dir() {
+            continue;
+        }
+        std::fs::create_dir_all(&on_disk).with_context(|| format!("making {folder}"))?;
+        let mut kept = std::collections::HashSet::new();
+        for (at, bytes) in &regions {
+            let path = region_path(&folder, *at);
+            kept.insert(project.join(&path));
+            if std::fs::read(project.join(&path)).ok().as_deref() != Some(bytes.as_slice()) {
+                std::fs::write(project.join(&path), bytes).with_context(|| format!("saving {path}"))?;
+                written.push(path);
+            }
+        }
+        // Regions no voxel is set in any more.
+        for entry in std::fs::read_dir(&on_disk).with_context(|| format!("reading {folder}"))?.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "vxr") && !kept.contains(&path) {
+                std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+            }
+        }
+        if regions.is_empty() {
+            let _ = std::fs::remove_dir(&on_disk);
+        }
+    }
+    Ok(written)
+}
+
+/// Digs out (`to` none) or places the voxel at each of `points` in the
+/// world, one voxel each, in every endless Voxel Volume a point falls in,
+/// or in `only`'s alone, over everything its edits make; kept with the
+/// volume and saved in region files beside its scene. Gives how many
+/// voxels were set.
+pub fn set_voxels(world: &mut World, points: &[Vec3], to: Option<VoxelKind>, only: Option<Entity>) -> usize {
+    let volumes: Vec<(Entity, Vec3, f32, f32)> = world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            let per = volume.voxels_per_metre.clamp(1, voxear_render::MOST_VOXELS_A_METRE) as f32;
+            (entity, corner, per, volume.size.y)
+        })
+        .collect();
+    let mut set = 0;
+    for (entity, corner, per, tall) in volumes {
+        let Some(volume) = world.get_mut::<VoxelVolume>(entity) else { continue };
+        let changes = Arc::make_mut(&mut volume.changes);
+        for point in points {
+            let local = *point - corner;
+            if local.y < 0.0 || local.y >= tall {
+                continue;
+            }
+            let cell = (local * per).floor().as_ivec3();
+            set += usize::from(changes.set(cell, to));
+        }
+    }
+    set
+}
+
+/// Lets the voxels at `points` in the world go back to what their volume's
+/// ground and edits make, in every endless volume, or `only`'s alone.
+pub fn unset_voxels(world: &mut World, points: &[Vec3], only: Option<Entity>) {
+    let volumes: Vec<(Entity, Vec3, f32)> = world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            (entity, corner, volume.voxels_per_metre.clamp(1, voxear_render::MOST_VOXELS_A_METRE) as f32)
+        })
+        .collect();
+    for (entity, corner, per) in volumes {
+        let Some(volume) = world.get_mut::<VoxelVolume>(entity) else { continue };
+        let changes = Arc::make_mut(&mut volume.changes);
+        for point in points {
+            changes.unset(((*point - corner) * per).floor().as_ivec3());
+        }
+    }
+}
+
+/// The world generator `reference` names: a `.worldgen`, or a world of
+/// blocks' ground generator, as its chunks are made by it (its biomes'
+/// land, its painted maps, its rivers; see `blocks::world_ground`), with
+/// its biomes, whose blocks the volume's ground is then made of.
+fn generator_of(
+    content: &mut Content,
+    reference: &str,
+) -> Option<(Arc<voxear_terrain::generate::WorldGen>, Option<Arc<VoxelBiomes>>)> {
+    let guid = content.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+    if content.db().get(guid).map(|entry| entry.kind) != Some(voxear_assets::AssetKind::BlockWorld) {
+        return content.world_gen(reference).map(|world| (world, None));
+    }
+    let found = crate::blocks::world_ground(content, guid)?;
+    let biomes = found.biomes.as_ref().filter(|placed| !placed.biomes.is_empty()).map(|placed| {
+        let own = [found.ground.top, found.ground.under, found.ground.bottom];
+        let gpu = placed.gpu(own, found.ground.under_depth, found.block_size);
+        let colour = |block: u16| found.colours.get(usize::from(block)).copied().unwrap_or([128; 3]);
+        Arc::new(VoxelBiomes { colours: gpu.blocks.iter().map(|&block| colour(block)).collect(), words: gpu.words })
+    });
+    Some((found.generator, biomes))
+}
+
+/// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Box` and the other shapes, `Voxels.Dig` and
+/// `Voxels.Place`, `Voxels.Print`, `Voxels.Raycast`, `Voxels.WaterAt` and `Voxels.Sea` in scripts.
 pub(crate) fn register() {
     voxear_scripting::set_voxel_edits(from_script);
+    voxear_scripting::set_voxel_water(
+        |world, at| water_at(world, Vec3::from(at), None).map(|(e, water)| (e, water.height, water.current.to_array())),
+        |world, on| {
+            if on >= 0 {
+                set_sea(world, on == 1, None);
+            }
+            sea_level(world)
+        },
+    );
+    voxear_scripting::set_voxel_shapes(shape_from_script);
+    voxear_scripting::set_voxel_sets(|world, points, to, tint| {
+        let points: Vec<Vec3> = points.iter().map(|p| Vec3::from(*p)).collect();
+        match to {
+            -2 => {
+                unset_voxels(world, &points, None);
+                points.len() as i32
+            }
+            to => match material_from_script(to) {
+                Some(material) => {
+                    let kind = material.map(|material| VoxelKind { material, tint });
+                    set_voxels(world, &points, kind, None) as i32
+                }
+                None => -1,
+            },
+        }
+    });
+    voxear_scripting::set_voxel_water_look(|world, look| {
+        if let Some(&look) = usize::try_from(look).ok().and_then(|look| VoxelWaterLook::ALL.get(look)) {
+            set_water_look(world, look, None);
+        }
+        water_look(world).map(|look| look as i32)
+    });
     voxear_scripting::set_voxel_raycast(|world, origin, direction, reach| {
         raycast(world, Vec3::from(origin), Vec3::from(direction), reach, None)
             .map(|(entity, hit)| (entity, hit.point.to_array(), hit.normal.to_array(), hit.distance))
@@ -315,18 +791,132 @@ pub fn raycast(
         .min_by(|a, b| a.1.distance.total_cmp(&b.1.distance))
 }
 
+/// The water of the rivers and lakes of the endless Voxel Volumes at `at`
+/// in the world, or of `only`'s alone: the volume, how high the water's
+/// surface stands and how its current runs (see
+/// `voxear_render::voxel_water_at`); the highest where two have water
+/// there. Not the sea, which stands at its generator's sea level as an
+/// Ocean (`voxear_render::ocean::seas`).
+pub fn water_at(world: &World, at: Vec3, only: Option<Entity>) -> Option<(Entity, voxear_render::VoxelWaterPoint)> {
+    world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .filter_map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            voxear_render::voxel_water_at(volume, corner, at).map(|water| (entity, water))
+        })
+        .max_by(|a, b| a.1.height.total_cmp(&b.1.height))
+}
+
+/// Draws the rivers and lakes of every endless Voxel Volume as `look`
+/// says, or `only`'s alone, in how its scene writes it too: how many it
+/// reached.
+pub fn set_water_look(world: &mut World, look: VoxelWaterLook, only: Option<Entity>) -> usize {
+    let reached: Vec<Entity> = world
+        .query_ref::<(Entity, &VoxelVolume)>()
+        .into_iter()
+        .filter(|(entity, volume)| volume.endless && only.is_none_or(|o| o == *entity))
+        .map(|(entity, _)| entity)
+        .collect();
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.water = look;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.water = look;
+        }
+    }
+    reached.len()
+}
+
+/// How the first endless Voxel Volume draws its rivers and lakes, if there
+/// is one.
+pub fn water_look(world: &World) -> Option<VoxelWaterLook> {
+    world.query_ref::<&VoxelVolume>().into_iter().find(|volume| volume.endless).map(|volume| volume.water)
+}
+
+/// Turns the generator's sea of every endless Voxel Volume with one on or
+/// off, or `only`'s alone, in how its scene writes it too: how many it
+/// reached.
+pub fn set_sea(world: &mut World, on: bool, only: Option<Entity>) -> usize {
+    let reached: Vec<Entity> = world
+        .query_ref::<(Entity, &VoxelVolume)>()
+        .into_iter()
+        .filter(|(entity, volume)| volume.endless && volume.generator.is_some() && only.is_none_or(|o| o == *entity))
+        .map(|(entity, _)| entity)
+        .collect();
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.sea = on;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.sea = on;
+        }
+    }
+    reached.len()
+}
+
+/// How high the sea of the first endless Voxel Volume with its generator's
+/// sea on stands in the world, if one has.
+pub fn sea_level(world: &World) -> Option<f32> {
+    world
+        .query_ref::<(&VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .find_map(|(volume, local, placed)| {
+            volume.sea_height(placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+        })
+}
+
 /// A script's carve (`fill` -1) or fill with the ground numbered as
 /// `VoxelMaterial` in Voxear.Core numbers it: how many volumes it reached,
 /// or -1 for a ground there is none of.
 fn from_script(world: &mut World, at: [f32; 3], radius: f32, fill: i32) -> i32 {
-    let fill = match fill {
-        -1 => None,
-        number => match VoxelMaterial::ALL.get(number as usize) {
-            Some(&material) => Some(material),
-            None => return -1,
-        },
+    match material_from_script(fill) {
+        Some(fill) => edit(world, Vec3::from(at), radius, fill, None) as i32,
+        None => -1,
+    }
+}
+
+/// The ground a script numbers as `VoxelMaterial` in Voxear.Core numbers
+/// it: `Some(None)` for -1, air; none for a number there is none of.
+fn material_from_script(number: i32) -> Option<Option<VoxelMaterial>> {
+    match number {
+        -1 => Some(None),
+        number => VoxelMaterial::ALL.get(usize::try_from(number).ok()?).map(|&material| Some(material)),
+    }
+}
+
+/// A script's shaped edit (`Voxels.Box` and the rest): how many volumes it
+/// reached, or -1 for a shape or a ground there is none of.
+fn shape_from_script(world: &mut World, request: &voxear_scripting::VoxelShapeRequest) -> i32 {
+    let Some(fill) = material_from_script(request.fill) else { return -1 };
+    let shape = match request.shape {
+        0 => VoxelEditShape::Ball,
+        1 => VoxelEditShape::Box,
+        2 => VoxelEditShape::Ramp,
+        3 => VoxelEditShape::Area,
+        4 => VoxelEditShape::Cover,
+        _ => return -1,
     };
-    edit(world, Vec3::from(at), radius, fill, None) as i32
+    let data = VoxelEditData {
+        shape,
+        at: request.at,
+        radius: request.radius.max(0.0),
+        size: request.size,
+        rotation: request.rotation,
+        points: request.points.clone(),
+        low: request.low,
+        high: request.high,
+        depth: request.depth,
+        fill,
+        tint: request.tint,
+        clear: request.clear.max(0.0),
+        ..VoxelEditData::default()
+    };
+    shape_edit(world, &data, None) as i32
 }
 
 /// Carves a ball of `radius` metres round `at` in the world out of every
@@ -335,27 +925,51 @@ fn from_script(world: &mut World, at: [f32; 3], radius: f32, fill: i32) -> i32 {
 /// its scene writes it, and makes again the columns it reaches. Gives how
 /// many volumes it reached.
 pub fn edit(world: &mut World, at: Vec3, radius: f32, fill: Option<VoxelMaterial>, only: Option<Entity>) -> usize {
-    let radius = radius.max(0.0);
-    let reached: Vec<(Entity, VoxelEditData)> = world
+    shape_edit(world, &VoxelEditData::ball(at.to_array(), radius.max(0.0), fill), only)
+}
+
+/// Makes the shaped edit `data` (a ball, a box, a bank, an area or a
+/// cover, placed in the world) in every endless Voxel Volume it reaches, or
+/// in `only`'s alone, as [`edit`] does a ball. A print is left to [`print`].
+pub fn shape_edit(world: &mut World, data: &VoxelEditData, only: Option<Entity>) -> usize {
+    if data.print.is_some() {
+        return 0;
+    }
+    let made = data.shaped();
+    let (low, high) = made.reach();
+    let reached = reached_by(world, low, high, only);
+    for &(entity, corner) in &reached {
+        let local = data.moved(-corner);
+        keep(world, entity, local.shaped(), local);
+    }
+    reached.len()
+}
+
+/// The endless volumes (all, or `only`) a box from `low` to `high` in the
+/// world reaches, endless across the ground and as tall as each is, with
+/// their corners.
+fn reached_by(world: &World, low: Vec3, high: Vec3, only: Option<Entity>) -> Vec<(Entity, Vec3)> {
+    world
         .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
         .into_iter()
         .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
         .filter_map(|(entity, volume, local, placed)| {
             let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
-            // Endless across the ground, as tall as the volume.
-            let inside = at.y + radius >= corner.y && at.y - radius <= corner.y + volume.size.y;
-            inside.then_some((entity, VoxelEditData::ball((at - corner).to_array(), radius, fill)))
+            let inside = high.y >= corner.y && low.y <= corner.y + volume.size.y;
+            inside.then_some((entity, corner))
         })
-        .collect();
-    for (entity, data) in &reached {
-        if let Some(volume) = world.get_mut::<VoxelVolume>(*entity) {
-            Arc::make_mut(&mut volume.edits).push(VoxelEdit::ball(Vec3::from(data.at), data.radius, data.fill));
-        }
-        if let Some(source) = world.get_mut::<VoxelVolumeSource>(*entity) {
-            source.0.edits.push(data.clone());
-        }
+        .collect()
+}
+
+/// Keeps `edit` in `entity`'s volume after what was changed in it before,
+/// and `data` in what its scene writes.
+fn keep(world: &mut World, entity: Entity, edit: VoxelEdit, data: VoxelEditData) {
+    if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+        Arc::make_mut(&mut volume.edits).push(edit);
     }
-    reached.len()
+    if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+        source.0.edits.push(data);
+    }
 }
 
 /// Prints `print` (read from `content` by `reference`) into every endless
@@ -372,29 +986,28 @@ pub fn print(
     rotation: [f32; 3],
     only: Option<Entity>,
 ) -> Option<usize> {
-    let (guid, voxel_print) = content.voxel_print(reference)?;
-    let data = VoxelEditData::printed(guid.to_string(), at.to_array(), rotation);
-    let turn = data.turn();
-    let (low, high) = voxel_print.placed_bounds(at, turn);
-    let reached: Vec<(Entity, Vec3)> = world
-        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
-        .into_iter()
-        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
-        .filter_map(|(entity, volume, local, placed)| {
-            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
-            let inside = high.y >= corner.y && low.y <= corner.y + volume.size.y;
-            inside.then_some((entity, corner))
-        })
-        .collect();
+    print_as(content, world, &VoxelEditData::printed(reference.to_string(), at.to_array(), rotation), only)
+}
+
+/// Prints the print edit `data` (placed in the world, its print by
+/// reference, fitted and tinted as it says) as [`print`] does.
+pub fn print_as(
+    content: &mut Content,
+    world: &mut World,
+    data: &VoxelEditData,
+    only: Option<Entity>,
+) -> Option<usize> {
+    let (guid, voxel_print) = content.voxel_print(data.print.as_deref()?)?;
+    let data = VoxelEditData { print: Some(guid.to_string()), ..data.clone() };
+    let made = |data: &VoxelEditData| {
+        let printed = VoxelEdit::printed(voxel_print.clone(), Vec3::from(data.at), data.turn());
+        if data.fit { printed.fitted(data.fill) } else { printed }.tinted(data.tint)
+    };
+    let (low, high) = made(&data).reach();
+    let reached = reached_by(world, low, high, only);
     for &(entity, corner) in &reached {
-        let local = VoxelEditData { at: (at - corner).to_array(), ..data.clone() };
-        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
-            let edit = VoxelEdit::printed(voxel_print.clone(), Vec3::from(local.at), turn);
-            Arc::make_mut(&mut volume.edits).push(edit);
-        }
-        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
-            source.0.edits.push(local);
-        }
+        let local = data.moved(-corner);
+        keep(world, entity, made(&local), local);
     }
     Some(reached.len())
 }
@@ -402,8 +1015,13 @@ pub fn print(
 /// Prints what scripts asked to print this frame (`Voxels.Print`), in order.
 pub(crate) fn print_from_scripts(content: &mut Content, world: &mut World) {
     for request in voxear_scripting::take_voxel_prints() {
-        let at = Vec3::from(request.at);
-        if print(content, world, &request.print, at, request.rotation, None).is_none() {
+        let data = VoxelEditData {
+            fit: request.fit,
+            fill: material_from_script(request.footing).flatten(),
+            tint: request.tint,
+            ..VoxelEditData::printed(request.print.clone(), request.at, request.rotation)
+        };
+        if print_as(content, world, &data, None).is_none() {
             tracing::error!(target: "script", "Voxels.Print: {} is not a Voxel Print in the project", request.print);
         }
     }
@@ -424,13 +1042,22 @@ fn trees_of(content: &mut Content, kind: &VoxelTreesData) -> Option<VoxelTrees> 
     };
     let wood = color(plant.wood.as_ref(), [104, 78, 56]);
     let leaves = color(plant.leaves.as_ref(), if conifer { [38, 92, 52] } else { [70, 128, 46] });
-    Some(VoxelTrees { plant, per_hectare: kind.per_hectare.max(0.0), wood, leaves })
+    let areas = area_rules(&kind.within, &kind.never_within);
+    Some(VoxelTrees { plant, per_hectare: kind.per_hectare.max(0.0), wood, leaves, areas })
 }
 
 /// Gives `entity` the Voxel Volume `data` makes, and keeps `data` as how it
 /// is written: for a volume added or changed.
 pub fn set(content: &mut Content, world: &mut World, entity: Entity, data: VoxelVolumeData) {
-    let volume = made(content, &data);
+    let mut volume = made(content, &data);
+    // The voxels dug and placed since it was saved stay as they are.
+    if let Some(had) = world.get::<VoxelVolume>(entity) {
+        volume.changes = had.changes.clone();
+    }
+    // The areas it had, until they are found again, so its ground is not made twice.
+    if let Some(had) = world.get::<VoxelVolume>(entity).filter(|_| keeps_to_areas(&volume, Some(&data))) {
+        volume.areas = had.areas.clone();
+    }
     world.insert(entity, volume);
     world.insert(entity, VoxelVolumeSource(data));
 }
@@ -467,6 +1094,73 @@ pub fn reprint(content: &mut Content, world: &mut World, guid: voxear_assets::As
         .collect();
     for (entity, data) in using {
         set(content, world, entity, data);
+    }
+}
+
+/// Whether any of an endless volume's trees, cover or mobs (as `data`
+/// writes them) keeps within or out of World Areas.
+pub fn keeps_to_areas(volume: &VoxelVolume, data: Option<&VoxelVolumeData>) -> bool {
+    let ruled = |rules: &VoxelAreaRules| !rules.within.is_empty() || !rules.never.is_empty();
+    let mobs = data.is_some_and(|data| data.mobs.iter().any(|kind| !kind.within.is_empty() || !kind.never_within.is_empty()));
+    volume.endless
+        && (mobs
+            || volume.trees.iter().any(|kind| ruled(&kind.areas))
+            || volume.cover.iter().any(|kind| ruled(&kind.areas)))
+}
+
+/// Gives every endless volume whose trees or cover keep to World Areas the
+/// outlined areas of its dimension with tags, laid out from its corner:
+/// each frame, its ground made again only where they changed. Painted
+/// areas belong to a world of blocks' Area map and are left out.
+pub fn sync_areas(world: &mut World) {
+    use voxear_scene::{Destroying, Transform, WorldTransform};
+    let volumes: Vec<(Entity, Vec3)> = world
+        .query_ref::<(Entity, &VoxelVolume, Option<&VoxelVolumeSource>, &Transform, Option<&WorldTransform>)>()
+        .into_iter()
+        .filter(|(_, volume, source, ..)| keeps_to_areas(volume, source.map(|source| &source.0)))
+        .map(|(entity, _, _, local, placed)| (entity, placed.map_or(local.position, |placed| placed.0.w_axis.truncate())))
+        .collect();
+    if volumes.is_empty() {
+        return;
+    }
+    let areas: Vec<(voxear_scene::DimensionId, VoxelArea)> = world
+        .query_ref::<(Entity, &crate::world_areas::WorldArea, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(obj, area, ..)| {
+            area.shape == crate::world_areas::AreaShape::Outline
+                && area.tags.iter().any(|entry| entry.tag.is_some())
+                && voxear_scene::is_active(world, *obj)
+        })
+        .map(|(obj, area, local, placed)| {
+            // Not placed in the world yet, before its first frame: where its own place puts it.
+            let placed = placed.map_or_else(|| local.matrix(), |placed| placed.0);
+            let found = VoxelArea {
+                outline: area.world_outline(&placed),
+                low: area.low,
+                high: area.high,
+                tags: area.tags.iter().filter_map(|entry| entry.tag).map(AssetGuid::to_u128).collect(),
+            };
+            (voxear_scene::dimension_of(world, obj), found)
+        })
+        .collect();
+    for (entity, corner) in volumes {
+        let here = voxear_scene::dimension_of(world, entity);
+        let laid: Vec<VoxelArea> = areas
+            .iter()
+            .filter(|(dimension, _)| *dimension == here)
+            .map(|(_, area)| VoxelArea {
+                outline: area.outline.iter().map(|&[x, z]| [x - corner.x, z - corner.z]).collect(),
+                low: area.low.map(|low| low - corner.y),
+                high: area.high.map(|high| high - corner.y),
+                tags: area.tags.clone(),
+            })
+            .collect();
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity)
+            && *volume.areas != laid
+        {
+            volume.areas = Arc::new(laid);
+        }
     }
 }
 
@@ -521,6 +1215,36 @@ mod tests {
         assert!(text.contains("generator = \"Worlds/Hills.worldgen\""), "{text}");
         assert_eq!(toml::from_str::<VoxelVolumeData>(&text).unwrap(), generated);
         assert!(!toml::to_string(&data).unwrap().contains("generator"), "nothing written for none");
+    }
+
+    #[test]
+    fn boxes_banks_areas_covers_and_fitted_prints_are_written_and_read_back_and_placed_from_the_world() {
+        let edits = vec![
+            VoxelEditData { clear: 2.0, ..VoxelEditData::boxed([1.0, 2.0, 3.0], [4.0, 0.5, 2.0], [0.0, 20.0, 0.0], Some(VoxelMaterial::Cobbles)) },
+            VoxelEditData::ramp([1.0, 2.0, 3.0], [2.0, 1.0, 4.0], [0.0; 3], Some(VoxelMaterial::Dirt)),
+            VoxelEditData { tint: Some([200, 60, 60]), ..VoxelEditData::area(vec![[0.0, 0.0], [4.0, 0.0], [4.0, 3.0]], 1.0, 1.5, Some(VoxelMaterial::Planks)) },
+            VoxelEditData::cover(vec![[0.0, 0.0], [4.0, 0.0], [4.0, 3.0]], 0.25, Some(VoxelMaterial::Bricks)),
+            VoxelEditData { fit: true, fill: Some(VoxelMaterial::Ashlar), ..VoxelEditData::printed("Prints/Hut.voxprint".into(), [3.0, 1.0, 2.0], [0.0; 3]) },
+        ];
+        let data = VoxelVolumeData { endless: true, edits, ..VoxelVolumeData::default() };
+        let text = toml::to_string(&data).unwrap();
+        for written in ["shape = \"box\"", "shape = \"ramp\"", "shape = \"area\"", "shape = \"cover\"", "fill = \"cobbles\"", "fit = true", "tint = [200, 60, 60]"] {
+            assert!(text.contains(written), "{written} in {text}");
+        }
+        assert_eq!(toml::from_str::<VoxelVolumeData>(&text).unwrap(), data);
+        // Made from the world into a volume whose corner is at (100, -10, 0): the box's foot, the area's outline and heights.
+        let mut world = World::new();
+        let volume = VoxelVolume { endless: true, size: Vec3::new(16.0, 40.0, 16.0), ..VoxelVolume::default() };
+        let obj = world.spawn((volume, VoxelVolumeSource(VoxelVolumeData::default()), voxear_scene::Transform::from_position(Vec3::new(100.0, -10.0, 0.0))));
+        assert_eq!(shape_edit(&mut world, &data.edits[0].moved(Vec3::new(100.0, 5.0, 0.0)), None), 1);
+        assert_eq!(shape_edit(&mut world, &data.edits[2].moved(Vec3::new(100.0, 5.0, 0.0)), None), 1);
+        assert_eq!(shape_edit(&mut world, &VoxelEditData::area(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], 50.0, 51.0, None), None), 0, "over its top");
+        let source = &world.get::<VoxelVolumeSource>(obj).unwrap().0;
+        assert_eq!(source.edits[0].at, [1.0, 17.0, 3.0]);
+        assert_eq!((source.edits[1].points[1], source.edits[1].low, source.edits[1].high), ([4.0, 0.0], 16.0, 16.5));
+        let made = world.get::<VoxelVolume>(obj).unwrap();
+        assert_eq!(made.edits[1].tint, Some([200, 60, 60]));
+        assert!(matches!(made.edits[0].shape, voxear_render::VoxelShape::Box { .. }) && made.edits[0].clear == 2.0);
     }
 
     #[test]
@@ -587,7 +1311,7 @@ mod tests {
         assert_eq!(edit(&mut world, Vec3::new(0.0, 40.0, 0.0), 2.0, None, None), 0, "over the volume's top");
         let made = world.get::<VoxelVolume>(endless).unwrap();
         assert_eq!(made.edits.len(), 1);
-        assert_eq!(made.edits[0].at, Vec3::new(4900.0, 15.0, -300.0), "from the volume's corner");
+        assert_eq!(made.edits[0].at(), Vec3::new(4900.0, 15.0, -300.0), "from the volume's corner");
         let source = &world.get::<VoxelVolumeSource>(endless).unwrap().0;
         assert_eq!(source.edits.len(), 4, "after the three it was written with");
         assert_eq!(source.edits[3].fill, Some(VoxelMaterial::Sand));
@@ -669,16 +1393,17 @@ mod timing {
         let hills = voxear_terrain::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap().world(7, 1.0);
         let hills = Arc::new(hills);
         let floor = hills.height_at(8.0, 8.0) - 24.0;
+        let generator = VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0], biomes: None };
         let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
         let pine = PlantDef { kind: PlantKind::Conifer, height: [12.0, 17.0], trunk: 1.0, crown_width: [5.0, 7.0], crown_height: [9.0, 13.0], ..PlantDef::default() };
         let trees = vec![
-            VoxelTrees { plant: Arc::new(oak), per_hectare: 60.0, wood: [104, 78, 56], leaves: [70, 128, 46] },
-            VoxelTrees { plant: Arc::new(pine), per_hectare: 40.0, wood: [92, 64, 44], leaves: [38, 92, 52] },
+            VoxelTrees { plant: Arc::new(oak), per_hectare: 60.0, wood: [104, 78, 56], leaves: [70, 128, 46], areas: Default::default() },
+            VoxelTrees { plant: Arc::new(pine), per_hectare: 40.0, wood: [92, 64, 44], leaves: [38, 92, 52], areas: Default::default() },
         ];
         for (name, generator, trees) in [
             ("own hills", None, Vec::new()),
-            ("Rolling Hills", Some(VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0] }), Vec::new()),
-            ("Rolling Hills, 100 trees a hectare", Some(VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0] }), trees),
+            ("Rolling Hills", Some(generator.clone()), Vec::new()),
+            ("Rolling Hills, 100 trees a hectare", Some(generator), trees),
         ] {
             let mut world = World::new();
             voxear_scene::register_obj_components(&mut world);

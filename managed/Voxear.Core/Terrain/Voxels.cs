@@ -6,19 +6,25 @@ namespace Voxear;
 
 /// <summary>
 /// The level's endless Voxel Volumes, ground of voxels a few centimetres across: where a ray meets it, balls carved
-/// out of it and filled with ground, and Voxel Prints printed into it. Each change reaches every endless Voxel Volume
-/// it falls in, which makes its ground there again within a frame or two, and a save of the scene keeps it, after what
-/// was changed before.
+/// out of it and filled with ground, boxes, banks and outlined areas laid with ground or paving, Voxel Prints printed
+/// into it, its voxels dug and built one at a time, the water of its rivers and lakes, and its sea. Each change reaches
+/// every endless Voxel Volume it falls in, which makes its ground there again within a frame or two, and a save of the
+/// scene keeps it, after what was changed before.
 /// <code>
 /// // A crater where a shell lands, a heap of rock where a wall is raised, and sandbags round a dug-out.
 /// Voxels.Carve(landed, 1.5f);
 /// Voxels.Fill(wall, 1f, VoxelMaterial.Rock);
 /// Voxels.Print(SandbagWall, dugOut, turn: 90f);
+///
+/// // A cobbled street with three metres of air over it, a cellar dug under a house, and a house fitted to a slope.
+/// Voxels.Area([new(0f, 0f), new(40f, 0f), new(40f, 6f), new(0f, 6f)], 11.75f, 12f, VoxelMaterial.Cobbles, clear: 3f);
+/// Voxels.CarveBox(cellarFoot, new Vector3(4f, 2.5f, 5f), turn: 15f);
+/// Voxels.Print(House, plot, new Vector3(0f, 15f, 0f), fit: true, footing: VoxelMaterial.Ashlar);
 /// </code>
 /// A later change goes over an earlier one: a ball carved into rock just filled, or into a print, takes a bite out of
 /// it.
 /// </summary>
-public static unsafe class Voxels
+public static unsafe partial class Voxels
 {
 	/// <summary>
 	/// Carves a ball of <paramref name="radius"/> metres round <paramref name="middle"/> out of every endless Voxel
@@ -54,17 +60,28 @@ public static unsafe class Voxels
 	/// <summary>
 	/// Prints <paramref name="print"/> as <see cref="Print(VoxelPrint, Vector3, float)"/> does, turned
 	/// <paramref name="rotation"/> degrees about X, Y and Z, as an Obj's rotation is written: leaning with a slope, say.
+	/// Fitted to the ground (<paramref name="fit"/>), the ground inside it is cleared down to its foot, and where the
+	/// ground falls away under it a footing of <paramref name="footing"/> reaches down to the ground, as deep as the print
+	/// is tall at most; no footing leaves it standing over the dip. With a <paramref name="tint"/>, its colours are
+	/// shaded from that colour as they were from their own average, so one house is printed in many paints.
 	/// </summary>
-	public static bool Print(VoxelPrint print, Vector3 at, Vector3 rotation)
+	public static bool Print(
+		VoxelPrint print,
+		Vector3 at,
+		Vector3 rotation,
+		bool fit = false,
+		VoxelMaterial? footing = null,
+		Color? tint = null)
 	{
 		if (!Native.IsConnected || !print.IsSet)
 		{
 			return false;
 		}
 		var bytes = System.Text.Encoding.UTF8.GetBytes(print.Reference);
+		var ground = footing is { } material ? (int)material : -1;
 		fixed (byte* text = bytes)
 		{
-			return Native.Api->VoxelPrint(text, bytes.Length, &at, &rotation) == 1;
+			return Native.Api->VoxelPrint(text, bytes.Length, &at, &rotation, fit ? 1 : 0, ground, Tint(tint)) == 1;
 		}
 	}
 
@@ -98,6 +115,87 @@ public static unsafe class Voxels
 		var normal = new Vector3(found[3], found[4], found[5]);
 		hit = new VoxelHit(point, normal, found[6], new Obj(obj));
 		return true;
+	}
+
+	/// <summary>
+	/// The water of an endless Voxel Volume's rivers and lakes at <paramref name="position"/>: how high its surface
+	/// stands, and which way and how fast its current runs, in metres a second, nothing on a lake. False where none has
+	/// water there, more than a metre under a river's bed, or without the engine. What floats and swims in it reads the
+	/// same through <see cref="Water"/>, with the sea and every other water.
+	/// <code>
+	/// // A fishing float rides the river downstream.
+	/// if (Voxels.WaterAt(floatAt, out var river))
+	/// {
+	///     floatAt = floatAt with { Y = river.Height } + river.Current * Time.DeltaTime;
+	/// }
+	/// </code>
+	/// </summary>
+	public static bool WaterAt(Vector3 position, out VoxelWater water)
+	{
+		water = default;
+		if (!Native.IsConnected)
+		{
+			return false;
+		}
+		var found = stackalloc float[4];
+		ulong obj = 0;
+		if (Native.Api->VoxelWater(&position, found, &obj) != 1)
+		{
+			return false;
+		}
+		water = new VoxelWater(found[0], new Vector3(found[1], found[2], found[3]), new Obj(obj));
+		return true;
+	}
+
+	/// <summary>
+	/// Whether the endless Voxel Volumes with a generator have its sea, filling the level at its sea level where the
+	/// level has no Ocean of its own. Setting it turns every one's on or off, as their Sea in the Inspector.
+	/// </summary>
+	public static bool Sea
+	{
+		get => Native.IsConnected && SeaCall(-1, out _);
+		set
+		{
+			if (Native.IsConnected)
+			{
+				SeaCall(value ? 1 : 0, out _);
+			}
+		}
+	}
+
+	/// <summary>
+	/// How high the endless Voxel Volumes' generator's sea stands in the world, where one has its sea on; else
+	/// <see cref="float.NaN"/>.
+	/// </summary>
+	public static float SeaLevel => Native.IsConnected && SeaCall(-1, out var level) ? level : float.NaN;
+
+	/// <summary>
+	/// How the endless Voxel Volumes' rivers and lakes are drawn, as their Water in the Inspector: as voxels of water,
+	/// as they come, or smooth. Setting it sets every one's; reading it gives the first one's, or
+	/// <see cref="VoxelWaterLook.Voxels"/> without one or without the engine.
+	/// <code>
+	/// // Smooth water over the small cubes.
+	/// Voxels.WaterLook = VoxelWaterLook.Smooth;
+	/// </code>
+	/// </summary>
+	public static VoxelWaterLook WaterLook
+	{
+		get => Native.IsConnected && Native.Api->VoxelWaterLook(-1) == 0 ? VoxelWaterLook.Smooth : VoxelWaterLook.Voxels;
+		set
+		{
+			if (Native.IsConnected)
+			{
+				Native.Api->VoxelWaterLook((int)value);
+			}
+		}
+	}
+
+	private static bool SeaCall(int on, out float level)
+	{
+		float found = 0f;
+		var has = Native.Api->VoxelSea(on, &found) == 1;
+		level = found;
+		return has;
 	}
 
 	private static int Edit(Vector3 middle, float radius, int fill)

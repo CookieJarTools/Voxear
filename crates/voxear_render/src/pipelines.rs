@@ -230,6 +230,9 @@ pub struct Pipelines {
     /// pass and the opaque one, each a triangle over the screen writing its
     /// own depth.
     pub voxel_coarse: vk::Pipeline,
+    /// What voxels a volume holds at given cells, for checking the GPU's
+    /// against the CPU's.
+    pub voxel_probe: vk::Pipeline,
     pub voxel_depth: vk::Pipeline,
     pub voxel_forward: vk::Pipeline,
     /// The voxels' shadows on whatever the depth passes drew, traced from each pixel.
@@ -288,6 +291,9 @@ pub struct Pipelines {
     pub block_water: vk::Pipeline,
     /// The water over endless Voxel Volumes' rivers and lakes.
     pub voxel_water: vk::Pipeline,
+    /// Their waterfalls, as sheets and as voxels thrown over their lips.
+    pub voxel_falls: vk::Pipeline,
+    pub voxel_drops: vk::Pipeline,
     /// The sea floor's voxels from straight above, their tops and their
     /// undersides.
     pub sea_floor_voxels: vk::Pipeline,
@@ -890,6 +896,22 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Water (voxels)", water, c"voxelWaterVertex", c"voxelWaterFragment")
             })?,
+            voxel_falls: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Waterfalls (voxels)", water, c"voxelFallVertex", c"voxelFallFragment")
+            })?,
+            voxel_drops: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Falling water (voxels)", water, c"voxelDropVertex", c"voxelDropFragment")
+            })?,
             // Over the whole view, at the depth where each pixel's view meets the swell.
             block_sea_inside: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
@@ -1063,6 +1085,7 @@ impl Pipelines {
             voxel_light_cells: maker.compute("Voxel light cells", voxels, c"voxelLightCells")?,
             voxel_light_sky: maker.compute("Voxel light sky", voxels, c"voxelLightSky")?,
             voxel_light_spread: maker.compute("Voxel light spread", voxels, c"voxelLightSpread")?,
+            voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
             voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
@@ -1505,6 +1528,7 @@ impl Pipelines {
             self.block_depth,
             self.block_forward_on_depth,
             self.voxel_coarse,
+            self.voxel_probe,
             self.voxel_depth,
             self.voxel_forward,
             self.voxel_shadows,
@@ -1546,6 +1570,8 @@ impl Pipelines {
             self.block_water_exits,
             self.block_water,
             self.voxel_water,
+            self.voxel_falls,
+            self.voxel_drops,
             self.sea_floor_voxels,
             self.sea_floor_voxels_under,
             self.block_sea_inside,

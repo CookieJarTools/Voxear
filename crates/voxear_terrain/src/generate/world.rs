@@ -746,24 +746,7 @@ impl WorldGen {
         let xs = [x, x - STEP, x + STEP, x, x];
         let zs = [z, z, z, z - STEP, z + STEP];
         let (water, _) = self.water(&xs, &zs)?;
-        if water[0] <= super::nodes::NO_WATER * 0.5 {
-            return None;
-        }
-        // Where a neighbour has no water, the slope is read from this side alone.
-        let slope = |low: usize, high: usize| match (water[low] > water[0] - 50.0, water[high] > water[0] - 50.0) {
-            (true, true) => (water[high] - water[low]) / (2.0 * STEP),
-            (true, false) => (water[0] - water[low]) / STEP,
-            (false, true) => (water[high] - water[0]) / STEP,
-            (false, false) => 0.0,
-        };
-        let (gx, gz) = (slope(1, 2), slope(3, 4));
-        let steep = (gx * gx + gz * gz).sqrt();
-        if steep < 1e-5 {
-            return Some([0.0, 0.0]);
-        }
-        // A river running nearly level still moves; one falling steeply runs fast.
-        let speed = (6.0 * steep.sqrt()).clamp(0.4, 4.0);
-        Some([-gx / steep * speed, -gz / steep * speed])
+        current_between([water[0], water[1], water[2], water[3], water[4]], STEP)
     }
 
     /// How far under the land round about ground `heights[i]` metres high
@@ -822,6 +805,32 @@ impl WorldGen {
         let file = File { seed, scale, sea_level, preview, nodes, links, exposed, comments };
         toml::to_string(&file).unwrap_or_default()
     }
+}
+
+/// Which way and how fast water flows, in metres a second along x and z,
+/// from how high it stands at a place and `step` metres either side of it
+/// along x then z (`[here, -x, +x, -z, +z]`), as [`WorldGen::current`]
+/// works it out: down its slope, faster the steeper it falls. None where
+/// there is no water at the place; where a side has none, the slope is read
+/// from the other alone, and nothing where it lies level.
+pub fn current_between(water: [f32; 5], step: f32) -> Option<[f32; 2]> {
+    if water[0] <= super::nodes::NO_WATER * 0.5 {
+        return None;
+    }
+    let slope = |low: usize, high: usize| match (water[low] > water[0] - 50.0, water[high] > water[0] - 50.0) {
+        (true, true) => (water[high] - water[low]) / (2.0 * step),
+        (true, false) => (water[0] - water[low]) / step,
+        (false, true) => (water[high] - water[0]) / step,
+        (false, false) => 0.0,
+    };
+    let (gx, gz) = (slope(1, 2), slope(3, 4));
+    let steep = (gx * gx + gz * gz).sqrt();
+    if steep < 1e-5 {
+        return Some([0.0, 0.0]);
+    }
+    // A river running nearly level still moves; one falling steeply runs fast.
+    let speed = (6.0 * steep.sqrt()).clamp(0.4, 4.0);
+    Some([-gx / steep * speed, -gz / steep * speed])
 }
 
 #[cfg(test)]
@@ -1351,3 +1360,4 @@ cooling = 6.5
         assert!(WorldGen::parse(&twice).is_err(), "{twice}");
     }
 }
+

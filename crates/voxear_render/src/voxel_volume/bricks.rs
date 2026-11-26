@@ -139,6 +139,7 @@ impl Builder {
                 solid += u64::from(counted);
                 let average = sum.map(|a| a / counted.max(1));
                 words[19] = average[0] | (average[1] << 8) | (average[2] << 16);
+                words[19] &= !(GLOWS | SEE_THROUGH);
                 words[19] |= if kinds & 0xF0 != 0 { GLOWS } else { 0 };
                 words[19] |= if kinds & 0x0F != 0 { SEE_THROUGH } else { 0 };
                 bricks.extend_from_slice(&words);
@@ -189,9 +190,9 @@ pub fn loosely_kept(seed: u32, group: u32) -> bool {
 pub const LEAFY: u32 = 1 << 24;
 /// The marks of a brick with a voxel that glows, and with one that is
 /// see-through (`VOXEL_GLOWS` and `VOXEL_SEE_THROUGH` in
-/// `shaders/voxels.slang`), over the mark of leaves and how it sways.
-pub const GLOWS: u32 = 1 << 27;
-pub const SEE_THROUGH: u32 = 1 << 28;
+/// `shaders/voxels.slang`): the lowest bits of its average red and green.
+pub const GLOWS: u32 = 1;
+pub const SEE_THROUGH: u32 = 1 << 8;
 /// The mark, over its average colour and the mark of leaves, of a brick of
 /// leaves that sways whole in the wind (`VOXEL_SWAY_SHIFT` in
 /// `shaders/voxels.slang`). A brick with ground or wood in it stays still;

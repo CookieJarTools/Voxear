@@ -190,17 +190,39 @@ Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Vo
 
 ## How it is drawn
 
-A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog. Its voxels shadow each other, traced through the volume towards the sun.
+A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog.
+
+### Shadows
+
+Its voxels shadow each other, and everything else standing among them: models, characters, doors and ships, blocks, terrain and grass. They are in no shadow map. Once the depth of the picture is drawn, a ray is traced from each pixel towards the sun through the voxels, from whatever is drawn there; what it meets puts the pixel in shadow, as sharp as the voxels are. The Profiler calls it **Voxel shadows**. It reaches 64 m towards the sun.
+
+### Light indoors and underground
+
+Under a roof, in a cellar or a cave, the sky's light is shut out, and what glows lights the room, as a [[Block Light|world of blocks]] is lit:
+
+- **The sky's light** reaches everything the sky is open over, straight down, and spreads from there a step less for each metre, through doors and windows and under eaves. A room with its door shut is dark.
+- **Voxels that glow**, a lantern's flame or a lamp, light what is round them in their own colour, as a block's Light does, a step less for each metre: a light of 15 reaches fifteen metres. A glowing voxel shines with its own light too. Which colours of a [[Voxel Prints|Voxel Print]] glow is chosen in its Inspector.
+- Models, characters and grass standing in a room are lit as its voxels are, so a figure in a cellar is in the dark too.
+
+The light is kept round the camera on the GPU, a value for each half-metre brick, 48 m across and 24 m tall, and worked out afresh as the voxels change: a few steps of it a frame, all of it when the volumes are new. A brick lets light through as far as lines through its voxels are open, so a wall a few voxels thick in the middle of a brick still keeps it out. Past the light kept, the sky's light is as it is in the open. The Profiler calls it **Voxel light cells**, **Voxel light sky** and **Voxel light spread**: together about 0.3 ms at 1080p on an RTX 3070.
+
+Lamps (Light components) light the voxels as they light anything; their light isn't stopped by voxels yet.
+
+### Glass
+
+A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Only the nearest glass in a pixel is drawn, and far off, where the voxels are drawn two by two or a brick at a time, it is drawn as solid. The Profiler calls it **Glass (voxels)**.
 
 By the sea, a volume's ground is part of the sea floor the waves feel, as meshes standing still are: the waves calm and shorten over its shallows, and foam runs along the shore where they meet it. The floor is found by walking straight down through the voxels round the camera, as far out as the volume reaches.
 
 Far off, where a voxel is smaller than half a pixel, it is drawn as groups of two by two by two, and further still as whole bricks of eight voxels a side in their average colour, so far grass and leaves don't shimmer.
 
-The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)** say what volumes cost. A meadow 80 m by 120 m with sixty trees, seen from in it at 1920 × 1080 on an RTX 3070, takes about 0.1 ms for the coarse rays, 2 ms for the depth pass and 3.8 ms to light.
+The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **Opaque (voxels)** and **Glass (voxels)** say what volumes cost. A street of six houses with glass in their windows and a dozen figures among them, on Rolling Hills seen from 20 m up at 1920 × 1080 on an RTX 3070, takes about 0.2 ms for the coarse rays, 2.2 ms for the depth pass, 2.3 ms for the shadows, 0.9 ms to light, 0.1 ms for the glass and 0.3 ms for the light kept round the camera: the whole frame 7.0 ms, against 6.6 ms before voxels shadowed models and lit rooms.
 
 ## What it doesn't do yet
 
-- Its voxels cast no shadow onto meshes, blocks or terrain.
+- Lamps' light isn't stopped by voxels: a lamp in a room lights the walls outside it too. Glowing voxels are the way to light a room.
+- Its voxels don't shadow the scene's fog or its particles, and water and glass meshes don't take their shadows.
+- Glass lets the sun through untinted, and only the nearest glass in a pixel is drawn.
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it, and you can't swim in it or float on it yet.

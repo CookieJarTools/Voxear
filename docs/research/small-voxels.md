@@ -369,7 +369,7 @@ one.
 | 3. **Plants and trees of small voxels** | Ground cover, grown plants and crowns as voxel stamps filled on the GPU; then models shared between bricks so a forest costs one tree per kind | +0.5 ms | 230 MB a 256 m forest unshared; tens of MB shared | 3 |
 | 4. **Editing a voxel at a time** | `Voxels` in C#, an editor brush, changed bricks in region files, edit commands over the network, picking | – | changed bricks only | 2–3 |
 | 5. **Distance in rings** | 1/16, 1/8, 1/4 m rings and coarser to the horizon, made as they come into view, far rings kept on disk | +0.5 ms | 400–760 MB | 3 |
-| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid | 1–2 ms | – | 2 |
+| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid; begun 2026-11-26: shadows on everything, light indoors, glass | 1–2 ms | – | 2 |
 | 7. **Physics, navigation and debris at voxel scale** | Collision from the bricks round each body, broken pieces as falling voxel objects, voxel characters | – | – | 3–4 |
 
 Block Worlds drawn as patterns of small voxels (option D) can follow any time after stage 1, for the worlds of
@@ -940,6 +940,100 @@ the CPU. Physics needs the solid voxels near what moves, and only there.
   - One fault on the way: the chunks wanted at once were measured from where a mover would be in half a second,
     not from where it was, so they came due as soon as they were asked for.
 - **Not yet.** Volumes of a set size; physics rays meet only the chunks made round what moves; navigation.
+
+## Stage 6 begun: shadows, light indoors and glass (2026-11-26)
+
+The Realm's city moving onto Voxel Volumes needed three things lighting gave its blocks: things standing among the
+voxels shadowed by them, rooms and cellars dark but for their lanterns, and windows of glass.
+
+- **Voxels shadow everything** (`voxelShadowFragment` in `shaders/voxels.slang`). The voxels are in no shadow map.
+  Once the depth passes have drawn the picture, a pass traces a ray towards the sun from each pixel through the
+  voxels, whatever is drawn there, and writes whether it got through. Models, blocks, terrain and grass read it
+  with the contact shadows, as they all share one lit fragment shader. A voxel's ray starts as its own lit pass
+  started it before, a group or a brick out at the coarser levels, found by the hit the depth pass kept for the
+  pixel; anything else's starts a voxel and a half out along its normal, more where a pixel is wider. The voxels'
+  lit pass no longer traces its own. Tracing into a shadow map instead was set aside: four cascades of 2048² are
+  16M rays a frame, eight times the screen's.
+- **Light kept round the camera** (`voxel_volume/light.rs`, `voxelLightCells`, `voxelLightSky` and
+  `voxelLightSpread`). This is the plan's grid at the bricks' half metre, as the light kept for blocks is a byte a
+  block, 96 × 48 × 96 cells. A cell keeps sky light and glow, with the glow's colour in 16 bits.
+  - What lets light through a cell is worked out each frame from its brick: for each side, the lines from that side
+    to the cell's middle that meet no voxel. Two cells pass light by the lines open from one middle to the other,
+    matched line by line, so a cell is the light at its middle. A wall a few voxels thick anywhere in a brick keeps
+    light out, and the air over a floor in a brick's lower half is open to the sky.
+  - The sky is found straight down from the top row afresh each frame. Then four steps spread light a step less a
+    cell (a level a metre, as blocks), read from last frame's moved as the camera moved, 32 steps when the volumes
+    are new.
+  - Voxels, models and grass read it between the cells round them that are not solid. Along the axis the surface
+    faces, the cell before it is read alone, so a wall's face never takes the light of the far side.
+  - It is shared by the lighting with blocks' (`blockSkyShare`, `blockGlowShare`, the same darkest sky and glow
+    brightness). A room of voxels with a lamp of light 15 looks as the blocks test's room of blocks does.
+- **Glass and glowing voxels.** A palette colour's kind rides in its top byte on the GPU: how see-through (0 to 15)
+  and how bright it glows (0 to 15), kept on the CPU as `255 - kind` in the fourth byte, so every palette until now
+  is plain. A brick with any such voxel is marked in its average-colour word, so only those bricks are looked into.
+  - The walk passes through a see-through voxel and keeps the first it met. The depth pass writes it beside what it
+    met, and **Glass (voxels)** draws it lit over everything opaque, blended by how solid it is and what it reflects.
+  - Sun shadow rays pass through glass. In the light kept round the camera, glass and glowing voxels let light
+    through, and a glowing voxel's cell gives its glow. A glowing voxel shines, its colour times four at light 15.
+  - A print's colours are made glass or lights by its settings' `materials`, in its Inspector's **Glass and Lights**
+    or `voxel_prints.materials`. Its id takes them in, so volumes printing it are made again.
+
+![The pillar's shadow across a model's slab, which voxels did not shadow before](../images/small-voxels/shadow-on-a-model.webp)
+
+![A house of voxels open to the sky, roofed and shut, roofed with a door, and shut with a lantern](../images/small-voxels/rooms-sky-door-lantern.webp)
+
+![The blocks test's sealed room lit by a lamp block, and the same room of voxels lit by a lamp of voxels](../images/small-voxels/room-blocks-and-voxels.webp)
+
+![A stone wall, and the same wall with a window of glass, the red pillar inside seen through it](../images/small-voxels/window-glass.webp)
+
+What went wrong on the way, worth knowing for the rest of stage 6:
+
+- **Sides in the wrong order.** The six sides were listed y-first and their axis taken as x-first, so light crossed each
+  cell by the wrong axis's openness and a sealed room was sky-lit.
+- **Lines through a whole cell** kept the sky out of the air over a floor in a cell's lower half, as no line crossed
+  the cell, and a flat field went dark.
+- **Hollow ground.** An edited brick keeps only the voxels open air is beside, so under the ground's skin and inside
+  thick walls there is nothing. Past a volume's window and under its floor, where no brick is, light came round
+  underneath and up into rooms. Those are solid now; inside a volume, the hollows are sealed by their skin.
+- **Counts, not lines.** Two cells passed light when each had *some* lines open across their side, though not the
+  same ones, and light got through the foot of every wall. Lines are matched one by one now.
+- **Stale light.** Light kept from the frame before falls a step a step, so a scene changed at once kept its old
+  light. Other voxel buffers or palettes, as a generator changed in the Inspector or a print added, start it afresh.
+- **A lamp of voxels a metre wide** filled its cells, which were then solid and kept their glow in. Glowing voxels
+  let light through now, as a block of light does.
+
+Measured on an RTX 3070 shared with other sessions: a street of six houses (5 × 4 × 6 m, glass windows, gables)
+printed into Rolling Hills without its rivers, with a dozen figures among them, seen from 20 m up at 1920 × 1080.
+Each number is the least of 60 frames, three runs each, on the commit this was built on and with it:
+
+| | Before | Now |
+|---|---|---|
+| Frame, post-processing on | 6.57 ms | 6.96 ms |
+| Frame, post-processing off | 6.36 ms | 6.79 ms |
+| Depth (voxels) | 2.04 ms | 2.21 ms |
+| Opaque (voxels), shadows traced in it before | 3.41 ms | 0.88 ms |
+| Voxel shadows | – | 2.27 ms |
+| Light round the camera (cells, sky, 4 spread steps) | – | 0.26 ms |
+| Glass (voxels) | – | 0.13 ms |
+
+The shadows cost what the lit pass's tracing did, now for every pixel. The rest is the light, the glass and the
+glass's look-ups in the depth pass (`measure_a_street_of_houses` in `tests/voxels.rs`).
+
+![The street before and after, from 20 m up](../images/small-voxels/street-before-after.webp)
+
+![Close up: the windows are glass now and the houses dark inside but by their doors](../images/small-voxels/street-close-before-after.webp)
+
+Not done:
+
+- **Lamps.** A Light's light isn't stopped by voxels, so a lamp in a room lights the walls outside it. Lamps'
+  shadow maps could take the voxels as the sun's mask does, a ray a texel, kept while the lamp and voxels stand
+  still; or each lit pixel could trace to the few lamps near it.
+- **Fog, particles and water** read the sun's shadow maps and not the voxels' mask.
+- **Glass** lets the sun through untinted, and only the nearest glass in a pixel is drawn.
+- **GI rays through voxels**, the rest of the stage. Worlds of blocks are lit without the probe GI, so it waits.
+- **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
+  commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
+  walk's, not the light's.
 
 ## Kept elsewhere
 

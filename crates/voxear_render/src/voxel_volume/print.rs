@@ -225,6 +225,13 @@ impl VoxelPrint {
         [r, g, b, super::kind_byte(alpha, light)]
     }
 
+    /// Makes `materials` its colours made glass or lights, in place of what
+    /// they were, telling it from the print it was.
+    pub fn set_materials(&mut self, materials: Vec<VoxelPrintMaterial>) {
+        self.settings.materials = materials;
+        self.id = self.hash_of();
+    }
+
     /// How many bricks its box is along each side.
     pub fn bricks_across(&self) -> [u32; 3] {
         bricks_across(self.size)
@@ -332,6 +339,8 @@ impl VoxelPrint {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (self.size, self.voxels_per_metre, self.origin.to_array().map(f32::to_bits)).hash(&mut hasher);
         (&self.palette, &self.grid, &self.bricks, &self.materials).hash(&mut hasher);
+        // Which colours are glass or lights changes how it is printed.
+        self.settings.materials.hash(&mut hasher);
         hasher.finish()
     }
 

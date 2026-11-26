@@ -4516,7 +4516,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stages 4 and 7 begun)
+## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stages 4, 6 and 7 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4658,6 +4658,28 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   Rigidbodies and where they will be in half a second, nearest first on workers of their own; a change makes again
   only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
   Not yet: volumes of a set size, navigation.
+- **Stage 6 begun (2026-11-26): shadows, light indoors and glass.**
+  - **Voxels shadow everything.** After the depth passes, **Voxel shadows** traces a ray towards the sun from each
+    pixel, through the voxels, whatever is drawn there. Models, blocks, terrain and grass take it with the contact
+    shadows. The voxels' own shadow moved there from their lit pass.
+  - **Light indoors and underground.** On the GPU, round the camera, a cell for each half-metre brick holds sky light
+    and glow, as a world of blocks keeps a byte a block. It is 48 × 24 × 48 m.
+    - A cell lets light through by the lines open through its voxels and its neighbour's, so a thin wall mid-brick
+      keeps light out.
+    - Each frame the sky is found straight down, then a few steps spread it, moved as the camera moved.
+    - Ground under its kept skin, and what is past a volume's sides and under its floor, counts as solid.
+    - Voxels, models and grass are lit by it as by block light: a room with its door shut is black, a lamp of
+      voxels lights a room as a lamp block does.
+  - **Glowing and see-through voxels.** A colour's kind rides over its red, green and blue in the palette. A print's
+    colours are made glass or lights in its Inspector's **Glass and Lights**, by `voxel_prints.materials`, or in its
+    settings.
+    - Glowing voxels shine and light the cells round them in their own colour.
+    - The walk passes through glass and keeps the first glass it met. **Glass (voxels)** draws it lit over what is
+      behind, reflecting the sky, with the sun through it onto the floor.
+  - Measured: a street of six houses with glass windows and a dozen figures at 1080p, the least of 60 frames, is
+    7.0 ms against 6.6 ms before. Shadows are 2.3 ms, the light kept round the camera 0.3 ms, glass 0.1 ms.
+  - Not yet: lamps' light stopped by voxels, voxel shadows in fog and on particles and water, tinted sunlight through
+    glass, GI rays through voxels.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

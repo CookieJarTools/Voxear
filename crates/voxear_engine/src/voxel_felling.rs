@@ -27,20 +27,10 @@ use crate::physics::{Acoustic, Collider, ColliderBoxes, PhysicsScene, Rigidbody}
 const GROW_STEPS: f32 = 16.0;
 /// The most boxes a piece's collider has of its logs.
 const MOST_BOXES: usize = 192;
-/// How far over the ground a lying crown's leaves are pressed down, in
-/// metres, and to what share of that.
-const PRESSED: f32 = 0.7;
-const PRESSED_TO: f32 = 0.45;
-/// How heavy wood is, in kilograms a cubic metre.
-const WOOD: f32 = 650.0;
-/// How fast a piece is set turning over the way it was cut, in radians a
-/// second: a slight push, gravity doing the rest.
-const PUSH: f32 = 0.6;
-/// How slow a piece must move, in metres and in radians a second, and for
-/// how long, to be at rest; and the longest it falls before it is taken as
-/// at rest all the same.
+/// How slow a piece must move to be still, in metres and in radians a
+/// second (how long, its volume's [`VoxelFelling`] says); and the longest it
+/// falls before it is taken as at rest all the same.
 const STILL_SPEED: f32 = 0.12;
-const STILL_FOR: f32 = 1.0;
 const LONGEST_FALL: f32 = 20.0;
 
 /// What becomes of the pieces a cut makes come loose.
@@ -163,6 +153,8 @@ pub struct CutDone {
     pub columns: usize,
     pub voxels: usize,
     pub pieces: Vec<FelledPiece>,
+    /// Where grass was cut, in the world, a place in each half metre or so.
+    pub mown: Vec<Vec3>,
 }
 
 /// Cuts every endless Voxel Volume `cut` reaches (in the world), or
@@ -198,8 +190,10 @@ pub fn cut(world: &mut World, cut: &VoxelCut, options: CutOptions, only: Option<
         done.reached += 1;
         done.columns += made.columns;
         done.voxels += made.voxels;
-        // Clippings fly up where grass was cut.
-        for at in &made.mown {
+        // Clippings fly up where grass was cut, unless the volume says not, as for a game that plays its own.
+        let clippings = world.get::<VoxelVolume>(entity).is_some_and(|volume| volume.felling.clippings);
+        done.mown.extend(made.mown.iter().map(|at| corner + *at));
+        for at in made.mown.iter().filter(|_| clippings) {
             let effect = voxear_render::EffectRef::Builtin(voxear_render::Starter::Clippings);
             crate::particles::play(world, effect, (corner + *at, Quat::IDENTITY), None, None);
         }
@@ -233,7 +227,8 @@ fn spawn(
     let place = corner + piece.low.as_vec3() * piece.voxel + middle;
     // Its logs as boxes (`spawn_body`): its leaves pass through branches and the ground, and are pressed against the
     // ground where it comes to rest.
-    let mass = (piece.logs() as f32 * piece.voxel.powi(3) * WOOD).max(1.0);
+    let felling = world.get::<VoxelVolume>(volume).map(|made| made.felling).unwrap_or_default();
+    let mass = (piece.logs() as f32 * piece.voxel.powi(3) * felling.wood_density).max(1.0);
     // Away from the cut, across; straight down a trunk, a way of its own.
     let away = (place - cut_at) * Vec3::new(1.0, 0.0, 1.0);
     let toward = options.toward.map(|way| way * Vec3::new(1.0, 0.0, 1.0)).filter(|way| way.length() > 1e-3);
@@ -374,7 +369,8 @@ pub fn fall(world: &mut World, dt: f32) {
                     let (linear, turn) = match body.push {
                         PiecePush::Tip => {
                             let (point, axis) = body.pivot;
-                            let turn = axis * PUSH;
+                            let push = world.get::<VoxelVolume>(body.volume).map_or(0.6, |volume| volume.felling.push);
+                            let turn = axis * push;
                             (turn.cross(place.0 - point), turn)
                         }
                         PiecePush::Away { from, speed } => {
@@ -400,7 +396,8 @@ pub fn fall(world: &mut World, dt: f32) {
                 } else {
                     0.0
                 };
-                if (body.still >= STILL_FOR && body.falling > 0.5) || body.falling > LONGEST_FALL {
+                let rest_after = world.get::<VoxelVolume>(body.volume).map_or(1.0, |volume| volume.felling.rest_after);
+                if (body.still >= rest_after && body.falling > 0.5) || body.falling > LONGEST_FALL {
                     body.fall = PieceFall::Resting;
                     crush.push(entity);
                     let felled = world.get::<VoxelVolume>(body.volume).map(|volume| match volume.felled {
@@ -520,10 +517,10 @@ fn crush_leaves(world: &mut World, entity: Entity) {
         let p = pose.transform_point3((Vec3::new(f32::from(c[0]), f32::from(c[1]), f32::from(c[2])) + 0.5) * v);
         let ground = ground_at(p);
         let over = p.y - ground;
-        if over >= PRESSED {
+        if over >= volume.felling.press_depth {
             continue;
         }
-        let pressed = ground + over.max(0.0) * PRESSED_TO + v * 0.5;
+        let pressed = ground + over.max(0.0) * volume.felling.press_to + v * 0.5;
         if (pressed - p.y).abs() < v * 0.5 {
             continue;
         }

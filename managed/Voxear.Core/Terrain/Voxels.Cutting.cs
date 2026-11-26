@@ -9,6 +9,76 @@ public static unsafe partial class Voxels
 	/// <summary>The most pieces one cut reports.</summary>
 	private const int MostPieces = 64;
 
+	/// <summary>The most places grass was cut one cut reports.</summary>
+	private const int MostMown = 256;
+
+	/// <summary>
+	/// What the endless Voxel Volumes' felled trees become at rest when a cut doesn't say, as their Felled in the
+	/// Inspector. Setting it sets every one's; reading it gives the first one's, or <see cref="VoxelFelled.Body"/>.
+	/// </summary>
+	public static VoxelFelled Felled
+	{
+		get => Cutting(-1, -1f, out var felled, out _) && felled == 1 ? VoxelFelled.Stamped : VoxelFelled.Body;
+		set => Cutting((int)value, -1f, out _, out _);
+	}
+
+	/// <summary>
+	/// How many seconds the endless Voxel Volumes' cut grass, cover and crops take to grow back from the stubble a cut
+	/// left, 0 for never, as their Regrow in the Inspector. Setting it sets every one's; reading it gives the first
+	/// one's, or 0.
+	/// <code>
+	/// // Crops grow back in ten minutes.
+	/// Voxels.Regrow = 600f;
+	/// </code>
+	/// </summary>
+	public static float Regrow
+	{
+		get => Cutting(-1, -1f, out _, out var regrow) ? regrow : 0f;
+		set => Cutting(-1, MathF.Max(value, 0f), out _, out _);
+	}
+
+	/// <summary>
+	/// How the endless Voxel Volumes' felled trees fall and come to rest, and whether clippings fly from cut grass.
+	/// Setting it sets every one's; reading it gives the first one's, or as a volume comes.
+	/// </summary>
+	public static VoxelFelling Felling
+	{
+		get
+		{
+			var n = stackalloc float[6];
+			if (!Native.IsConnected || Native.Api->VoxelFelling(0, n) != 1)
+			{
+				return new VoxelFelling();
+			}
+			return new VoxelFelling(n[0], n[1], n[2], n[3], n[4], n[5] != 0f);
+		}
+		set
+		{
+			if (!Native.IsConnected)
+			{
+				return;
+			}
+			var n = stackalloc float[6] { value.Push, value.RestAfter, value.PressDepth, value.PressTo, value.WoodDensity, value.Clippings ? 1f : 0f };
+			Native.Api->VoxelFelling(1, n);
+		}
+	}
+
+	private static bool Cutting(int felled, float regrow, out int felledNow, out float regrowNow)
+	{
+		(felledNow, regrowNow) = (0, 0f);
+		if (!Native.IsConnected)
+		{
+			return false;
+		}
+		var found = stackalloc float[2];
+		if (Native.Api->VoxelCutting(felled, regrow, found) != 1)
+		{
+			return false;
+		}
+		(felledNow, regrowNow) = ((int)found[0], found[1]);
+		return true;
+	}
+
 	/// <summary>
 	/// Cuts everything in a ball of <paramref name="radius"/> metres round <paramref name="middle"/> in every endless
 	/// Voxel Volume it reaches: the grass, cover and crops of the columns it reaches are cut where the ball first meets
@@ -132,15 +202,16 @@ public static unsafe partial class Voxels
 		{
 			return default;
 		}
-		var done = stackalloc int[3];
+		var done = stackalloc int[4];
 		var found = stackalloc float[MostPieces * 9];
 		var objs = stackalloc ulong[MostPieces];
+		var mown = stackalloc Vector3[MostMown];
 		var toward = fall.GetValueOrDefault();
 		var resting = rest is { } chosen ? (int)chosen : -1;
 		int reached;
 		fixed (float* sent = numbers)
 		{
-			reached = Native.Api->VoxelCut(shape, sent, numbers.Length, fall.HasValue ? &toward : null, (int)pieces, resting, done, found, objs, MostPieces);
+			reached = Native.Api->VoxelCut(shape, sent, numbers.Length, fall.HasValue ? &toward : null, (int)pieces, resting, done, found, objs, MostPieces, mown, MostMown);
 		}
 		if (reached < 0)
 		{
@@ -151,6 +222,11 @@ public static unsafe partial class Voxels
 		{
 			felled[i] = PieceOf(found + i * 9, objs[i]);
 		}
-		return new VoxelCutDone(reached, done[0], done[1], felled);
+		var places = new Vector3[Math.Min(done[3], MostMown)];
+		for (var i = 0; i < places.Length; i++)
+		{
+			places[i] = mown[i];
+		}
+		return new VoxelCutDone(reached, done[0], done[1], felled, places);
 	}
 }

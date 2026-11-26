@@ -465,6 +465,19 @@ vox editor call voxels.raycast '{ "from": [12, 40, 9], "direction": [0, -1, 0], 
 vox editor call field.set '{ "obj": 7, "component": "voxel_volume", "field": "felled", "value": "Stamped" }'
 ```
 
+Scripts set the volume's settings too, every endless volume's at once:
+
+```csharp
+Voxels.Felled = VoxelFelled.Stamped;   // fallen trees become ground when they settle
+Voxels.Regrow = 600f;                  // cut grass grows back in ten minutes; 0 never
+// How trees fall and rest, and the game's own effect for cut grass in place of the clippings.
+Voxels.Felling = Voxels.Felling with { Push = 0.3f, WoodDensity = 900f, RestAfter = 0.5f, Clippings = false };
+var mowed = Voxels.Cut(swing, 1f);
+foreach (var at in mowed.MownAt) Particles.Play(ParticleEffect.Clippings, at);
+```
+
+`VoxelFelling` holds the push a felled tree is given the way it was cut (radians a second; gravity does the rest), how long it must lie still to be at rest, how deep and to what share its leaves are pressed against the ground, its wood's density (how heavy it is), and whether clippings fly from cut grass.
+
 The scene writes the volume's settings:
 
 ```toml
@@ -472,6 +485,10 @@ The scene writes the volume's settings:
 endless = true
 felled = "stamped"
 regrow = 600.0
+[obj.voxel_volume.felling]
+push = 0.3
+wood_density = 900.0
+clippings = false
 ```
 
 ### What was built comes loose and gives way
@@ -590,7 +607,11 @@ A volume is lit as everything else is: by the sun, with the shadows of meshes, b
 
 ### Shadows
 
-Its voxels shadow each other, and everything else standing among them: models, characters, doors and ships, blocks, terrain and grass. They are in no shadow map. Once the depth of the picture is drawn, a ray is traced from each pixel towards the sun through the voxels, from whatever is drawn there; what it meets puts the pixel in shadow, as sharp as the voxels are. The Profiler calls it **Voxel shadows**. It reaches 64 m towards the sun.
+Its voxels shadow each other, and everything else standing among them: models, characters, doors and ships, blocks, terrain and grass. They are in no shadow map. Once the depth of the picture is drawn, a ray is traced from each pixel towards the sun through the voxels, from whatever is drawn there; what it meets puts the pixel in shadow, as sharp as the voxels are. Through glass of voxels, the sun takes the glass's colour. The Profiler calls it **Voxel shadows**. It reaches 64 m towards the sun.
+
+Lamps (Light components) are stopped by voxels too: from each pixel, a ray is traced to each lamp whose light reaches it, the first 24 of them, and a lamp with voxels in the way doesn't light it. A lamp in a room lights the room and not the street outside its walls, and the walls cast its shadows. These rays are traced at half the picture's size and walk the voxels coarser the further they go, so a lamp's shadow is softer than the sun's; a lamp's light past four fifths of its range is faint, and its shadow isn't looked for there. The Profiler calls it **Voxel lamp shadows**: about 0.9 ms at 1920 × 1080 on an RTX 3070 for a street lit by twelve lamps, next to nothing with none.
+
+Fog, particles and water have no pixel of the depth passes of their own, so they read a coarser map of the voxels' shadows instead: a square 64 m across round the camera, a ray towards the ground from each 25 cm of it, worked out each frame (**Voxel sun map**). A wall's shadow lies on a river beside it and on the smoke and the light shafts of the fog.
 
 ### Light indoors and underground
 
@@ -602,7 +623,7 @@ Under a roof, in a cellar or a cave, the sky's light is shut out, and what glows
 
 The light is kept round the camera on the GPU, a value for each half-metre brick, 48 m across and 24 m tall, and worked out afresh as the voxels change: a few steps of it a frame, all of it when the volumes are new. A brick lets light through as far as lines through its voxels are open, so a wall a few voxels thick in the middle of a brick still keeps it out. Past the light kept, the sky's light is as it is in the open. The Profiler calls it **Voxel light cells**, **Voxel light sky** and **Voxel light spread**: together about 0.3 ms at 1080p on an RTX 3070.
 
-Lamps (Light components) light the voxels as they light anything; their light isn't stopped by voxels yet.
+Lamps (Light components) light the voxels as they light anything, and voxels stand in their way (see Shadows above).
 
 ### Glass
 
@@ -616,9 +637,8 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 
 ## What it doesn't do yet
 
-- Lamps' light isn't stopped by voxels: a lamp in a room lights the walls outside it too. Glowing voxels are the way to light a room.
-- Its voxels don't shadow the scene's fog or its particles, and water and glass meshes don't take their shadows.
-- Glass lets the sun through untinted, and only the nearest glass in a pixel is drawn.
+- Only the first 24 lamps whose light reaches a pixel are looked for behind voxels. Glass of voxels tints only the sun, not lamps; only the nearest glass in a pixel is drawn. Glass meshes don't take the voxels' shadows.
+- Fog, particles and water take the voxels' shadows from a map 64 m across round the camera, a texel 25 cm; past it, none.
 - It isn't scaled with its Obj. One of a set size turns with its Obj, about its corner; an endless one doesn't turn. A view draws up to 64 volumes, a felled piece one each.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.

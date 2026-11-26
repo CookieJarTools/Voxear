@@ -11,6 +11,7 @@ use voxear_render::{
     VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint, VoxelPrintMaterial,
     VoxelPrintSettings, VoxelStamp, VoxelTrees, VoxelVolume, Voxels, WindZone,
 };
+use voxear_render::{Ocean, Weather};
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
 use voxear_terrain::generate::{
@@ -1796,6 +1797,8 @@ struct House {
     lantern: bool,
     window: bool,
     pillar: bool,
+    /// The window's glass red and less clear.
+    red_glass: bool,
 }
 
 /// A house 4 m square and 3 m tall printed on flat endless ground at
@@ -1804,15 +1807,16 @@ struct House {
 /// lantern of glowing voxels in its north-west corner on the floor; a pane
 /// of glass 1 m square in its west wall; and a red pillar inside behind it.
 fn house(has: House) -> Arc<VoxelPrint> {
-    let House { roof, door: doorway, lantern, window, pillar } = has;
+    let House { roof, door: doorway, lantern, window, pillar, red_glass } = has;
     let stone = [150, 146, 138, 255];
     let flame = [255, 186, 80, 255];
-    let glass = [196, 222, 230, 255];
+    let (glass, clear) = if red_glass { ([220, 40, 30], 8) } else { ([196, 222, 230], 14) };
     let mut settings = VoxelPrintSettings::default();
     settings.materials = vec![
         VoxelPrintMaterial { colour: [255, 186, 80], glass: 0, light: 14 },
-        VoxelPrintMaterial { colour: [196, 222, 230], glass: 14, light: 0 },
+        VoxelPrintMaterial { colour: glass, glass: clear, light: 0 },
     ];
+    let glass = [glass[0], glass[1], glass[2], 255];
     let print = VoxelPrint::from_voxels(
         [64, 48, 64],
         16,
@@ -1976,6 +1980,91 @@ fn a_window_of_glass_voxels_shows_what_is_behind_it() {
     assert!((0..3).all(|i| (a[i] - b[i]).abs() < 12), "the wall beside the window: {a:?} and {b:?}");
 }
 
+#[test]
+fn a_lamp_inside_a_house_of_voxels_lights_no_ground_outside_its_walls() {
+    let Some(mut renderer) = renderer() else { return };
+    // At night, seen from 10 m over the ground: the ground a metre outside the west wall, and a model's top there.
+    let height = 10.0;
+    let outside = (5.0, 8.0);
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let white = MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let white = renderer.add_material(&white).unwrap();
+    let model = (5.0, 9.6);
+    let mut shot = |lamp: Option<Vec3>, name: &str| {
+        let mut scene = printed_from_above(house(House { roof: true, ..House::default() }), height);
+        for light in scene.query::<&mut Light>() {
+            light.intensity = 0.0;
+        }
+        scene.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+        if let Some(at) = lamp {
+            scene.spawn((Light::point(Vec3::new(1.0, 0.85, 0.6), 60.0, 9.0), Transform::from_position(at)));
+        }
+        let placed = Transform::new(Vec3::new(model.0, 2.25, model.1), Quat::IDENTITY, Vec3::splat(0.5));
+        scene.spawn((MeshRenderer::new(cube, white), placed));
+        let pixels = render(&mut renderer, &scene, 6);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let dark = shot(None, "lamp none.png");
+    let inside = shot(Some(Vec3::new(8.0, 3.5, 8.0)), "lamp inside the house.png");
+    let out = shot(Some(Vec3::new(3.5, 3.5, 8.0)), "lamp outside the house.png");
+    let sum = |c: [i32; 3]| c.iter().sum::<i32>();
+    let at = |pixels: &[u8], (x, z): (f32, f32)| sum(mean_around(pixels, height, (x, z), 3));
+    let (none, from_inside, from_outside) = (at(&dark, outside), at(&inside, outside), at(&out, outside));
+    // The lamp outside lights the ground there; the one inside, behind the wall, doesn't.
+    assert!(from_outside > none + 60, "lit by the lamp beside it: {from_outside} against {none}");
+    assert!(from_inside < none + 12, "not lit through the wall: {from_inside} against {none}");
+    // Nor the model standing outside.
+    let (none, from_inside) = (at(&dark, model), at(&inside, model));
+    assert!(from_inside < none + 12, "the model outside not lit through the wall: {from_inside} against {none}");
+}
+
+#[test]
+fn the_sun_through_red_glass_falls_red() {
+    let Some(mut renderer) = renderer() else { return };
+    // Roofless, the low sun from the west through the window onto the floor, seen from 8 m over it: where the floor
+    // is brightest, the patch of sun.
+    let height = 8.0;
+    let mut shot = |red_glass: bool, name: &str| {
+        let has = House { window: true, red_glass, ..House::default() };
+        let pixels = render(&mut renderer, &printed_from_above(house(has), height), 6);
+        keep_image(name, &pixels);
+        let mut brightest = [0; 3];
+        for k in 0..400 {
+            let (x, z) = (6.4 + (k % 20) as f32 * 0.16, 7.4 + (k / 20) as f32 * 0.06);
+            let c = mean_around(&pixels, height, (x, z), 1);
+            if c.iter().sum::<i32>() > brightest.iter().sum::<i32>() {
+                brightest = c;
+            }
+        }
+        brightest
+    };
+    let clear = shot(false, "sun through clear glass.png");
+    let red = shot(true, "sun through red glass.png");
+    // The grass floor is green where the sun comes through clear glass; through red, far less green, as red as it.
+    assert!(clear[1] > clear[0], "through clear glass: {clear:?}");
+    assert!(red[1] * 10 < clear[1] * 7, "through red glass, less green: {red:?} against {clear:?}");
+    assert!(red[0] * clear[1] > clear[0] * red[1] * 3 / 2, "through red glass, redder: {red:?} against {clear:?}");
+}
+
+#[test]
+fn voxels_shadow_the_sea_beside_them() {
+    let Some(mut renderer) = renderer() else { return };
+    // The field's pillar moved to the volume's east edge, in calm sea half a metre deep: its shadow on the open
+    // water east of the volume, which the sea's surface takes as it takes the shadow maps'.
+    let mut world = field(false);
+    for volume in world.query::<&mut VoxelVolume>() {
+        volume.stamps[0].at = Vec3::new(15.0, 1.0, 8.0);
+    }
+    let calm = Ocean { weather: Weather::Custom, wind: 0.2, swell_wind: 0.2, ..Ocean::default() };
+    world.spawn((calm, Transform::from_position(Vec3::new(0.0, 1.5, 0.0))));
+    let pixels = render(&mut renderer, &world, 6);
+    keep_image("voxel shadow on the sea.png", &pixels);
+    let brightness = |x: f32, z: f32| mean_around(&pixels, 19.5, (x, z), 4).iter().sum::<i32>();
+    let (open, shadowed) = (brightness(17.5, 5.0), brightness(17.5, 8.0));
+    assert!(shadowed * 4 < open * 3, "the pillar's shadow on the sea: {shadowed} against {open}");
+}
+
 /// A room 15 m square and 5 m tall sealed in stone a metre thick, as the
 /// blocks test's sealed room is, seen from a corner towards where its lamp,
 /// a metre cube of voxels glowing as a block of light 15 in the colour a
@@ -2083,7 +2172,12 @@ fn measure_a_street_of_houses() {
         },
     );
     let print = Arc::new(print);
-    for (name, post) in [("post off", PostProcess::neutral()), ("post on", PostProcess::default())] {
+    let cases = [
+        ("post off", PostProcess::neutral(), false),
+        ("post on", PostProcess::default(), false),
+        ("at night with lamps", PostProcess::default(), true),
+    ];
+    for (name, post, night) in cases {
         let mut scene = generated_view(hills.clone(), 8.0, 8.0, 20.0, 35.0);
         let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
         let mut edits = Vec::new();
@@ -2103,6 +2197,12 @@ fn measure_a_street_of_houses() {
         }
         let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
         scene.insert_resource(PostProcess { anti_aliasing, ..post });
+        // At night, the sun out and a lamp by each of the twelve figures.
+        if night {
+            for light in scene.query::<&mut Light>() {
+                light.intensity = 0.0;
+            }
+        }
         // Models standing in the street: boxes a person's size.
         let cube = renderer.primitive(Primitive::Cube).unwrap();
         let cloth = MaterialDesc { base_color: [0.5, 0.35, 0.25, 1.0], roughness: 0.8, ..MaterialDesc::default() };
@@ -2114,6 +2214,10 @@ fn measure_a_street_of_houses() {
             {
                 let placed = Transform::new(ground.point + Vec3::Y * 0.9, Quat::IDENTITY, Vec3::new(0.5, 1.8, 0.3));
                 scene.spawn((MeshRenderer::new(cube, cloth), placed));
+                if night {
+                    let lamp = Light::point(Vec3::new(1.0, 0.8, 0.55), 40.0, 8.0);
+                    scene.spawn((lamp, Transform::from_position(ground.point + Vec3::new(0.8, 2.5, 0.0))));
+                }
             }
         }
         renderer.render(&scene, 0.0).unwrap();

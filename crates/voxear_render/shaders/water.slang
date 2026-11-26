@@ -2395,7 +2395,7 @@ FragmentOut waterFragment(WaterOut input)
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float shadow = sunShadow(frame, input.world, float3(0.0, 1.0, 0.0));
+    float shadow = (sunShadow(frame, input.world, float3(0.0, 1.0, 0.0)) * voxelSunLit(input.world));
     // Rougher where the surface's normal turns fast across a pixel, so glints there spread rather than sparkle a
     // pixel at a time.
     float3 nx = ddx(n);
@@ -2488,7 +2488,7 @@ FragmentOut waterFragment(WaterOut input)
         float2 webA = bed.xz - flow * phase * FLOW_PERIOD;
         float2 webB = bed.xz - flow * frac(phase + 0.5) * FLOW_PERIOD;
         float web = lerp(causticsAt(frame, webA, under, ddx(bed.xz), ddy(bed.xz)), causticsAt(frame, webB, under, ddx(bed.xz), ddy(bed.xz)), blend);
-        behind *= lerp(1.0, web, (0.5 + 0.5 * quick) * sunShadow(frame, bed, float3(0.0, 1.0, 0.0)) * saturate(under / 0.1));
+        behind *= lerp(1.0, web, (0.5 + 0.5 * quick) * (sunShadow(frame, bed, float3(0.0, 1.0, 0.0)) * voxelSunLit(bed)) * saturate(under / 0.1));
     }
     // How much foam there is: where a crest folds over, and where the water thins at a shore. Only where the water
     // folds hard does a crest break: a calm sea's gentle folding stays clear.
@@ -2958,7 +2958,7 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float shadow = sunShadow(frame, input.world, n);
+    float shadow = (sunShadow(frame, input.world, n) * voxelSunLit(input.world));
     Surface s;
     s.normal = n;
     s.view = v;
@@ -3390,7 +3390,7 @@ FragmentOut lavaWall(Frame* frame, WallOut input, WaterBody lava, float below)
     s.f0 = 0.04;
     s.roughness = 0.7;
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
-    float3 color = s.diffuse * ambient + shade(s, -frame->sunDirection, sunLight) * sunShadow(frame, input.world, s.normal) + emitted;
+    float3 color = s.diffuse * ambient + shade(s, -frame->sunDirection, sunLight) * (sunShadow(frame, input.world, s.normal) * voxelSunLit(input.world)) + emitted;
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
@@ -3503,7 +3503,7 @@ FragmentOut wallWater(Frame* frame, WallOut input, WaterBody water)
     float below = max(surface - input.world.y, 0.0);
     float rise = -v.y;
     float reach = rise > 1e-4 ? min(thickness, below / rise) : thickness;
-    float shadow = sunShadow(frame, input.world, float3(0.0, 1.0, 0.0));
+    float shadow = (sunShadow(frame, input.world, float3(0.0, 1.0, 0.0)) * voxelSunLit(input.world));
     float3 glow = waterGlow(frame, medium, below, -v, 0.0, reach, 0.0, shadow, ambient, sunLight);
     float3 color = behind * through + glow;
     // The water's edge against its surface, bright and frothy.
@@ -4201,7 +4201,7 @@ FragmentOut blockIceLit(Frame* frame, BlockWaterOut input, float2 corner, float 
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float shadow = sunShadow(frame, at, float3(0.0, 1.0, 0.0));
+    float shadow = (sunShadow(frame, at, float3(0.0, 1.0, 0.0)) * voxelSunLit(at));
     Surface s;
     s.normal = n;
     s.view = v;
@@ -4588,7 +4588,7 @@ FragmentOut voxelDropFragment(VoxelDropOut input)
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float shadow = sunShadow(frame, input.world, n);
+    float shadow = (sunShadow(frame, input.world, n) * voxelSunLit(input.world));
     float3 albedo = lerp(float3(0.1, 0.32, 0.32), float3(0.82, 0.88, 0.9), input.white);
     Surface s;
     s.normal = n;
@@ -4715,7 +4715,7 @@ FragmentOut blockWaterLit(
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float shadow = sunShadow(frame, at, face);
+    float shadow = (sunShadow(frame, at, face) * voxelSunLit(at));
     // Lit by the light kept for its world's blocks (blockAmbient in shading.slang): the sky's light and what it
     // reflects of its surroundings as much as its sky light lets in, its blocks' light over them, and the sun as its
     // sky light lets it in, past its shadows in their place.
@@ -5258,7 +5258,7 @@ float3 lightShafts(Frame* frame, Under u, float2 pixel)
         // As blurred as a step spans, a pixel wide and a step long, so the streaks do not sparkle.
         float footprint = max(2.0 * screenDistance(frame, t) / (max(tall, 1e-3) * float(frame->viewport.y)), reach / float(STEPS) * 0.25);
         float focused = shaftsAt(frame, surfaced, below, footprint);
-        float lit = sunShadow(frame, p, float3(0.0, 1.0, 0.0));
+        float lit = (sunShadow(frame, p, float3(0.0, 1.0, 0.0)) * voxelSunLit(p));
         total += lit * focused * exp(-u.medium.extinction * t - u.medium.fade * below / slant);
     }
     total *= reach / float(STEPS);

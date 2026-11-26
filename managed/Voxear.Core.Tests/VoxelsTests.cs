@@ -29,6 +29,11 @@ internal static class VoxelsTests
 		Check.True(Voxels.Cut(Vector3.Zero, 1f, VoxelPieces.Remove).All.IsEmpty, "no piece to take away");
 		Check.True(!Voxels.Piece(default, out var piece) && piece == default && !Voxels.StampPiece(default) && !Voxels.RemovePiece(default), "no felled piece");
 		Check.True(!Voxels.Raycast(Vector3.Zero, -Vector3.UnitY, out _, 10f, VoxelRayMeets.Cover), "no cover to meet");
+		Voxels.Felled = VoxelFelled.Stamped;
+		Voxels.Regrow = 60f;
+		Voxels.Felling = new VoxelFelling(Push: 0.2f, Clippings: false);
+		Check.True(Voxels.Felled == VoxelFelled.Body && Voxels.Regrow == 0f && Voxels.Felling == new VoxelFelling(), "no volume to set");
+		Check.True(new VoxelFelling().Push == 0.6f && new VoxelFelling().Clippings, "as a volume comes");
 		Voxels.Sea = true;
 		Check.True(!Voxels.Sea && float.IsNaN(Voxels.SeaLevel), "no sea");
 		Voxels.WaterLook = VoxelWaterLook.Smooth;

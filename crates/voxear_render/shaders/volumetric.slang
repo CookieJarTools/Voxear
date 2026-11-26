@@ -111,7 +111,7 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     float2 blockLit;
     float4 blockGlow;
     bool amongBlocks = blockLightAround(position, blockLit, blockGlow);
-    float3 light = sunLight * sunShadowHard(frame, position, float3(0.0)) * sunCookieAt(frame, position)
+    float3 light = sunLight * sunShadowHard(frame, position, float3(0.0)) * voxelSunLit(position) * sunCookieAt(frame, position)
         * glassSun(frame, position, float3(0.0))
         * miePhase(g, dot(-frame->sunDirection, -toCamera));
     if (amongBlocks)

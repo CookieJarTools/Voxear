@@ -1233,13 +1233,27 @@ glass's look-ups in the depth pass (`measure_a_street_of_houses` in `tests/voxel
 
 ![Close up: the windows are glass now and the houses dark inside but by their doors](../images/small-voxels/street-close-before-after.webp)
 
+Since, the same day:
+
+- **Lamps stopped by voxels.** A pass of its own after the voxels' shadows (`voxelLampShadowFragment`) traces from
+  each pixel to each lamp of its cluster, the first 24, and writes which have voxels in the way as a whole number in
+  a float image; every lit pass skips those lamps (`voxelLampOut`). In the sun's pass it cost 0.73 ms with no lamp
+  in view, by the walk's weight alone, so it is a pass of its own, which leaves a pixel at once where its cluster has
+  none (0.06 ms). With twelve lamps over a street it took 3.1 ms, 24 million rays; at half the picture's size,
+  leaving out lamps past four fifths of their range, 0.95 ms. Walking coarser with distance alone saved nothing.
+- **The sun through glass takes its colour.** The plain walk keeps the first glass it passed as the depth pass's
+  does; the sun's mask is RGBA, its tint over the lit share.
+- **Fog, particles and water** read a sun map of the voxels, 256 texels a side over 64 m round the camera on whole
+  texels, each a ray from 64 m towards the sun down through the voxels at a group's or brick's level (0.12 ms; 512
+  texels took 0.86 ms). A wall's shadow lies on the sea beside it.
+- **Measured** on the same street, against the commit before (least of 60 frames, three runs each): by day 7.83 →
+  8.05 ms; at night with a lamp by each of the twelve figures, 5.88 → 7.27 ms, the lamps' pass 0.94 ms of it.
+
+![A lamp in a house and beside it, at night; the sun through clear and red glass; a pillar's shadow on the sea](../images/small-voxels/lamps-tint-sea.webp)
+
 Not done:
 
-- **Lamps.** A Light's light isn't stopped by voxels, so a lamp in a room lights the walls outside it. Lamps'
-  shadow maps could take the voxels as the sun's mask does, a ray a texel, kept while the lamp and voxels stand
-  still; or each lit pixel could trace to the few lamps near it.
-- **Fog, particles and water** read the sun's shadow maps and not the voxels' mask.
-- **Glass** lets the sun through untinted, and only the nearest glass in a pixel is drawn.
+- **Glass** tints only the sun, and only the nearest glass in a pixel is drawn.
 - **GI rays through voxels**, the rest of the stage. Worlds of blocks are lit without the probe GI, so it waits.
 - **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
   commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the

@@ -202,3 +202,33 @@ fn a_cut_takes_its_pieces_away_or_says_what_they_become_at_rest_and_a_game_stamp
     assert!(crate::volume(&game).changes.count() > before + 1000, "stamped where it lies");
     assert!(voxear_engine::voxel_felling::piece(&game.engine.world, kept).is_none());
 }
+
+#[test]
+fn how_trees_fall_and_grass_grows_back_are_set_for_every_volume_and_kept_for_its_scene() {
+    use voxear_engine::voxel_volumes::{cutting, felling, set_felled, set_felling, set_regrow};
+    use voxear_render::VoxelFelling;
+    let (_dir, mut game) = game(VoxelFelled::Body);
+    let world = &mut game.engine.world;
+    assert_eq!(set_felled(world, VoxelFelled::Stamped, None), 1);
+    assert_eq!(set_regrow(world, -5.0, None), 1, "under none is never");
+    let slow = VoxelFelling { push: 0.2, wood_density: 900.0, clippings: false, ..VoxelFelling::default() };
+    assert_eq!(set_felling(world, VoxelFelling { push: f32::NAN, ..slow }, None), 1);
+    assert_eq!(cutting(world), Some((VoxelFelled::Stamped, 0.0)));
+    assert_eq!(felling(world), Some(VoxelFelling { push: 0.6, ..slow }), "a push of no number is the usual one");
+    let ground = named(&game, "Ground");
+    let data = game.engine.world.get::<VoxelVolumeSource>(ground).unwrap().0.clone();
+    assert_eq!((data.felled, data.regrow, data.felling.clippings), (VoxelFelled::Stamped, 0.0, false));
+    // Cut grass with no clippings plays none, and says where it was cut.
+    let effects = |game: &Game| game.engine.world.query_ref::<&voxear_render::ParticleSystem>().into_iter().count();
+    let before = effects(&game);
+    let trunks = voxear_render::voxel_tree_trunks(&volume(&game), Vec3::splat(-12.0), Vec3::splat(28.0));
+    let open = trunks[0] + Vec3::new(2.5, 0.2, 0.0);
+    let done = voxear_engine::voxel_felling::cut(
+        &mut game.engine.world,
+        &VoxelCut::Ball { at: open, radius: 0.6 },
+        CutOptions::default(),
+        None,
+    );
+    assert!(done.columns > 0 && !done.mown.is_empty(), "{done:?}");
+    assert_eq!(effects(&game), before, "no clippings");
+}

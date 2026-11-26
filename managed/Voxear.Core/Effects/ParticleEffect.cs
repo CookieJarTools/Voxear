@@ -68,6 +68,9 @@ public readonly struct ParticleEffect : IEquatable<ParticleEffect>, IAsset<Parti
 	/// <summary>Clods and spatter thrown up, once.</summary>
 	public static ParticleEffect Mud => new(Builtin + "mud");
 
+	/// <summary>Bits of grass blades tossed up and fluttering down, once: what cut grass throws up.</summary>
+	public static ParticleEffect Clippings => new(Builtin + "clippings");
+
 	public bool IsValid => !string.IsNullOrEmpty(key);
 
 	/// <summary>Whether it is one of the starters every project has, rather than one of the project's files.</summary>

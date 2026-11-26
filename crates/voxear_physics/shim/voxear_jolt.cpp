@@ -842,6 +842,18 @@ uint32_t vx_joint_add(VxWorld *world, uint32_t kind, uint32_t a, uint32_t b, con
 		settings = hinge;
 		break;
 	}
+	case 4: {
+		// From a point of the first body, given where an axis would be, to the point, held to the second.
+		auto rope = new DistanceConstraintSettings();
+		rope->mPoint1 = RVec3(axis[0], axis[1], axis[2]);
+		rope->mPoint2 = at;
+		if (min >= 0.0f && max > 0.0f) {
+			rope->mMinDistance = min;
+			rope->mMaxDistance = max;
+		}
+		settings = rope;
+		break;
+	}
 	default: {
 		// From the first body's centre to the point, held to the second.
 		auto distance = new DistanceConstraintSettings();

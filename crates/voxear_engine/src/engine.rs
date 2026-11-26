@@ -614,6 +614,8 @@ impl Engine {
             // What the weather leaves lying by place, what keeps it off, and how deep the sea is round the viewer.
             crate::weather_maps::update(&mut self.world, self.time.delta, !self.edit_mode);
         }
+        // Endless Voxel Volumes' trees and crops keep to the World Areas as they are now.
+        crate::voxel_volumes::sync_areas(&mut self.world);
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
         // What cuts the water's surface leaves trails on it.

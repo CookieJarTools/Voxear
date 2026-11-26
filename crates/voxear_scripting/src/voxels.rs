@@ -2,8 +2,10 @@
 //! change every endless Voxel Volume a ball falls in, `Voxels.Box`,
 //! `Voxels.Ramp`, `Voxels.Area` and `Voxels.Cover` those their shapes
 //! reach, `Voxels.Print` prints a Voxel Print into those its box reaches,
-//! and `Voxels.Raycast`
-//! finds where a ray meets their ground. The engine answers, as
+//! `Voxels.Dig` and `Voxels.Place` set a voxel at a time, `Voxels.Raycast`
+//! finds where a ray meets their ground, `Voxels.WaterAt` the water of
+//! their rivers and lakes at a place, and `Voxels.Sea` turns their
+//! generators' seas on and off. The engine answers, as
 //! only it keeps the volumes (see `voxear_engine::voxel_volumes`); a print
 //! is printed after the frame, when the engine has its project's files.
 
@@ -166,6 +168,61 @@ pub(crate) unsafe extern "C" fn voxel_raycast(
         *obj = entity.to_bits();
     }
     1
+}
+
+/// What answers `Voxels.WaterAt`: the water of an endless Voxel Volume's
+/// rivers and lakes at a place of the world: the volume, how high its
+/// surface stands, and its current along X, Y and Z, in metres a second.
+pub type VoxelWaterAt = fn(&World, [f32; 3]) -> Option<(Entity, f32, [f32; 3])>;
+
+/// What answers `Voxels.Sea`: given 0 or 1, turns every endless Voxel
+/// Volume's generator's sea off or on, and given -1 only asks; gives the
+/// height of the sea one has now, if any has.
+pub type VoxelSea = fn(&mut World, i32) -> Option<f32>;
+
+static WATER_AT: OnceLock<VoxelWaterAt> = OnceLock::new();
+static SEA: OnceLock<VoxelSea> = OnceLock::new();
+
+/// Sets what answers `Voxels.WaterAt` and `Voxels.Sea`; the first set is kept.
+pub fn set_voxel_water(water_at: VoxelWaterAt, sea: VoxelSea) {
+    let _ = WATER_AT.set(water_at);
+    let _ = SEA.set(sea);
+}
+
+/// `Voxels.WaterAt`: 1 with the surface's height and the current in
+/// `water` and the volume's Obj in `obj`; 0 where there is no such water;
+/// -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_water(at: *const [f32; 3], water: *mut [f32; 4], obj: *mut u64) -> i32 {
+    let Some(water_at) = WATER_AT.get() else { return -1 };
+    if at.is_null() || water.is_null() || obj.is_null() {
+        return -1;
+    }
+    let at = unsafe { *at };
+    let Some((entity, height, current)) = with_world(|world| Some(water_at(world, at))).unwrap_or(None) else {
+        return 0;
+    };
+    unsafe {
+        *water = [height, current[0], current[1], current[2]];
+        *obj = entity.to_bits();
+    }
+    1
+}
+
+/// `Voxels.Sea`: `on` 0 or 1 turns the seas off or on, -1 asks; 1 with the
+/// sea's height in `level` where a volume has one now, 0 where none has,
+/// -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_sea(on: i32, level: *mut f32) -> i32 {
+    let Some(sea) = SEA.get() else { return -1 };
+    if level.is_null() {
+        return -1;
+    }
+    match with_world(|world| Some(sea(world, on))).unwrap_or(None) {
+        Some(height) => {
+            unsafe { *level = height };
+            1
+        }
+        None => 0,
+    }
 }
 
 /// A print a script asked for: the `.voxprint` by GUID or path, where its

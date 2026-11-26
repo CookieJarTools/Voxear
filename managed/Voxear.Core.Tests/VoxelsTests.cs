@@ -23,6 +23,9 @@ internal static class VoxelsTests
 		Check.True(!Voxels.Print(house, Vector3.Zero, Vector3.Zero, fit: true, footing: VoxelMaterial.Ashlar), "no house");
 		Check.True(Voxels.Dig(Vector3.Zero) == 0 && Voxels.Place(Vector3.One, VoxelMaterial.Planks, Color.Red) == 0, "no voxel set");
 		Check.True(Voxels.Restore([Vector3.Zero, Vector3.One]) == 0 && Voxels.Dig(ReadOnlySpan<Vector3>.Empty) == 0, "nor let go");
+		Check.True(!Voxels.WaterAt(Vector3.Zero, out var water) && water == default, "no river to find");
+		Voxels.Sea = true;
+		Check.True(!Voxels.Sea && float.IsNaN(Voxels.SeaLevel), "no sea");
 	}
 
 	[Test]

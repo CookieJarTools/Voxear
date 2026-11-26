@@ -4650,7 +4650,16 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   Beds are gravel and sand; the water is drawn as a world of blocks' water is, flowing downstream, foaming at the bank,
   waterfalls pouring down their faces; `Voxels.Raycast` and edits meet the cut bed. Voxel ground is in the sea floor
   map, so waves calm over voxel shallows and foam on the shore. A column takes 0.104 ms with rivers as without.
-  Not yet: water filling a pit carved beside a river, swimming in voxel rivers (research/small-voxels.md).
+  Since (2026-11-26): an endless volume with a generator has its sea, an Ocean at the generator's sea level where
+  the level has none (`ocean::seas`; **Sea** in the Inspector, `Voxels.Sea`, field `sea`), an Ocean on the volume's
+  Obj setting its look; and the game's water reads the rivers' and lakes' points, so crates and boats float and
+  drift down a river's current, characters wade and swim in it (`Voxels.WaterAt` in C#, `voxels.water_at`).
+  Not yet: water filling a pit carved beside a river; the sea calming what floats over voxel shallows beyond the
+  collision chunks round it; the sea stops nowhere inland, so a cave dug below its level is wet (research/small-voxels.md).
+- **Waterfalls that fall (2026-11-26).** A voxel river's waterfall leaves its lip and curves down the cliff into its
+  pool, as thrown water falls, in two swaying sheets with ragged sides, the front one torn into strands lower down;
+  pale, lit through by the sun behind; its pool churned white over 3 m. Before, it was a flat wall standing out from
+  the cliff.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A
@@ -4658,6 +4667,13 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   Rigidbodies and where they will be in half a second, nearest first on workers of their own; a change makes again
   only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
   Not yet: volumes of a set size, navigation.
+- **What grows where, and mobs (2026-11-26).** An endless Voxel Volume grows crops and ground cover of its own
+  voxels on the ground it is told (meadow grass, wheat, barley, flax and cabbages, in rows on ploughed earth), keeps
+  each kind of tree, crop and mob within or out of World Areas by their Area Tags, as structures in a world of blocks
+  do, and spawns mobs from prefabs on its ground round the player. Block Mobs walk a volume's ground straight to
+  where they are sent and wander it. Inspector rows, `vox editor call field.set`, and the scene's `cover`, `mobs`,
+  `within` and `never_within`. The CPU keeps trees to the areas as the GPU does. Making a column costs what it did.
+  Not yet: ways found round obstacles on voxel ground, painted areas, harvesting.
 
 - **Edits for building (2026-11-26).** Endless volumes' edits are typed shapes, kept in order: balls; boxes turned
   any way (a slab is one half a metre tall); banks, boxes whose top slopes; areas, outlines of points across the

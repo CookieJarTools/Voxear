@@ -19,9 +19,17 @@ use voxear_core::math::{IVec3, Vec3};
 use super::{
     MOST_VOXELS_A_METRE, VoxelEdit, VoxelGround, VoxelHeld, VoxelShape, VoxelVolume,
     edit::Fixed,
+    growth::{self, Growth},
     rivers::{self, RiverLayer},
     trees::{self, AIR, GROUND, LOG, Tree, Woods},
 };
+
+/// What the ground is at a column, as the GPU's tops pass numbers it.
+pub(super) const GRASS: u32 = 0;
+pub(super) const ROCK: u32 = 1;
+pub(super) const SAND: u32 = 2;
+pub(super) const SNOW: u32 = 3;
+pub(super) const GRAVEL: u32 = 4;
 
 /// How far a ray's step looks for trees, in voxels.
 const TREE_LOOK: f32 = 96.0;
@@ -48,6 +56,8 @@ pub(super) struct Ground<'a> {
     rivers: Option<Arc<RiverLayer>>,
     /// Each edit asked about, in whole numbers, by its place in the list.
     fixed: HashMap<usize, Fixed>,
+    /// The World Areas its trees keep within or out of, where any does.
+    growth: Option<Growth>,
 }
 
 /// The tree each cell holds, where it has one.
@@ -77,6 +87,9 @@ impl<'a> Ground<'a> {
                 .generator
                 .as_ref()
                 .and_then(|generator| rivers::layer_of(generator, volume.voxels_per_metre)),
+            growth: growth::growing(&volume.trees)
+                .any(|kind| !kind.areas.within.is_empty() || !kind.areas.never.is_empty())
+                .then(|| Growth::new(&volume.areas, &volume.trees, &volume.cover, voxel)),
         }
     }
 
@@ -199,14 +212,15 @@ impl<'a> Ground<'a> {
         }
     }
 
-    /// Whether the ground at each voxel column of `feet` grows grass, by
-    /// the rules the GPU's tops pass has (`grassAt`), and how high it is
-    /// there.
-    fn grass_at(&mut self, feet: &[[i32; 2]]) -> Vec<Option<i32>> {
+    /// What the ground is at each voxel column of `feet`, by the rules the
+    /// GPU's tops pass has (`groundKind`, numbered as there: grass, rock,
+    /// sand, snow, gravel), and how high it is there: none where its top is
+    /// out of the volume's columns.
+    pub fn kinds_at(&mut self, feet: &[[i32; 2]]) -> Vec<Option<(i32, u32)>> {
         let Some(generator) = self.volume.generator.clone() else {
             return feet
                 .iter()
-                .map(|&[x, z]| Some(self.height(x, z)).filter(|&h| h >= 0 && h < self.rows - 1))
+                .map(|&[x, z]| Some(self.height(x, z)).filter(|&h| h >= 0 && h < self.rows - 1).map(|h| (h, GRASS)))
                 .collect();
         };
         if feet.is_empty() {
@@ -242,22 +256,48 @@ impl<'a> Ground<'a> {
                 ((height - generator.floor) / v).floor() as i32
             };
             let h = at(0);
+            if h < 0 || h >= self.rows - 1 {
+                found.push(None);
+                continue;
+            }
             let across = (at(1) - at(2)).abs().max((at(3) - at(4)).abs());
             let top = h as f32 * v + generator.floor;
             let (warm, wet) = (warmth[i], wetness[i]);
             let rocky = rock.as_ref().is_some_and(|rock| rock[i]);
+            let water = self.river(x, z).1;
+            let above = top - sea;
             // Under a river's or a lake's water, or along its edge, is gravel and sand.
-            let watered = self.river(x, z).1 > top - 0.1;
-            let bare = rocky
-                || across as f32 / 4.0 > 1.0
-                || watered
-                || top - sea < 1.0
-                || warm < 0.0
-                || (wet < 0.12 && warm > 18.0);
-            if h < 0 || h >= self.rows - 1 || bare {
+            let kind = if rocky || across as f32 / 4.0 > 1.0 {
+                ROCK
+            } else if water > top - 0.1 {
+                if water > top + 0.3 { GRAVEL } else { SAND }
+            } else if above < -0.5 {
+                GRAVEL
+            } else if above < 1.0 {
+                SAND
+            } else if warm < 0.0 {
+                SNOW
+            } else if wet < 0.12 && warm > 18.0 {
+                SAND
+            } else {
+                GRASS
+            };
+            found.push(Some((h, kind)));
+        }
+        found
+    }
+
+    /// Whether the ground at each voxel column of `feet` grows grass, by
+    /// the rules the GPU's tops pass has (`grassAt`), and how high it is
+    /// there.
+    fn grass_at(&mut self, feet: &[[i32; 2]]) -> Vec<Option<i32>> {
+        let kinds = self.kinds_at(feet);
+        let mut found = Vec::with_capacity(feet.len());
+        for (&[x, z], kind) in feet.iter().zip(kinds) {
+            let Some((h, GRASS)) = kind else {
                 found.push(None);
                 continue;
-            }
+            };
             // Where the Volume moved the ground, or hollowed it under the foot, nothing is planted.
             found.push(match self.densities(x, h, z, 2) {
                 Some(d) => (d[0] > 0.0 && d[1] <= 0.0).then_some(h),
@@ -305,7 +345,9 @@ impl<'a> Ground<'a> {
         for (cell, tree) in held {
             let tree = tree.and_then(|(model, foot)| {
                 let h = grass.next().flatten()?;
-                self.foot_kept(IVec3::new(foot[0], h, foot[1])).then(|| woods.stood(model, foot, h))
+                let kind = model / (4 * trees::VARIANTS as usize);
+                let allowed = self.growth.as_ref().is_none_or(|growth| growth.tree_allowed(kind, foot, h));
+                (allowed && self.foot_kept(IVec3::new(foot[0], h, foot[1]))).then(|| woods.stood(model, foot, h))
             });
             placed.push((cell, tree));
         }
@@ -465,6 +507,26 @@ impl<'a> Ground<'a> {
         }
         clear
     }
+}
+
+/// What the ground of an endless volume is under (`x`, `z`), in metres from
+/// its corner, as its generator or its own ground makes it, before what was
+/// changed in it: how high its top is over the volume's floor, in metres,
+/// and what it is. None where its top is out of the volume.
+pub fn ground_at(volume: &VoxelVolume, x: f32, z: f32) -> Option<(f32, super::VoxelMaterial)> {
+    use super::VoxelMaterial;
+    let mut ground = Ground::new(volume, None);
+    let v = ground.voxel;
+    let column = [(x / v).floor() as i32, (z / v).floor() as i32];
+    let (h, kind) = ground.kinds_at(&[column]).pop().flatten()?;
+    let material = match kind {
+        ROCK => VoxelMaterial::Rock,
+        SAND => VoxelMaterial::Sand,
+        SNOW => VoxelMaterial::Snow,
+        GRAVEL => VoxelMaterial::Gravel,
+        _ => VoxelMaterial::Grass,
+    };
+    Some(((h + 1) as f32 * v, material))
 }
 
 /// What an endless Voxel Volume's voxels are, as the CPU finds them, for
@@ -628,6 +690,7 @@ impl VoxelSolids {
             && new.size.y == old.size.y
             && new.ground == old.ground
             && new.generator == old.generator
+            && (Arc::ptr_eq(&new.areas, &old.areas) || new.areas == old.areas)
             && same_trees;
         if !same {
             return None;
@@ -674,7 +737,7 @@ mod tests {
 
     fn wood() -> Vec<VoxelTrees> {
         let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
-        vec![VoxelTrees { plant: Arc::new(oak), per_hectare: 120.0, wood: [100, 70, 50], leaves: [70, 120, 40] }]
+        vec![VoxelTrees { plant: Arc::new(oak), per_hectare: 120.0, wood: [100, 70, 50], leaves: [70, 120, 40], areas: Default::default() }]
     }
 
     fn hills() -> VoxelVolume {

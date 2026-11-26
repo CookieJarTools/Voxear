@@ -1101,6 +1101,28 @@ impl Game {
         self.engine.instantiate(&template, parent, placement)
     }
 
+    /// Spawns the mobs endless Voxel Volumes keep round the player, and
+    /// takes away those left far behind (see `voxel_mobs`).
+    fn spawn_voxel_mobs(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        let changes = crate::voxel_mobs::changes(&mut self.engine.world, delta);
+        if !changes.remove.is_empty() {
+            self.engine.destroy_objs(&changes.remove);
+        }
+        for (volume, kind, prefab, ground, turn) in changes.spawn {
+            let placed = crate::voxel_mobs::placed_at(ground, turn);
+            match self.instantiate(&prefab.to_string(), None, Some(placed), renderer.as_deref_mut()) {
+                Ok(mob) => {
+                    let spawned = crate::voxel_mobs::VoxelMobSpawned { volume, kind };
+                    self.engine.world.insert(mob, spawned);
+                }
+                Err(error) => {
+                    tracing::warn!("a Voxel Volume's mob {prefab} could not be spawned: {error:#}");
+                    crate::voxel_mobs::failed(&mut self.engine.world, prefab);
+                }
+            }
+        }
+    }
+
     /// Takes away the Objs whose ground streamed out, kept for later or
     /// destroyed as their Streams With Ground says, and makes again those
     /// kept whose ground came back (see `ground_streaming`).
@@ -1550,6 +1572,10 @@ impl Game {
         if !self.engine.is_edit_mode() {
             profile_scope!("Streams With Ground");
             self.stream_with_ground(renderer.as_deref_mut());
+        }
+        if !self.engine.is_edit_mode() {
+            profile_scope!("Voxel Mobs");
+            self.spawn_voxel_mobs(delta, renderer.as_deref_mut());
         }
         // The columns made and let go, told to scripts while the game plays, and forgotten in the editor.
         let columns = crate::ground_streaming::take_untold(&mut self.engine.world);

@@ -658,6 +658,8 @@ pub enum Prop {
     VoxelGenerator,
     VoxelGeneratorFloor,
     VoxelGeneratorAt,
+    /// Whether an endless volume has its generator's sea.
+    VoxelSea,
     VoxelGround,
     VoxelGroundHeight,
     VoxelHills,
@@ -674,6 +676,8 @@ pub enum Prop {
     VoxelTreeAdd,
     /// A row of an endless volume's brush in the Scene view.
     VoxelBrush(crate::voxel_brush::VoxelBrushField),
+    /// A row of an endless volume's trees' areas, its cover or its mobs.
+    VoxelGrowth(crate::voxel_growth_props::GrowthField),
     /// A Mist's trail: whether it is left now, how wide and thick it is, its
     /// colour, how long it lingers, and which swirls.
     /// When a Reflection Probe is captured: once, or live.
@@ -1300,6 +1304,7 @@ impl Prop {
             | Prop::VoxelGenerator
             | Prop::VoxelGeneratorFloor
             | Prop::VoxelGeneratorAt
+            | Prop::VoxelSea
             | Prop::VoxelGround
             | Prop::VoxelGroundHeight
             | Prop::VoxelHills
@@ -1312,7 +1317,8 @@ impl Prop {
             | Prop::VoxelTreePlant(_)
             | Prop::VoxelTreesPerHectare(_)
             | Prop::VoxelTreeAdd
-            | Prop::VoxelBrush(_) => Part::VoxelVolume,
+            | Prop::VoxelBrush(_)
+            | Prop::VoxelGrowth(_) => Part::VoxelVolume,
             Prop::MistEmitting
             | Prop::MistWidth
             | Prop::MistDensity
@@ -1607,6 +1613,7 @@ impl Prop {
             Prop::Placement(field) => crate::road_props::placement_key(*field),
             Prop::PrefabBrush(field) => crate::road_props::brush_key(*field),
             Prop::VoxelBrush(field) => crate::voxel_brush::key(*field),
+            Prop::VoxelGrowth(field) => crate::voxel_growth_props::key(*field),
             Prop::WalkableDoor => "door",
             Prop::NavObstacle(field) => crate::nav_props::obstacle_key(*field),
             Prop::CrowdMember(field) => crate::nav_props::crowd_key(*field),
@@ -1739,6 +1746,7 @@ impl Prop {
             Prop::VoxelGenerator => "generator",
             Prop::VoxelGeneratorFloor => "generator_floor",
             Prop::VoxelGeneratorAt => "generator_at",
+            Prop::VoxelSea => "sea",
             Prop::VoxelGround => "ground",
             Prop::VoxelGroundHeight => "ground_height",
             Prop::VoxelHills => "hills",
@@ -2423,13 +2431,18 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.extend([Prop::VoxelReach, Prop::VoxelGenerator]);
             }
             if generated {
-                props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt]);
+                props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt, Prop::VoxelSea]);
             }
             if endless {
                 let kinds = source.map_or(0, |source| source.0.trees.len());
-                let rows = (0..kinds).flat_map(|kind| [Prop::VoxelTreePlant(kind), Prop::VoxelTreesPerHectare(kind)]);
-                props.extend(rows);
+                for kind in 0..kinds {
+                    props.extend([Prop::VoxelTreePlant(kind), Prop::VoxelTreesPerHectare(kind)]);
+                    props.extend(crate::voxel_growth_props::tree_rows(kind).map(Prop::VoxelGrowth));
+                }
                 props.push(Prop::VoxelTreeAdd);
+                if let Some(source) = source {
+                    props.extend(crate::voxel_growth_props::fields(&source.0).into_iter().map(Prop::VoxelGrowth));
+                }
                 props.extend(crate::voxel_brush::fields(world).into_iter().map(Prop::VoxelBrush));
             }
             props.push(Prop::VoxelGround);
@@ -2936,6 +2949,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::Placement(field) => return crate::road_props::placement_label(*field),
         Prop::PrefabBrush(field) => return crate::road_props::brush_label(*field),
         Prop::VoxelBrush(field) => return crate::voxel_brush::label(*field).into(),
+        Prop::VoxelGrowth(field) => return crate::voxel_growth_props::label(*field),
         Prop::WalkableDoor => return "Door".into(),
         Prop::NavObstacle(field) => return crate::nav_props::obstacle_label(*field),
         Prop::CrowdMember(field) => return crate::nav_props::crowd_label(*field),
@@ -3073,6 +3087,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelGenerator => "Generator",
         Prop::VoxelGeneratorFloor => "Floor",
         Prop::VoxelGeneratorAt => "Offset",
+        Prop::VoxelSea => "Sea",
         Prop::VoxelGround => "Ground",
         Prop::VoxelGroundHeight => "Ground Height",
         Prop::VoxelHills => "Hills",
@@ -3426,6 +3441,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::Placement(field), _) => crate::road_props::placement_unit(*field),
         (Prop::PrefabBrush(field), _) => crate::road_props::brush_unit(*field),
         (Prop::VoxelBrush(field), _) => crate::voxel_brush::unit(*field),
+        (Prop::VoxelGrowth(field), _) => crate::voxel_growth_props::unit(*field),
         (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::Nav(field), _) => crate::nav_props::unit(*field),
         (Prop::NavArea(crate::nav_props::NavAreaField::Size), _) => Some("m"),
@@ -3904,6 +3920,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Placement(field) => return crate::road_props::placement_get(game, entity, *field),
         Prop::PrefabBrush(field) => return crate::road_props::brush_get(game, entity, *field),
         Prop::VoxelBrush(field) => return Some(crate::voxel_brush::get(game, *field)),
+        Prop::VoxelGrowth(field) => return crate::voxel_growth_props::get(game, entity, *field),
         Prop::WalkableDoor => {
             let walkable = game.engine.world.get::<voxear_engine::walkable_models::Walkable>(entity)?;
             return Some(Value::Toggle(walkable.door));
@@ -4251,6 +4268,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelRoughness
         | Prop::VoxelEndless
         | Prop::VoxelReach
+        | Prop::VoxelSea
         | Prop::VoxelGround
         | Prop::VoxelGroundHeight
         | Prop::VoxelHills
@@ -4797,6 +4815,11 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::voxel_brush::pick(game, &choice))
         }
         (Prop::VoxelBrush(field), value) => crate::voxel_brush::set(&mut game.engine.world, *field, value),
+        (Prop::VoxelGrowth(field), Value::Asset(label)) if crate::voxel_growth_props::is_picked(*field) => {
+            let choice = crate::voxel_growth_props::choices(game, types, *field).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::voxel_growth_props::pick(game, entity, *field, &choice))
+        }
+        (Prop::VoxelGrowth(field), value) => crate::voxel_growth_props::set(game, entity, *field, value),
         (Prop::WalkableDoor, Value::Toggle(on)) => {
             let walkable = game.engine.world.get_mut::<voxear_engine::walkable_models::Walkable>(entity);
             walkable.map(|walkable| walkable.door = on).is_some()
@@ -4880,6 +4903,11 @@ pub fn pick(
         && crate::voxel_brush::is_picked(*field)
     {
         return crate::voxel_brush::pick(game, choice);
+    }
+    if let Prop::VoxelGrowth(field) = prop
+        && crate::voxel_growth_props::is_picked(*field)
+    {
+        return crate::voxel_growth_props::pick(game, entity, *field, choice);
     }
     if let Prop::AreaFill(field) = prop {
         return crate::road_props::area_pick(game, entity, *field, choice);
@@ -5407,6 +5435,9 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return crate::road_props::prefab_choices(game);
         }
         Prop::VoxelBrush(field) if crate::voxel_brush::is_picked(*field) => return crate::voxel_brush::choices(game),
+        Prop::VoxelGrowth(field) if crate::voxel_growth_props::is_picked(*field) => {
+            return crate::voxel_growth_props::choices(game, types, *field);
+        }
         Prop::AreaFill(field) if crate::road_props::area_picked(*field) => {
             return crate::road_props::block_choices(game);
         }
@@ -5658,6 +5689,9 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Road(field) if crate::road_props::road_picked(*field) => "Block".into(),
         Prop::PrefabBrush(field) if crate::road_props::brush_picked(*field) => "Prefab".into(),
         Prop::VoxelBrush(field) if crate::voxel_brush::is_picked(*field) => "Voxel Print".into(),
+        Prop::VoxelGrowth(field) if crate::voxel_growth_props::is_picked(*field) => {
+            crate::voxel_growth_props::takes_name(*field).into()
+        }
         Prop::AreaFill(field) if crate::road_props::area_picked(*field) => "Block".into(),
         Prop::World(field) if crate::world_props::is_picked(*field) => crate::world_props::takes_name(*field).into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
@@ -6392,6 +6426,7 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
         Prop::VoxelRoughness => Value::Number(data.roughness),
         Prop::VoxelEndless => Value::Toggle(data.endless),
         Prop::VoxelReach => Value::Number(data.reach),
+        Prop::VoxelSea => Value::Toggle(data.sea),
         Prop::VoxelGround => Value::Toggle(data.ground_on),
         Prop::VoxelGroundHeight => Value::Number(ground.height),
         Prop::VoxelHills => Value::Number(ground.hills),
@@ -6425,6 +6460,7 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         (Prop::VoxelRoughness, Value::Number(n)) => data.roughness = n.clamp(0.0, 1.0),
         (Prop::VoxelEndless, Value::Toggle(on)) => data.endless = on,
         (Prop::VoxelReach, Value::Number(n)) => data.reach = n.clamp(4.0, 512.0),
+        (Prop::VoxelSea, Value::Toggle(on)) => data.sea = on,
         (Prop::VoxelGeneratorFloor, Value::Number(n)) => data.generator_floor = Some(n.clamp(-100_000.0, 100_000.0)),
         (Prop::VoxelGeneratorAt, Value::Vector(v)) if v.len() == 2 => {
             data.generator_at = [v[0], v[1]].map(|metres| metres.clamp(-1.0e7, 1.0e7));
@@ -6447,6 +6483,7 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.ground = data.ground_on.then_some(data.ground);
         volume.endless = data.endless;
         volume.reach = data.reach;
+        volume.sea = data.sea;
         if let Some(generator) = &mut volume.generator {
             generator.at = data.generator_at;
             generator.floor = data.generator_floor.unwrap_or(generator.floor);
@@ -7246,16 +7283,34 @@ mod tests {
         assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelGeneratorAt, Value::Vector(vec![10.0, -5.0])));
         let data = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
         assert_eq!((data.generator_floor, data.generator_at), (Some(42.0), [10.0, -5.0]));
+        // Its generator's sea is on until turned off.
+        assert!(shown.contains(&Prop::VoxelSea) && data.sea, "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelSea, Value::Toggle(false)));
+        assert!(!world.get::<voxear_render::VoxelVolume>(volume).unwrap().sea);
         // Its trees: a row of a plant and how many to a hectare for each kind, then one to add another.
         assert!(shown.contains(&Prop::VoxelTreeAdd) && !shown.contains(&Prop::VoxelTreePlant(0)), "{shown:?}");
         let oaks =
-            voxear_engine::voxel_volumes::VoxelTreesData { plant: "Plants/Oak.voxplant".into(), per_hectare: 30.0 };
+            voxear_engine::voxel_volumes::VoxelTreesData {
+                plant: "Plants/Oak.voxplant".into(),
+                per_hectare: 30.0,
+                ..Default::default()
+            };
         world.get_mut::<VoxelVolumeSource>(volume).unwrap().0.trees = vec![oaks.clone(), oaks];
         let shown = props(&world, volume, &Part::VoxelVolume, &types);
         let rows = [Prop::VoxelTreePlant(0), Prop::VoxelTreesPerHectare(0), Prop::VoxelTreePlant(1)];
         let all = rows.iter().all(|row| shown.contains(row)) && shown.contains(&Prop::VoxelTreesPerHectare(1));
         assert!(all, "{shown:?}");
         assert_eq!(label(&Prop::VoxelTreePlant(0)), "Trees");
+        // Each kind's areas follow its density; then its cover and its mobs, each with a row to add one more.
+        use crate::voxel_growth_props::GrowthField as G;
+        let after = shown.iter().position(|row| *row == Prop::VoxelTreesPerHectare(0)).unwrap();
+        assert_eq!(shown[after + 1..after + 3], [Prop::VoxelGrowth(G::TreeWithin(0)), Prop::VoxelGrowth(G::TreeNever(0))]);
+        assert!(shown.contains(&Prop::VoxelGrowth(G::CoverAdd)) && shown.contains(&Prop::VoxelGrowth(G::MobAdd)));
+        world.get_mut::<VoxelVolumeSource>(volume).unwrap().0.cover =
+            vec![voxear_engine::voxel_volumes::VoxelCoverData::of(voxear_render::VoxelCoverKind::Wheat)];
+        let shown = props(&world, volume, &Part::VoxelVolume, &types);
+        assert!(shown.contains(&Prop::VoxelGrowth(G::CoverSoil(0))) && shown.contains(&Prop::VoxelGrowth(G::CoverWithin(0))));
+        assert_eq!([label(&Prop::VoxelGrowth(G::CoverKind(0))), label(&Prop::VoxelGrowth(G::TreeNever(0)))], ["Cover", "Not Within"]);
     }
 
     /// A Camera shows its projection, then its field of view while it is

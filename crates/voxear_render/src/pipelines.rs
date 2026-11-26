@@ -283,6 +283,8 @@ pub struct Pipelines {
     pub block_water: vk::Pipeline,
     /// The water over endless Voxel Volumes' rivers and lakes.
     pub voxel_water: vk::Pipeline,
+    /// Their waterfalls.
+    pub voxel_falls: vk::Pipeline,
     /// The sea floor's voxels from straight above, their tops and their
     /// undersides.
     pub sea_floor_voxels: vk::Pipeline,
@@ -884,6 +886,14 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Water (voxels)", water, c"voxelWaterVertex", c"voxelWaterFragment")
+            })?,
+            voxel_falls: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Waterfalls (voxels)", water, c"voxelFallVertex", c"voxelFallFragment")
             })?,
             // Over the whole view, at the depth where each pixel's view meets the swell.
             block_sea_inside: graphics(&GraphicsPipelineDesc {
@@ -1522,6 +1532,7 @@ impl Pipelines {
             self.block_water_exits,
             self.block_water,
             self.voxel_water,
+            self.voxel_falls,
             self.sea_floor_voxels,
             self.sea_floor_voxels_under,
             self.block_sea_inside,

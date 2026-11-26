@@ -304,6 +304,7 @@ impl Editor {
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
             "voxels.carve" | "voxels.fill" => self.voxels_edit(call, args),
             "voxels.raycast" => self.voxels_raycast(args),
+            "voxels.water_at" => self.voxels_water_at(args),
             "voxels.print" => self.voxels_print(args),
             "voxels.box" | "voxels.ramp" | "voxels.area" | "voxels.cover" => self.voxels_shape(call, args),
             "voxels.dig" | "voxels.place" | "voxels.restore" => self.voxels_set(call, args),
@@ -2505,6 +2506,22 @@ impl Editor {
                 "distance": hit.distance,
             })),
             None => done(json!({ "obj": null, "point": null, "normal": null, "distance": null })),
+        }
+    }
+
+    fn voxels_water_at(&mut self, args: &Json) -> Called {
+        let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        match voxear_engine::voxel_volumes::water_at(&self.game.engine.world, at, only) {
+            Some((entity, water)) => done(json!({
+                "obj": obj_ref(&self.game, entity),
+                "height": water.height,
+                "current": water.current.to_array(),
+            })),
+            None => done(json!({ "obj": null, "height": null, "current": null })),
         }
     }
 

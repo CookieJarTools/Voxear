@@ -4756,7 +4756,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     is 2.45 ms against 0.32 ms.
   - Lamps take the colour of glass of voxels they shine through; a brick holding glass is walked voxel by voxel at
     any distance, so lamps' and the GI's rays pass it (night street: lamps' pass 0.93 → 0.99 ms).
-  - Not yet: more than the nearest glass in a pixel; the GI's rays taking glass's colour.
+  - The GI's rays, and the sun's from what they meet, take the colour of glass of voxels they pass (2.70 → 2.80 ms).
+  - Not yet: more than the nearest glass in a pixel.
 - **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
   voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
   whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest

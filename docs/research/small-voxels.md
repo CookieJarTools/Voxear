@@ -1268,10 +1268,14 @@ Since, the same day:
   two a few metres out, so no lamp shone through a window: a brick marked see-through is now walked voxel by voxel
   at any level, which lets the GI's rays through glass too. Street, least of 60, three runs: at night the lamps'
   pass 0.93 → 0.99 ms, the frame 8.23 → 8.39 ms; by day unchanged; the GI's rays 2.46 → 2.65 ms.
+- **The GI's rays take the colour of glass.** A probe's ray, whatever it met past glass of voxels, takes the first
+  glass's colour, and so does the sun's ray from what it met (`ddgiSunThrough` in `ddgi.slang`). Sun through a red
+  window bounces dim red round the room, where through clear glass it bounces the floor's green; on master the two
+  were the same. The GI's rays' pass 2.70 → 2.80 ms on the street.
 
 Not done:
 
-- **Glass**: only the nearest glass in a pixel is drawn; the GI's rays pass it without its colour.
+- **Glass**: only the nearest glass in a pixel is drawn.
 - **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
   commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
   walk's, not the light's.

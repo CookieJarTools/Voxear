@@ -453,7 +453,7 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "voxels.raycast",
-        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed, not its grass, flowers or trees. `obj` is null where it meets none.",
+        about: "Where a ray from a point of the world, in metres, first meets the ground of an endless Voxel Volume, or `obj`'s alone, as a script's Voxels.Raycast finds it: its ground as made and changed and its trees, not its grass or flowers. `obj` is null where it meets none.",
         args: &[
             arg("from", ArgKind::Vector, "Where the ray starts, in metres, in the world."),
             arg("direction", ArgKind::Vector, "Which way it goes."),

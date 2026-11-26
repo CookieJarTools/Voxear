@@ -4516,7 +4516,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stage 4 begun)
+## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stages 4 and 7 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4643,7 +4643,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   `voxel_prints.make` with `"background": true`); no grass, flowers or trees grow where a print stands, by a
   footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
   turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
-  stays whole. Next: changed bricks in region files, edits over the network, collision.
+  stays whole. Next: changed bricks in region files, edits over the network.
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.
@@ -4656,6 +4656,13 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   drift down a river's current, characters wade and swim in it (`Voxels.WaterAt` in C#, `voxels.water_at`).
   Not yet: water filling a pit carved beside a river; the sea calming what floats over voxel shallows, until bodies
   collide with voxels; the sea stops nowhere inland, so a cave dug below its level is wet (research/small-voxels.md).
+- **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
+  its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
+  CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A
+  Voxel Collider's solid voxels are made into meshes of their faces in 2 m chunks, only round characters and
+  Rigidbodies and where they will be in half a second, nearest first on workers of their own; a change makes again
+  only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
+  Not yet: volumes of a set size, navigation.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

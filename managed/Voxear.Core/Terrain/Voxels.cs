@@ -71,7 +71,8 @@ public static unsafe class Voxels
 	/// <summary>
 	/// Where a ray from <paramref name="origin"/> along <paramref name="direction"/> first meets the ground of an
 	/// endless Voxel Volume within <paramref name="maxDistance"/> metres: its ground as it is made and as it was changed,
-	/// the prints printed into it with the rest, not its grass, flowers or trees. Every machine finds the same, so a game can carve where a player aims.
+	/// the prints printed into it with the rest, and its trees' logs and leaves; not its grass or flowers. Every machine
+	/// finds the same, so a game can carve where a player aims.
 	/// <code>
 	/// // Dig where the player looks.
 	/// if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f) &amp;&amp; Input.Pressed(dig))

@@ -319,7 +319,7 @@ pub(crate) fn register() {
 /// Where a ray from `origin` along `direction`, in the world, first meets
 /// the ground of an endless Voxel Volume within `reach` metres, or `only`'s
 /// alone: the volume, and where and how far. Its ground as it is made, its
-/// edits over it; not its grass, flowers or trees.
+/// trees' logs and leaves, its edits over them; not its grass or flowers.
 pub fn raycast(
     world: &World,
     origin: Vec3,
@@ -599,6 +599,43 @@ mod tests {
     }
 
     #[test]
+    fn a_body_dropped_on_an_endless_volume_rests_on_its_hills_and_falls_into_a_pit_carved_under_it() {
+        use crate::physics::{Collider, PhysicsScene, Rigidbody, VoxelCollider};
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let ground = VoxelGround { height: 3.0, hills: 2.0, ..VoxelGround::default() };
+        let volume = VoxelVolume { endless: true, size: Vec3::new(16.0, 16.0, 16.0), ground: Some(ground), ..VoxelVolume::default() };
+        let corner = Vec3::new(-50.0, -10.0, 20.0);
+        let obj = world.spawn((voxear_scene::Transform::from_position(corner),));
+        world.insert(obj, volume.clone());
+        let at = Vec3::new(-41.3, 0.0, 27.6);
+        let falling = world.spawn((voxear_scene::Transform::from_position(at + Vec3::Y * 6.0),));
+        world.insert(falling, Collider { size: [0.5, 0.5, 0.5], ..Collider::default() });
+        world.insert(falling, Rigidbody::default());
+        sync_colliders(&mut world);
+        assert!(world.get::<VoxelCollider>(obj).is_some(), "an endless volume collides");
+        let mut physics = PhysicsScene::new();
+        let mut settle = |world: &mut World, physics: &mut PhysicsScene| {
+            for _ in 0..240 {
+                sync_colliders(world);
+                physics.step(world, 1.0 / 60.0);
+            }
+            world.get::<voxear_scene::Transform>(falling).unwrap().position
+        };
+        let rests = settle(&mut world, &mut physics);
+        let top = voxear_render::voxel_raycast(&volume, corner, rests, -Vec3::Y, 20.0).expect("the hills").point.y;
+        assert!((rests.y - 0.25 - top).abs() < 0.08, "it rests on the hills' voxels: at {rests}, their top at {top}");
+        // A pit carved under it: it falls in, a metre down.
+        edit(&mut world, rests - Vec3::Y * 0.3, 1.2, None, None);
+        let fallen = settle(&mut world, &mut physics);
+        assert!(fallen.y < rests.y - 0.6, "it fell into the pit: from {rests} to {fallen}");
+        // A volume no longer endless collides no more.
+        world.get_mut::<VoxelVolume>(obj).unwrap().endless = false;
+        sync_colliders(&mut world);
+        assert!(world.get::<VoxelCollider>(obj).is_none());
+    }
+
+    #[test]
     fn edits_are_kept_in_order_written_and_read_back_and_reach_only_the_endless_volumes_a_ball_falls_in() {
         let data = VoxelVolumeData {
             endless: true,
@@ -630,5 +667,123 @@ mod tests {
         assert_eq!(source.edits.len(), 4, "after the three it was written with");
         assert_eq!(source.edits[3].fill, Some(VoxelMaterial::Sand));
         assert!(world.get::<VoxelVolume>(plain).unwrap().edits.is_empty(), "a volume of a set size is not edited");
+    }
+}
+
+/// An endless Voxel Volume's solid voxels as physics asks for them: its
+/// ground, edits and trees' logs, as the CPU finds them.
+struct Solids(voxear_render::VoxelSolids);
+
+impl crate::physics::VoxelSolids for Solids {
+    fn voxel(&self) -> f32 {
+        self.0.voxel()
+    }
+
+    fn fill(&self, low: [i32; 3], size: [i32; 3], solid: &mut [bool]) {
+        self.0.fill(low, size, solid);
+    }
+
+    fn changed_from(&self, older: &dyn crate::physics::VoxelSolids) -> Option<Vec<([i32; 3], [i32; 3])>> {
+        self.0.changed_from(&older.as_any().downcast_ref::<Solids>()?.0)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Gives each endless Voxel Volume a Voxel Collider of its solid voxels,
+/// given again when the volume changes, so characters and bodies stand on
+/// its ground and bump into its trees' trunks; and takes it from those no
+/// longer endless or gone.
+pub fn sync_colliders(world: &mut World) {
+    use crate::physics::VoxelCollider;
+    let mut changed: Vec<(Entity, Option<VoxelCollider>)> = Vec::new();
+    for (entity, volume, collider) in world.query_ref::<(Entity, &VoxelVolume, Option<&VoxelCollider>)>().into_iter() {
+        let kept = collider.and_then(|collider| collider.0.as_any().downcast_ref::<Solids>());
+        if kept.is_some_and(|kept| kept.0.volume() == volume) || (!volume.endless && collider.is_none()) {
+            continue;
+        }
+        let solids = voxear_render::VoxelSolids::of(volume).map(|solids| match kept {
+            Some(kept) => solids.keeping(&kept.0),
+            None => solids,
+        });
+        changed.push((entity, solids.map(|solids| VoxelCollider(Arc::new(Solids(solids))))));
+    }
+    let left: Vec<Entity> = world
+        .query_ref::<(Entity, &VoxelCollider)>()
+        .into_iter()
+        .filter(|(entity, collider)| collider.0.as_any().is::<Solids>() && world.get::<VoxelVolume>(*entity).is_none())
+        .map(|(entity, _)| entity)
+        .collect();
+    changed.extend(left.into_iter().map(|entity| (entity, None)));
+    for (entity, collider) in changed {
+        match collider {
+            Some(collider) => {
+                world.insert(entity, collider);
+            }
+            None => {
+                world.remove::<VoxelCollider>(entity);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+
+    /// What colliding with an endless volume costs a character walking at
+    /// 6 m/s over its own hills, over a generator's, and through a wood:
+    /// run by hand, `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn measure_collision_walking() {
+        use crate::physics::{CharacterController, PhysicsScene};
+        use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
+        let hills = voxear_terrain::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap().world(7, 1.0);
+        let hills = Arc::new(hills);
+        let floor = hills.height_at(8.0, 8.0) - 24.0;
+        let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
+        let pine = PlantDef { kind: PlantKind::Conifer, height: [12.0, 17.0], trunk: 1.0, crown_width: [5.0, 7.0], crown_height: [9.0, 13.0], ..PlantDef::default() };
+        let trees = vec![
+            VoxelTrees { plant: Arc::new(oak), per_hectare: 60.0, wood: [104, 78, 56], leaves: [70, 128, 46] },
+            VoxelTrees { plant: Arc::new(pine), per_hectare: 40.0, wood: [92, 64, 44], leaves: [38, 92, 52] },
+        ];
+        for (name, generator, trees) in [
+            ("own hills", None, Vec::new()),
+            ("Rolling Hills", Some(VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0] }), Vec::new()),
+            ("Rolling Hills, 100 trees a hectare", Some(VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0] }), trees),
+        ] {
+            let mut world = World::new();
+            voxear_scene::register_obj_components(&mut world);
+            let volume = VoxelVolume { endless: true, size: Vec3::new(16.0, 48.0, 16.0), generator, trees, ..VoxelVolume::default() };
+            let obj = world.spawn((voxear_scene::Transform::default(),));
+            world.insert(obj, volume.clone());
+            let top = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(8.0, 47.0, 8.0), -Vec3::Y, 60.0).unwrap().point;
+            let walker = world.spawn((voxear_scene::Transform::from_position(top + Vec3::Y * 0.05),));
+            world.insert(walker, CharacterController::default());
+            let mut physics = PhysicsScene::new();
+            let started = std::time::Instant::now();
+            sync_colliders(&mut world);
+            let collider = started.elapsed();
+            let started = std::time::Instant::now();
+            physics.step(&mut world, 1.0 / 60.0);
+            let first = started.elapsed();
+            let mut steps = Vec::new();
+            let mut grounded = 0;
+            for _ in 0..600 {
+                let started = std::time::Instant::now();
+                sync_colliders(&mut world);
+                physics.step(&mut world, 1.0 / 60.0);
+                let s = physics.move_character(&mut world, walker, Vec3::new(6.0, -6.0, 1.5), 1.0 / 60.0);
+                steps.push(started.elapsed().as_secs_f64() * 1000.0);
+                grounded += usize::from(s.is_some_and(|s| s.ground == voxear_physics::Ground::Ground));
+            }
+            let over = steps.iter().filter(|&&t| t > 2.0).count();
+            steps.sort_by(f64::total_cmp);
+            let at = world.get::<voxear_scene::Transform>(walker).unwrap().position;
+            eprintln!("{name}: collider {collider:?}, first step {first:?}; steps median {:.2} ms, 99th {:.2}, most {:.2}, {over} over 2 ms; on the ground {grounded} of 600; walked to {at}", steps[300], steps[594], steps[599]);
+        }
     }
 }

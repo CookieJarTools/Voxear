@@ -190,7 +190,7 @@ A model made into a [[Voxel Prints|Voxel Print]] is printed into the ground as a
 
 ### Where a ray meets the ground
 
-`Voxels.Raycast` finds where a ray first meets an endless volume's ground, as it was made and changed, within a reach; not its grass, flowers or trees. It is worked out on the CPU the way the GPU makes the ground, so every machine finds the same, in well under a millisecond:
+`Voxels.Raycast` finds where a ray first meets an endless volume's ground, as it was made and changed, and its trees' logs and leaves, within a reach; not its grass or flowers. It is worked out on the CPU the way the GPU makes the ground and places the trees, so every machine finds the same, in well under a millisecond:
 
 ```csharp
 // Dig where the player looks.
@@ -201,6 +201,16 @@ if (Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f) && Input.Pr
 ```
 
 `hit` has the point, on the face of the voxel met, which way that face looks, how far along the ray, and the volume's Obj. `vox editor call voxels.raycast '{ "from": [0, 40, 0], "direction": [0, -1, 0] }'` finds the same.
+
+## Collision
+
+Characters and bodies collide with an endless volume as with any ground: they stand on its voxels, bump into its trees' trunks and branches, and fall into what is carved out under them. Leaves, grass and flowers are walked through. Nothing needs adding: an endless volume collides as soon as it is in a scene that plays.
+
+The ground is never made whole for physics. Its solid voxels are made into shapes in chunks of 32 voxels a side (2 m at 16 voxels a metre), only round what moves: each character, and each Obj with a Rigidbody, where it is and where it will be in half a second. A chunk is made in the background as something comes within about 5 m of it, the nearest first, or at once for one within a metre that isn't ready. Chunks are let go once everything has gone well away. A change made to the volume makes again only the chunks it reaches, and wakes the bodies resting there.
+
+A character walking at 6 m/s over a generator's hills, through a wood of 100 trees a hectare, costs about 0.2 ms a physics step; a step that has to make a chunk at once takes about 5 ms, every two metres or so going down steep slopes. Over the volume's own hills a step stays under 0.5 ms.
+
+Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Voxels.Raycast` meets the whole ground.
 
 ## How it is drawn
 
@@ -219,4 +229,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
-- A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A ray meets its ground, not its grass, flowers or trees, and bodies don't collide with it yet.
+- A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A volume of a set size doesn't collide yet; an endless one does.

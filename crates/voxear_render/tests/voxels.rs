@@ -664,6 +664,25 @@ fn measure_rivers_and_a_coast() {
         .map(|i| [(i % 400) as f32 * 4.0 - 800.0, (i / 400) as f32 * 4.0 - 800.0])
         .find(|&[x, z]| (islands.height_at(x, z) - sea).abs() < 0.5 && islands.height_at(x + 24.0, z) < sea - 3.0)
         .expect("a shore");
+    // A waterfall in the mountains, more than 4 m high, found along X: its place, its top and its foot, and which way
+    // along X its water runs on below it.
+    let alpine = Arc::new(starter("Alpine"));
+    let fall = {
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..400 * 400).map(|at| ((at % 400) as f32 * 6.0 - 1200.0, (at / 400) as f32 * 6.0 - 1200.0)).unzip();
+        let (level, _) = alpine.water(&xs, &zs).unwrap();
+        let wet = |at: usize| level[at] > -1000.0;
+        (0..xs.len())
+            .filter(|&at| wet(at) && at % 400 + 1 < 400 && wet(at + 1))
+            .find_map(|at| {
+                let line: (Vec<f32>, Vec<f32>) = (0..=12).map(|k| (xs[at] + k as f32 * 0.5, zs[at])).unzip();
+                let (top, falls) = alpine.water(&line.0, &line.1).unwrap();
+                let k = (0..line.0.len()).find(|&k| falls[k] > 4.0)?;
+                let (near, _) = alpine.water(&[line.0[k] - 3.0, line.0[k] + 3.0], &[line.1[k]; 2]).unwrap();
+                Some((line.0[k], line.1[k], top[k], top[k] - falls[k], if near[1] < near[0] { 1.0 } else { -1.0 }))
+            })
+            .expect("a waterfall")
+    };
     let which = std::env::var("RIVER_CASES").unwrap_or_else(|_| "river,bare,trees,coast".into());
     for case in which.split(',') {
         let mut scene = match case {
@@ -680,6 +699,17 @@ fn measure_rivers_and_a_coast() {
                 let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
                 camera.rotation =
                     Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
+                scene
+            }
+            "falls" => {
+                // From 18 m downstream at 3 m over its pool, looking back up at it.
+                let (fx, fz, top, foot, down) = fall;
+                let x = fx + down * 18.0;
+                eprintln!("falls at {fx} {fz}: from {top:.1} to {foot:.1}");
+                let mut scene = generated_view(alpine.clone(), x, fz, foot + 3.0 - alpine.height_at(x, fz), -8.0);
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                let turn = if down > 0.0 { -std::f32::consts::FRAC_PI_2 } else { std::f32::consts::FRAC_PI_2 };
+                camera.rotation = Quat::from_rotation_y(turn) * Quat::from_rotation_x(-8f32.to_radians());
                 scene
             }
             // From 6 m over the river's water, looking 35° down.
@@ -1050,6 +1080,53 @@ fn a_ray_worked_out_on_the_cpu_meets_the_ground_the_gpu_draws() {
         assert!(changed > 25, "{name}: the pit where the ray met the ground changes {changed} of 81 pixels");
         assert!(took.as_millis() < 50, "{name}: a ray takes {took:?}");
     }
+}
+
+#[test]
+fn the_cpus_trees_stand_where_the_gpu_draws_them() {
+    let Some(mut renderer) = renderer() else { return };
+    // A wood from 20 m over it, straight down, its leaves red and its wood blue, in still air.
+    let mut trees = oaks_and_pines();
+    for kind in &mut trees {
+        (kind.wood, kind.leaves) = ([40, 40, 230], [230, 40, 40]);
+    }
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = generated_view(hills, 8.0, 8.0, 20.0, 90.0);
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().trees = trees;
+    scene.spawn((WindZone { strength: 0.0, ..WindZone::default() }, Transform::default()));
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("cpu trees from above.png", &pixels);
+    let (camera, place) = scene.query::<(&Camera, &Transform)>().into_iter().next().map(|(c, t)| (c.clone(), t.clone())).unwrap();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let bare = VoxelVolume { trees: Vec::new(), ..volume.clone() };
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let tan = (camera.fov_y_for(aspect) * 0.5).tan();
+    let (forward, up) = (place.rotation * Vec3::Z, place.rotation * Vec3::Y);
+    let right = up.cross(forward);
+    let (mut agree, mut all, mut gpu_trees, mut cpu_trees) = (0, 0, 0, 0);
+    let started = std::time::Instant::now();
+    for py in (6..HEIGHT).step_by(12) {
+        for px in (6..WIDTH).step_by(12) {
+            let x = ((px as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0) * tan * aspect;
+            let y = (1.0 - (py as f32 + 0.5) / HEIGHT as f32 * 2.0) * tan;
+            let d = (forward + right * x + up * y).normalize();
+            let ray = |volume: &VoxelVolume| voxear_render::voxel_raycast(volume, Vec3::ZERO, place.position, d, 200.0);
+            let (Some(hit), Some(ground)) = (ray(&volume), ray(&bare)) else { continue };
+            let cpu = hit.distance < ground.distance - 0.1;
+            // Red leaves and blue wood, lit or in shadow: most of the pixel's light red, or blue. Inside the crowns
+            // the shade is black, which the ground in the sun never is.
+            let [r, g, b] = rgb_at(&pixels, px, py).map(|c| c as f32);
+            let sum = (r + g + b).max(1.0);
+            let gpu = sum <= 6.0 || r / sum > 0.5 || b / sum > 0.5;
+            all += 1;
+            agree += usize::from(cpu == gpu);
+            gpu_trees += usize::from(gpu);
+            cpu_trees += usize::from(cpu);
+        }
+    }
+    eprintln!("{agree} of {all} agree; trees at {gpu_trees} on the GPU, {cpu_trees} on the CPU, in {:?}", started.elapsed());
+    assert!(gpu_trees * 4 > all, "the wood covers the view: {gpu_trees} of {all}");
+    assert!(agree * 100 >= all * 95, "the CPU's trees are the GPU's: {agree} of {all} agree");
 }
 
 fn with_trees(mut scene: World) -> World {

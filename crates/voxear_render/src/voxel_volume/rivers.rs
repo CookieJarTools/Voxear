@@ -75,6 +75,15 @@ impl RiverGrid {
         let high = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * fx;
         low + (high - low) * fz
     }
+
+    /// How high the highest water stands among the four points round voxel
+    /// column (`x`, `z`) of the column, from its corner, as the GPU reads it
+    /// (`riverAt`): [`NO_WATER`] where there is none.
+    pub fn water_near(&self, x: i32, z: i32) -> f32 {
+        let ((i, _), (j, _)) = (between(x), between(z));
+        let at = |i: usize, j: usize| self.water[j * GRID + i];
+        at(i, j).max(at(i + 1, j)).max(at(i, j + 1)).max(at(i + 1, j + 1))
+    }
 }
 
 /// Which point a voxel column `x` of a column lies after along one axis,

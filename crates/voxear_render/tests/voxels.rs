@@ -259,6 +259,75 @@ fn without_rivers(world: &WorldGen) -> WorldGen {
     WorldGen::new(world.seed(), world.scale(), world.sea_level(), graph)
 }
 
+/// Where in `world` a river's water stands at least `deep` metres over its
+/// bed, the nearest the middle of those looked at, every 8 m within 640 m:
+/// the place, and how high its water and its bed are.
+fn river_in(world: &WorldGen, deep: f32) -> ([f32; 2], f32, f32) {
+    let (mut xs, mut zs) = (Vec::new(), Vec::new());
+    for j in 0..160 {
+        for i in 0..160 {
+            xs.push(i as f32 * 8.0 - 640.0);
+            zs.push(j as f32 * 8.0 - 640.0);
+        }
+    }
+    let (water, _) = world.water(&xs, &zs).expect("its water wired in");
+    let mut heights = vec![0.0; xs.len()];
+    world.heights(&xs, &zs, &mut heights);
+    let found = (0..xs.len())
+        .filter(|&i| water[i] - heights[i] > deep)
+        .min_by(|&a, &b| xs[a].hypot(zs[a]).total_cmp(&xs[b].hypot(zs[b])))
+        .expect("a river deep enough");
+    ([xs[found], zs[found]], water[found], heights[found])
+}
+
+#[test]
+fn an_endless_volumes_ground_is_cut_by_its_generators_rivers_with_their_water_over_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let rivered = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&rivered, 0.8);
+    // Straight down from 8 m over the river's water, the volume's floor 24 m under its bed.
+    let scene = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    let mut bare = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    for volume in bare.query::<&mut VoxelVolume>() {
+        volume.generator.as_mut().unwrap().world = Arc::new(rivered.without_rivers());
+    }
+    let volume = |scene: &World| scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let camera = scene.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.position;
+    // The ray worked out on the CPU meets the bed the rivers cut, as deep as the generator makes it.
+    let down = -Vec3::Y;
+    let hit = voxear_render::voxel_raycast(&volume(&scene), Vec3::ZERO, camera, down, 100.0).expect("the bed");
+    let uncut = voxear_render::voxel_raycast(&volume(&bare), Vec3::ZERO, camera, down, 100.0).expect("the ground");
+    eprintln!(
+        "river at {x} {z}: water {water:.2}, bed {bed:.2}; met at {:.2}, uncut {:.2}",
+        hit.point.y, uncut.point.y
+    );
+    assert!((hit.point.y - 24.0).abs() < 0.25, "the ray meets the bed at {:.2}, not 24", hit.point.y);
+    assert!(uncut.point.y > hit.point.y + 0.5, "the ground without the rivers stands higher");
+    let cut = render(&mut renderer, &scene, 3);
+    let squares = renderer.stats().voxels.water_squares;
+    keep_image("river from above.png", &cut);
+    let uncut_pixels = render(&mut renderer, &bare, 3);
+    keep_image("river taken out from above.png", &uncut_pixels);
+    assert!(squares > 0, "water over the river");
+    assert_eq!(renderer.stats().voxels.water_squares, 0, "no water without the rivers");
+    let middle = |a: &[u8], b: &[u8]| {
+        (0..40)
+            .flat_map(|dy| (0..40).map(move |dx| (WIDTH / 2 + dx - 20, HEIGHT / 2 + dy - 20)))
+            .filter(|&(x, y)| (0..3).any(|i| (rgb_at(a, x, y)[i] - rgb_at(b, x, y)[i]).abs() > 20))
+            .count()
+    };
+    let changed = middle(&cut, &uncut_pixels);
+    assert!(changed > 800, "the river shows under the camera: {changed} of 1600 pixels changed");
+    // A ball of rock filled where the ray met the bed stands up out of the water under the camera.
+    let mut filled = scene;
+    filled.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits =
+        Arc::new(vec![VoxelEdit::ball(hit.point, water - bed + 0.6, Some(VoxelMaterial::Rock))]);
+    let rock = render(&mut renderer, &filled, 3);
+    keep_image("river filled from above.png", &rock);
+    let risen = middle(&cut, &rock);
+    assert!(risen > 400, "the rock filled where the ray met the bed shows: {risen} of 1600 pixels changed");
+}
+
 fn starter(name: &str) -> WorldGen {
     let found = starters().into_iter().find(|starter| starter.name == name).expect("a starter of that name");
     found.world(7, 1.0)
@@ -476,6 +545,128 @@ fn measure_an_endless_volume_made_by_a_generator() {
                 making[making.len() - 1],
                 median / most as f32,
                 most
+            );
+        }
+    }
+}
+
+/// Pictures and timings of rivers and a coast in endless volumes, at
+/// 1920×1080, for comparing by eye: a river with its rivers cut and drawn
+/// and one without, and a coast. Each still view's passes are the least of
+/// 60 frames; a column's making is the least of the frames making the
+/// window over again, each making as many columns as a frame makes at most.
+/// Run by hand: `cargo test -p voxear_render --test voxels rivers_and_a_coast -- --ignored --nocapture`,
+/// with `VOXEAR_TEST_OUTPUT` naming a folder for the pictures.
+#[test]
+#[ignore]
+fn measure_rivers_and_a_coast() {
+    let (w, h) = (1920, 1080);
+    let Ok(mut renderer) = Renderer::new_offscreen(w, h, &RendererSettings::default()) else { return };
+    let keep = |name: &str, pixels: &[u8]| {
+        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, w, h);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(pixels).unwrap();
+        }
+    };
+    let hills = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&hills, 1.2);
+    let islands = Arc::new(starter("Archipelago"));
+    let sea = islands.sea_level();
+    // A shore: ground within half a metre of the sea, with the sea 3 m deep 24 m off towards +x.
+    let coast = (0..160_000)
+        .map(|i| [(i % 400) as f32 * 4.0 - 800.0, (i / 400) as f32 * 4.0 - 800.0])
+        .find(|&[x, z]| (islands.height_at(x, z) - sea).abs() < 0.5 && islands.height_at(x + 24.0, z) < sea - 3.0)
+        .expect("a shore");
+    let which = std::env::var("RIVER_CASES").unwrap_or_else(|_| "river,bare,trees,coast".into());
+    for case in which.split(',') {
+        let mut scene = match case {
+            "coast" => {
+                // From 3 m over the sea at the shore, looking out across it.
+                let mut scene = generated_view(
+                    islands.clone(),
+                    coast[0] - 6.0,
+                    coast[1],
+                    sea - islands.height_at(coast[0] - 6.0, coast[1]) + 3.0,
+                    12.0,
+                );
+                let floor =
+                    scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
+                scene.spawn((
+                    voxear_render::Ocean::default(),
+                    Transform::from_position(Vec3::new(0.0, sea - floor, 0.0)),
+                ));
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                camera.rotation =
+                    Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
+                scene
+            }
+            // From 6 m over the river's water, looking 35° down.
+            _ => generated_view(hills.clone(), x, z, water - bed + 6.0, 35.0),
+        };
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.reach = 64.0;
+            if case == "bare" {
+                volume.generator.as_mut().unwrap().world = Arc::new(hills.without_rivers());
+            }
+            if case == "trees" {
+                volume.trees = oaks_and_pines();
+            }
+        }
+        let started = std::time::Instant::now();
+        renderer.render(&scene, 0.0).unwrap();
+        assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(120)).unwrap());
+        let window = started.elapsed().as_secs_f32();
+        let mut least: std::collections::BTreeMap<String, f32> = Default::default();
+        let mut frame = f32::MAX;
+        for i in 0..90 {
+            renderer.render(&scene, i as f32 / 60.0).unwrap();
+            if i >= 30 {
+                for (pass, ms) in renderer.timings() {
+                    if pass.contains("oxel") || pass.contains("Water") || pass.contains("Sea floor") {
+                        let kept = least.entry(pass.clone()).or_insert(f32::MAX);
+                        *kept = kept.min(*ms);
+                    }
+                }
+                frame = frame.min(renderer.gpu_frame_ms());
+            }
+        }
+        keep(&format!("{case}.png"), &renderer.read_pixels().unwrap().2);
+        let stats = renderer.stats().voxels;
+        eprintln!(
+            "{case}: window made in {window:.2} s, {} MB, {} squares of water",
+            stats.bytes / 1_000_000,
+            stats.water_squares
+        );
+        eprintln!("{case}: still view, least of 60: frame {frame:.2} ms, {least:?}");
+        // The window made over again, as a changed floor makes it: each frame's making over its columns.
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.generator.as_mut().unwrap().floor += 1e-3;
+        }
+        let mut each = Vec::new();
+        let mut columns = Vec::new();
+        for i in 0..200 {
+            renderer.render(&scene, 2.0 + i as f32 / 60.0).unwrap();
+            columns.push(renderer.stats().voxels.columns_made);
+            if let Some((_, ms)) = renderer.timings().iter().find(|(pass, _)| pass == "Voxel world making") {
+                each.push(*ms);
+            }
+            if !renderer.voxel_volumes_making() && i > 10 {
+                break;
+            }
+        }
+        let most = columns.iter().copied().max().unwrap_or(1).max(1);
+        // Only the frames well inside the run, where every frame made as many columns as it may.
+        let full = columns.iter().filter(|&&c| c == most).count();
+        let mut kept: Vec<f32> = each.iter().skip(4).take(full.saturating_sub(8)).copied().collect();
+        kept.sort_by(f32::total_cmp);
+        if !kept.is_empty() {
+            eprintln!(
+                "{case}: making again, {} frames of {most} columns: a column least {:.3} ms, median {:.3} ms",
+                kept.len(),
+                kept[0] / most as f32,
+                kept[kept.len() / 2] / most as f32
             );
         }
     }

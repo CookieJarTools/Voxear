@@ -22,6 +22,7 @@ pub(crate) use endless::generated_at;
 mod ground;
 pub mod print;
 mod ray;
+mod rivers;
 mod solid;
 mod trees;
 mod voxelize;
@@ -37,6 +38,7 @@ pub use ground::{GROUND_COLORS, VoxelGround};
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
 pub use solid::VoxelSolids;
+pub use rivers::GpuVoxelWater;
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;
@@ -475,6 +477,12 @@ pub(crate) struct VoxelVolumes {
     endless: HashMap<Entity, endless::Endless>,
     /// Each volume drawn this frame and its corner.
     drawn: Vec<(GpuVoxelVolume, Vec3)>,
+    /// The water over endless volumes' rivers: how many times each one's
+    /// changed as last seen, a count of the changes to all of it, and for
+    /// each frame slot its buffer, which change it holds and how many squares.
+    water_seen: Vec<(Entity, u64)>,
+    water_version: u64,
+    water: Vec<(Option<Buffer>, u64, u32)>,
 }
 
 /// How many volumes are drawn, and their bricks and bytes on the GPU.
@@ -483,6 +491,10 @@ pub struct VoxelCounts {
     pub volumes: u32,
     pub bricks: u64,
     pub bytes: u64,
+    /// How many squares of water lie over endless volumes' rivers and lakes.
+    pub water_squares: u32,
+    /// How many columns of endless volumes are made this frame.
+    pub columns_made: u32,
 }
 
 impl VoxelVolumes {
@@ -626,12 +638,52 @@ impl VoxelVolumes {
             counts.bytes += resident.bytes;
         }
         counts.bytes += self.endless.values().map(endless::Endless::bytes).sum::<u64>();
+        counts.water_squares = self.endless.values().map(|made| made.water().0.count() as u32).sum();
+        counts.columns_made = self.endless.values().map(endless::Endless::making_now).sum();
         counts
     }
 
     /// Each volume drawn this frame, and its corner, for every view.
     pub fn drawn(&self) -> std::sync::Arc<[(GpuVoxelVolume, Vec3)]> {
         self.drawn.iter().copied().collect()
+    }
+
+    /// The water over endless volumes' rivers and lakes for frame slot
+    /// `slot`, as every view draws it: its buffer's address and how many
+    /// squares it holds, written again where it changed.
+    pub fn water(&mut self, gpu: &Gpu, slot: usize) -> Result<(u64, u32)> {
+        let mut seen: Vec<(Entity, u64)> =
+            self.endless.iter().map(|(entity, made)| (*entity, made.water().1)).collect();
+        seen.sort_unstable_by_key(|(entity, _)| entity.to_bits());
+        if seen != self.water_seen {
+            self.water_seen = seen;
+            self.water_version += 1;
+        }
+        if self.water.len() <= slot {
+            self.water.resize_with(slot + 1, || (None, 0, 0));
+        }
+        let version = self.water_version;
+        if self.water[slot].1 != version {
+            let squares: Vec<GpuVoxelWater> = self.endless.values().flat_map(|made| made.water().0.copied()).collect();
+            let bytes = (squares.len() * size_of::<GpuVoxelWater>()).max(16) as u64;
+            let (buffer, _, _) = &mut self.water[slot];
+            if buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {
+                let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+                let name = format!("voxel water {slot}");
+                // This slot's last frame is done with it.
+                if let Some(old) =
+                    buffer.replace(gpu.create_buffer(&name, bytes * 3 / 2, usage, MemoryLocation::CpuToGpu)?)
+                {
+                    gpu.destroy_buffer(old);
+                }
+            }
+            if let Some(buffer) = buffer.as_ref().filter(|_| !squares.is_empty()) {
+                buffer.write(0, &squares);
+            }
+            self.water[slot] = (self.water[slot].0.take(), version, squares.len() as u32);
+        }
+        let (buffer, _, count) = &self.water[slot];
+        Ok((buffer.as_ref().map_or(0, |buffer| buffer.address), *count))
     }
 }
 
@@ -685,6 +737,9 @@ impl VoxelVolumes {
         }
         for (_, made) in self.endless.drain() {
             made.destroy(gpu);
+        }
+        for (buffer, _, _) in self.water.drain(..) {
+            buffer.into_iter().for_each(|buffer| gpu.destroy_buffer(buffer));
         }
     }
 }

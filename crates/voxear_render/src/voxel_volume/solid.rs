@@ -18,6 +18,7 @@ use voxear_core::math::{IVec3, Vec3};
 
 use super::{
     MOST_VOXELS_A_METRE, VoxelGround, VoxelVolume,
+    rivers::{self, RiverLayer},
     trees::{self, AIR, GROUND, LOG, Tree, Woods},
 };
 
@@ -44,6 +45,8 @@ pub(super) struct Ground<'a> {
     shared: Option<&'a Mutex<Cells>>,
     /// The footprints of the prints printed into it, by print.
     footprints: HashMap<usize, Vec<u32>>,
+    /// Its generator's rivers, where it runs any.
+    rivers: Option<Arc<RiverLayer>>,
 }
 
 /// The tree each cell holds, where it has one.
@@ -69,6 +72,10 @@ impl<'a> Ground<'a> {
             cells,
             shared: None,
             footprints: HashMap::new(),
+            rivers: volume
+                .generator
+                .as_ref()
+                .and_then(|generator| rivers::layer_of(generator, volume.voxels_per_metre)),
         }
     }
 
@@ -82,8 +89,8 @@ impl<'a> Ground<'a> {
         let (mx, mz) = ((x as f32 + 0.5) * v, (z as f32 + 0.5) * v);
         let h = match (&self.volume.generator, &self.volume.ground) {
             (Some(generator), _) => {
-                let height = generator.world.height_at(mx + generator.at[0], mz + generator.at[1]);
-                ((height - generator.floor) / v).floor() as i32
+                let height = self.bare(generator).height_at(mx + generator.at[0], mz + generator.at[1]);
+                ((height + self.river(x, z).0 - generator.floor) / v).floor() as i32
             }
             (None, Some(ground)) => (ground.height_at(mx, mz) / v).floor() as i32,
             (None, None) => -1,
@@ -108,8 +115,9 @@ impl<'a> Ground<'a> {
             }
         }
         let mut heights = vec![0.0; xs.len()];
-        generator.world.heights(&xs, &zs, &mut heights);
+        self.bare(&generator).heights(&xs, &zs, &mut heights);
         for (key, height) in keys.into_iter().zip(heights) {
+            let height = height + self.river(key.0, key.1).0;
             self.heights.insert(key, ((height - generator.floor) / v).floor() as i32);
         }
     }
@@ -121,8 +129,10 @@ impl<'a> Ground<'a> {
         let volume = generator.world.volume()?;
         let v = self.voxel;
         let (gx, gz) = ((x as f32 + 0.5) * v + generator.at[0], (z as f32 + 0.5) * v + generator.at[1]);
+        // Carried up from the ground without the rivers, as the GPU's columns carry it.
+        let bare = self.rivers.as_ref().map_or(&*generator.world, |rivers| rivers.bare());
         Some(self.columns.entry((x, z)).or_insert_with(|| {
-            let height = generator.world.height_at(gx, gz);
+            let height = bare.height_at(gx, gz);
             volume.carried(&[gx], &[gz], &[height]).rows().iter().map(|row| row[0]).collect()
         }))
     }
@@ -141,7 +151,30 @@ impl<'a> Ground<'a> {
         let (mut density, mut ground) = (vec![0.0; count], vec![0.0; count]);
         let cells = voxear_terrain::generate::Cells { x: &[gx], y: &ys, z: &[gz], carried: &rows, size: v };
         volume.densities(cells, false, &mut density, &mut ground);
-        Some(density)
+        // The rivers' cut moves the surface by as much, as how far into the ground a voxel is goes by metres.
+        let cut = self.river(x, z).0;
+        Some(density.into_iter().map(|d| d + cut).collect())
+    }
+
+    /// The generator's world without its rivers, which the GPU runs and
+    /// lays the rivers' cut over.
+    fn bare<'w>(&'w self, generator: &'w super::VoxelGenerator) -> &'w voxear_terrain::generate::WorldGen {
+        self.rivers.as_ref().map_or(&*generator.world, |rivers| rivers.bare())
+    }
+
+    /// What the rivers make of voxel column (`x`, `z`), as the GPU reads it
+    /// (`riverAt`): how many metres they raise its ground, and how high the
+    /// water stands round it (`NO_WATER` for none).
+    fn river(&self, x: i32, z: i32) -> (f32, f32) {
+        let none = (0.0, voxear_terrain::generate::nodes::NO_WATER);
+        let Some(layer) = &self.rivers else { return none };
+        let column = [x.div_euclid(64), z.div_euclid(64)];
+        let grid = layer.grid(column);
+        if !grid.laid {
+            return none;
+        }
+        let (lx, lz) = (x - column[0] * 64, z - column[1] * 64);
+        (grid.cut_at(lx, lz), grid.water_near(lx, lz))
     }
 
     /// How far into a generator's Volume voxel `c` is, in metres: none
@@ -190,24 +223,36 @@ impl<'a> Ground<'a> {
                 zs.push(gz);
             }
         }
-        let world = &generator.world;
+        // The generator's ground without its rivers, as the GPU runs it, their cut laid over it.
+        let world = self.bare(&generator);
         let mut heights = vec![0.0; xs.len()];
         world.heights(&xs, &zs, &mut heights);
-        let up = |height: f32| ((height - generator.floor) / v).floor() as i32;
         let (fx, fz): (Vec<f32>, Vec<f32>) = feet.iter().map(|&[x, z]| place(x, z)).unzip();
         let raw: Vec<f32> = (0..feet.len()).map(|i| heights[i * 5]).collect();
         let (mut warmth, mut wetness) = (vec![0.0; feet.len()], vec![0.0; feet.len()]);
         world.climates(&fx, &fz, &raw, &mut warmth, &mut wetness);
         let rock = world.rock(&fx, &fz, &raw);
+        let sea = world.sea_level();
         let mut found = Vec::with_capacity(feet.len());
         for (i, &[x, z]) in feet.iter().enumerate() {
-            let at = |k: usize| up(heights[i * 5 + k]);
+            let at = |k: usize| {
+                let [dx, dz] = offsets[k];
+                let height = heights[i * 5 + k] + self.river(x + dx, z + dz).0;
+                ((height - generator.floor) / v).floor() as i32
+            };
             let h = at(0);
             let across = (at(1) - at(2)).abs().max((at(3) - at(4)).abs());
-            let above = h as f32 * v + generator.floor - world.sea_level();
+            let top = h as f32 * v + generator.floor;
             let (warm, wet) = (warmth[i], wetness[i]);
             let rocky = rock.as_ref().is_some_and(|rock| rock[i]);
-            let bare = rocky || across as f32 / 4.0 > 1.0 || above < 1.0 || warm < 0.0 || (wet < 0.12 && warm > 18.0);
+            // Under a river's or a lake's water, or along its edge, is gravel and sand.
+            let watered = self.river(x, z).1 > top - 0.1;
+            let bare = rocky
+                || across as f32 / 4.0 > 1.0
+                || watered
+                || top - sea < 1.0
+                || warm < 0.0
+                || (wet < 0.12 && warm > 18.0);
             if h < 0 || h >= self.rows - 1 || bare {
                 found.push(None);
                 continue;

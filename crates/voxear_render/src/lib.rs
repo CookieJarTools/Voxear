@@ -2199,6 +2199,8 @@ impl Renderer {
         let voxel_draws = voxels.drawn();
         // Endless volumes' columns made round the camera, before any view walks them.
         let voxel_pools = voxels.record(&mut fg, *pipelines, frame.slot);
+        // The water over their rivers and lakes, which every view draws.
+        let voxel_water = voxels.water(gpu, frame.slot)?;
         let ui = &ui_buffers[frame.slot];
         // The UI's shaded backgrounds read the time from `output`.
         let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
@@ -2321,6 +2323,7 @@ impl Renderer {
                 blocks: block_draws.clone(),
                 voxels: voxel_draws.clone(),
                 voxel_pools: voxel_pools.clone(),
+                voxel_water,
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
                 sound: sound.filter(|_| !sound_done),
                 baked: baked_frame.clone(),
@@ -2897,6 +2900,9 @@ struct ViewSetup {
     voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3)]>,
     /// What endless volumes' making writes this frame, which the voxel passes read.
     voxel_pools: Vec<graph::BufferId>,
+    /// The water over endless volumes' rivers and lakes: its buffer's
+    /// address and how many squares it has.
+    voxel_water: (u64, u32),
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
@@ -4125,10 +4131,16 @@ impl View {
         }
         // The first Ocean's sea, its waves moved on to now, the Pools and Dry Areas, and the worlds of blocks' water.
         let block_water = view_blocks.as_ref().filter(|blocks| blocks.has_water()).cloned();
+        // And the water over Voxel Volumes' rivers, and their ground under the sea, which its floor is drawn from.
+        let voxel_water = water::VoxelWater {
+            squares: setup.voxel_water.1,
+            floor: view_voxels.as_ref().map(|view| view.pools.clone()),
+        };
         let wet = extracted.ocean.is_some()
             || extracted.water_bodies.pools > 0
             || !extracted.water_bodies.streams.is_empty()
-            || block_water.is_some();
+            || block_water.is_some()
+            || voxel_water.squares > 0;
         // Through a Portal, only the water of worlds of blocks, and only while some of it shows there.
         let shown = portal.is_none_or(|pass| pass.water && block_water.is_some());
         let water = match wet && !wireframe && shown {
@@ -4136,7 +4148,7 @@ impl View {
                 fg,
                 (gpu, bindless),
                 (&mut self.ocean, slot),
-                (extracted.ocean, &extracted.water_bodies, block_water, extracted.origin),
+                (extracted.ocean, &extracted.water_bodies, (block_water, voxel_water), extracted.origin),
                 (extent, setup.time, camera),
                 (
                     &{
@@ -4350,6 +4362,7 @@ impl View {
                 skin_groups: 0,
                 baked_matrices: setup.baked_matrices,
                 voxel_volumes: buffers.voxels.as_ref().map_or(0, |[list, _]| list.address),
+                voxel_water: setup.voxel_water.0,
                 ui_panels: buffers.ui_panels.address,
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],

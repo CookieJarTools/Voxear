@@ -5980,7 +5980,7 @@ fn every_starter_plays_its_emitters_and_shows() {
             Starter::MuzzleFlash => (1.2, 0.0),
             Starter::Explosion => (0.3, 0.3),
             Starter::Blood | Starter::Mud => (0.6, 0.35),
-            Starter::Clippings => (0.3, 0.3),
+            Starter::Clippings => (0.4, 0.15),
             Starter::Magic => (1.2, 2.0),
             _ => (0.1, 3.0),
         };

@@ -62,7 +62,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume};
+use voxear_render::{
+    VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
+};
 
 use crate::content::Content;
 
@@ -105,10 +107,18 @@ pub struct VoxelVolumeData {
     /// where the level has no Ocean of its own: on unless written off.
     #[serde(skip_serializing_if = "is_on")]
     pub sea: bool,
+    /// How an endless volume's rivers and lakes are drawn: smooth, or as
+    /// voxels of water (`water = "voxels"`).
+    #[serde(skip_serializing_if = "is_smooth")]
+    pub water: VoxelWaterLook,
 }
 
 fn is_on(on: &bool) -> bool {
     *on
+}
+
+fn is_smooth(look: &VoxelWaterLook) -> bool {
+    *look == VoxelWaterLook::Smooth
 }
 
 /// A change to an endless volume as a scene writes it: a ball, its middle
@@ -226,6 +236,7 @@ impl Default for VoxelVolumeData {
             trees: Vec::new(),
             edits: Vec::new(),
             sea: made.sea,
+            water: made.water,
         }
     }
 }
@@ -294,8 +305,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         trees,
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
         sea: data.sea,
-        // Water of voxels is tried in the renderer alone so far: not saved or set from the editor yet.
-        water: voxear_render::VoxelWaterLook::Smooth,
+        water: data.water,
     }
 }
 
@@ -312,6 +322,12 @@ pub(crate) fn register() {
             sea_level(world)
         },
     );
+    voxear_scripting::set_voxel_water_look(|world, look| {
+        if let Some(&look) = usize::try_from(look).ok().and_then(|look| VoxelWaterLook::ALL.get(look)) {
+            set_water_look(world, look, None);
+        }
+        water_look(world).map(|look| look as i32)
+    });
     voxear_scripting::set_voxel_raycast(|world, origin, direction, reach| {
         raycast(world, Vec3::from(origin), Vec3::from(direction), reach, None)
             .map(|(entity, hit)| (entity, hit.point.to_array(), hit.normal.to_array(), hit.distance))
@@ -357,6 +373,33 @@ pub fn water_at(world: &World, at: Vec3, only: Option<Entity>) -> Option<(Entity
             voxear_render::voxel_water_at(volume, corner, at).map(|water| (entity, water))
         })
         .max_by(|a, b| a.1.height.total_cmp(&b.1.height))
+}
+
+/// Draws the rivers and lakes of every endless Voxel Volume as `look`
+/// says, or `only`'s alone, in how its scene writes it too: how many it
+/// reached.
+pub fn set_water_look(world: &mut World, look: VoxelWaterLook, only: Option<Entity>) -> usize {
+    let reached: Vec<Entity> = world
+        .query_ref::<(Entity, &VoxelVolume)>()
+        .into_iter()
+        .filter(|(entity, volume)| volume.endless && only.is_none_or(|o| o == *entity))
+        .map(|(entity, _)| entity)
+        .collect();
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.water = look;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.water = look;
+        }
+    }
+    reached.len()
+}
+
+/// How the first endless Voxel Volume draws its rivers and lakes, if there
+/// is one.
+pub fn water_look(world: &World) -> Option<VoxelWaterLook> {
+    world.query_ref::<&VoxelVolume>().into_iter().find(|volume| volume.endless).map(|volume| volume.water)
 }
 
 /// Turns the generator's sea of every endless Voxel Volume with one on or

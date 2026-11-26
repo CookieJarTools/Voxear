@@ -712,12 +712,17 @@ impl VoxelVolumes {
         }
         let version = self.water_version;
         if self.water[slot].1 != version {
-            let mut squares: Vec<GpuVoxelWater> = self.endless.values().flat_map(|made| made.water_squares().copied()).collect();
+            let mut squares: Vec<GpuVoxelWater> =
+                self.endless.values().flat_map(|made| made.water_squares().copied()).collect();
             let still = squares.len() as u32;
             squares.extend(self.endless.values().flat_map(|made| made.water_falls().copied()));
             let falls = squares.len() as u32 - still;
             // Waterfalls' lips after those, as many words each.
-            squares.extend(self.endless.values().flat_map(|made| made.water_lips().map(|lip| bytemuck::cast::<_, GpuVoxelWater>(*lip))));
+            squares.extend(
+                self.endless
+                    .values()
+                    .flat_map(|made| made.water_lips().map(|lip| bytemuck::cast::<_, GpuVoxelWater>(*lip))),
+            );
             let bytes = (squares.len() * size_of::<GpuVoxelWater>()).max(16) as u64;
             let (buffer, _, _) = &mut self.water[slot];
             if buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {

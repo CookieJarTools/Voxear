@@ -152,6 +152,27 @@ public static unsafe class Voxels
 	/// </summary>
 	public static float SeaLevel => Native.IsConnected && SeaCall(-1, out var level) ? level : float.NaN;
 
+	/// <summary>
+	/// How the endless Voxel Volumes' rivers and lakes are drawn, as their Water in the Inspector: smooth, or as voxels
+	/// of water. Setting it sets every one's; reading it gives the first one's, or <see cref="VoxelWaterLook.Smooth"/>
+	/// without one or without the engine.
+	/// <code>
+	/// // The whole world in small cubes, its rivers too.
+	/// Voxels.WaterLook = VoxelWaterLook.Voxels;
+	/// </code>
+	/// </summary>
+	public static VoxelWaterLook WaterLook
+	{
+		get => Native.IsConnected && Native.Api->VoxelWaterLook(-1) == 1 ? VoxelWaterLook.Voxels : VoxelWaterLook.Smooth;
+		set
+		{
+			if (Native.IsConnected)
+			{
+				Native.Api->VoxelWaterLook((int)value);
+			}
+		}
+	}
+
 	private static bool SeaCall(int on, out float level)
 	{
 		float found = 0f;

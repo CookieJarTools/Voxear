@@ -1673,6 +1673,13 @@ fn a_tool_finds_the_water_of_an_endless_voxel_volumes_rivers_and_turns_its_sea_o
     assert!(!sea(&editor), "the sea turned off");
     let source = editor.game.engine.world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).unwrap();
     assert!(!source.0.sea, "and its scene writes it so");
+    // Its rivers drawn as voxels of water, by the look's name.
+    let voxels = json!({ "obj": volume, "component": "voxel_volume", "field": "water", "value": "Voxels" });
+    done(&mut editor, &mut renderer, "field.set", voxels);
+    let look = editor.game.engine.world.get::<voxear_render::VoxelVolume>(entity).unwrap().water;
+    assert_eq!(look, voxear_render::VoxelWaterLook::Voxels);
+    let source = editor.game.engine.world.get::<voxear_engine::voxel_volumes::VoxelVolumeSource>(entity).unwrap();
+    assert_eq!(source.0.water, voxear_render::VoxelWaterLook::Voxels, "and its scene writes it so");
 }
 
 #[test]

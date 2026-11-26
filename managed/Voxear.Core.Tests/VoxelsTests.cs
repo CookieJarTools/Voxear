@@ -15,6 +15,8 @@ internal static class VoxelsTests
 		Check.True(!Voxels.WaterAt(Vector3.Zero, out var water) && water == default, "no river to find");
 		Voxels.Sea = true;
 		Check.True(!Voxels.Sea && float.IsNaN(Voxels.SeaLevel), "no sea");
+		Voxels.WaterLook = VoxelWaterLook.Voxels;
+		Check.True(Voxels.WaterLook == VoxelWaterLook.Smooth, "no volume to draw water of voxels");
 	}
 
 	[Test]

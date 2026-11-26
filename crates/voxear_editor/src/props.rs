@@ -660,6 +660,8 @@ pub enum Prop {
     VoxelGeneratorAt,
     /// Whether an endless volume has its generator's sea.
     VoxelSea,
+    /// How an endless volume's rivers and lakes are drawn: smooth, or as voxels.
+    VoxelWater,
     VoxelGround,
     VoxelGroundHeight,
     VoxelHills,
@@ -1303,6 +1305,7 @@ impl Prop {
             | Prop::VoxelGeneratorFloor
             | Prop::VoxelGeneratorAt
             | Prop::VoxelSea
+            | Prop::VoxelWater
             | Prop::VoxelGround
             | Prop::VoxelGroundHeight
             | Prop::VoxelHills
@@ -1743,6 +1746,7 @@ impl Prop {
             Prop::VoxelGeneratorFloor => "generator_floor",
             Prop::VoxelGeneratorAt => "generator_at",
             Prop::VoxelSea => "sea",
+            Prop::VoxelWater => "water",
             Prop::VoxelGround => "ground",
             Prop::VoxelGroundHeight => "ground_height",
             Prop::VoxelHills => "hills",
@@ -2427,7 +2431,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.extend([Prop::VoxelReach, Prop::VoxelGenerator]);
             }
             if generated {
-                props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt, Prop::VoxelSea]);
+                props.extend([Prop::VoxelGeneratorFloor, Prop::VoxelGeneratorAt, Prop::VoxelSea, Prop::VoxelWater]);
             }
             if endless {
                 let kinds = source.map_or(0, |source| source.0.trees.len());
@@ -3078,6 +3082,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelGeneratorFloor => "Floor",
         Prop::VoxelGeneratorAt => "Offset",
         Prop::VoxelSea => "Sea",
+        Prop::VoxelWater => "Water",
         Prop::VoxelGround => "Ground",
         Prop::VoxelGroundHeight => "Ground Height",
         Prop::VoxelHills => "Hills",
@@ -4258,6 +4263,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelEndless
         | Prop::VoxelReach
         | Prop::VoxelSea
+        | Prop::VoxelWater
         | Prop::VoxelGround
         | Prop::VoxelGroundHeight
         | Prop::VoxelHills
@@ -6400,6 +6406,10 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
         Prop::VoxelEndless => Value::Toggle(data.endless),
         Prop::VoxelReach => Value::Number(data.reach),
         Prop::VoxelSea => Value::Toggle(data.sea),
+        Prop::VoxelWater => Value::Choice(
+            voxear_render::VoxelWaterLook::ALL.iter().position(|&look| look == data.water).unwrap_or(0),
+            voxear_render::VoxelWaterLook::ALL.iter().map(|look| look.name().to_string()).collect(),
+        ),
         Prop::VoxelGround => Value::Toggle(data.ground_on),
         Prop::VoxelGroundHeight => Value::Number(ground.height),
         Prop::VoxelHills => Value::Number(ground.hills),
@@ -6434,6 +6444,9 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         (Prop::VoxelEndless, Value::Toggle(on)) => data.endless = on,
         (Prop::VoxelReach, Value::Number(n)) => data.reach = n.clamp(4.0, 512.0),
         (Prop::VoxelSea, Value::Toggle(on)) => data.sea = on,
+        (Prop::VoxelWater, Value::Choice(index, _)) => {
+            data.water = voxear_render::VoxelWaterLook::ALL.get(index).copied().unwrap_or_default();
+        }
         (Prop::VoxelGeneratorFloor, Value::Number(n)) => data.generator_floor = Some(n.clamp(-100_000.0, 100_000.0)),
         (Prop::VoxelGeneratorAt, Value::Vector(v)) if v.len() == 2 => {
             data.generator_at = [v[0], v[1]].map(|metres| metres.clamp(-1.0e7, 1.0e7));
@@ -6457,6 +6470,7 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.endless = data.endless;
         volume.reach = data.reach;
         volume.sea = data.sea;
+        volume.water = data.water;
         if let Some(generator) = &mut volume.generator {
             generator.at = data.generator_at;
             generator.floor = data.generator_floor.unwrap_or(generator.floor);
@@ -7257,9 +7271,15 @@ mod tests {
         let data = &world.get::<VoxelVolumeSource>(volume).unwrap().0;
         assert_eq!((data.generator_floor, data.generator_at), (Some(42.0), [10.0, -5.0]));
         // Its generator's sea is on until turned off.
+        let smooth = data.water == voxear_render::VoxelWaterLook::Smooth;
         assert!(shown.contains(&Prop::VoxelSea) && data.sea, "{shown:?}");
         assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelSea, Value::Toggle(false)));
         assert!(!world.get::<voxear_render::VoxelVolume>(volume).unwrap().sea);
+        // Its rivers smooth until drawn as voxels.
+        assert!(shown.contains(&Prop::VoxelWater) && smooth, "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelWater, Value::Choice(1, Vec::new())));
+        let drawn = world.get::<voxear_render::VoxelVolume>(volume).unwrap().water;
+        assert_eq!(drawn, voxear_render::VoxelWaterLook::Voxels);
         // Its trees: a row of a plant and how many to a hectare for each kind, then one to add another.
         assert!(shown.contains(&Prop::VoxelTreeAdd) && !shown.contains(&Prop::VoxelTreePlant(0)), "{shown:?}");
         let oaks =

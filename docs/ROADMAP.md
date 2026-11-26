@@ -4660,6 +4660,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   pool, as thrown water falls, in two swaying sheets with ragged sides, the front one torn into strands lower down;
   pale, lit through by the sun behind; its pool churned white over 3 m. Before, it was a flat wall standing out from
   the cliff.
+- **Water of voxels (2026-11-26).** A volume's **Water** set to **Voxels** (Inspector, `water = "voxels"`,
+  `Voxels.WaterLook`, `field.set`) makes its rivers and lakes of voxels as small as the ground's. Each is shaded by how
+  deep the water is, its steps lit as its top, ripples drifting over it. Its waterfalls are voxels thrown over their
+  lips, falling as thrown water falls, whiter the faster they go, splashing off a churned pool. A whole frame costs
+  less than with smooth water: 8.6 ms over a river against 10.5. A first try that walked through the water to the bed
+  cost 4.4 ms more and striped sloping rivers.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A

@@ -66,6 +66,21 @@ if (Voxels.WaterAt(floatAt, out var river))
 
 `Water.TrySample` reads it as well, with the sea and every other water, and `vox editor call voxels.water_at '{ "at": [12, 30, -4] }'` finds the same.
 
+### Water of voxels
+
+A volume's **Water** sets how its rivers and lakes are drawn:
+
+- **Smooth**, as it comes: a smooth surface over the voxels, as described above.
+- **Voxels**: the water is voxels as small as the ground's, so it steps where the ground steps and its edges are the voxels' own.
+  - Each voxel is shaded by how deep the water is under it, from sandy where it is shallow to deep green-blue, with ripples, reflections and glints over it, and foam where it meets the bank.
+  - Where its top drops a voxel down a sloping river, the step's side is lit as the top, so the river reads as one surface.
+  - A waterfall is voxels of water thrown over its lip, each falling as thrown water falls, blue-green as it leaves the lip and whiter the faster it falls. They spread and break up lower down, and some splash back up off the pool, which churns white where they land.
+  - Shadows, rays and the sea's floor go through it to the bed.
+
+Water of voxels costs no more than smooth water. A river at 1920 × 1080 on an RTX 3070 is 8.6 ms a frame against 10.5, and a waterfall 8.7 against 9.9. Making a column costs the same either way.
+
+A script sets it with `Voxels.WaterLook = VoxelWaterLook.Voxels`, for every endless volume. `vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "water", "value": "Voxels"}`. The scene writes `water = "voxels"`, and nothing while it is smooth.
+
 ### The sea
 
 An endless volume with a generator has the generator's sea: an [[The Ocean|Ocean]] filling the level at the generator's **Sea Level**, its waves, foam and shores as an Ocean as it comes has them. Crates and ships float on it and characters swim in it as on any Ocean. Its waves are drawn calmer over the volume's shallows; what floats there feels only the ground made for collision a few metres round it, so it rides them a little rougher than they look. There is no Ocean to add by hand.

@@ -906,11 +906,67 @@ by the sun behind as spray is. The pool churns white where it lands, in patches 
 
 Not done:
 
-- **Water as a voxel material**, so a pit carved below a river's level or beside it fills. The squares are the
-  generator's water alone. The next step would be a material of water kept with the edits, made where an edit opens
-  ground below a neighbouring water height (from the points), drawn by the same squares at that height over the
-  carved voxels; flowing it on would be a simulation over the edits' bricks, cheap only for small pits.
+- **Water filling a carved pit.** The squares are the generator's water alone. Water of voxels (below) fills what a
+  ball carves out under a river's top, as its layer is made wherever the column is open there, but not a pit dug
+  beside a river, and nothing flows.
 - Lakes and rivers of a Volume's caves: the points say nothing of what is under an overhang.
+
+## Water of voxels (2026-11-26)
+
+A volume's **Water** can be **Voxels** (`VoxelWaterLook`): its rivers and lakes made of voxels as small as the
+ground's, in place of the smooth squares over them.
+
+**First try: a walk through the water to the bed.**
+- How it worked:
+  - Each column put a layer of water voxels at the water's top, as deep as its top stands over the lowest beside it,
+    so its steps leave no gap.
+  - The lit pass met a water voxel as it meets ground, then walked on through the water to the bed. It lit the bed
+    simply and dimmed it by the water the view crossed.
+  - Falls were blocks of falling-water voxels as wide as the fall.
+- It cost more and looked worse.
+  - Rolling Hills' river view: the lit voxels took 9.8 ms, against 3.6 ms and 1.8 ms of squares for smooth water.
+  - Each part turned off in turn, in the same view: the walk to the bed was 4.3 ms of that, the water's own shadow
+    walked through the voxels 2.3 ms, the foam 0.4 ms, the reflection nothing.
+  - A sloping river's top drops a voxel every few voxels: each step's side showed, striping the whole river.
+  - The fall was a wall.
+
+**What it does now.**
+- **Shades by depth, in place of the walk.** The column's making knows how deep the water is over its ground, so
+  each voxel takes one of eight shades, from sandy where it is shallow to deep green-blue, 0.3 m apart. The lit pass
+  walks nothing more than the hit: the shade lit by the sky and the sun, the sky's reflection, glints, ripples drifting
+  smoothly across it.
+- **Steps lit as the top.** A water voxel's side with open air in front and water under that is lit as a top: the
+  stripes go.
+- **The water's shadow walked coarser:** three times the pixel's footprint, 24 m at most, through the water as through
+  air. Ground's shadows and the sea's floor go through water voxels too.
+- **Waterfalls as voxels thrown over their lips.**
+  - The CPU finds each piece of a fall's lip, half a metre or less: where its corners before the fall are. It gives
+    the fall's top and drop, the way out from the cliff, and how fast the water leaves the lip to land where the
+    river's node says, 1.6 m out.
+  - Each piece throws 1,536 voxel-sized cubes (`voxelDropVertex`). Each has its own moment, place along the lip,
+    depth back from the front, speed out (within a fifth) and drift sideways. It falls as thrown water does, worked
+    out from the time alone, with nothing kept between frames, so the sheet spreads and tears as it falls.
+  - Its colour goes by its speed: the water's blue-green leaving the lip, white as it passes 2 to 7 m/s, each cube
+    its own. About half splash back up off the pool, the rest are gone into it, and each leaves the lip again.
+  - Where a fall pours the columns make no water: none between its points, and beside them only where a point has
+    the pool's water. The pool within a metre or so of where it lands is churned: two white shades whose foam boils.
+- **Measured** (1920×1080, RTX 3070 shared, least of 60 frames, whole frames, as the two looks' passes differ):
+
+  | View | Smooth water | Water of voxels |
+  |---|---|---|
+  | Rolling Hills, over the river | 10.5 ms | 8.6 ms |
+  | The same with oaks and pines | 14.1 ms | 12.9 ms |
+  | Alpine's 7.6 m fall, from its pool | 8.6 ms | 8.8 ms |
+  | The same from its side | 9.9 ms | 8.7 ms |
+
+  A column takes 0.11 ms either way, 0.23 to 0.35 ms with trees. The falling voxels cost 0.19 to 0.25 ms.
+
+![Smooth water (above) and water of voxels (below) over Rolling Hills' river](../images/small-voxels/water-smooth-and-voxels.webp)
+
+![A waterfall of smooth water (above) and of voxels thrown over its lip (below)](../images/small-voxels/waterfall-smooth-and-voxels.webp)
+
+Not done: water of voxels in the far bricks takes its brick's average colour, with no ripples; spray mist round a
+fall's foot; the falling voxels collide with nothing, so a ledge in a fall's way does not split it.
 
 ## Stage 7 begun: collision (2026-11-26)
 

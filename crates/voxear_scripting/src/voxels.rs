@@ -85,6 +85,26 @@ pub type VoxelWaterAt = fn(&World, [f32; 3]) -> Option<(Entity, f32, [f32; 3])>;
 /// height of the sea one has now, if any has.
 pub type VoxelSea = fn(&mut World, i32) -> Option<f32>;
 
+/// What answers `Voxels.WaterLook`: given a look's number (0 smooth, 1
+/// voxels), draws every endless Voxel Volume's rivers and lakes so, and
+/// given -1 only asks; gives the first one's look's number, if there is one.
+pub type VoxelWaterLookCall = fn(&mut World, i32) -> Option<i32>;
+
+static WATER_LOOK: OnceLock<VoxelWaterLookCall> = OnceLock::new();
+
+/// Sets what answers `Voxels.WaterLook`; the first set is kept.
+pub fn set_voxel_water_look(look: VoxelWaterLookCall) {
+    let _ = WATER_LOOK.set(look);
+}
+
+/// `Voxels.WaterLook`: `look` 0 or 1 draws the water so, -1 asks; the first
+/// endless volume's look's number, -1 where there is none or scripts are not
+/// running.
+pub(crate) unsafe extern "C" fn voxel_water_look(look: i32) -> i32 {
+    let Some(call) = WATER_LOOK.get() else { return -1 };
+    with_world(|world| call(world, look)).unwrap_or(-1)
+}
+
 static WATER_AT: OnceLock<VoxelWaterAt> = OnceLock::new();
 static SEA: OnceLock<VoxelSea> = OnceLock::new();
 

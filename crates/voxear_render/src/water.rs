@@ -1039,7 +1039,8 @@ pub fn record(
             });
         }
         // Drawn with the worlds of blocks' exits where there are any, else with its own.
-        let voxel_water = (voxel_water.0, voxel_water.1, voxel_water.2, voxel_water.3.or(blocks.as_ref().map(|(_, exits)| *exits)));
+        let voxel_water =
+            (voxel_water.0, voxel_water.1, voxel_water.2, voxel_water.3.or(blocks.as_ref().map(|(_, exits)| *exits)));
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
         let dry_walls = (Vec::new(), index_buffer);
         let draws = Draws {

@@ -635,6 +635,43 @@ fn measure_an_endless_volume_made_by_a_generator() {
     }
 }
 
+#[test]
+fn an_endless_volumes_rivers_drawn_as_voxels_of_water_show_its_water_and_not_its_squares() {
+    let Some(mut renderer) = renderer() else { return };
+    let rivered = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&rivered, 0.8);
+    // Straight down from 8 m over the river's water, as smooth water and as voxels of water.
+    let smooth = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    let mut voxels = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    for volume in voxels.query::<&mut VoxelVolume>() {
+        volume.water = voxear_render::VoxelWaterLook::Voxels;
+    }
+    let drawn_smooth = render(&mut renderer, &smooth, 3);
+    let made = renderer.stats().voxels.bytes;
+    let drawn = render(&mut renderer, &voxels, 3);
+    keep_image("river of voxels from above.png", &drawn);
+    assert_eq!(renderer.stats().voxels.water_squares, 0, "its water is the columns' own");
+    assert!(renderer.stats().voxels.bytes >= made, "the same room");
+    // Water under the camera: green-blue, not the grass or gravel of the bed, and near what smooth water shows.
+    let (mut watery, mut near) = (0, 0);
+    for dy in 0..40 {
+        for dx in 0..40 {
+            let (px, py) = (WIDTH / 2 + dx - 20, HEIGHT / 2 + dy - 20);
+            let [r, g, b] = rgb_at(&drawn, px, py);
+            watery += usize::from(b > r && g > r);
+            let smooth = rgb_at(&drawn_smooth, px, py);
+            near += usize::from((0..3).all(|i| ([r, g, b][i] - smooth[i]).abs() < 60));
+        }
+    }
+    assert!(watery > 1200, "water of voxels under the camera: {watery} of 1600 pixels");
+    assert!(near > 800, "and about as dark as smooth water: {near} of 1600 pixels");
+    // The CPU's ray goes through it to the bed, as through smooth water.
+    let camera = voxels.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.position;
+    let volume = voxels.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let hit = voxear_render::voxel_raycast(&volume, Vec3::ZERO, camera, -Vec3::Y, 100.0).expect("the bed");
+    assert!((hit.point.y - 24.0).abs() < 0.25, "the ray meets the bed at {:.2}", hit.point.y);
+}
+
 /// Pictures and timings of rivers and a coast in endless volumes, at
 /// 1920×1080, for comparing by eye: a river with its rivers cut and drawn
 /// and one without, and a coast. Each still view's passes are the least of

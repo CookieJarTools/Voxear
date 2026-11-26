@@ -602,6 +602,10 @@ pub(crate) struct GpuVoxelVolume {
     /// of no water voxels, and how many shades from shallow to deep.
     water: u32,
     shades: u32,
+    /// How many sectors of each of an endless volume's columns its window
+    /// keeps entries for, by their height wrapped.
+    layers: u32,
+    pad: u32,
     /// A ring's hole: the box the ring inside it draws, which the walk
     /// passes over, in its voxels from its corner along X and Z, least then
     /// most; none where the most is not past the least.
@@ -1210,6 +1214,8 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         pages: 0,
         water: 0,
         shades: 0,
+        layers: 1,
+        pad: 0,
         hole: [0.0; 4],
         outer: [0.0; 4],
     };
@@ -1223,8 +1229,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 136);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 120 + 136 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 144);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 120 + 144 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

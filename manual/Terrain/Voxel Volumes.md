@@ -74,7 +74,8 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 - **Rivers** are found on the CPU, as a world of blocks finds them, and laid into the GPU's ground (below).
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Raised Land, Spires, Fins, Chasms, Slope Mask) makes the volume's own ground instead, and the Console names the node.
-- An endless volume is at most 16 of its sectors tall, 64 voxels each: 64 m at 16 voxels a metre, 256 m at 4. Land higher than its top is cut off flat there.
+- An endless volume is at most 256 of its sectors tall, 64 voxels each: 1,024 m at 16 voxels a metre. Land higher than its top is cut off flat there. Give a world of mountains a tall volume and set its **Floor** under its lowest ground: for a world whose ground runs from 54 m under its sea to peaks of 655 m, a volume 720 m tall with its floor at -60 m holds all of it.
+- Each 4 m column keeps only the sectors round its own ground: 24 of them, 96 m at 16 voxels a metre, from the lowest that holds anything up. A height costs nearly nothing for that: on the same hills, a volume 512 m tall keeps 127 MB against 120 MB for one 48 m tall, and draws in the same time. Where a column's ground, its trees and what is built on it rise more than 96 m within its 4 m, the lowest of it is left out; the steepest columns of a mountainous world 51 km across rise 56 m.
 
 ### Rivers and lakes
 
@@ -471,7 +472,7 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - Only the first 24 lamps whose light reaches a pixel are looked for behind voxels. Glass of voxels tints only the sun, not lamps; only the nearest glass in a pixel is drawn. Glass meshes don't take the voxels' shadows.
 - Fog, particles and water take the voxels' shadows from a map 64 m across round the camera, a texel 25 cm; past it, none.
 - It isn't turned or scaled with its Obj.
-- One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk, and its full detail is at most 64 m tall at 16 voxels a metre: taller hills are cut flat near the camera and whole in the rings. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
+- One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.

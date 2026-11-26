@@ -94,14 +94,16 @@ uint* voxelSector(VoxelVolume volume, int3 s)
     {
         return volume.sectors + uint((s.y * volume.sectorCount.z + s.z) * volume.sectorCount.x + s.x) * VOXEL_SECTOR_WORDS;
     }
-    // An endless volume's sectors are kept by where they are in the world, wrapping round its window; each slot's
-    // entry says which sector it holds, then holds it as a volume's sector is held.
+    // An endless volume's sectors are kept by where they are in the world, wrapping round its window and, up its
+    // columns, round the band of layers each keeps; each slot's entry says which sector it holds, then holds it as a
+    // volume's sector is held.
     int3 world = volume.windowSector + s;
     int w = volume.sectorCount.x;
     // Wrapped as the CPU wraps it (rem_euclid), from whole numbers made positive first: a remainder of a negative
     // number is not taken the same way everywhere.
     uint2 slot = uint2(uint(world.x + w * 65536), uint(world.z + w * 65536)) % uint(w);
-    uint* entry = volume.sectors + ((uint(s.y) * uint(w) + slot.y) * uint(w) + slot.x) * VOXEL_ENTRY_WORDS;
+    uint layer = uint(world.y) % volume.layers;
+    uint* entry = volume.sectors + ((layer * uint(w) + slot.y) * uint(w) + slot.x) * VOXEL_ENTRY_WORDS;
     if (int(entry[0]) != world.x || int(entry[1]) != world.y || int(entry[2]) != world.z)
     {
         return volume.emptySector;
@@ -1775,15 +1777,21 @@ void voxelLightCells(uint3 id: SV_DispatchThreadID)
                 continue;
             }
             int3 b = int3(floor((middle - volume.corner) / (volume.voxel * 8.0)));
-            for (int y = max(b.y + 2, 0); y < volume.sectorCount.y * 8 && sky; y++)
+            // A sector with nothing in it, as all over a column's band of them, passed at a step.
+            for (int y = max(b.y + 2, 0); y < volume.sectorCount.y * 8 && sky;)
             {
-                int found = voxelBrickAt(volume, int3(b.x, y, b.z));
-                sky = found == -1;
-                if (found == -2)
+                int3 s = int3(b.x, y, b.z) >> 3;
+                if (any(s < int3(0)) || any(s >= volume.sectorCount))
                 {
-                    sky = true;
                     break;
                 }
+                if (voxelSector(volume, s)[24] == VOXEL_EMPTY)
+                {
+                    y = (s.y + 1) * 8;
+                    continue;
+                }
+                sky = voxelBrickAt(volume, int3(b.x, y, b.z)) == -1;
+                y++;
             }
         }
         second |= sky ? VOXEL_CELL_SKY : 0u;

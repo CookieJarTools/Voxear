@@ -4653,7 +4653,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   block's colour where that is green; the GPU picks the CPU's biome at 8192 places of 8192, and collision places
   trees by the same. Since (2026-11-26): ground tens of kilometres from the volume's Obj is drawn as near it, each
   pixel's ray worked out from the camera's own place, not from two places of the world a few centimetres apart.
-  Not yet: rock layers; the Realm's Spires and Arches; a volume taller than 16 sectors (64 m at 16 voxels a metre).
+  Not yet: rock layers; the Realm's Spires and Arches. Since: volumes up to 1,024 m tall (below).
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.
@@ -4727,8 +4727,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   ring inside it has made, and fewer columns a frame; rivers' beds are cut in every ring, and water of voxels fills
   them. Measured with 100 trees a hectare at reach 64 m, 1080p: 122 MB and 4.7 ms for today's view, 500 MB and 12.7
   ms to 1 km, 618 MB and 12.9 ms to 2 km; without trees 433 MB to 2 km. The lit pass keeps a plain walk of its own,
-  as carrying the rings' edges made it 0.5–1.3 ms slower for every volume. Next: far rings kept on disk, the finest
-  ring taller than 64 m.
+  as carrying the rings' edges made it 0.5–1.3 ms slower for every volume. Next: far rings kept on disk.
 - **Stage 6 begun (2026-11-26): shadows, light indoors and glass.**
   - **Voxels shadow everything.** After the depth passes, **Voxel shadows** traces a ray towards the sun from each
     pixel, through the voxels, whatever is drawn there. Models, blocks, terrain and grass take it with the contact
@@ -4753,6 +4752,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     (0.95 ms with twelve lamps over a street); the sun takes the colour of glass it comes through; fog, particles and
     water take the voxels' shadows from a sun map 64 m across round the camera (0.12 ms).
   - Not yet: GI rays through voxels; lamps tinted by glass.
+- **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
+  voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
+  whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest
+  ground made: a volume 512 m tall keeps 127 MB against 120 MB for one 48 m tall on the same hills, and draws in the
+  same time. The CPU's collision and rays leave out a generator's overhangs where the GPU does, so they meet the
+  ground drawn.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

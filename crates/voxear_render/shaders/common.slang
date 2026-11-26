@@ -2173,6 +2173,10 @@ struct VoxelVolume
     // there are from shallow to deep (src/voxel_volume/rivers.rs).
     uint water;
     uint shades;
+    // How many sectors of each of an endless volume's columns its window keeps entries for: a band round its ground,
+    // each in the layer its height in sectors wraps to.
+    uint layers;
+    uint pad;
     // A ring's hole: the box the ring inside it draws, which the walk passes over, in its voxels from its corner along X
     // and Z, least then most; none where the most is not past the least.
     float4 hole;

@@ -728,6 +728,61 @@ fn an_endless_volume_made_by_a_starter_generator_shows_its_ground() {
     assert!(grey * 10 > 14400, "rock on the mountainside: {grey} of 14400 grey");
 }
 
+/// Measures what an endless volume's height costs on the same ground, Rolling
+/// Hills with oaks and pines at reach 64, 48 m tall and taller: its bytes, a
+/// still view's passes looking along the ground and up at the sky (the least
+/// of 60 frames) and the making while flying at 10 m/s.
+/// Run by hand: `cargo test -p voxear_render --test voxels measure_how_tall -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn measure_how_tall_an_endless_volume_is() {
+    let Ok(mut renderer) = Renderer::new_offscreen(1920, 1080, &RendererSettings::default()) else { return };
+    let hills = Arc::new(starter("Rolling Hills"));
+    for tall in [48.0, 128.0, 320.0, 512.0] {
+        for pitch in [8.0, -40.0] {
+            let mut scene = generated_view(hills.clone(), 8.0, 8.0, 2.0, pitch);
+            for volume in scene.query::<&mut VoxelVolume>() {
+                volume.reach = 64.0;
+                volume.trees = oaks_and_pines();
+                volume.size.y = tall;
+            }
+            renderer.render(&scene, 0.0).unwrap();
+            assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(60)).unwrap());
+            let mut least: std::collections::BTreeMap<String, f32> = Default::default();
+            let mut frame = f32::MAX;
+            for i in 0..90 {
+                renderer.render(&scene, i as f32 / 60.0).unwrap();
+                if i >= 30 {
+                    for (pass, ms) in renderer.timings() {
+                        if pass.contains("oxel") {
+                            let kept = least.entry(pass.clone()).or_insert(f32::MAX);
+                            *kept = kept.min(*ms);
+                        }
+                    }
+                    frame = frame.min(renderer.gpu_frame_ms());
+                }
+            }
+            let bytes = renderer.stats().voxels.bytes / 1_000_000;
+            eprintln!("{tall} m, pitch {pitch}: {bytes} MB, frame {frame:.2} ms, {least:?}");
+            if pitch > 0.0 {
+                let mut making = Vec::new();
+                for i in 0..360 {
+                    let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                    camera.position.x += 10.0 / 60.0;
+                    renderer.render(&scene, 2.0 + i as f32 / 60.0).unwrap();
+                    if let Some((_, ms)) = renderer.timings().iter().find(|(pass, _)| pass == "Voxel world making") {
+                        making.push(*ms);
+                    }
+                }
+                making.sort_by(f32::total_cmp);
+                if !making.is_empty() {
+                    eprintln!("{tall} m: making on {} frames, median {:.2} ms", making.len(), making[making.len() / 2]);
+                }
+            }
+        }
+    }
+}
+
 /// Measures an endless volume made by a generator against one of its own
 /// ground, at 1920×1080: the window made before the frames, the columns
 /// made while flying, and a still view's passes, the least of 60 frames.
@@ -2279,6 +2334,90 @@ fn gpu_against_cpu(
         eprintln!("{apart} voxels of the ground no edit reaches differ");
     }
     (differ, kept, found)
+}
+
+#[test]
+fn an_endless_volume_hundreds_of_metres_tall_keeps_its_highest_ground_as_the_cpu_does() {
+    use voxear_terrain::generate::{
+        nodes::{PaintedMapKind, PaintedMapNode},
+        painted::{Painted, PaintedMaps},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    // A hill painted 360 m high round (60, 0), steep on its sides, in a volume 400 m tall whose floor is under the
+    // low ground: its top is a hundred sectors up, its columns' bands far apart.
+    let painted = Painted::new(9, PaintedMaps::default());
+    painted.change(|maps| maps.height.paint([60.0, 0.0], 70.0, 0.6, &|_, cover| Some(cover * 360.0)));
+    let height =
+        NodeKind::PaintedMap(PaintedMapNode { map: PaintedMapKind::Height, default: 0.0, painted: Some(painted) });
+    let world = Arc::new(node_world(height, 0, &[]));
+    let summit = world.height_at(60.0, 0.0);
+    assert!(summit > 300.0, "the summit stands {summit:.1} m high");
+    let mut scene = generated_view(world.clone(), -10.0, 0.0, 20.0, -25.0);
+    // The summit is flat: its top half a voxel from a voxel's edge, where the GPU's rounding and the CPU's agree.
+    let low_ground = world.height_at(-10.0, 0.0) - 8.0;
+    let floor = summit - (((summit - low_ground) * 16.0).floor() + 0.5) / 16.0;
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.size.y = 400.0;
+        volume.reach = 96.0;
+        volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
+        volume.generator.as_mut().unwrap().floor = floor;
+    }
+    {
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        camera.position.y = world.height_at(-10.0, 0.0) - floor + 20.0;
+        camera.rotation = Quat::from_rotation_y(90f32.to_radians()) * Quat::from_rotation_x(-25f32.to_radians());
+    }
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("a hill 360 m high.png", &pixels);
+    let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    // The summit's voxels, and the slope's halfway up, on the GPU as the CPU has them.
+    let per = 16;
+    for (x, z) in [(60.0f32, 0.0f32), (60.0 - 40.0, 0.0)] {
+        let top = ((world.height_at(x, z) - floor) * per as f32) as i32;
+        let low = [(x as i32) * per - 16, top - 40, (z as i32) * per - 16];
+        let size = [32, 64, 32];
+        let (_, kept, found) = gpu_against_cpu(&renderer, &scene, (low, size), &|_, _| false);
+        let mut solid = vec![false; found.len()];
+        voxear_render::VoxelSolids::of(&volume).unwrap().fill(low, size, &mut solid);
+        // Every voxel the CPU has open to the air the GPU keeps, and the GPU keeps none where the CPU has air; the GPU
+        // also keeps a row under its ground's top, hidden.
+        let at = |x: i32, y: i32, z: i32| (x + size[0] * (y + size[1] * z)) as usize;
+        let (mut missing, mut extra, mut open) = (0, 0, 0);
+        for z in 1..size[2] - 1 {
+            for y in 1..size[1] - 1 {
+                for x in 1..size[0] - 1 {
+                    let cpu = solid[at(x, y, z)];
+                    let shown = cpu
+                        && [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+                            .iter()
+                            .any(|&(dx, dy, dz)| !solid[at(x + dx, y + dy, z + dz)]);
+                    let gpu = found[at(x, y, z)] != 0;
+                    open += usize::from(shown);
+                    missing += usize::from(shown && !gpu);
+                    extra += usize::from(gpu && !cpu);
+                }
+            }
+        }
+        eprintln!(
+            "at {x}, {z}, {} m up: {kept} kept, {open} open on the CPU, {missing} missing, {extra} over",
+            top / per
+        );
+        assert!(open > 500, "the CPU's ground {} m up: {open} voxels open to the air", top / per);
+        assert!(
+            missing * 100 < open && extra * 100 < open,
+            "the GPU's ground {} m up is the CPU's: {missing} missing, {extra} over",
+            top / per
+        );
+    }
+    // The CPU's ray from over the summit meets it where its ground is.
+    let over = Vec3::new(60.0, 399.0, 0.0);
+    let hit = voxear_render::voxel_raycast(&volume, Vec3::ZERO, over, -Vec3::Y, 400.0).expect("the summit");
+    assert!(
+        (hit.point.y - (summit - floor)).abs() < 0.2,
+        "the ray meets the summit at {:.2}, not {:.2}",
+        hit.point.y,
+        summit - floor
+    );
 }
 
 /// Rolling Hills seen from 14 m over (8, 8), with no grass, flowers or

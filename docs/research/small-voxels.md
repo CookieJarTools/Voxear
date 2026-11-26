@@ -1330,9 +1330,48 @@ the same hills in rings and in full detail to 192 m: 8×8 blocks of ground diffe
 trees' and voxels' own grain.
 
 - **Not done.** Far rings are made again as they come into view, not kept on disk. The frame with the land to the horizon is three times today's view of sky;
-  the far crowns' rays are most of the depth pass. The finest ring is at most 16 sectors tall (64 m at 16 voxels a
-  metre), while a ring of a metre's voxels may be 1 km tall: hills taller than the finest ring are cut flat near the
-  camera and whole further out.
+  the far crowns' rays are most of the depth pass. The finest ring was at most 16 sectors tall (64 m at 16 voxels a
+  metre), so hills taller than it were cut flat near the camera and whole further out; it may now be 1,024 m tall
+  (below).
+
+## Ground hundreds of metres tall (2026-11-26)
+
+An endless volume was at most 16 sectors tall: 64 m at 16 voxels a metre. The Realm, the first game's world of
+51 km painted with land, runs from 54 m under its sea to summits of 655 m, with cliffs that rise 140 m in 64 m.
+
+- **Measured first, on the CPU, over the whole world.** Its heights every 64 m: 54 m under the sea to 576 m (655 m
+  sampled finer). Over 2 km round its highest ground, each 4 m column's ground, sampled every half metre with its
+  border, spans one sector in a quarter of the columns, two in half, and at most 14 (56 m) on the steepest faces.
+  A column's ground is a thin band however high it is: keeping every sector of a column 640 m tall would spend the
+  window's table on air.
+- **Each column keeps a band of 24 sectors** (96 m at 16 voxels a metre), from the lowest that holds anything up,
+  or down from the highest where it holds more. The window's table has 24 layers in place of one a sector, and a
+  sector's entry goes in the layer its height wraps to. The walk already checks the world place an entry names, so
+  a sector outside its column's band reads as empty, as one not yet made does. A volume may now be 256 sectors tall,
+  1,024 m at 16 voxels a metre; a volume 24 sectors tall or less is kept as before.
+- **The walk stops at the highest ground made.** Each column notes its highest sector; the walk's box is as tall as
+  the highest any column has noted, read back from the GPU, so a tall volume of low ground walks no more air.
+- **What a height costs** (Rolling Hills with oaks and pines, reach 64 m, 1920×1080, the least of 60 frames):
+
+  | Tall | On the GPU | Frame | Making (median) |
+  |---|---|---|---|
+  | 48 m | 120 MB | 10.30 ms | 1.39 ms |
+  | 128 m | 124 MB | 10.43 ms | 1.81 ms |
+  | 320 m | 125 MB | 10.39 ms | 1.64 ms |
+  | 512 m | 127 MB | 10.40 ms | 1.73 ms |
+
+  The few MB are the making passes' lists of bricks by row, which still go a whole column up; the GPU was shared with
+  other sessions, so making times move by a few tenths either way.
+- **The CPU leaves out a Volume the GPU leaves out.** The Realm's generator has overhangs (Bridged, Over, Towered)
+  the GPU cannot run, so its ground is the height made solid there; the CPU still ran them for collision and rays,
+  and met a summit six voxels under the one drawn. It now asks whether the GPU runs the Volume, kept for each
+  generator. On the Realm's ground, the GPU's top voxel, the CPU's collision and its ray meet at the same voxel on
+  the highest summit (715.6 m over a floor at -60 m) and at the players' start; on a river's cliff one voxel apart.
+- **Checked** by a test of a hill painted 360 m high in a volume 400 m tall: every voxel the CPU has open to the air
+  near the summit and halfway up is on the GPU, the GPU has none where the CPU has air, and the CPU's ray meets the
+  summit.
+- **Not done:** a column whose ground, trees and buildings rise more than 96 m within its 4 m loses the lowest of
+  it. The making passes' lists of bricks by row still go a whole column up.
 
 ## Kept elsewhere
 

@@ -50,7 +50,9 @@ mod voxels;
 mod world;
 pub(crate) mod written_land;
 
-pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, WorldBiomes};
+pub use biomes::{
+    BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, GPU_BIOME_WORDS, GpuBiomes, WorldBiomes,
+};
 pub use land::{BiomeLand, Landform};
 pub use strata::{RockLayer, RockLayers, Strata};
 pub use areas::{Areas, Character, LevelPlan, Sites};

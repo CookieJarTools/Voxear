@@ -12,6 +12,7 @@
 //! Beside the height it gives Crests, 1 along the ridges' crests, for a
 //! Rock mask or snow.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -194,6 +195,12 @@ impl Mountains {
 }
 
 impl Kernel for Mountains {
+    fn gpu(&self) -> Option<GpuStep> {
+        let step = GpuStep::new(GpuOp::Peaks).number(self.size).number(self.height).number(self.base);
+        let step = step.number(self.ranges).number(self.sharpness).number(self.ridges);
+        Some(step.whole(self.seed).whole(u32::from(self.crests)))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("peaks").number(self.size).number(self.height).number(self.base).number(self.ranges);
         key.number(self.sharpness).number(self.ridges).whole(self.seed).whole(u32::from(self.crests));

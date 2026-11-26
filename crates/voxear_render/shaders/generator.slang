@@ -40,6 +40,14 @@ static const uint OP_STEEP = 26;
 static const uint OP_PUSH = 27;
 static const uint OP_TUNNELS = 28;
 static const uint OP_CHAMBERS = 29;
+static const uint OP_SMOOTH_RING = 30;
+static const uint OP_SMOOTHED = 31;
+static const uint OP_PEAKS = 32;
+static const uint OP_WINDING = 33;
+static const uint OP_PLATEAUS = 34;
+static const uint OP_EDGE = 35;
+static const uint OP_EDGE_INSIDE = 36;
+static const uint OP_PAINTED = 37;
 
 // noise.rs: a lattice point's hash, the gradient noise and its fractal kinds.
 
@@ -784,6 +792,419 @@ float heldBetween(float value, float lowest, float highest, float smooth)
 
 // What a generator makes at a place: the ground's height in metres, how warm it is in °C, how wet from 0 to 1, and
 // its rock mask (0 with none).
+// nodes/plateaus.rs and nodes/peaks.rs: a number from 0 to 1 from a whole number, and three whole numbers mixed into a
+// seed.
+float shareOf(uint h)
+{
+    return float(h >> 8) / 16777216.0;
+}
+
+uint mixOf(uint seed, int a, int b, int c)
+{
+    uint h = seed ^ 0x9E3779B9u;
+    int values[3] = { a, b, c };
+    for (uint i = 0; i < 3; i++)
+    {
+        h = (h ^ uint(values[i])) * 0x85EBCA6Bu;
+        h ^= h >> 15;
+        h *= 0xC2B2AE35u;
+        h ^= h >> 13;
+    }
+    return h;
+}
+
+float smoothOf(float t)
+{
+    t = clamp(t, 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// A Peaks node (nodes/peaks.rs, Mountains): its settings from `p` on, its height or where its crests are.
+float peaksAt(uint* program, uint p, float x, float z)
+{
+    float size = asfloat(program[p]);
+    float height = asfloat(program[p + 1]);
+    float base = asfloat(program[p + 2]);
+    float ranges = asfloat(program[p + 3]);
+    float sharpness = asfloat(program[p + 4]);
+    float ridges = asfloat(program[p + 5]);
+    uint seed = program[p + 6];
+    bool crests = program[p + 7] != 0u;
+    // How much of a mountain the place is.
+    float wide = size * 2.2;
+    float broad = 0.5 + 0.5 * gradientNoise(x / wide, z / wide, seed + 1u);
+    float range = smoothOf((broad - (1.0 - ranges)) / 0.22 + 0.5);
+    // Sharp ridges across the ranges.
+    float warp = size * 0.35;
+    float wx = warp * gradientNoise(x / (size * 0.9), z / (size * 0.9), seed + 2u);
+    float wz = warp * gradientNoise(x / (size * 0.9), z / (size * 0.9), seed + 3u);
+    float scale = size * 0.45;
+    float ridge = fractalNoise(1, (x + wx) / scale, (z + wz) / scale, 7, seed + 4u);
+    float ridged = ridge * (1.0 - sharpness * 0.5) + ridge * ridge * sharpness * 0.5;
+    if (crests)
+    {
+        return smoothOf((ridged - 0.62) / 0.15) * smoothOf(range * 2.0);
+    }
+    float rolling = 12.0 * fractalNoise(0, x / 400.0, z / 400.0, 4, seed + 5u);
+    if (range <= 0.0)
+    {
+        return base + rolling;
+    }
+    // How near a great summit the place is.
+    int2 cell = int2(int(floor(x / size)), int(floor(z / size)));
+    float best = 0.0;
+    for (int dz = -1; dz <= 1; dz++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int2 c = cell + int2(dx, dz);
+            float2 at = float2((float(c.x) + 0.15 + 0.7 * shareOf(mixOf(seed, c.x, c.y, 0))) * size,
+                (float(c.y) + 0.15 + 0.7 * shareOf(mixOf(seed, c.x, c.y, 1))) * size);
+            float tall = 0.55 + 0.45 * shareOf(mixOf(seed, c.x, c.y, 2));
+            float ox = x - at.x;
+            float oz = z - at.y;
+            float near = 1.0 - sqrt(ox * ox + oz * oz) / (size * 0.62);
+            if (near <= 0.0)
+            {
+                continue;
+            }
+            float horn = near * near * near;
+            float shape = near * (1.0 - sharpness) + horn * sharpness;
+            best = max(best, shape * tall);
+        }
+    }
+    float lift = 0.25 + 0.75 * best;
+    float ridgesOf = ridged * (0.5 + 0.5 * ridges);
+    float mass = best * (1.0 - 0.5 * ridges) + ridgesOf * lift;
+    return base + rolling + height * range * mass * 0.75;
+}
+
+// How far from a Plateaus node's river line a place is, in metres (nodes/plateaus.rs, Winding).
+float windingRead(float size, uint seed, float x, float z)
+{
+    float fine = size * 0.27;
+    return gradientNoise(x / size, z / size, seed + 0x5Au) + 0.22 * gradientNoise(x / fine, z / fine, seed + 0x5Bu);
+}
+
+float windingAt(float size, uint seed, float x, float z)
+{
+    float noise = windingRead(size, seed, x, z);
+    float along = (windingRead(size, seed, x + 4.0, z) - noise) / 4.0;
+    float across = (windingRead(size, seed, x, z + 4.0) - noise) / 4.0;
+    float climb = sqrt(along * along + across * across);
+    float off = noise < 0.0 ? -noise : noise;
+    return off / (climb > 0.2 / size ? climb : 0.2 / size);
+}
+
+// A Plateaus node's tableland whose place is in `cell`: where its place is, and its level.
+struct Tableland
+{
+    int2 cell;
+    float2 at;
+    uint level;
+};
+
+Tableland tablelandOf(uint* program, uint p, int2 cell)
+{
+    float size = asfloat(program[p]);
+    uint seed = program[p + 1];
+    uint levels = program[p + 12];
+    Tableland site;
+    site.cell = cell;
+    float m0 = shareOf(mixOf(seed, cell.x, cell.y, 0)) * 0.8 + 0.1;
+    float m1 = shareOf(mixOf(seed, cell.x, cell.y, 1)) * 0.8 + 0.1;
+    float m2 = shareOf(mixOf(seed, cell.x, cell.y, 2)) * 0.8 + 0.1;
+    site.at = float2((float(cell.x) + m0) * size, (float(cell.y) + m1) * size);
+    float wide = size * 3.2;
+    float noise = fractalNoise(0, site.at.x / wide, site.at.y / wide, 2, seed + 0x56u);
+    float number = 0.5 + (noise - 0.5) * 2.4 + (m2 - 0.5) * 0.3;
+    site.level = 0;
+    for (uint level = levels - 1; level >= 1; level--)
+    {
+        if (number >= asfloat(program[p + 14 + level * 2]))
+        {
+            site.level = level;
+            break;
+        }
+    }
+    return site;
+}
+
+bool cellBefore(int2 a, int2 b)
+{
+    return a.x < b.x || (a.x == b.x && a.y < b.y);
+}
+
+// A Plateaus node (nodes/plateaus.rs, Cut): the ground cut into tablelands at (x, z), where ramps may be and how far
+// the river's line is; its height, where its walls are or its floor, as its output says.
+float plateausAt(uint* program, uint p, float x, float z, float ramps, float off)
+{
+    const float RUBBLE = 0.7;
+    const float BED = 14.0;
+    float size = asfloat(program[p]);
+    uint seed = program[p + 1];
+    float wall = asfloat(program[p + 2]);
+    float talus = asfloat(program[p + 3]);
+    float rim = asfloat(program[p + 4]);
+    float river = asfloat(program[p + 5]);
+    float canyon = asfloat(program[p + 6]);
+    float rampShare = asfloat(program[p + 7]);
+    float rampSlope = asfloat(program[p + 8]);
+    float step = asfloat(program[p + 9]);
+    float wander = asfloat(program[p + 10]);
+    uint port = program[p + 11];
+    float raised = rim > 0.0 ? rim : 0.0;
+    float rounded = rim < 0.0 ? -rim : 0.0;
+    float wideRamp = size * 0.1 + 12.0;
+    // The walls' lines are bent by reading the land a little way off.
+    float px = x;
+    float pz = z;
+    float2 bends[3] = { float2(1.3, 0.26), float2(0.45, 0.1), float2(0.12, 0.018) };
+    for (uint octave = 0; octave < 3; octave++)
+    {
+        float bend = size * bends[octave].x;
+        float far = wander * size * bends[octave].y;
+        uint s = seed + 0x51u + octave * 2u;
+        px += far * gradientNoise(x / bend, z / bend, s);
+        pz += far * gradientNoise(x / bend, z / bend, s + 1u);
+    }
+    int2 cell = int2(int(floor(px / size)), int(floor(pz / size)));
+    // The nearest place of the twenty-five round here is the tableland this is on.
+    Tableland near[25];
+    float apart[25];
+    uint own = 0;
+    for (uint k = 0; k < 25; k++)
+    {
+        near[k] = tablelandOf(program, p, cell + int2(int(k % 5) - 2, int(k / 5) - 2));
+        float dx = px - near[k].at.x;
+        float dz = pz - near[k].at.y;
+        apart[k] = dx * dx + dz * dz;
+        if (apart[k] < apart[own])
+        {
+            own = k;
+        }
+    }
+    Tableland mine = near[own];
+    float least = apart[own];
+    float level = asfloat(program[p + 13 + mine.level * 2]);
+    float high = level;
+    float walled = 0.0;
+    float clear = 3.402823e38;
+    float edge = 3.402823e38;
+    for (uint k = 0; k < 25; k++)
+    {
+        Tableland other = near[k];
+        if (all(other.cell == mine.cell))
+        {
+            continue;
+        }
+        float ax = other.at.x - mine.at.x;
+        float az = other.at.y - mine.at.y;
+        float between = sqrt(ax * ax + az * az);
+        float away = (apart[k] - least) / (2.0 * between);
+        if (other.level < mine.level)
+        {
+            edge = away < edge ? away : edge;
+            continue;
+        }
+        if (other.level == mine.level)
+        {
+            continue;
+        }
+        float top = asfloat(program[p + 13 + other.level * 2]) - rounded;
+        float rise = top - level;
+        float rubble = talus < rise * 0.4 ? talus : rise * 0.4;
+        float sheer = top - away * wall;
+        float foot = (rise - rubble) / wall;
+        float scree = level + rubble - (away - foot) * RUBBLE;
+        float w = sheer > scree ? sheer : scree;
+        float reached = away - foot - rubble / RUBBLE;
+        clear = reached < clear ? reached : clear;
+        if (w > high)
+        {
+            high = w;
+            walled = 1.0;
+        }
+        // A ramp against this wall, for the pairs the seed picks.
+        int2 low = cellBefore(mine.cell, other.cell) ? mine.cell : other.cell;
+        int2 up = cellBefore(mine.cell, other.cell) ? other.cell : mine.cell;
+        uint pair = mixOf(seed, low.x ^ (up.x * 0x51ED), low.y ^ (up.y * 0x2F0B), 3);
+        if (shareOf(pair) >= rampShare || ramps < 0.5)
+        {
+            continue;
+        }
+        float ux = ax / between;
+        float uz = az / between;
+        float along = shareOf(mixOf(pair, 1, 2, 3)) - 0.5;
+        float mx = (mine.at.x + other.at.x) * 0.5 - uz * along * 0.3 * between;
+        float mz = (mine.at.y + other.at.y) * 0.5 + ux * along * 0.3 * between;
+        float beside = (px - mx) * -uz + (pz - mz) * ux;
+        beside = beside < 0.0 ? -beside : beside;
+        if (beside > wideRamp * 0.5)
+        {
+            continue;
+        }
+        float outward = sqrt(away * away + 0.3 * beside * beside);
+        float stair = top - ceil(outward * rampSlope / step) * step;
+        if (stair > high)
+        {
+            high = stair;
+            walled = 0.0;
+        }
+        float reach = outward - rise / rampSlope;
+        clear = reach < clear ? reach : clear;
+    }
+    // The level's own edge over lower ground: a lip raised along it, or the edge rounded off.
+    float lip = 0.0;
+    if (walled == 0.0 && high == level && edge < 3.402823e38)
+    {
+        if (raised > 0.0)
+        {
+            float part = edge / (raised * 3.0 + 3.0);
+            lip = part < 1.0 ? raised * 4.0 * part * (1.0 - part) : 0.0;
+        }
+        else if (rounded > 0.0)
+        {
+            float part = edge / (rounded * 4.0);
+            lip = part < 1.0 ? -rounded * (1.0 - part) * (1.0 - part) : 0.0;
+        }
+    }
+    float ground = high + lip;
+    float floorOf = mine.level == 0 && high == level ? smoothOf(clear / 24.0) : 0.0;
+    float half = canyon * 0.5;
+    if (canyon > 0.0)
+    {
+        float cut = asfloat(program[p + 13]) + (off > half ? (off - half) * wall : 0.0);
+        if (cut < ground)
+        {
+            ground = cut;
+            walled = off > half ? 1.0 : 0.0;
+            floorOf = off > half ? 0.0 : 1.0;
+        }
+    }
+    if (river > 0.0 && floorOf > 0.0 && off < BED)
+    {
+        ground -= river * (1.0 - off * off / (BED * BED)) * floorOf;
+    }
+    return port == 1u ? walled : (port == 2u ? floorOf : ground);
+}
+
+// A World Edge's wandering (nodes/world_edge.rs, wander): smooth noise from -1 to 1 hashed from whole numbers.
+float edgeOctave(float x, float z, float cell, uint salt)
+{
+    float fx = x / cell;
+    float fz = z / cell;
+    float ix = floor(fx);
+    float iz = floor(fz);
+    float tx = fx - ix;
+    float tz = fz - iz;
+    float sx = tx * tx * (3.0 - 2.0 * tx);
+    float sz = tz * tz * (3.0 - 2.0 * tz);
+    float v[4];
+    for (uint k = 0; k < 4; k++)
+    {
+        int64_t cx = int64_t(ix) + int64_t(k & 1u);
+        int64_t cz = int64_t(iz) + int64_t(k >> 1);
+        uint64_t rz = uint64_t(cz);
+        uint64_t h = uint64_t(cx) ^ ((rz << 32) | (rz >> 32)) ^ uint64_t(salt);
+        h = (h ^ (h >> 33)) * 0xff51afd7ed558ccdull;
+        h = (h ^ (h >> 33)) * 0xc4ceb9fe1a85ec53ull;
+        v[k] = (float(uint(h >> 40)) / 16777216.0) * 2.0 - 1.0;
+    }
+    float nearRow = v[0] + (v[1] - v[0]) * sx;
+    float farRow = v[2] + (v[3] - v[2]) * sx;
+    return nearRow + (farRow - nearRow) * sz;
+}
+
+// How far past a World Edge's box (x, z) is, from 0 inside to 1 (Edged::past).
+float edgePast(uint* program, uint p, float x, float z)
+{
+    float2 from = float2(asfloat(program[p + 1]), asfloat(program[p + 2]));
+    float2 to = float2(asfloat(program[p + 3]), asfloat(program[p + 4]));
+    float dx = max(from.x - x, x - to.x);
+    float dz = max(from.y - z, z - to.y);
+    float ox = max(dx, 0.0);
+    float oz = max(dz, 0.0);
+    float past = dx > 0.0 || dz > 0.0 ? sqrt(ox * ox + oz * oz) : max(dx, dz);
+    float width = max(asfloat(program[p + 5]), 1e-3);
+    float w = max(width, 1.0);
+    float wander = (edgeOctave(x, z, w, 0x51edu) + edgeOctave(x, z, w * 0.4, 0x7a3cu) * 0.5) / 1.5;
+    past = past + wander * width * 0.5;
+    return clamp((past + width) / width, 0.0, 1.0);
+}
+
+float edgeAt(uint* program, uint p, float ground, float x, float z)
+{
+    float t = edgePast(program, p, x, z);
+    float level = asfloat(program[p + 6]);
+    if (program[p] == 0u)
+    {
+        return ground + (min(ground, level) - ground) * (t * t * (3.0 - 2.0 * t));
+    }
+    // Cliffs: sheer faces with level ledges between them.
+    float ledged = 1.0;
+    if (t < 1.0)
+    {
+        float stepAt = t * 3.0;
+        float whole = floor(stepAt);
+        float rise = clamp((stepAt - whole - 0.8) / 0.2, 0.0, 1.0);
+        ledged = min((whole + rise * rise * (3.0 - 2.0 * rise)) / 3.0, 1.0);
+    }
+    return ground + (max(ground, level) - ground) * ledged;
+}
+
+// A painted map's pixel (generate/painted.rs, PaintedMap::gpu_words), where it is painted.
+bool paintedPixel(uint* map, int px, int pz, out float value)
+{
+    value = 0.0;
+    int2 tile = int2(px >> 6, pz >> 6) - int2(int(map[1]), int(map[2]));
+    uint w = map[3];
+    uint h = map[4];
+    if (tile.x < 0 || tile.y < 0 || uint(tile.x) >= w || uint(tile.y) >= h)
+    {
+        return false;
+    }
+    uint place = map[5 + uint(tile.x) + w * uint(tile.y)];
+    if (place == 0xFFFFFFFFu)
+    {
+        return false;
+    }
+    value = asfloat(map[5 + w * h + place * 4096u + uint((pz & 63) * 64 + (px & 63))]);
+    return !isnan(value);
+}
+
+// A painted map read at (x, z): the pixel nearest, or blended between the four round it with unpainted ones counting
+// as `none`; `none` where none is painted.
+float paintedAt(uint* map, bool nearest, float none, float x, float z)
+{
+    if (map[3] == 0u)
+    {
+        return none;
+    }
+    float spacing = asfloat(map[0]);
+    float value;
+    if (nearest)
+    {
+        return paintedPixel(map, int(floor(x / spacing)), int(floor(z / spacing)), value) ? value : none;
+    }
+    float fx = x / spacing - 0.5;
+    float fz = z / spacing - 0.5;
+    int x0 = int(floor(fx));
+    int z0 = int(floor(fz));
+    float tx = fx - float(x0);
+    float tz = fz - float(z0);
+    bool painted = false;
+    float c[4];
+    for (uint k = 0; k < 4; k++)
+    {
+        bool here = paintedPixel(map, x0 + int(k & 1u), z0 + int(k >> 1), value);
+        painted = painted || here;
+        c[k] = here ? value : none;
+    }
+    float blended = (c[0] * (1.0 - tx) + c[1] * tx) * (1.0 - tz) + (c[2] * (1.0 - tx) + c[3] * tx) * tz;
+    return painted ? blended : none;
+}
+
 struct Generated
 {
     float height;
@@ -1054,6 +1475,30 @@ void runSteps(uint* program, uint words, float x, float y, float z, float size, 
             value = inside < under ? inside : under;
             break;
         }
+        case OP_SMOOTH_RING:
+            value = (a[0] + a[1] + a[2] + a[3]) * 2.0 + (a[4] + a[5] + a[6] + a[7]);
+            break;
+        case OP_SMOOTHED:
+            value = (a[0] * 4.0 + a[1]) / 16.0;
+            break;
+        case OP_PEAKS:
+            value = peaksAt(program, p, a[0], a[1]);
+            break;
+        case OP_WINDING:
+            value = windingAt(asfloat(program[p]), program[p + 1], a[0], a[1]);
+            break;
+        case OP_PLATEAUS:
+            value = plateausAt(program, p, a[0], a[1], a[2], a[3]);
+            break;
+        case OP_EDGE:
+            value = edgeAt(program, p, a[0], a[1], a[2]);
+            break;
+        case OP_EDGE_INSIDE:
+            value = 1.0 - edgePast(program, p, a[0], a[1]);
+            break;
+        case OP_PAINTED:
+            value = paintedAt(program + words + program[p], program[p + 1] != 0u, asfloat(program[p + 2]), a[0], a[1]);
+            break;
         default:
             break;
         }

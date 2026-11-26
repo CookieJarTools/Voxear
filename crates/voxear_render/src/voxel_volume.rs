@@ -230,6 +230,9 @@ pub struct VoxelGenerator {
     pub world: Arc<voxear_terrain::generate::WorldGen>,
     pub floor: f32,
     pub at: [f32; 2],
+    /// A world of blocks' biomes, whose blocks its ground is made of: none
+    /// for ground of grass, rock, sand, snow and gravel by its climate.
+    pub biomes: Option<Arc<VoxelBiomes>>,
 }
 
 impl PartialEq for VoxelGenerator {
@@ -237,6 +240,107 @@ impl PartialEq for VoxelGenerator {
         (Arc::ptr_eq(&self.world, &other.world) || self.world.hash() == other.world.hash())
             && self.floor == other.floor
             && self.at == other.at
+            && self.biomes == other.biomes
+    }
+}
+
+/// A world of blocks' biomes as an endless volume lays their ground: which
+/// is where, and what blocks each lays (see `voxear_terrain::generate::GpuBiomes`),
+/// with each block's colour, as sRGB, in the order the words name them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoxelBiomes {
+    pub words: Vec<u32>,
+    pub colours: Vec<[u8; 3]>,
+}
+
+impl VoxelBiomes {
+    fn number(&self, at: usize) -> f32 {
+        f32::from_bits(self.words[at])
+    }
+
+    /// The painted biome map's pixel `[px, pz]`, where it is painted
+    /// (`paintedPixel` in `shaders/generator.slang`).
+    fn painted(&self, map: usize, [px, pz]: [i32; 2]) -> Option<f32> {
+        let w = &self.words[map..];
+        let (tx, tz) = ((px >> 6) - w[1] as i32, (pz >> 6) - w[2] as i32);
+        let (across, down) = (w[3], w[4]);
+        if tx < 0 || tz < 0 || tx as u32 >= across || tz as u32 >= down {
+            return None;
+        }
+        let place = w[5 + tx as usize + across as usize * tz as usize];
+        if place == u32::MAX {
+            return None;
+        }
+        let at = 5 + (across * down) as usize + place as usize * 4096 + ((pz & 63) * 64 + (px & 63)) as usize;
+        Some(f32::from_bits(w[at])).filter(|value| !value.is_nan())
+    }
+
+    /// Which biome the place at `(x, z)` of the generator's world is, in
+    /// metres, with its climate there, as the GPU picks it (`biomeOf` in
+    /// `shaders/voxel_world.slang`): by its place in their list.
+    pub fn biome_of(&self, x: f32, z: f32, warmth: f32, wetness: f32, above_sea: f32) -> Option<usize> {
+        use voxear_terrain::noise::{NoiseStyle, fractal, gradient};
+        let count = *self.words.first()? as usize;
+        if count == 0 {
+            return None;
+        }
+        if self.words[9] != u32::MAX {
+            let map = self.words[9] as usize;
+            let spacing = f32::from_bits(self.words[map]);
+            let size = spacing * 3.0;
+            let wx = (fractal(NoiseStyle::Fractal, x / size, z / size, 2, 0x51) * 2.0 - 1.0) * spacing * 1.5;
+            let wz = (fractal(NoiseStyle::Fractal, x / size, z / size, 2, 0x7a) * 2.0 - 1.0) * spacing * 1.5;
+            let pixel = [((x + wx) / spacing).floor() as i32, ((z + wz) / spacing).floor() as i32];
+            if self.words[map + 3] != 0
+                && let Some(value) = self.painted(map, pixel)
+            {
+                let index = value.round();
+                if index >= 0.0 && index < count as f32 {
+                    return Some(index as usize);
+                }
+            }
+        }
+        let wander = self.number(1);
+        let (mut temperature, mut humidity) = (warmth, wetness);
+        if wander > 0.0 {
+            let (u, v) = (x / self.number(2), z / self.number(2));
+            let seed = self.words[3];
+            let off = |part: u32| {
+                (gradient(u, v, seed ^ part) + 0.4 * gradient(u * 3.7, v * 3.7, seed ^ part ^ 0x9E37_79B9)) * wander
+            };
+            temperature += off(1) * self.number(4);
+            humidity += off(2) * self.number(5);
+        }
+        let outside =
+            |low: f32, high: f32, value: f32, spread: f32| (low - value).max(value - high).max(0.0) / spread.max(1e-6);
+        let mut best: Option<(usize, f32, f32)> = None;
+        for i in 0..count {
+            let r = self.words[8] as usize + i * voxear_terrain::generate::GPU_BIOME_WORDS;
+            let t = outside(self.number(r), self.number(r + 1), temperature, self.number(4));
+            let h = outside(self.number(r + 2), self.number(r + 3), humidity, self.number(5));
+            let y = outside(self.number(r + 4), self.number(r + 5), above_sea, self.number(6));
+            let (away, reach) = (t * t + h * h + y * y, self.number(r + 6));
+            if best.is_none_or(|(_, least, narrowest)| away < least || (away == least && reach < narrowest)) {
+                best = Some((i, away, reach));
+            }
+        }
+        best.map(|(i, ..)| i)
+    }
+
+    /// Whether grass and trees grow on biome `biome`'s ground where it is
+    /// rocky, rises `across` voxels over four and stands `above_sea` metres
+    /// over the sea, as the GPU has it (`growsOn`): on its own ground, not
+    /// its steep ground's or its shore's, where its top block is green.
+    pub fn grows(&self, biome: usize, rock: bool, across: i32, above_sea: f32) -> bool {
+        let r = self.words[8] as usize + biome * voxear_terrain::generate::GPU_BIOME_WORDS;
+        let steep = self.words[r + 10] != u32::MAX && across as f32 / 4.0 >= self.number(r + 11);
+        let shore = self.words[r + 12] != u32::MAX && above_sea.abs() <= self.number(r + 13);
+        let top = self.words[r + 7];
+        let green = self
+            .colours
+            .get(top as usize)
+            .is_some_and(|&[red, g, b]| g > red.saturating_add(8) && g > b.saturating_add(8));
+        !rock && !steep && !shore && top != u32::MAX && green
     }
 }
 

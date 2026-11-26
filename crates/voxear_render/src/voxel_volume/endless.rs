@@ -23,8 +23,8 @@ use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, PAVING_COLORS, VoxelChanges, VoxelEdit, VoxelGenerator,
-    VoxelGround, VoxelMaterial, VoxelPrint, VoxelShape, VoxelTrees, VoxelVolume, edit,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, PAVING_COLORS, VoxelBiomes, VoxelChanges, VoxelEdit,
+    VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint, VoxelShape, VoxelTrees, VoxelVolume, edit,
     growth::{self, Growth},
     print,
     rivers::{self, ColumnWater, GpuVoxelWater, LaidRivers},
@@ -165,6 +165,8 @@ struct GpuWorldMake {
     edits: u64,
     job_edits: u64,
     prints: u64,
+    biomes: u64,
+    column_grounds: u64,
     rivers: u64,
     growth: u64,
     height: f32,
@@ -224,6 +226,9 @@ pub(crate) struct Endless {
     empty: Buffer,
     heights: Buffer,
     columns: Buffer,
+    /// What each column of a job is made of where it is a biome's ground,
+    /// beside its word in `columns` (`columnGrounds`).
+    column_grounds: Buffer,
     slots: Buffer,
     loose: Buffer,
     counters: Buffer,
@@ -240,6 +245,8 @@ pub(crate) struct Endless {
     /// the trees placed round each column being made, and room for what the
     /// column under each one's foot carries up.
     forest: Option<(Buffer, u32, f32)>,
+    /// Its generator's biomes as the GPU reads them, where it has any.
+    biomes: Option<Buffer>,
     /// What grows where: the areas its trees and cover keep to, and its
     /// cover's kinds.
     growth: Buffer,
@@ -359,17 +366,21 @@ fn volume_fields(make: &mut GpuWorldMake, cells: &GpuVolume, voxel: f32) {
     make.depth = voxels(cells.depth);
 }
 
-/// A program's words in a buffer the GPU reads.
+/// A program's words in a buffer the GPU reads, what its steps read beside
+/// their own numbers (painted maps) after them.
 fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
+    let words = [program.words.as_slice(), program.data.as_slice()].concat();
     let buffer = gpu.create_buffer(
         "voxel world program",
-        (program.words.len() as u64 * 4).max(16),
+        (words.len() as u64 * 4).max(16),
         vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
         MemoryLocation::GpuOnly,
     )?;
-    gpu.upload_buffer(&buffer, 0, bytemuck::cast_slice(&program.words))?;
+    for (i, piece) in bytemuck::cast_slice::<u32, u8>(&words).chunks(64 << 20).enumerate() {
+        gpu.upload_buffer(&buffer, (i * (64 << 20)) as u64, piece)?;
+    }
     Ok(buffer)
 }
 
@@ -454,6 +465,21 @@ fn nearest_of(colours: &[[u8; 4]], colour: [u8; 4]) -> usize {
     colours.iter().enumerate().min_by_key(|(_, c)| distance(c)).map_or(0, |(i, _)| i)
 }
 
+/// The place of `colour` among the palette's first colours, which every
+/// brick shares unless there are more than a bank's worth (a biome's
+/// blocks'), added where it is new, else the nearest there is: for the
+/// colours the ground is made of, before any print's.
+fn place_in(palette: &mut Vec<[u8; 4]>, colour: [u8; 4]) -> u8 {
+    if let Some(at) = palette.iter().take(256).position(|c| c[..3] == colour[..3]) {
+        return at as u8;
+    }
+    if palette.len() < 256 {
+        palette.push(colour);
+        return (palette.len() - 1) as u8;
+    }
+    nearest_of(&palette[..256], colour) as u8
+}
+
 /// The bank a palette place is in: none for a shared one.
 fn bank_of(place: usize) -> Option<usize> {
     match place {
@@ -535,21 +561,22 @@ fn place_table(palette: &mut Vec<[u8; 4]>, wanted: &[[u8; 4]]) -> Vec<u32> {
     places.into_iter().map(|place| place.unwrap_or(0) as u32).collect()
 }
 
-/// An endless volume's palette's colours, its own ground's, a generator's
-/// and its trees', and its trees as the GPU reads them, where it has any;
-/// with their plants' voxels too, with `models`.
+/// An endless volume's palette's colours, its own ground's, a generator's,
+/// its trees' and its biomes' blocks', and its trees as the GPU reads them,
+/// where it has any; with their plants' voxels too, with `models`; and its
+/// generator's biomes as the GPU reads them, where it has any.
 #[allow(clippy::type_complexity)]
 fn forest_buffers(
     gpu: &Gpu,
     volume: &VoxelVolume,
     models: bool,
-) -> Result<(Vec<[u8; 4]>, Option<(Buffer, u32, f32)>, Option<trees::Models>)> {
+) -> Result<(Vec<[u8; 4]>, Option<(Buffer, u32, f32)>, Option<trees::Models>, Option<Buffer>)> {
     // The pavings' colours after the ground's, where the shaders look for them, then the crops', then the trees'.
     let cover_colors = growth::cover_colors(&volume.cover);
     let first = (BASE_COLOURS + cover_colors.len()) as u32;
     let forest = trees::forest(&volume.trees, first);
     let tree_colors = forest.as_ref().map(|forest| forest.colors.clone()).unwrap_or_default();
-    let all: Vec<[u8; 4]> = GROUND_COLORS
+    let mut all: Vec<[u8; 4]> = GROUND_COLORS
         .iter()
         .chain(&GENERATED_COLORS)
         .chain(&PAVING_COLORS)
@@ -557,6 +584,21 @@ fn forest_buffers(
         .chain(&tree_colors)
         .copied()
         .collect();
+    let biomes = volume.generator.as_ref().and_then(|generator| generator.biomes.as_deref());
+    let biomes = match biomes.map(|biomes| biome_words(biomes, &mut all)) {
+        Some(words) => {
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+            let buffer =
+                gpu.create_buffer("voxel world biomes", words.len() as u64 * 4, usage, MemoryLocation::GpuOnly)?;
+            for (i, piece) in bytemuck::cast_slice::<u32, u8>(&words).chunks(64 << 20).enumerate() {
+                gpu.upload_buffer(&buffer, (i * (64 << 20)) as u64, piece)?;
+            }
+            Some(buffer)
+        }
+        None => None,
+    };
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
@@ -571,7 +613,29 @@ fn forest_buffers(
         }
         None => None,
     };
-    Ok((all, forest, made))
+    Ok((all, forest, made, biomes))
+}
+
+/// A generator's biomes as the GPU reads them (`biomeOf` in
+/// `shaders/voxel_world.slang`), each of their blocks' colours added to
+/// `palette` in two shades, its own and a darker: their words, and after
+/// them a word for each block, its colour's place in the palette, with a
+/// bit over it where grass grows on it, as on a green block. Where the
+/// palette is full, its nearest colours.
+fn biome_words(biomes: &VoxelBiomes, palette: &mut Vec<[u8; 4]>) -> Vec<u32> {
+    let mut words = biomes.words.clone();
+    // Where the blocks' places start, after the words.
+    if words.len() > 10 {
+        words[10] = words.len() as u32;
+    }
+    for &[r, g, b] in &biomes.colours {
+        let place = place_in(palette, [r, g, b, 255]);
+        let dark = |c: u8| (f32::from(c) * 0.86).round() as u8;
+        let shade = place_in(palette, [dark(r), dark(g), dark(b), 255]);
+        let green = g > r.saturating_add(8) && g > b.saturating_add(8);
+        words.push(u32::from(place) | u32::from(shade) << 8 | u32::from(green) << 16);
+    }
+    words
 }
 
 /// The words of what grows where on `volume` (see [`growth`]), as the GPU
@@ -669,7 +733,7 @@ impl Endless {
         let none = vk::BufferUsageFlags::empty();
         let jobs = MAX_JOBS as u64;
         let table = make("table", slots_in * u64::from(tall) * ENTRY_WORDS * 4, none)?;
-        let (colours, forest, made) = forest_buffers(gpu, volume, true)?;
+        let (colours, forest, made, biomes) = forest_buffers(gpu, volume, true)?;
         let palette = palette_buffer(gpu, &colours)?;
         let growth = growth_buffer(gpu, volume)?;
         let trees = make("trees", jobs * MAX_TREES * TREE_WORDS * 4, none)?;
@@ -680,6 +744,7 @@ impl Endless {
         gpu.upload_buffer(&empty, 0, bytemuck::cast_slice(&nothing))?;
         let heights = make("heights", jobs * SIDE * SIDE * 4, none)?;
         let columns = make("columns", jobs * TOPS * TOPS * 4, none)?;
+        let column_grounds = make("column grounds", jobs * TOPS * TOPS * 4, none)?;
         let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
@@ -757,6 +822,7 @@ impl Endless {
             empty,
             heights,
             columns,
+            column_grounds,
             slots,
             loose,
             counters,
@@ -765,6 +831,7 @@ impl Endless {
             program,
             volume: caves,
             forest,
+            biomes,
             growth,
             trees,
             tree_carried,
@@ -1110,7 +1177,7 @@ impl Endless {
             return Ok(None);
         }
         let (program, caves) = program_buffers(gpu, program)?;
-        let (colours, forest, _) = forest_buffers(gpu, volume, false)?;
+        let (colours, forest, _, biomes) = forest_buffers(gpu, volume, false)?;
         // The prints' and tints' colours placed again after the ground's and the trees', with every column made over.
         self.base_colours = colours.len();
         self.colours = colours;
@@ -1127,6 +1194,7 @@ impl Endless {
         gone.push(std::mem::replace(&mut self.palette, palette));
         gone.push(std::mem::replace(&mut self.growth, growth_buffer(gpu, volume)?));
         gone.extend(std::mem::replace(&mut self.forest, forest).map(|(buffer, _, _)| buffer));
+        gone.extend(std::mem::replace(&mut self.biomes, biomes));
         let laid = laid_rivers(gpu, volume, self.program.is_some(), self.window, self.forest.as_ref())?;
         gone.extend(std::mem::replace(&mut self.rivers, laid).map(|rivers| rivers.table));
         self.from = volume.clone();
@@ -1144,6 +1212,7 @@ impl Endless {
             &self.materials,
             &self.heights,
             &self.columns,
+            &self.column_grounds,
             &self.slots,
             &self.loose,
             &self.grounds,
@@ -1406,6 +1475,8 @@ impl Endless {
             reach: 0.0,
             depth: 0.0,
             forest: self.forest.as_ref().map_or(0, |(buffer, _, _)| buffer.address),
+            biomes: self.biomes.as_ref().map_or(0, |buffer| buffer.address),
+            column_grounds: self.column_grounds.address,
             trees: self.trees.address,
             tree_carried: self.tree_carried.address,
             tree_kinds: self.forest.as_ref().map_or(0, |(_, kinds, _)| *kinds),
@@ -1545,6 +1616,7 @@ impl Endless {
             self.empty,
             self.heights,
             self.columns,
+            self.column_grounds,
             self.slots,
             self.loose,
             self.counters,
@@ -1562,6 +1634,7 @@ impl Endless {
             self.placed,
         ];
         all.extend(self.forest.map(|(buffer, _, _)| buffer));
+        all.extend(self.biomes);
         all.extend(self.models);
         all.extend(self.edit_buffer);
         all.extend(self.print_buffer);
@@ -1668,15 +1741,17 @@ fn tinted_colours(colours: &[[u8; 4]], tint: [u8; 3]) -> Vec<[u8; 4]> {
 /// world, run on the GPU as an endless volume's columns and voxels run it:
 /// the ground's height in metres, how warm it is, how wet, its rock mask,
 /// and how far into its Volume's ground a cell `size` metres across at the
-/// place is (nothing where it has no Volume on the GPU). For checking the
-/// GPU against the CPU.
+/// place is (nothing where it has no Volume on the GPU); and with `biomes`,
+/// the biome the place is, by its place in their list (-1 for none). For
+/// checking the GPU against the CPU.
 pub(crate) fn generated_at(
     gpu: &Gpu,
     (pipelines, bindless): (&Pipelines, &Bindless),
     world: &WorldGen,
+    biomes: Option<&VoxelBiomes>,
     places: &[[f32; 3]],
     size: f32,
-) -> Result<Vec<[f32; 5]>> {
+) -> Result<Vec<[f32; 6]>> {
     let program = world.gpu_program().map_err(|names| anyhow::anyhow!("not on the GPU: {}", names.join(", ")))?;
     let code = program_buffer(gpu, &program)?;
     let cells = program.volume.as_ref().map(|cells| GpuProgram { words: cells.words.clone(), ..GpuProgram::default() });
@@ -1696,6 +1771,18 @@ pub(crate) fn generated_at(
     make.loose = made.address;
     make.candidate_room = places.len() as u32;
     make.voxel = size;
+    make.sea_level = world.sea_level();
+    let biome_buffer = match biomes {
+        Some(biomes) => {
+            let words = biome_words(biomes, &mut Vec::new());
+            let buffer =
+                gpu.create_buffer("generator biomes", words.len() as u64 * 4, usage, MemoryLocation::CpuToGpu)?;
+            buffer.write(0, &words);
+            make.biomes = buffer.address;
+            Some(buffer)
+        }
+        None => None,
+    };
     if let (Some(volume), Some(words)) = (&program.volume, &cells) {
         make.volume = words.address;
         volume_fields(&mut make, volume, size);
@@ -1708,8 +1795,8 @@ pub(crate) fn generated_at(
         gpu.device.cmd_dispatch(cmd, (places.len() as u32).div_ceil(64), 1, 1);
     })?;
     let words: &[f32] = bytemuck::cast_slice(&made.read()[..places.len() * 64]);
-    let out = words.chunks(16).map(|place| [place[0], place[1], place[2], place[3], place[4]]).collect();
-    for buffer in [code, asked, made, record].into_iter().chain(cells) {
+    let out = words.chunks(16).map(|place| [place[0], place[1], place[2], place[3], place[4], place[15]]).collect();
+    for buffer in [code, asked, made, record].into_iter().chain(cells).chain(biome_buffer) {
         gpu.destroy_buffer(buffer);
     }
     Ok(out)

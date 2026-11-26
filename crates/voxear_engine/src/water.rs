@@ -980,7 +980,12 @@ mod tests {
         let volume = voxear_render::VoxelVolume {
             size: Vec3::new(16.0, 48.0, 16.0),
             endless: true,
-            generator: Some(voxear_render::VoxelGenerator { world: generator.clone(), floor, at: [0.0, 0.0] }),
+            generator: Some(voxear_render::VoxelGenerator {
+                world: generator.clone(),
+                floor,
+                at: [0.0, 0.0],
+                biomes: None,
+            }),
             ..voxear_render::VoxelVolume::default()
         };
         (world.spawn((volume, Transform::default())), generator, floor)

@@ -267,7 +267,15 @@ impl<'a> Ground<'a> {
             let water = self.river(x, z).1;
             let above = top - sea;
             // Under a river's or a lake's water, or along its edge, is gravel and sand.
-            let kind = if rocky || across as f32 / 4.0 > 1.0 {
+            // On a world of blocks' biome's ground, as the GPU's tops pass has it: grass where its own ground's top
+            // block grows grass, else rock; a river's or a lake's bed is its sand or gravel all the same.
+            let biome = generator.biomes.as_deref().filter(|_| water <= top - 0.1).and_then(|biomes| {
+                let grows = biomes.biome_of(fx[i], fz[i], warm, wet, above)?;
+                Some(biomes.grows(grows, rocky, across, above))
+            });
+            let kind = if let Some(grows) = biome {
+                if grows { GRASS } else { ROCK }
+            } else if rocky || across as f32 / 4.0 > 1.0 {
                 ROCK
             } else if water > top - 0.1 {
                 if water > top + 0.3 { GRAVEL } else { SAND }
@@ -806,7 +814,7 @@ mod tests {
         let floor = alpine.height_at(40.0, 40.0) - 20.0;
         let generated = VoxelVolume {
             size: Vec3::new(16.0, 48.0, 16.0),
-            generator: Some(VoxelGenerator { world: alpine, floor, at: [0.0, 0.0] }),
+            generator: Some(VoxelGenerator { world: alpine, floor, at: [0.0, 0.0], biomes: None }),
             ..hills()
         };
         let low = [40 * 16 - 17, 20 * 16 - 17, 40 * 16 - 17];

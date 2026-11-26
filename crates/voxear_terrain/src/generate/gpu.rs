@@ -63,6 +63,19 @@ pub enum GpuOp {
     Push = 27,
     Tunnels = 28,
     Chambers = 29,
+    /// A Smooth node's ring of eight added, and its average with the middle.
+    SmoothRing = 30,
+    Smoothed = 31,
+    Peaks = 32,
+    /// How far from a Plateaus node's river line, and the tablelands cut.
+    Winding = 33,
+    Plateaus = 34,
+    /// The ground at a World Edge, and how far inside it a place is.
+    Edge = 35,
+    EdgeInside = 36,
+    /// A painted map read: its words follow the program's (see
+    /// [`GpuStep::data`]).
+    Painted = 37,
 }
 
 /// One step as a kernel writes it for the GPU: its operation and numbers.
@@ -72,11 +85,21 @@ pub(crate) struct GpuStep {
     pub words: Vec<u32>,
     /// What it leaves out of what it does on the CPU, if anything.
     pub left_out: Option<&'static str>,
+    /// Words it reads that are too many for its own, as a painted map's
+    /// pixels, known by a number so steps reading the same share them: they
+    /// follow the program's words, and where they start among them is the
+    /// step's first number.
+    pub data: Option<(u64, std::sync::Arc<Vec<u32>>)>,
 }
 
 impl GpuStep {
     pub fn new(op: GpuOp) -> Self {
-        Self { op, words: Vec::new(), left_out: None }
+        Self { op, words: Vec::new(), left_out: None, data: None }
+    }
+
+    pub fn reading(mut self, key: u64, data: std::sync::Arc<Vec<u32>>) -> Self {
+        self.data = Some((key, data));
+        self
     }
 
     pub fn number(mut self, number: f32) -> Self {
@@ -108,10 +131,12 @@ impl GpuStep {
 ///
 /// `words` holds each step in turn: its operation, how many rows it reads
 /// and the slots they are in, the slot it writes, how many numbers it has
-/// and the numbers.
+/// and the numbers. `data` follows `words` where the GPU reads them: what
+/// steps read that is too much for their own numbers, as painted maps.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuProgram {
     pub words: Vec<u32>,
+    pub data: Vec<u32>,
     pub steps: u32,
     /// How many slots its rows take.
     pub slots: u32,
@@ -184,9 +209,35 @@ fn lower(
     steps
 }
 
+/// What steps encoded read beside their own numbers, by where it starts
+/// among the words after the program's.
+#[derive(Default)]
+struct Data {
+    words: Vec<u32>,
+    starts: Vec<(u64, u32)>,
+}
+
+impl Data {
+    /// Where `data`, known by `key`, starts: added where it is not yet.
+    fn place(&mut self, key: u64, data: &[u32]) -> u32 {
+        if let Some((_, start)) = self.starts.iter().find(|(known, _)| *known == key) {
+            return *start;
+        }
+        let start = self.words.len() as u32;
+        self.words.extend_from_slice(data);
+        self.starts.push((key, start));
+        start
+    }
+}
+
 /// Steps as the words the shader reads, `kept` rows held to the end: the
 /// words, each row's slot, how many slots, and what the steps leave out.
-fn encode(steps: &[(GpuStep, Vec<u32>)], kept: &[u32]) -> Result<(Vec<u32>, Vec<u32>, u32, Vec<String>), String> {
+/// What they read beside their own numbers is put in `data`.
+fn encode(
+    steps: &[(GpuStep, Vec<u32>)],
+    kept: &[u32],
+    data: &mut Data,
+) -> Result<(Vec<u32>, Vec<u32>, u32, Vec<String>), String> {
     let (slot_of, slots) = slots(steps, kept);
     if slots > GPU_SLOTS as u32 {
         return Err(format!("{slots} rows at once, of {GPU_SLOTS}"));
@@ -198,7 +249,13 @@ fn encode(steps: &[(GpuStep, Vec<u32>)], kept: &[u32]) -> Result<(Vec<u32>, Vec<
         words.push(inputs.len() as u32);
         words.extend(inputs.iter().map(|&input| slot_of[input as usize]));
         words.push(slot_of[at]);
-        words.push(step.words.len() as u32);
+        match &step.data {
+            Some((key, read)) => {
+                words.push(step.words.len() as u32 + 1);
+                words.push(data.place(*key, read));
+            }
+            None => words.push(step.words.len() as u32),
+        }
         words.extend(&step.words);
         if let Some(what) = step.left_out
             && !left_out.iter().any(|known| known == what)
@@ -271,7 +328,7 @@ impl WorldGen {
             };
             let cells = lower(&voxels.cells, 0, given, &mut missing);
             let density = voxels.cells.outputs[0];
-            let made = encode(&cells, &[density]);
+            let made = encode(&cells, &[density], &mut Data::default());
             if let Err(error) = &made {
                 missing.push(error.clone());
             }
@@ -302,7 +359,8 @@ impl WorldGen {
                 left_out.push(format!("overhangs and caves ({})", missing.join(", ")));
             }
         }
-        let (words, slot_of, slots, made_left_out) = encode(&steps, &kept).map_err(|error| vec![error])?;
+        let mut data = Data::default();
+        let (words, slot_of, slots, made_left_out) = encode(&steps, &kept, &mut data).map_err(|error| vec![error])?;
         for what in made_left_out {
             if !left_out.contains(&what) {
                 left_out.push(what);
@@ -313,6 +371,7 @@ impl WorldGen {
             volume.map(|(carried, volume)| GpuVolume { carried: carried.into_iter().map(slot).collect(), ..volume });
         Ok(GpuProgram {
             words,
+            data: data.words,
             steps: steps.len() as u32,
             slots,
             height: slot(outputs[0]),

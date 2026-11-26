@@ -152,6 +152,10 @@ struct WorldMake
     uint* edits;
     uint* jobEdits;
     uint* prints;
+    // A world of blocks' biomes and the places of their blocks' colours, where the generator has any (biomeOf).
+    uint* biomes;
+    // What each column of a job is made of where it is a biome's ground (GROUND_BIOMES on), else 0, beside its word.
+    uint* columnGrounds;
     // A generator's rivers, laid in from the CPU (src/voxel_volume/rivers.rs): for each slot of a window of columns
     // a little wider than the volume's, `riverWindow` a side, the column it holds and its points; none without rivers.
     uint* rivers;
@@ -305,6 +309,20 @@ bool columnBare(uint column)
 bool columnCovered(uint column)
 {
     return ((column >> 23) & 1u) != 0;
+}
+
+// What the ground of column (x, z) of a job is made of, its word `column`: its biome's ground where it has one.
+uint groundTop(WorldMake* make, uint job, int x, int z, uint column)
+{
+    if (make->biomes != nullptr)
+    {
+        uint ground = make->columnGrounds[job * TOPS * TOPS + uint((z + TOP_BORDER) * TOPS + x + TOP_BORDER)];
+        if (ground != 0)
+        {
+            return ground;
+        }
+    }
+    return columnTop(column);
 }
 
 // The voxel `y` up of what grows on a column whose ground's top is `base` voxels high: its head's material at the top,
@@ -512,6 +530,149 @@ uint groundKind(WorldMake* make, int h, int across, float warmth, float wetness,
     return GROUND_GRASS;
 }
 
+// A world of blocks' biomes (generate/biomes.rs, WorldBiomes::gpu): how many, the header's words, and each biome's
+// record of BIOME_WORDS; a column's ground of a biome is GROUND_BIOMES and four times its biome, and which of its
+// grounds it is: its own, its steep ground's, its shore's or bare rock.
+static const uint BIOME_WORDS = 16;
+static const uint GROUND_BIOMES = 8;
+static const uint BIOME_OWN = 0;
+static const uint BIOME_STEEP = 1;
+static const uint BIOME_SHORE = 2;
+static const uint BIOME_BARE = 3;
+
+// How far a measure lies outside a biome's range, in shares of its spread (BiomeDef::outside).
+float outsideOf(float low, float high, float value, float spread)
+{
+    float under = low - value;
+    float over = value - high;
+    return max(max(under, over), 0.0) / max(spread, 1e-6);
+}
+
+// Which biome the place at (x, z) of the generator's world is, in metres, with its climate there: the one painted
+// nearest a place moved a little by noise, so painted biomes meet with ragged edges; else the one its climate is
+// nearest, read a little off by noise, so borders wander (WorldBiomes::index_at, Biomes::at). -1 for none.
+int biomeOf(WorldMake* make, float x, float z, float warmth, float wetness, float aboveSea)
+{
+    uint* b = make->biomes;
+    uint count = b[0];
+    if (count == 0u)
+    {
+        return -1;
+    }
+    if (b[9] != 0xFFFFFFFFu)
+    {
+        uint* map = b + b[9];
+        float spacing = asfloat(map[0]);
+        float size = spacing * 3.0;
+        float wx = (fractalNoise(0, x / size, z / size, 2, 0x51u) * 2.0 - 1.0) * spacing * 1.5;
+        float wz = (fractalNoise(0, x / size, z / size, 2, 0x7au) * 2.0 - 1.0) * spacing * 1.5;
+        float value;
+        if (map[3] != 0u && paintedPixel(map, int(floor((x + wx) / spacing)), int(floor((z + wz) / spacing)), value))
+        {
+            float index = round(value);
+            if (index >= 0.0 && index < float(count))
+            {
+                return int(index);
+            }
+        }
+    }
+    float wander = asfloat(b[1]);
+    float temperature = warmth;
+    float humidity = wetness;
+    if (wander > 0.0)
+    {
+        float u = x / asfloat(b[2]);
+        float v = z / asfloat(b[2]);
+        uint seed = b[3];
+        float off1 = (gradientNoise(u, v, seed ^ 1u) + 0.4 * gradientNoise(u * 3.7, v * 3.7, seed ^ 1u ^ 0x9E3779B9u)) * wander;
+        float off2 = (gradientNoise(u, v, seed ^ 2u) + 0.4 * gradientNoise(u * 3.7, v * 3.7, seed ^ 2u ^ 0x9E3779B9u)) * wander;
+        temperature += off1 * asfloat(b[4]);
+        humidity += off2 * asfloat(b[5]);
+    }
+    int best = -1;
+    float least = 0.0;
+    float narrowest = 0.0;
+    for (uint i = 0; i < count; i++)
+    {
+        uint* r = b + b[8] + i * BIOME_WORDS;
+        float t = outsideOf(asfloat(r[0]), asfloat(r[1]), temperature, asfloat(b[4]));
+        float h = outsideOf(asfloat(r[2]), asfloat(r[3]), humidity, asfloat(b[5]));
+        float y = outsideOf(asfloat(r[4]), asfloat(r[5]), aboveSea, asfloat(b[6]));
+        float away = t * t + h * h + y * y;
+        float reach = asfloat(r[6]);
+        if (best < 0 || away < least || (away == least && reach < narrowest))
+        {
+            best = int(i);
+            least = away;
+            narrowest = reach;
+        }
+    }
+    return best;
+}
+
+// What the ground is at voxel column `voxel` of the world, `h` voxels high where its height changes by `across`
+// voxels over four, as warm, wet and rocky as the generator says, a river's or lake's water `water` metres high: of its biome's blocks where the generator is a world
+// of blocks' (BiomeBlocks::at), else grass, rock, sand, snow or gravel.
+uint groundAt(WorldMake* make, int2 voxel, int h, int across, float warmth, float wetness, bool rock, float water)
+{
+    // A river's or a lake's bed is its sand or gravel, whatever biome it runs through.
+    if (make->biomes == nullptr || water > float(h) * make->voxel + make->floor - 0.1)
+    {
+        return groundKind(make, h, across, warmth, wetness, rock, water);
+    }
+    float v = make->voxel;
+    float x = (float(voxel.x) + 0.5) * v + make->atX;
+    float z = (float(voxel.y) + 0.5) * v + make->atZ;
+    float above = float(h) * v + make->floor - make->seaLevel;
+    int biome = biomeOf(make, x, z, warmth, wetness, above);
+    if (biome < 0)
+    {
+        return groundKind(make, h, across, warmth, wetness, rock, water);
+    }
+    uint* r = make->biomes + make->biomes[8] + uint(biome) * BIOME_WORDS;
+    uint kind = BIOME_OWN;
+    if (rock)
+    {
+        kind = BIOME_BARE;
+    }
+    else if (r[10] != 0xFFFFFFFFu && float(across) / 4.0 >= asfloat(r[11]))
+    {
+        kind = BIOME_STEEP;
+    }
+    else if (r[12] != 0xFFFFFFFFu && abs(above) <= asfloat(r[13]))
+    {
+        kind = BIOME_SHORE;
+    }
+    return GROUND_BIOMES + uint(biome) * 4u + kind;
+}
+
+// Whether grass, flowers and trees grow on ground `top`: grass, or a biome's own ground of a green block.
+bool growsOn(WorldMake* make, uint top)
+{
+    if (top < GROUND_BIOMES)
+    {
+        return top == GROUND_GRASS;
+    }
+    uint biome = (top - GROUND_BIOMES) >> 2;
+    if (((top - GROUND_BIOMES) & 3u) != BIOME_OWN)
+    {
+        return false;
+    }
+    uint block = make->biomes[make->biomes[8] + biome * BIOME_WORDS + 7];
+    return block != 0xFFFFFFFFu && ((make->biomes[make->biomes[10] + block] >> 16) & 1u) != 0u;
+}
+
+// The colour of a block a biome names, by its place in its blocks, in one of its two shades, or none.
+uint biomeBlock(WorldMake* make, uint block, float grain)
+{
+    if (block == 0xFFFFFFFFu)
+    {
+        return 0u;
+    }
+    uint places = make->biomes[make->biomes[10] + block];
+    return (grain < 0.55 ? places & 255u : (places >> 8) & 255u) + 1u;
+}
+
 // What the ground is at a column of the generator's: its height and how steep it is round it, and its climate.
 uint groundOf(WorldMake* make, uint job, int x, int z)
 {
@@ -520,13 +681,47 @@ uint groundOf(WorldMake* make, uint job, int x, int z)
     uint climate = make->grounds[job * SIDE * SIDE + uint((z + BORDER) * SIDE + x + BORDER)];
     float warmth = float(climate & 255u) - 128.0;
     float wetness = float((climate >> 8) & 255u) / 255.0;
-    int2 at = make->jobs[job].column * 64 + int2(x, z);
-    return groundKind(make, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0, riverAt(make, at.x, at.y).y);
+    int2 voxel = make->jobs[job].column * 64 + int2(x, z);
+    return groundAt(make, voxel, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0, riverAt(make, voxel.x, voxel.y).y);
 }
 
 uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
 {
     float grain = unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 31));
+    if (top >= GROUND_BIOMES && make->biomes != nullptr)
+    {
+        // A biome's blocks down from the top: its top block a block deep, its under block as deep as it says, then
+        // its deep block (generate/blocks columns_at); steep ground its steep block, a shore its shore block, bare
+        // rock its deep block all the way.
+        uint* r = make->biomes + make->biomes[8] + ((top - GROUND_BIOMES) >> 2) * BIOME_WORDS;
+        uint kind = (top - GROUND_BIOMES) & 3u;
+        float block = max(asfloat(make->biomes[11]), make->voxel);
+        float down = float(under) * make->voxel;
+        uint upper = r[7];
+        uint lower = r[8];
+        if (kind == BIOME_STEEP)
+        {
+            upper = r[10];
+            lower = r[10];
+        }
+        else if (kind == BIOME_SHORE)
+        {
+            upper = r[12];
+            lower = r[8] == 0xFFFFFFFFu ? r[12] : r[8];
+        }
+        else if (kind == BIOME_BARE)
+        {
+            upper = r[9];
+            lower = r[9];
+        }
+        uint chosen = down < block ? upper : (down < block + asfloat(r[14]) ? lower : r[9]);
+        uint made = biomeBlock(make, chosen, grain);
+        if (made != 0u)
+        {
+            return made;
+        }
+        top = GROUND_ROCK;
+    }
     switch (top)
     {
     case GROUND_ROCK:
@@ -934,6 +1129,14 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     uint seed = make->seed + 21;
     uint r = hashOf(x, 0, z, seed);
     uint blade = 0;
+    // A biome's ground: the kind its grass, cover and flowers go by is grass where its top block grows grass, else
+    // rock; what it is made of is kept beside the column's word.
+    uint biomeGround = 0;
+    if (top >= GROUND_BIOMES)
+    {
+        biomeGround = top;
+        top = growsOn(make, top) ? GROUND_GRASS : GROUND_ROCK;
+    }
     uint stem = 3 + (r & 3u);
     uint head = 7;
     uint headLength = 0;
@@ -946,6 +1149,15 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
         blade = 1 + uint(unit(hashOf(x, 1, z, seed)) * tallest);
         headLength = float(blade) * make->voxel > 0.2 ? 1u : 0u;
     }
+    // A biome's blades are its top block's colour, a shade each, their heads its own.
+    if (biomeGround != 0 && !covered && make->biomes != nullptr)
+    {
+        uint block = make->biomes[make->biomes[8] + ((biomeGround - GROUND_BIOMES) >> 2) * BIOME_WORDS + 7];
+        uint places = make->biomes[make->biomes[10] + block];
+        stem = min((((r >> 4) & 1u) == 0u ? places & 255u : (places >> 8) & 255u) + 1u, 255u);
+        head = min((places & 255u) + 1u, 255u);
+    }
+    make->columnGrounds[job * TOPS * TOPS + id.x] = biomeGround;
     make->columns[job * TOPS * TOPS + id.x] = min(blade, 255u) | (stem << 8) | (top << 16) | (bare ? 1u << 19 : 0u)
         | (min(headLength, 7u) << 20) | (flowers ? 0u : 1u << 23) | (head << 24);
 }
@@ -1071,7 +1283,7 @@ bool grassAt(WorldMake* make, int2 foot, uint* carried, out int h)
         return false;
     }
     int across = max(abs(east - west), abs(north - south));
-    if (groundKind(make, h, across, made.warmth, made.wetness, made.rock > 0.5, river.y) != GROUND_GRASS)
+    if (!growsOn(make, groundAt(make, foot, h, across, made.warmth, made.wetness, made.rock > 0.5, river.y)))
     {
         return false;
     }
@@ -1919,8 +2131,9 @@ uint volumeVoxel(WorldMake* make, uint job, uint column, int h, int3 l, int3 p)
     {
         return 0;
     }
-    uint top = columnTop(column);
-    int under = surfaceOf(make, job, p.x - make->jobs[job].column.x * 64, p.z - make->jobs[job].column.y * 64) - p.y;
+    int2 local = int2(p.x, p.z) - make->jobs[job].column * 64;
+    uint top = groundTop(make, job, local.x, local.y, column);
+    int under = surfaceOf(make, job, local.x, local.y) - p.y;
     // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not.
     if (under > 8 || under < -2)
     {
@@ -2128,7 +2341,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
                 || !solidNear(l, int3(-1, 0, 0)) || !solidNear(l, int3(0, 0, 1)) || !solidNear(l, int3(0, 0, -1));
             if (seen)
             {
-                m = groundVoxel(make, columnTop(column), max(h - y, 0), here);
+                m = groundVoxel(make, groundTop(make, job, px, pz, column), max(h - y, 0), here);
             }
         }
         else if (y > h && underEdit < 0)
@@ -2157,7 +2370,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     else if (h >= 0 && y <= h && y >= max(lowOf(make, job, px, pz), 0))
     {
-        m = groundVoxel(make, columnTop(column), h - y, int3(corner.x + px, y, corner.y + pz));
+        m = groundVoxel(make, groundTop(make, job, px, pz, column), h - y, int3(corner.x + px, y, corner.y + pz));
     }
     else if (y > h)
     {
@@ -2641,6 +2854,9 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     out[2] = asuint(slots[min(outs.z, GENERATOR_SLOTS - 1)]);
     out[3] = asuint(outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0);
     out[4] = 0;
+    // The biome the place is, where there are biomes (biomeOf).
+    float height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
+    out[15] = asuint(make->biomes == nullptr ? -1.0 : float(biomeOf(make, x, z, asfloat(out[1]), asfloat(out[2]), height - make->seaLevel)));
     if (make->volumeWords == 0)
     {
         return;

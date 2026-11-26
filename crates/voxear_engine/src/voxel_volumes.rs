@@ -113,8 +113,8 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_assets::AssetGuid;
 use voxear_render::{
-    VoxelArea, VoxelAreaRules, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator, VoxelGround, VoxelKind,
-    VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume,
+    VoxelArea, VoxelAreaRules, VoxelBiomes, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator,
+    VoxelGround, VoxelKind, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume,
 };
 
 use crate::content::Content;
@@ -137,7 +137,8 @@ pub struct VoxelVolumeData {
     pub endless: bool,
     pub reach: f32,
     /// The world generator an endless volume's ground is made by, a
-    /// reference to a `.worldgen`: none for its own ground.
+    /// reference to a `.worldgen`, or to a generated world of blocks for
+    /// the ground its chunks are made of: none for its own ground.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generator: Option<String>,
     /// How high the generator's ground is at the volume's floor, in metres
@@ -535,16 +536,19 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         }
     }
     let generator = data.generator.as_deref().and_then(|reference| {
-        let found = content.world_gen(reference);
+        let found = generator_of(content, reference);
         if found.is_none() {
-            tracing::warn!("a Voxel Volume's generator {reference} is not a world generator in the project");
+            tracing::warn!(
+                "a Voxel Volume's generator {reference} is not a world generator or a generated world of blocks in the project"
+            );
         }
         found
     });
-    let generator = generator.map(|world| VoxelGenerator {
+    let generator = generator.map(|(world, biomes)| VoxelGenerator {
         floor: data.generator_floor.unwrap_or_else(|| auto_floor(&world, data)),
         at: data.generator_at,
         world,
+        biomes,
     });
     let trees = data.trees.iter().filter_map(|kind| trees_of(content, kind)).collect();
     VoxelVolume {
@@ -689,6 +693,28 @@ pub fn unset_voxels(world: &mut World, points: &[Vec3], only: Option<Entity>) {
             changes.unset(((*point - corner) * per).floor().as_ivec3());
         }
     }
+}
+
+/// The world generator `reference` names: a `.worldgen`, or a world of
+/// blocks' ground generator, as its chunks are made by it (its biomes'
+/// land, its painted maps, its rivers; see `blocks::world_ground`), with
+/// its biomes, whose blocks the volume's ground is then made of.
+fn generator_of(
+    content: &mut Content,
+    reference: &str,
+) -> Option<(Arc<voxear_terrain::generate::WorldGen>, Option<Arc<VoxelBiomes>>)> {
+    let guid = content.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+    if content.db().get(guid).map(|entry| entry.kind) != Some(voxear_assets::AssetKind::BlockWorld) {
+        return content.world_gen(reference).map(|world| (world, None));
+    }
+    let found = crate::blocks::world_ground(content, guid)?;
+    let biomes = found.biomes.as_ref().filter(|placed| !placed.biomes.is_empty()).map(|placed| {
+        let own = [found.ground.top, found.ground.under, found.ground.bottom];
+        let gpu = placed.gpu(own, found.ground.under_depth, found.block_size);
+        let colour = |block: u16| found.colours.get(usize::from(block)).copied().unwrap_or([128; 3]);
+        Arc::new(VoxelBiomes { colours: gpu.blocks.iter().map(|&block| colour(block)).collect(), words: gpu.words })
+    });
+    Some((found.generator, biomes))
 }
 
 /// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Box` and the other shapes, `Voxels.Dig` and
@@ -1324,6 +1350,7 @@ mod timing {
         let hills = voxear_terrain::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap().world(7, 1.0);
         let hills = Arc::new(hills);
         let floor = hills.height_at(8.0, 8.0) - 24.0;
+        let generator = VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0], biomes: None };
         let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
         let pine = PlantDef { kind: PlantKind::Conifer, height: [12.0, 17.0], trunk: 1.0, crown_width: [5.0, 7.0], crown_height: [9.0, 13.0], ..PlantDef::default() };
         let trees = vec![
@@ -1332,8 +1359,8 @@ mod timing {
         ];
         for (name, generator, trees) in [
             ("own hills", None, Vec::new()),
-            ("Rolling Hills", Some(VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0] }), Vec::new()),
-            ("Rolling Hills, 100 trees a hectare", Some(VoxelGenerator { world: hills.clone(), floor, at: [0.0, 0.0] }), trees),
+            ("Rolling Hills", Some(generator.clone()), Vec::new()),
+            ("Rolling Hills, 100 trees a hectare", Some(generator), trees),
         ] {
             let mut world = World::new();
             voxear_scene::register_obj_components(&mut world);

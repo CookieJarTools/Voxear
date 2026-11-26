@@ -342,7 +342,7 @@ fn loosen(
         }
         world.insert(obj, PieceSpeed::default());
         if let Some(hinge) = hinge {
-            hinge_piece(world, obj, place, corner + hinge.point, hinge.holds);
+            hinge_piece(world, obj, place, corner + hinge.point, hinge.holds, hinge.bears);
         }
         crate::voxel_ropes::catch(world, obj, &piece, corner);
         rehinge_onto(world, obj, &piece, corner);
@@ -367,7 +367,13 @@ const HOLD_STILL: f32 = 0.3;
 pub struct PieceHinge {
     pub anchor: Vec3,
     pub holds: f32,
+    /// How much weight may hang from it, in newtons.
+    pub bears: f32,
     pub bending: bool,
+    /// How long it and all hinged beyond it have not bent, in seconds, and
+    /// whether that is long enough for it to come to rest.
+    pub unbent: f32,
+    pub settled: bool,
 }
 
 impl Component for PieceHinge {}
@@ -375,7 +381,7 @@ impl Component for PieceHinge {}
 /// Hinges piece `obj`, whose Obj is at `place`, to what stands at `point`
 /// in the world: it turns about the line through there square to the way
 /// its weight hangs from it.
-fn hinge_piece(world: &mut World, obj: Entity, place: Vec3, point: Vec3, holds: f32) {
+fn hinge_piece(world: &mut World, obj: Entity, place: Vec3, point: Vec3, holds: f32, bears: f32) {
     let out = (place - point) * Vec3::new(1.0, 0.0, 1.0);
     // Turning about this, its weight goes down: out across, down.
     let axis = out.cross(Vec3::NEG_Y).normalize_or(Vec3::X);
@@ -388,7 +394,41 @@ fn hinge_piece(world: &mut World, obj: Entity, place: Vec3, point: Vec3, holds: 
         ..crate::physics::Joint::default()
     };
     world.insert(obj, joint);
-    world.insert(obj, PieceHinge { anchor, holds, bending: false });
+    world.insert(obj, PieceHinge { anchor, holds, bears, bending: false, unbent: 0.0, settled: false });
+    // Where what it broke from has come loose already, hinged to that piece.
+    let holding = world
+        .query_ref::<(Entity, &VoxelPieceBody, &Transform)>()
+        .into_iter()
+        .filter(|(e, body, _)| *e != obj && body.built)
+        .find(|(_, body, t)| {
+            let piece = &body.piece;
+            let local = (t.rotation.inverse() * (point - t.position) + body.middle) / piece.voxel;
+            let cells: std::collections::HashSet<[u16; 3]> = piece.voxels.iter().map(|(c, _)| *c).collect();
+            (0..27).any(|i| {
+                let c = (local + Vec3::new((i % 3 - 1) as f32, (i / 3 % 3 - 1) as f32, (i / 9 - 1) as f32)).floor();
+                c.cmpge(Vec3::ZERO).all() && cells.contains(&c.to_array().map(|a| a as u16))
+            })
+        })
+        .map(|(e, ..)| e);
+    if let Some(holding) = holding.filter(|holding| !hinged_beyond(world, obj, *holding))
+        && let Some(joint) = world.get_mut::<crate::physics::Joint>(obj)
+    {
+        joint.connected = Some(holding);
+    }
+}
+
+/// Whether hinging `piece` onto `holder` would close a loop: `holder` is
+/// hinged, through others or at once, onto `piece`.
+fn hinged_beyond(world: &World, piece: Entity, holder: Entity) -> bool {
+    let mut at = Some(holder);
+    for _ in 0..64 {
+        match at {
+            Some(e) if e == piece => return true,
+            Some(e) => at = world.get::<crate::physics::Joint>(e).and_then(|joint| joint.connected),
+            None => return false,
+        }
+    }
+    true
 }
 
 /// Hinges each piece hinged to the world at a point the new piece `obj`
@@ -407,7 +447,10 @@ fn rehinge_onto(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: Vec3
             let c = (local + Vec3::new((i % 3 - 1) as f32, (i / 3 % 3 - 1) as f32, (i / 9 - 1) as f32)).floor();
             c.cmpge(Vec3::ZERO).all() && cells.contains(&c.to_array().map(|a| a as u16))
         });
-        if near && let Some(joint) = world.get_mut::<crate::physics::Joint>(other) {
+        if near
+            && !hinged_beyond(world, other, obj)
+            && let Some(joint) = world.get_mut::<crate::physics::Joint>(other)
+        {
             joint.connected = Some(obj);
         }
     }
@@ -416,28 +459,53 @@ fn rehinge_onto(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: Vec3
 /// Bends the hinged pieces whose weight turns them harder than their hinge
 /// holds, a little each step, and snaps those bent too far.
 fn bend(world: &mut World, dt: f32) {
-    let hinged: Vec<(Entity, PieceHinge, f32, Vec3, Quat, PieceFall)> = world
-        .query_ref::<(Entity, &PieceHinge, &VoxelPieceBody, &Transform)>()
+    let hinged: Vec<(Entity, PieceHinge, f32, Vec3, Quat, PieceFall, Option<Entity>)> = world
+        .query_ref::<(Entity, &PieceHinge, &VoxelPieceBody, &Transform, &crate::physics::Joint)>()
         .into_iter()
-        .map(|(e, hinge, body, t)| (e, *hinge, body.piece.mass, t.position, t.rotation, body.fall))
+        .map(|(e, hinge, body, t, joint)| {
+            (e, *hinge, body.piece.mass, t.position, t.rotation, body.fall, joint.connected)
+        })
         .collect();
-    for (entity, hinge, mass, position, rotation, fall) in hinged {
+    // Hinged onto a piece stamped back or taken away since: onto where it lay, the world.
+    for &(entity, .., connected) in &hinged {
+        if connected.is_some_and(|holder| !world.is_alive(holder))
+            && let Some(joint) = world.get_mut::<crate::physics::Joint>(entity)
+        {
+            joint.connected = None;
+        }
+    }
+    for &(entity, hinge, _, position, rotation, fall, _) in &hinged {
         if fall != PieceFall::Falling {
             continue;
         }
         let point = position + rotation * hinge.anchor;
-        let lever = ((position - point) * Vec3::new(1.0, 0.0, 1.0)).length();
-        let turning = mass * 9.81 * lever;
+        // Its weight about its hinge, with the weight of every piece hinged on beyond it.
+        let (mut turning, mut hanging) = (0.0, 0.0);
+        let mut beyond = vec![entity];
+        let mut at = 0;
+        while at < beyond.len() && beyond.len() <= hinged.len() {
+            let piece = beyond[at];
+            at += 1;
+            if let Some(&(_, _, mass, middle, ..)) = hinged.iter().find(|h| h.0 == piece) {
+                turning += mass * 9.81 * ((middle - point) * Vec3::new(1.0, 0.0, 1.0)).length();
+                hanging += mass * 9.81;
+            }
+            let more: Vec<Entity> =
+                hinged.iter().filter(|h| h.6 == Some(piece) && !beyond.contains(&h.0)).map(|h| h.0).collect();
+            beyond.extend(more);
+        }
         let bent = 2.0 * rotation.w.abs().min(1.0).acos().to_degrees();
-        if bent > GIVE {
-            // Bent too far: it tears off.
+        if bent > GIVE || hanging > hinge.bears {
+            // Bent too far, or pulled harder than it holds hanging: it tears off.
             world.remove::<crate::physics::Joint>(entity);
             world.remove::<PieceHinge>(entity);
             raise_dust(world, std::iter::once(point));
             continue;
         }
         let bending = turning > hinge.holds;
-        let limits = if bending { [-HOLD_STILL, BEND_RATE * dt] } else { [-HOLD_STILL, HOLD_STILL] };
+        // Bending, it may turn a little either way, and its weight turns it down; held, hardly at all.
+        let step = BEND_RATE * dt;
+        let limits = if bending { [-step, step] } else { [-HOLD_STILL, HOLD_STILL] };
         // A joint made again where its piece is now: bending, each step lets it turn a little further.
         if (bending || hinge.bending)
             && let Some(joint) = world.get_mut::<crate::physics::Joint>(entity)
@@ -446,6 +514,24 @@ fn bend(world: &mut World, dt: f32) {
         }
         if let Some(kept) = world.get_mut::<PieceHinge>(entity) {
             kept.bending = bending;
+            kept.unbent = if bending { 0.0 } else { kept.unbent + dt };
+        }
+    }
+    // Settled where it and every piece hinged beyond it has not bent for a second.
+    for &(entity, ..) in &hinged {
+        let mut beyond = vec![entity];
+        let mut at = 0;
+        let mut quiet = true;
+        while at < beyond.len() && beyond.len() <= hinged.len() {
+            let piece = beyond[at];
+            at += 1;
+            quiet &= world.get::<PieceHinge>(piece).is_none_or(|h| h.unbent >= 1.0);
+            let more: Vec<Entity> =
+                hinged.iter().filter(|h| h.6 == Some(piece) && !beyond.contains(&h.0)).map(|h| h.0).collect();
+            beyond.extend(more);
+        }
+        if let Some(kept) = world.get_mut::<PieceHinge>(entity) {
+            kept.settled = quiet;
         }
     }
 }

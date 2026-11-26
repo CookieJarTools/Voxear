@@ -814,6 +814,13 @@ pub(crate) fn register() {
         let carve = fill == -1;
         settling(world, carve, at - reach, at + reach, |world| from_script(world, at.to_array(), radius, fill))
     });
+    voxear_scripting::set_voxel_ropes(|world, act, n, obj| match act {
+        0 => {
+            let (tied, holds) = (Vec3::new(n[0], n[1], n[2]), Vec3::new(n[3], n[4], n[5]));
+            Some(crate::voxel_ropes::hang(world, tied, holds, n[6], n[7]))
+        }
+        _ => obj.filter(|obj| crate::voxel_ropes::cut(world, *obj)),
+    });
     voxear_scripting::set_voxel_blasts(|world, at, radius, pieces, throw| {
         use crate::voxel_collapse::{BlastOptions, blast};
         use crate::voxel_felling::CutPieces;

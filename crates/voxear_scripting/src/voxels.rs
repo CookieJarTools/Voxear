@@ -428,6 +428,28 @@ pub(crate) unsafe extern "C" fn voxel_blast(at: *const [f32; 3], radius: f32, pi
     made[0]
 }
 
+/// What answers `Voxels.Hang` and `Voxels.CutRope`: with `act` 0 a rope
+/// tied at `numbers[0..3]` holding the point `numbers[3..6]`, `numbers[6]`
+/// metres long and snapping at `numbers[7]` newtons (0 for as far as
+/// between them, and never), giving its Obj; with `act` 1 rope `obj` cut,
+/// giving it back where it was one not cut already.
+pub type VoxelRopes = fn(&mut World, i32, [f32; 8], Option<Entity>) -> Option<Entity>;
+
+static ROPES: OnceLock<VoxelRopes> = OnceLock::new();
+
+/// Sets what answers `Voxels.Hang` and `Voxels.CutRope`; the first set is kept.
+pub fn set_voxel_ropes(ropes: VoxelRopes) {
+    let _ = ROPES.set(ropes);
+}
+
+/// `Voxels.Hang` (`act` 0) and `Voxels.CutRope` (1): the rope's Obj, or 0.
+pub(crate) unsafe extern "C" fn voxel_rope(act: i32, numbers: *const [f32; 8], obj: u64) -> u64 {
+    let Some(ropes) = ROPES.get() else { return 0 };
+    let numbers = if numbers.is_null() { [0.0; 8] } else { unsafe { *numbers } };
+    let obj = (obj != 0).then(|| Entity::from_bits(obj));
+    with_world(|world| ropes(world, act, numbers, obj)).map_or(0, Entity::to_bits)
+}
+
 /// What answers `Voxels.Piece`, `Voxels.Stamp` and `Voxels.Remove`: what
 /// felled piece an Obj is, and with `act` 1 it stamped back where it lies, 2
 /// taken away; none for an Obj that is not one.

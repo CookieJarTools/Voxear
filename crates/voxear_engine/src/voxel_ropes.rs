@@ -29,16 +29,24 @@ use crate::{
 /// `hangs` metres from there (along the world's axes), `length` metres long
 /// (0 for as long as from its Obj to that point), snapping when pulled
 /// harder than `strength` newtons (0 for never).
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// ```toml
+/// [obj.voxel_rope]
+/// hangs = [0.0, -3.0, 0.0]
+/// length = 3.5        # left out, as far as to the point it holds
+/// strength = 20000.0  # newtons; left out, it never snaps
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct VoxelRope {
-    pub hangs: Vec3,
+    pub hangs: [f32; 3],
     pub length: f32,
     pub strength: f32,
 }
 
 impl Default for VoxelRope {
     fn default() -> Self {
-        Self { hangs: Vec3::new(0.0, -2.0, 0.0), length: 0.0, strength: 0.0 }
+        Self { hangs: [0.0, -2.0, 0.0], length: 0.0, strength: 0.0 }
     }
 }
 
@@ -48,7 +56,7 @@ impl VoxelRope {
     /// How long it is: as given, or as far as from where it is tied to the
     /// point it holds.
     pub fn long(&self) -> f32 {
-        if self.length > 0.0 { self.length } else { self.hangs.length() }
+        if self.length > 0.0 { self.length } else { Vec3::from(self.hangs).length() }
     }
 }
 
@@ -81,7 +89,7 @@ fn ropes(world: &World) -> Vec<(Entity, VoxelRope, Vec3)> {
 /// built, `length` metres long (0 for as far as between them) and snapping
 /// at `strength` newtons (0 for never): its Obj.
 pub fn hang(world: &mut World, tied: Vec3, holds: Vec3, length: f32, strength: f32) -> Entity {
-    let rope = VoxelRope { hangs: holds - tied, length: length.max(0.0), strength: strength.max(0.0) };
+    let rope = VoxelRope { hangs: (holds - tied).to_array(), length: length.max(0.0), strength: strength.max(0.0) };
     let obj = world.spawn((Transform::from_position(tied), Name("Rope".into())));
     world.insert(obj, rope);
     obj
@@ -140,7 +148,7 @@ fn held_point(world: &World, obj: Entity, rope: VoxelRope, tied: Vec3) -> Vec3 {
     let holds = world.get::<RopeHolds>(obj).copied().unwrap_or_default();
     match holds.piece.and_then(|piece| world.get::<Transform>(piece)) {
         Some(placed) => placed.position + placed.rotation * holds.point,
-        None => tied + rope.hangs,
+        None => tied + Vec3::from(rope.hangs),
     }
 }
 
@@ -155,7 +163,7 @@ pub(crate) fn catch(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: 
         if holds.snapped || holds.piece.is_some_and(|p| world.is_alive(p)) {
             continue;
         }
-        let point = tied + rope.hangs;
+        let point = tied + Vec3::from(rope.hangs);
         let local = (point - corner) / piece.voxel - piece.low.as_vec3();
         let inside = (0..27).any(|i| {
             let c = (local + Vec3::new((i % 3 - 1) as f32, (i / 3 % 3 - 1) as f32, (i / 9 - 1) as f32)).floor();
@@ -208,7 +216,7 @@ pub(crate) fn tend(world: &mut World) {
             // Newly tied: what it holds that nothing else holds comes loose and hangs from it.
             holds.tied = true;
             world.insert(obj, holds);
-            crate::voxel_collapse::settle_around(world, tied + rope.hangs);
+            crate::voxel_collapse::settle_around(world, tied + Vec3::from(rope.hangs));
         }
         // Pulled by what hangs, its weight and its swing, harder than it holds: it snaps.
         if let Some(piece) = holds.piece.filter(|_| !holds.snapped) {

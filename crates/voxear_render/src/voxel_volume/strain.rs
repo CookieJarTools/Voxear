@@ -198,14 +198,18 @@ pub struct VoxelRound {
 pub struct VoxelHinge {
     pub piece: usize,
     pub point: Vec3,
-    /// How much its weight may turn it about the hinge, in newton metres.
+    /// How much its weight may turn it about the hinge, in newton metres,
+    /// and how much weight may hang from it, in newtons.
     pub holds: f32,
+    pub bears: f32,
 }
 
 /// What a join of timber broken by bending still holds bent, splintered and
 /// nailed, in pascals over its section modulus: much more than what broke
 /// it, as its fibres bend before they tear.
 const HELD_BENT: f64 = 2.0e5;
+/// What such a join holds hanging, in pascals over its section's area.
+const HELD_HANGING: f64 = 1.2e4;
 
 /// Whether `stuff` bends before it breaks, as timber does, where stone,
 /// brick, earth and glass snap.
@@ -1104,14 +1108,15 @@ pub(super) fn strain(
                     let made = (first..round.pieces.len()).max_by_key(|&k| round.pieces[k].voxels.len());
                     if let (Some(piece), false) = (made, hinged.is_empty()) {
                         let mut point = [0.0; 3];
-                        let mut holds = 0.0;
+                        let (mut holds, mut bears) = (0.0, 0.0);
                         for &j in &hinged {
                             point = add(point, graph.joins[j].point);
                             holds += HELD_BENT * graph.joins[j].modulus;
+                            bears += HELD_HANGING * graph.joins[j].section;
                         }
                         let point = scale(point, 1.0 / hinged.len() as f64);
                         let point = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
-                        round.hinges.push(VoxelHinge { piece, point, holds: holds as f32 });
+                        round.hinges.push(VoxelHinge { piece, point, holds: holds as f32, bears: bears as f32 });
                     }
                 }
             }
@@ -1952,7 +1957,7 @@ mod tests {
         // At the wall's face, the floor's middle across, and holding a few kilonewton metres bent; the floor beside
         // the wall hinged, the end the post held falling with what is left of the post.
         assert!((hinge.point.x - 4.5).abs() < 0.3 && (hinge.point.z - 4.0).abs() < 0.1, "{hinge:?}");
-        assert!(hinge.holds > 1000.0 && hinge.holds < 50_000.0, "{hinge:?}");
+        assert!(hinge.holds > 1000.0 && hinge.holds < 50_000.0 && hinge.bears > 1000.0, "{hinge:?}");
         let round = done.loose.iter().find(|round| !round.hinges.is_empty()).unwrap();
         let sizes: Vec<(usize, IVec3)> = round.pieces.iter().map(|p| (p.voxels.len(), p.low)).collect();
         let piece = &round.pieces[hinge.piece];

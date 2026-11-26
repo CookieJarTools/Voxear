@@ -795,6 +795,9 @@ pub(crate) fn gather(
     volumes.seen_on = u32::from(seen.is_some());
     volumes.seen = seen.map_or(0, |seen| seen.address);
     volumes.seen_width = size[0];
+    // The glass each pixel's ray passed through is kept after what it met.
+    volumes.glass_on = u32::from(seen.is_some());
+    volumes.glass = seen.map_or(0, |seen| seen.address + seen_bytes(size) / 2);
     if let Some(light) = light {
         volumes.light = light.light_address;
         volumes.light_cells = light.cells_address;
@@ -865,10 +868,10 @@ pub(crate) struct ViewVoxels {
     pub light: Vec<BufferId>,
 }
 
-/// The bytes a view keeps of what its depth pass met, for a picture `size`
-/// pixels.
+/// The bytes a view keeps of what its depth pass met, and the glass it
+/// passed through on the way, for a picture `size` pixels.
 pub(crate) fn seen_bytes(size: [u32; 2]) -> u64 {
-    u64::from(size[0]) * u64::from(size[1]) * 16
+    u64::from(size[0]) * u64::from(size[1]) * 16 * 2
 }
 
 /// A volume's sectors, bricks, materials and palette in one buffer on the GPU.
@@ -1070,6 +1073,29 @@ pub(crate) fn record_shadows(
         let color = [attachment(ctx.view(target), layout, None)];
         begin_rendering(ctx, ctx.extent(target), &color, None);
         bind(ctx, pipelines.voxel_shadows, vk::PipelineBindPoint::GRAPHICS, &push);
+        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
+/// **Glass (voxels)**: the see-through voxels in view, the first each
+/// pixel's ray passed through, lit and blended over everything opaque
+/// drawn behind them, nearer than it.
+pub(crate) fn record_glass(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    view: &ViewVoxels,
+    images: Vec<(ImageId, ImageAccess)>,
+    (hdr, depth): (ImageId, ImageId),
+    buffers: &[(BufferId, BufferAccess)],
+) {
+    let mut reads = coarse_reads(view, buffers);
+    reads.extend(view.seen.map(|seen| (seen, BufferAccess::ShaderRead)));
+    fg.add_pass("Glass (voxels)", &images, &reads, move |ctx| {
+        let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+        let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+        begin_rendering(ctx, ctx.extent(hdr), &color, Some(&target));
+        bind(ctx, pipelines.voxel_glass, vk::PipelineBindPoint::GRAPHICS, &push);
         unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });

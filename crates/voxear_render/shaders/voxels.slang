@@ -527,6 +527,7 @@ bool voxelPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
         if (nearest >= 1e9)
         {
             hit = (VoxelHit)0;
+            hit.glassT = -1.0;
             return false;
         }
         // A brick and a half short, in the coarsest volume's bricks.
@@ -602,14 +603,23 @@ VoxelDepthOut voxelDepth(VoxelVertex input)
     Frame* frame = push.frame;
     float3 d;
     VoxelHit hit;
-    if (!voxelPixel(frame, input.position.xy, d, hit))
+    bool met = voxelPixel(frame, input.position.xy, d, hit);
+    VoxelVolumes* volumes = voxelVolumes();
+    // The glass the ray passed through, kept for the glass pass, even over the sky.
+    if (volumes->glassOn != 0u && hit.glassT >= 0.0)
+    {
+        uint2 at = uint2(input.position.xy);
+        uint side = uint(hit.glassAxis + 1) | (hit.glassVolume << 4);
+        volumes->glass[at.y * volumes->seenWidth + at.x] =
+            uint4(asuint(hit.glassMetres), side, hit.glassColour, frame->frameIndex + 1);
+    }
+    if (!met)
     {
         discard;
     }
-    VoxelVolume volume = voxelVolumes()->volumes[hit.volume];
+    VoxelVolume volume = volumes->volumes[hit.volume];
     float3 normal = voxelNormal(hit, d);
     float roughness = smoothedRoughness(frame, normal, volume.roughness);
-    VoxelVolumes* volumes = voxelVolumes();
     if (volumes->seenOn != 0u)
     {
         uint2 at = uint2(input.position.xy);
@@ -764,6 +774,99 @@ VoxelOut voxelOpaque(VoxelVertex input)
     VoxelOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));
+    o.depth = voxelDepthOf(frame, world);
+    return o;
+}
+
+// ---------------------------------------------------------------- See-through voxels
+
+// How rough glass is.
+static const float VOXEL_GLASS_ROUGHNESS = 0.06;
+
+struct VoxelGlassOut
+{
+    float4 color : SV_Target0;
+    float depth : SV_Depth;
+};
+
+// The see-through voxels in view, over everything opaque drawn behind them, as the depth pass found them: the first
+// each pixel's ray passed through, lit as a voxel is, and reflecting what is round it, in front of what is behind it
+// as much as it is solid. Drawn with its colour multiplied by how much of what is behind it hides, so it blends over
+// what is there.
+[shader("fragment")]
+VoxelGlassOut voxelGlass(VoxelVertex input)
+{
+    Frame* frame = push.frame;
+    float2 pixel = input.position.xy;
+    VoxelVolumes* volumes = voxelVolumes();
+    uint2 at = uint2(pixel);
+    uint4 glass = volumes->glassOn != 0u ? volumes->glass[at.y * volumes->seenWidth + at.x] : uint4(0);
+    if (glass.w != frame->frameIndex + 1)
+    {
+        discard;
+    }
+    float metres = asfloat(glass.x);
+    int axis = int(glass.y & 3u) - 1;
+    VoxelVolume volume = volumes->volumes[min(glass.y >> 4, volumes->count - 1)];
+    uint packed = glass.z;
+    float3 d = voxelRay(frame, pixel);
+    float3 world = voxelOrigin(frame, pixel) + d * metres;
+    float3 normal = -d;
+    if (axis >= 0)
+    {
+        normal = 0.0;
+        normal[axis] = d[axis] > 0.0 ? -1.0 : 1.0;
+    }
+    float3 albedo = pow(float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0, 2.2);
+    float solid = 1.0 - float(voxelKind(packed).x) / 16.0;
+
+    Surface s;
+    s.normal = normal;
+    s.view = -d;
+    s.roughness = VOXEL_GLASS_ROUGHNESS;
+    s.diffuse = albedo;
+    s.f0 = float3(0.04);
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float shadow = dot(normal, -frame->sunDirection) > 0.0 ? sunShadow(frame, world, normal) : 0.0;
+    if (shadow > 0.0 && voxelSunBlocked(frame, volumes, pixel, world, normal, metres, 0.02 * volume.voxel))
+    {
+        shadow = 0.0;
+    }
+    float2 lit = float2(1.0, 0.0);
+    float4 glow = 0.0;
+    bool litHere = voxelLitAround(world, normal, lit, glow);
+    float3 ambient = ambientLight(frame, world, s, sunLight, atmosphere);
+    if (litHere)
+    {
+        ambient = ambient * blockSkyShare(lit.x, glow.w) + glow.rgb * blockGlowShare(lit.y);
+    }
+    // Its own body, as much as it is solid; then what it reflects, the sun's glint and its surroundings.
+    Surface body = s;
+    body.f0 = 0.0;
+    float3 color = (shade(body, -frame->sunDirection, sunLight) * shadow + ambient * albedo) * solid;
+    Surface shine = s;
+    shine.diffuse = 0.0;
+    color += shade(shine, -frame->sunDirection, sunLight) * shadow;
+    float found;
+    float3 reflected = environmentReflection(frame, pixel, world, normal, reflect(d, normal), s.roughness, ambient, atmosphere, found);
+    if (litHere)
+    {
+        float3 round = reflected * blockSkyShare(lit.x, glow.w) + glow.rgb * blockGlowShare(lit.y);
+        reflected = lerp(round, reflected, found);
+    }
+    float nv = saturate(dot(normal, -d));
+    float fresnel = 0.04 + 0.96 * pow(1.0 - nv, 5.0);
+    color += reflected * fresnel;
+    // What it hides of what is behind it: as much as it is solid, and what it reflects.
+    float hides = saturate(solid + fresnel * (1.0 - solid));
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), metres);
+        color = color * haze.a + haze.rgb * skyLook(frame) * hides;
+    }
+    VoxelGlassOut o;
+    o.color = float4(color, hides);
     o.depth = voxelDepthOf(frame, world);
     return o;
 }

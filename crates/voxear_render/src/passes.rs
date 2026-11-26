@@ -624,7 +624,7 @@ pub fn record(
         || reflections.is_some()
         || through
         || frame.surface.is_some()
-        || voxel_shadows.is_some();
+        || frame.voxels.is_some();
     if let Some(atmosphere) = frame.atmosphere.filter(|_| frame.own_sky) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
@@ -983,6 +983,9 @@ pub fn record(
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::voxel_volume::record_opaque(fg, (pipelines, shading_push), voxels, images, targets, &shading_buffers);
+                // Their glass over everything opaque.
+                let images = shading(ImageAccess::ColorAttachment);
+                crate::voxel_volume::record_glass(fg, (pipelines, shading_push), voxels, images, (hdr, depth), &shading_buffers);
             }
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {

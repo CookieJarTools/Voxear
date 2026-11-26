@@ -234,6 +234,8 @@ pub struct Pipelines {
     pub voxel_forward: vk::Pipeline,
     /// The voxels' shadows on whatever the depth passes drew, traced from each pixel.
     pub voxel_shadows: vk::Pipeline,
+    /// The voxels' see-through voxels over everything opaque.
+    pub voxel_glass: vk::Pipeline,
     /// The light kept round the camera for the voxels: what lets it through each cell, and a step of spreading it.
     pub voxel_light_cells: vk::Pipeline,
     pub voxel_light_sky: vk::Pipeline,
@@ -1109,6 +1111,14 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Opaque (voxels)", voxels, c"voxelVertex", c"voxelOpaque")
             })?,
+            voxel_glass: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Glass (voxels)", voxels, c"voxelVertex", c"voxelGlass")
+            })?,
             voxel_shadows: graphics(&GraphicsPipelineDesc {
                 color_formats: &[AO_FORMAT],
                 cull: vk::CullModeFlags::NONE,
@@ -1498,6 +1508,7 @@ impl Pipelines {
             self.voxel_depth,
             self.voxel_forward,
             self.voxel_shadows,
+            self.voxel_glass,
             self.voxel_light_cells,
             self.voxel_light_sky,
             self.voxel_light_spread,

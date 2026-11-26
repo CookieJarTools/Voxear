@@ -3931,7 +3931,8 @@ impl View {
             || contact_shadows.is_some()
             || reflections.is_some()
             || pack_normals
-            || voxel_shadows;
+            || voxel_shadows
+            || view_voxels.is_some();
         let surface = match depth_first || portal.is_some() {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;

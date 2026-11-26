@@ -1212,28 +1212,29 @@ struct House {
     door: bool,
     lantern: bool,
     window: bool,
+    pillar: bool,
 }
 
 /// A house 4 m square and 3 m tall printed on flat endless ground at
 /// `(8, 2, 8)`: stone walls a quarter of a metre thick, with what `has`
 /// says: a roof as thick; a door 1 m wide and 2 m tall in its east wall; a
-/// lantern of glowing voxels in its north-west corner on the floor; and a
-/// pane of glass 1 m square in its west wall.
+/// lantern of glowing voxels in its north-west corner on the floor; a pane
+/// of glass 1 m square in its west wall; and a red pillar inside behind it.
 fn house(has: House) -> Arc<VoxelPrint> {
-    let House { roof, door: doorway, lantern, window } = has;
+    let House { roof, door: doorway, lantern, window, pillar } = has;
     let stone = [150, 146, 138, 255];
     let flame = [255, 186, 80, 255];
     let glass = [196, 222, 230, 255];
     let mut settings = VoxelPrintSettings::default();
     settings.materials = vec![
         VoxelPrintMaterial { colour: [255, 186, 80], glass: 0, light: 14 },
-        VoxelPrintMaterial { colour: [196, 222, 230], glass: 12, light: 0 },
+        VoxelPrintMaterial { colour: [196, 222, 230], glass: 14, light: 0 },
     ];
     let print = VoxelPrint::from_voxels(
         [64, 48, 64],
         16,
         Vec3::new(32.0, 0.0, 32.0),
-        vec![stone, flame, glass],
+        vec![stone, flame, glass, [200, 30, 30, 255]],
         settings,
         |c| {
             let [x, y, z] = c.map(|a| a as i32);
@@ -1242,7 +1243,10 @@ fn house(has: House) -> Arc<VoxelPrint> {
             let door = doorway && x >= 60 && (24..40).contains(&z) && y < 32;
             let pane = x < 4 && (24..40).contains(&z) && (16..32).contains(&y);
             let lamp = (6..10).contains(&x) && (6..10).contains(&z) && y < 6;
-            if lantern && lamp {
+            let red = (16..32).contains(&x) && (20..44).contains(&z) && y < 40;
+            if pillar && red {
+                4
+            } else if lantern && lamp {
                 2
             } else if window && pane {
                 3
@@ -1338,4 +1342,42 @@ fn a_room_under_a_roof_is_dark_but_for_its_door_and_its_lantern() {
     assert!(r > b + 20, "the lantern's light is warm: {by_lantern:?}");
     let across = at(&lit, (9.4, 9.4));
     assert!(across < sum(by_lantern), "across the room {across}, by the lantern {}", sum(by_lantern));
+}
+
+#[test]
+fn a_window_of_glass_voxels_shows_what_is_behind_it() {
+    let Some(mut renderer) = renderer() else { return };
+    // From 3 m west of the house, looking east at the middle of its west wall, with a red pillar inside behind it.
+    let mut shot = |window: bool, name: &str| {
+        let mut scene = printed_from_above(house(House { window, pillar: true, ..House::default() }), 2.6);
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        *camera =
+            Transform::new(Vec3::new(3.0, 3.5, 8.0), Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE);
+        let pixels = render(&mut renderer, &scene, 12);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let glass = shot(true, "window of glass.png");
+    let wall = shot(false, "wall without a window.png");
+    // The lower part of the window, where the sun through it falls on the pillar behind: the wall over the window
+    // shades the pillar higher up.
+    let middle = |pixels: &[u8]| {
+        let mut sum = [0; 3];
+        for dy in -6..=6 {
+            for dx in -6..=6 {
+                let c = rgb_at(pixels, (WIDTH as i32 / 2 + dx) as u32, (HEIGHT as i32 / 2 + 36 + dy) as u32);
+                (0..3).for_each(|i| sum[i] += c[i]);
+            }
+        }
+        sum.map(|v| v / 169)
+    };
+    // The red pillar through the glass, a little paler for it; the stone wall where there is none.
+    let [r, g, b] = middle(&glass);
+    assert!(r > g + 30 && r > b + 30, "the pillar through the window: {r} {g} {b}");
+    let [r, g, b] = middle(&wall);
+    assert!((r - g).abs() < 20 && (g - b).abs() < 20, "the wall: {r} {g} {b}");
+    // Beside the window, the wall alike in both.
+    let beside = |pixels: &[u8]| rgb_at(pixels, WIDTH / 2, HEIGHT / 2 + 100);
+    let (a, b) = (beside(&glass), beside(&wall));
+    assert!((0..3).all(|i| (a[i] - b[i]).abs() < 12), "the wall beside the window: {a:?} and {b:?}");
 }

@@ -104,7 +104,7 @@ pub struct VoxelPrintMaterial {
     /// The colour, red, green and blue as sRGB.
     pub colour: [u8; 3],
     /// How see-through, from 0, solid, to 15, as clear as glass is made:
-    /// 12 for a window.
+    /// 14 for a window, less for frosted or coloured glass.
     pub glass: u8,
     /// How brightly it glows, from 0, not at all, to 15, as a block's light:
     /// a step less of it for each metre from it.

@@ -17,6 +17,8 @@
 //! far, its far voxels drawn coarser.
 
 pub mod bricks;
+mod changes;
+mod edit;
 mod endless;
 pub(crate) use endless::generated_at;
 mod ground;
@@ -34,6 +36,8 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
+pub use changes::{VoxelChanges, VoxelKind, VoxelSet};
+pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
@@ -75,148 +79,13 @@ pub struct VoxelVolume {
     /// many to a hectare as it says, where the ground grows grass.
     pub trees: Vec<VoxelTrees>,
     /// The changes made to an endless volume, in the order they were made:
-    /// balls carved out of it or filled with ground, and Voxel Prints
-    /// printed into it, a later one over an earlier. Each column is made
-    /// with those that reach it.
+    /// shapes carved out of it or filled with a ground or a paving, and
+    /// Voxel Prints printed into it, a later one over an earlier (see
+    /// [`VoxelEdit`]). Each column is made with those that reach it.
     pub edits: Arc<Vec<VoxelEdit>>,
-}
-
-/// A change made to an endless Voxel Volume: a ball carved out of it, or
-/// filled with ground, its voxels' middles within the radius; or a Voxel
-/// Print printed into it, its model's origin at `at`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct VoxelEdit {
-    /// The ball's middle, or where the print's origin is, in metres from
-    /// the volume's corner.
-    pub at: Vec3,
-    /// Its radius, in metres; for a print, how far its box reaches from
-    /// `at`.
-    pub radius: f32,
-    /// What fills it: none for air, carved out.
-    pub fill: Option<VoxelMaterial>,
-    /// The print printed there in place of a ball, and how it is turned.
-    pub print: Option<VoxelPrinted>,
-}
-
-/// A Voxel Print as an edit prints it: the print, and how it is turned
-/// about its origin.
-#[derive(Clone, Debug)]
-pub struct VoxelPrinted {
-    pub print: Arc<VoxelPrint>,
-    pub rotation: Quat,
-}
-
-impl PartialEq for VoxelPrinted {
-    fn eq(&self, other: &Self) -> bool {
-        (Arc::ptr_eq(&self.print, &other.print) || self.print == other.print) && self.rotation == other.rotation
-    }
-}
-
-impl VoxelEdit {
-    /// A ball `radius` metres round `at`, carved out, or filled with `fill`.
-    pub fn ball(at: Vec3, radius: f32, fill: Option<VoxelMaterial>) -> Self {
-        Self { at, radius: radius.max(0.0), fill, print: None }
-    }
-
-    /// `print` printed with its origin at `at`, turned `rotation`.
-    pub fn printed(print: Arc<VoxelPrint>, at: Vec3, rotation: Quat) -> Self {
-        let (low, high) = print.bounds();
-        let corner = |i: usize| {
-            Vec3::new([low.x, high.x][i & 1], [low.y, high.y][(i >> 1) & 1], [low.z, high.z][i >> 2]).length()
-        };
-        let radius = (0..8).map(corner).fold(0.0, f32::max);
-        Self { at, radius, fill: None, print: Some(VoxelPrinted { print, rotation: rotation.normalize() }) }
-    }
-
-    /// The box it reaches, least and most corners, in metres from the
-    /// volume's corner.
-    pub fn reach(&self) -> (Vec3, Vec3) {
-        match &self.print {
-            Some(printed) => printed.print.placed_bounds(self.at, printed.rotation),
-            None => (self.at - self.radius, self.at + self.radius),
-        }
-    }
-
-    /// Whether a print is looked at round each voxel's middle too, a
-    /// quarter of a voxel toward its eight corners, in a volume of voxels
-    /// `voxel` metres across: where it is turned off the quarter turns, or
-    /// its voxels are smaller than the volume's, so a wall a voxel thick
-    /// leaves no gap between voxels that meet only at their edges, and a
-    /// thin pole is not missed. A ball never is.
-    pub fn widened(&self, voxel: f32) -> bool {
-        let Some(printed) = &self.print else { return false };
-        let turn = voxear_core::math::Mat3::from_quat(printed.rotation);
-        let quarter = turn.to_cols_array().iter().all(|a| a.abs() < 1e-4 || (a.abs() - 1.0).abs() < 1e-4);
-        !quarter || printed.print.voxels_per_metre as f32 * voxel > 1.001
-    }
-
-    /// Whether voxel `cell` of a volume of voxels `voxel` metres across
-    /// is in it, worked out as the GPU works it (`editHeld` in
-    /// `shaders/voxel_world.slang`): 0 for not, else for a print its colour
-    /// there as a place in the print's palette and one, and 1 for a ball.
-    pub fn holds(&self, cell: voxear_core::math::IVec3, voxel: f32) -> u8 {
-        let middle = cell.as_vec3() + 0.5;
-        match &self.print {
-            Some(printed) => {
-                let print = &printed.print;
-                let scale = print.voxels_per_metre as f32 * voxel;
-                let back = printed.rotation.inverse();
-                let at = |p: Vec3| {
-                    print.get((back * (p - self.at / voxel) * scale + print.origin).floor().as_ivec3().to_array())
-                };
-                let held = at(middle);
-                if held != 0 || !self.widened(voxel) {
-                    return held;
-                }
-                (0..8)
-                    .map(|k| Vec3::new((k & 1) as f32, (k >> 1 & 1) as f32, (k >> 2 & 1) as f32) * 0.5 - 0.25)
-                    .map(|corner| at(middle + corner))
-                    .find(|&held| held != 0)
-                    .unwrap_or(0)
-            }
-            None => {
-                let off = middle - self.at / voxel;
-                let radius = self.radius / voxel;
-                u8::from(off.dot(off) <= radius * radius)
-            }
-        }
-    }
-}
-
-/// The ground an edit fills a ball with, its voxels in the shades the
-/// volume's own ground or a generator's has: dirt; grass, its top the
-/// grass's green; rock; sand; snow; or gravel.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VoxelMaterial {
-    #[default]
-    Dirt,
-    Grass,
-    Rock,
-    Sand,
-    Snow,
-    Gravel,
-}
-
-impl VoxelMaterial {
-    pub const ALL: [Self; 6] = [Self::Dirt, Self::Grass, Self::Rock, Self::Sand, Self::Snow, Self::Gravel];
-
-    /// As the editor and scenes name it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Dirt => "Dirt",
-            Self::Grass => "Grass",
-            Self::Rock => "Rock",
-            Self::Sand => "Sand",
-            Self::Snow => "Snow",
-            Self::Gravel => "Gravel",
-        }
-    }
-
-    /// The one named so, as [`name`](Self::name) gives it.
-    pub fn named(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|material| material.name().eq_ignore_ascii_case(name))
-    }
+    /// The voxels of an endless volume dug out or placed one at a time, over
+    /// everything its edits make.
+    pub changes: Arc<VoxelChanges>,
 }
 
 /// A kind of tree scattered through an endless Voxel Volume's ground: a
@@ -272,6 +141,7 @@ impl Default for VoxelVolume {
             generator: None,
             trees: Vec::new(),
             edits: Arc::default(),
+            changes: Arc::default(),
         }
     }
 }
@@ -290,6 +160,7 @@ impl PartialEq for VoxelVolume {
             && self.generator == other.generator
             && self.trees == other.trees
             && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
+            && (Arc::ptr_eq(&self.changes, &other.changes) || self.changes == other.changes)
     }
 }
 
@@ -543,7 +414,7 @@ impl VoxelVolumes {
                 let made = self.endless.get_mut(&entity).expect("made above");
                 made.from.roughness = volume.roughness;
                 // New edits make the columns they reach again.
-                for buffer in made.set_edits(gpu, &volume.edits)? {
+                for buffer in made.set_edits(gpu, &volume.edits, &volume.changes)? {
                     frames.retire(Retired::Buffer(buffer));
                 }
                 made.follow(corner, camera.unwrap_or(corner));
@@ -629,6 +500,18 @@ impl VoxelVolumes {
             }
         }
         Ok(())
+    }
+
+    /// What `entity`'s endless volume holds on the GPU at each of `cells`
+    /// (see [`endless::Endless::probe`]): none where it has none.
+    pub fn probe(
+        &self,
+        gpu: &Gpu,
+        made: (&Pipelines, &Bindless),
+        entity: Entity,
+        cells: &[[i32; 3]],
+    ) -> Result<Option<(Vec<u32>, Vec<[u8; 4]>)>> {
+        self.endless.get(&entity).map(|endless| endless.probe(gpu, made, cells)).transpose()
     }
 
     pub fn counts(&self) -> VoxelCounts {
@@ -849,7 +732,7 @@ mod tests {
             // A row of voxels a voxel up, every one the wall holds.
             let held: std::collections::HashSet<(i32, i32)> = (0..128)
                 .flat_map(|z| (0..128).map(move |x| (x, z)))
-                .filter(|&(x, z)| edit.holds(IVec3::new(x, 1, z), voxel) != 0)
+                .filter(|&(x, z)| edit.held(IVec3::new(x, 1, z), voxel, 0).solid())
                 .collect();
             // Seen from the side the wall is whole: its voxels all meet face to face, one run end to end.
             let first = *held.iter().next().expect("the wall");

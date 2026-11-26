@@ -795,6 +795,10 @@ impl Levels {
         let mut written = Vec::new();
         for scene in &mut self.scenes {
             let (mut captured, ids) = scene_file::capture_scene_with_ids(&engine.world, content, &scene.objs);
+            // Voxels dug and placed are kept in region files beside the scene, which it names.
+            let voxels = crate::voxel_volumes::save_changes(&engine.world, (project, &scene.path), &ids, &mut captured.objs)
+                .with_context(|| format!("saving {}'s voxels", scene.path))?;
+            written.extend(voxels);
             // The world's sky and lighting are the level's; each scene keeps its own.
             (captured.sky, captured.post) = (scene.sky, scene.post.clone());
             captured.set_own_sun(scene.own.clone());

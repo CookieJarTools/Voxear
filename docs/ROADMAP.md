@@ -4659,6 +4659,32 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
   Not yet: volumes of a set size, navigation.
 
+- **Edits for building (2026-11-26).** Endless volumes' edits are typed shapes, kept in order: balls; boxes turned
+  any way (a slab is one half a metre tall); banks, boxes whose top slopes; areas, outlines of points across the
+  ground from one height to another; and covers, the ground's own top within an outline as deep as they say,
+  wherever it is. Each fills with a ground or a paving (cobbles, flagstones, bricks, planks, ashlar), laid in a
+  pattern of its own on the world's grid with joints and three shades, or carves out; and clears the air over its
+  top as far as it says. One edit paves a whole street. Fills and prints can be tinted, their colours shaded from
+  the tint as from their own average. Prints can be fitted to the ground: cleared inside down to their foot, on a
+  footing that reaches down to the ground in the columns they stand over. A column takes 4,096 edits, a brick 256.
+  The GPU works each out a voxel at a time (`editHeld`) and the CPU the same way (`VoxelEdit::held`): a probe that
+  reads an endless volume's voxels back from the GPU finds them the CPU's to the voxel. `Voxels.Box`, `CarveBox`,
+  `Slab`, `Ramp`, `Area`, `CarveArea`, `Cover` and `Print(…, fit, footing, tint)` in C#; `voxels.box`,
+  `voxels.ramp`, `voxels.area`, `voxels.cover` in `vox editor call`; the brush's Box, Area and Cover modes, its
+  Height, Clear, Snap and Tint, and Fit and Footing for prints. Every shape is worked out in whole numbers
+  (sixteenths of a voxel, turns in 4096ths), the same on both, after a first try in floats left two voxels in
+  131,328 at a turned box's edge differing.
+- **Digging and building a voxel at a time, saved in region files (2026-11-26).** Voxels dug out or placed in a
+  ground or paving (tinted or not) are kept brick by brick over everything the edits make, an edit a brick on the GPU
+  after all the others, and found the same on the CPU for collision, rays and trees. `Voxels.Dig`, `Voxels.Place`,
+  `Voxels.Restore` in C#, `voxels.dig`, `voxels.place`, `voxels.restore` in `vox editor call`, the brush's Dig and
+  Build. Saved with the scene in region files beside it, 64 m a side, a bit a voxel and a byte a voxel set, packed
+  with zstd: a 320-voxel tunnel over two regions is under 2 KB; a save writes only the regions that changed.
+- **Colours for a city (2026-11-26).** A volume holds 4,224 colours: 128 shared by every brick and 32 banks of 128,
+  each brick keeping the bank most of its voxels are in. A print's colours in each tint, and a tinted fill's, go
+  together into one bank, so sixty kinds of building of thirty colours each keep every colour; a print takes up to
+  128.
+
 ## M13 — Virtualised geometry (Nanite-style)
 
 M1 and M5 already lay the groundwork: meshlets, the visibility buffer and two-phase Hi-Z culling. This milestone

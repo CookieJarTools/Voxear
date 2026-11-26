@@ -128,6 +128,10 @@ const fn maybe(name: &'static str, kind: ArgKind, about: &'static str) -> ArgInf
 pub const VIEWS: &[&str] = &["scene", "game", "editor"];
 /// The levels `console.read` keeps to.
 pub const LEVELS: &[&str] = &["info", "warning", "error"];
+/// The grounds and pavings an endless Voxel Volume's edits fill with, as
+/// `VoxelMaterial` names them.
+pub const VOXEL_MATERIALS: &[&str] =
+    &["dirt", "grass", "rock", "sand", "snow", "gravel", "cobbles", "flagstones", "bricks", "planks", "ashlar"];
 
 /// Every call the editor answers, easy ones first.
 pub const CALLS: &[CallInfo] = &[
@@ -476,15 +480,11 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "voxels.fill",
-        about: "Fills a ball round a point of the world, in metres, with a ground in every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Fill does. One step to undo.",
+        about: "Fills a ball round a point of the world, in metres, with a ground or a paving in every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Fill does. One step to undo.",
         args: &[
             arg("at", ArgKind::Vector, "The ball's middle, in metres, in the world."),
             arg("radius", ArgKind::Number, "Its radius, in metres."),
-            arg(
-                "material",
-                ArgKind::Choice(&["dirt", "grass", "rock", "sand", "snow", "gravel"]),
-                "The ground it is filled with.",
-            ),
+            arg("material", ArgKind::Choice(VOXEL_MATERIALS), "The ground or paving it is filled with."),
             maybe("obj", ArgKind::Obj, "The Voxel Volume."),
         ],
         changes: true,
@@ -498,10 +498,106 @@ pub const CALLS: &[CallInfo] = &[
             arg("at", ArgKind::Vector, "Where its model's origin goes, in metres, in the world."),
             maybe("turn", ArgKind::Number, "How far it is turned about the up axis, in degrees."),
             maybe("rotation", ArgKind::Vector, "How it is turned, in degrees about X, Y and Z, in place of `turn`."),
+            maybe("fit", ArgKind::Toggle, "Fitted to the ground: the ground inside it cleared down to its foot, on a footing where the ground falls away under it."),
+            maybe("footing", ArgKind::Choice(VOXEL_MATERIALS), "What a fitted print's footing is: none unless given."),
+            maybe("tint", ArgKind::Value, "The colour its colours are shaded from, [r, g, b] from 0 to 255: its own unless given."),
             maybe("obj", ArgKind::Obj, "The Voxel Volume."),
         ],
         changes: true,
         returns: "{ reached }",
+    },
+    CallInfo {
+        name: "voxels.box",
+        about: "Fills a box with a ground or a paving, or carves it out with no `material`, in every endless Voxel Volume it reaches, or `obj`'s alone, as a script's Voxels.Box does: a paved square, a slab half a metre tall, a cellar. The volume keeps it after what was changed in it before, and its scene saves it. One step to undo.",
+        args: &[
+            arg("at", ArgKind::Vector, "The middle of its foot, in metres, in the world."),
+            arg("size", ArgKind::Vector, "How large it is along its own X, Y and Z, in metres."),
+            maybe("turn", ArgKind::Number, "How far it is turned about the up axis, in degrees."),
+            maybe("rotation", ArgKind::Vector, "How it is turned, in degrees about X, Y and Z, in place of `turn`."),
+            maybe("material", ArgKind::Choice(VOXEL_MATERIALS), "The ground or paving it is filled with: carved out unless given."),
+            maybe("clear", ArgKind::Number, "How far over its top it clears the ground, in metres."),
+            maybe("tint", ArgKind::Value, "The colour its material's colours are shaded from, [r, g, b] from 0 to 255."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached }",
+    },
+    CallInfo {
+        name: "voxels.ramp",
+        about: "Fills a bank, a box whose top slopes from its foot at its back (its own -Z) up to its height at its front, or carves it out, as voxels.box places a box: a graded bank, a ramp. One step to undo.",
+        args: &[
+            arg("at", ArgKind::Vector, "The middle of its foot, in metres, in the world."),
+            arg("size", ArgKind::Vector, "How large it is along its own X, Y and Z, in metres: it rises along Z."),
+            maybe("turn", ArgKind::Number, "How far it is turned about the up axis, in degrees."),
+            maybe("rotation", ArgKind::Vector, "How it is turned, in degrees about X, Y and Z, in place of `turn`."),
+            maybe("material", ArgKind::Choice(VOXEL_MATERIALS), "The ground or paving it is filled with: carved out unless given."),
+            maybe("clear", ArgKind::Number, "How far over its top it clears the ground, in metres."),
+            maybe("tint", ArgKind::Value, "The colour its material's colours are shaded from, [r, g, b] from 0 to 255."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached }",
+    },
+    CallInfo {
+        name: "voxels.area",
+        about: "Fills an outline across the ground from one height up to another with a ground or a paving, or carves it out with no `material`, in every endless Voxel Volume it reaches, as a script's Voxels.Area does: a street, a square, a quay, a levelled plot. One step to undo.",
+        args: &[
+            arg("points", ArgKind::Value, "Its outline's points along X and Z, in metres, in the world: [[x, z], ...], three or more."),
+            arg("low", ArgKind::Number, "Its foot, in metres, in the world."),
+            arg("high", ArgKind::Number, "Its top, in metres, in the world."),
+            maybe("material", ArgKind::Choice(VOXEL_MATERIALS), "The ground or paving it is filled with: carved out unless given."),
+            maybe("clear", ArgKind::Number, "How far over its top it clears the ground, in metres."),
+            maybe("tint", ArgKind::Value, "The colour its material's colours are shaded from, [r, g, b] from 0 to 255."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached }",
+    },
+    CallInfo {
+        name: "voxels.cover",
+        about: "Lays the top of the ground within an outline with a ground or a paving, as deep as it says, wherever the ground is, or digs it away with no `material`, as a script's Voxels.Cover does: a road paved over hills. One step to undo.",
+        args: &[
+            arg("points", ArgKind::Value, "Its outline's points along X and Z, in metres, in the world: [[x, z], ...], three or more."),
+            arg("depth", ArgKind::Number, "How deep it lays the ground's top, in metres."),
+            maybe("material", ArgKind::Choice(VOXEL_MATERIALS), "The ground or paving it is laid with: dug away unless given."),
+            maybe("clear", ArgKind::Number, "How far over the ground it clears, grass and flowers too, in metres."),
+            maybe("tint", ArgKind::Value, "The colour its material's colours are shaded from, [r, g, b] from 0 to 255."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached }",
+    },
+    CallInfo {
+        name: "voxels.dig",
+        about: "Digs out the voxel at each point of the world, in metres, in every endless Voxel Volume it falls in, or `obj`'s alone, as a script's Voxels.Dig does: one voxel each, over everything its edits make. Saved in region files beside the scene. One step to undo.",
+        args: &[
+            arg("points", ArgKind::Value, "The points, in metres, in the world: [[x, y, z], ...]."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ set }",
+    },
+    CallInfo {
+        name: "voxels.place",
+        about: "Places a voxel of a ground or a paving at each point of the world, in metres, as a script's Voxels.Place does, over everything the volume's edits make. One step to undo.",
+        args: &[
+            arg("points", ArgKind::Value, "The points, in metres, in the world: [[x, y, z], ...]."),
+            arg("material", ArgKind::Choice(VOXEL_MATERIALS), "The ground or paving of the voxels."),
+            maybe("tint", ArgKind::Value, "The colour their material's colours are shaded from, [r, g, b] from 0 to 255."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ set }",
+    },
+    CallInfo {
+        name: "voxels.restore",
+        about: "Lets the voxels at points of the world go back to what their volume's ground and edits make, undoing digging and placing there, as a script's Voxels.Restore does. One step to undo.",
+        args: &[
+            arg("points", ArgKind::Value, "The points, in metres, in the world: [[x, y, z], ...]."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ set }",
     },
     CallInfo {
         name: "voxel_prints.make",
@@ -512,7 +608,7 @@ pub const CALLS: &[CallInfo] = &[
             maybe("path", ArgKind::Text, "Where a new print is kept, a project path ending .voxprint."),
             maybe("voxels_per_metre", ArgKind::Whole, "How many voxels make a metre, as many as the volumes it goes in: 16 unless given."),
             maybe("scale", ArgKind::Number, "Multiplies the model's size: 1 unless given."),
-            maybe("colours", ArgKind::Whole, "The most colours its voxels are in, up to 64: 32 unless given."),
+            maybe("colours", ArgKind::Whole, "The most colours its voxels are in, up to 128: 32 unless given."),
             maybe("fill", ArgKind::Choice(&["solid", "sealed", "shell"]), "What it leaves inside its skin: solid where the outside cannot reach; sealed, solid too where its skin is round a place on five sides, for a model open underneath; or its skin alone."),
             maybe("pictures", ArgKind::Value, "Pictures its parts are coloured from in place of their own: [{ \"part\": \"material0\", \"picture\": <asset> }]."),
         ],

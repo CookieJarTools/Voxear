@@ -6,19 +6,24 @@ namespace Voxear;
 
 /// <summary>
 /// The level's endless Voxel Volumes, ground of voxels a few centimetres across: where a ray meets it, balls carved
-/// out of it and filled with ground, and Voxel Prints printed into it. Each change reaches every endless Voxel Volume
-/// it falls in, which makes its ground there again within a frame or two, and a save of the scene keeps it, after what
-/// was changed before.
+/// out of it and filled with ground, boxes, banks and outlined areas laid with ground or paving, and Voxel Prints
+/// printed into it. Each change reaches every endless Voxel Volume it falls in, which makes its ground there again
+/// within a frame or two, and a save of the scene keeps it, after what was changed before.
 /// <code>
 /// // A crater where a shell lands, a heap of rock where a wall is raised, and sandbags round a dug-out.
 /// Voxels.Carve(landed, 1.5f);
 /// Voxels.Fill(wall, 1f, VoxelMaterial.Rock);
 /// Voxels.Print(SandbagWall, dugOut, turn: 90f);
+///
+/// // A cobbled street with three metres of air over it, a cellar dug under a house, and a house fitted to a slope.
+/// Voxels.Area([new(0f, 0f), new(40f, 0f), new(40f, 6f), new(0f, 6f)], 11.75f, 12f, VoxelMaterial.Cobbles, clear: 3f);
+/// Voxels.CarveBox(cellarFoot, new Vector3(4f, 2.5f, 5f), turn: 15f);
+/// Voxels.Print(House, plot, new Vector3(0f, 15f, 0f), fit: true, footing: VoxelMaterial.Ashlar);
 /// </code>
 /// A later change goes over an earlier one: a ball carved into rock just filled, or into a print, takes a bite out of
 /// it.
 /// </summary>
-public static unsafe class Voxels
+public static unsafe partial class Voxels
 {
 	/// <summary>
 	/// Carves a ball of <paramref name="radius"/> metres round <paramref name="middle"/> out of every endless Voxel
@@ -54,17 +59,28 @@ public static unsafe class Voxels
 	/// <summary>
 	/// Prints <paramref name="print"/> as <see cref="Print(VoxelPrint, Vector3, float)"/> does, turned
 	/// <paramref name="rotation"/> degrees about X, Y and Z, as an Obj's rotation is written: leaning with a slope, say.
+	/// Fitted to the ground (<paramref name="fit"/>), the ground inside it is cleared down to its foot, and where the
+	/// ground falls away under it a footing of <paramref name="footing"/> reaches down to the ground, as deep as the print
+	/// is tall at most; no footing leaves it standing over the dip. With a <paramref name="tint"/>, its colours are
+	/// shaded from that colour as they were from their own average, so one house is printed in many paints.
 	/// </summary>
-	public static bool Print(VoxelPrint print, Vector3 at, Vector3 rotation)
+	public static bool Print(
+		VoxelPrint print,
+		Vector3 at,
+		Vector3 rotation,
+		bool fit = false,
+		VoxelMaterial? footing = null,
+		Color? tint = null)
 	{
 		if (!Native.IsConnected || !print.IsSet)
 		{
 			return false;
 		}
 		var bytes = System.Text.Encoding.UTF8.GetBytes(print.Reference);
+		var ground = footing is { } material ? (int)material : -1;
 		fixed (byte* text = bytes)
 		{
-			return Native.Api->VoxelPrint(text, bytes.Length, &at, &rotation) == 1;
+			return Native.Api->VoxelPrint(text, bytes.Length, &at, &rotation, fit ? 1 : 0, ground, Tint(tint)) == 1;
 		}
 	}
 

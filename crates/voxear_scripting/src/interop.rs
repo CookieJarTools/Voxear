@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 98;
+pub(crate) const API_VERSION: u32 = 99;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -636,9 +636,22 @@ pub(crate) struct NativeApi {
         obj: *mut u64,
     ) -> i32,
     /// `Voxels.Print`: a Voxel Print by reference printed after the frame, its origin at `at`, turned `rotation`
-    /// degrees about X, Y and Z; 1 once asked for.
-    pub voxel_print:
-        unsafe extern "C" fn(print: *const u8, length: i32, at: *const [f32; 3], rotation: *const [f32; 3]) -> i32,
+    /// degrees about X, Y and Z, fitted to the ground on a footing or not, in a tint or its own colours.
+    pub voxel_print: unsafe extern "C" fn(
+        print: *const u8,
+        length: i32,
+        at: *const [f32; 3],
+        rotation: *const [f32; 3],
+        fit: i32,
+        footing: i32,
+        tint: u32,
+    ) -> i32,
+    /// `Voxels.Box`, `Voxels.Ramp`, `Voxels.Area` and `Voxels.Cover`: a shaped edit made in every endless Voxel
+    /// Volume it reaches; how many it reached, or -1.
+    pub voxel_shape: unsafe extern "C" fn(shape: i32, numbers: *const f32, count: i32, fill: i32, tint: u32) -> i32,
+    /// `Voxels.Dig`, `Voxels.Place` and `Voxels.Restore`: voxels at points of the world dug out (`to` -1), placed
+    /// (a ground or paving), or let go back to what the edits make (-2); how many were set.
+    pub voxel_set: unsafe extern "C" fn(points: *const [f32; 3], count: i32, to: i32, tint: u32) -> i32,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2391,6 +2404,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         voxel_edit: crate::voxels::voxel_edit,
         voxel_raycast: crate::voxels::voxel_raycast,
         voxel_print: crate::voxels::voxel_print,
+        voxel_shape: crate::voxels::voxel_shape,
+        voxel_set: crate::voxels::voxel_set,
     }
 }
 

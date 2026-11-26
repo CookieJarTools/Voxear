@@ -305,6 +305,8 @@ impl Editor {
             "voxels.carve" | "voxels.fill" => self.voxels_edit(call, args),
             "voxels.raycast" => self.voxels_raycast(args),
             "voxels.print" => self.voxels_print(args),
+            "voxels.box" | "voxels.ramp" | "voxels.area" | "voxels.cover" => self.voxels_shape(call, args),
+            "voxels.dig" | "voxels.place" | "voxels.restore" => self.voxels_set(call, args),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
             "blocks.restore" => self.blocks_restore(args),
@@ -2507,19 +2509,13 @@ impl Editor {
     }
 
     fn voxels_edit(&mut self, call: &str, args: &Json) -> Called {
-        use voxear_render::{VoxelMaterial, VoxelVolume};
+        use voxear_render::VoxelVolume;
         let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
         let radius = need(args, "radius")?.as_f64().ok_or_else(|| bad("`radius` is a number of metres"))? as f32;
         let fill = match call {
             "voxels.fill" => {
-                let name = need(args, "material")?.as_str().unwrap_or_default();
-                let material = VoxelMaterial::named(name).ok_or_else(|| {
-                    refuse(
-                        ErrorKind::WrongValue,
-                        format!("{name} is not a ground: dirt, grass, rock, sand, snow or gravel"),
-                    )
-                })?;
-                Some(material)
+                let _ = need(args, "material")?;
+                material_of(args, "material")?
             }
             _ => None,
         };
@@ -2568,12 +2564,17 @@ impl Editor {
             .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
             .map(|(entity, _)| entity)
             .collect();
-        let reference = guid.to_string();
+        let data = voxear_engine::voxel_volumes::VoxelEditData {
+            fit: args.get("fit").and_then(Json::as_bool).unwrap_or(false),
+            fill: material_of(args, "footing")?,
+            tint: tint_of(args)?,
+            ..voxear_engine::voxel_volumes::VoxelEditData::printed(guid.to_string(), at.to_array(), rotation)
+        };
         let mut reached = 0;
         for entity in volumes {
             let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
             let (content, world) = (&mut self.game.content, &mut self.game.engine.world);
-            let printed = voxear_engine::voxel_volumes::print(content, world, &reference, at, rotation, Some(entity));
+            let printed = voxear_engine::voxel_volumes::print_as(content, world, &data, Some(entity));
             match printed {
                 None => return Err(refuse(ErrorKind::WrongValue, "the Voxel Print could not be read")),
                 Some(0) => {}
@@ -2584,6 +2585,122 @@ impl Editor {
             }
         }
         done(json!({ "reached": reached }))
+    }
+
+    fn voxels_shape(&mut self, call: &str, args: &Json) -> Called {
+        use voxear_engine::voxel_volumes::{VoxelEditData, VoxelEditShape};
+        use voxear_render::VoxelVolume;
+        let number = |name: &str| args.get(name).and_then(Json::as_f64).map(|n| n as f32);
+        let needed = |name: &str| number(name).ok_or_else(|| bad(format!("`{name}` is a number of metres")));
+        let fill = material_of(args, "material")?;
+        let turned = || -> Result<[f32; 3], LinkError> {
+            let turn = number("turn").unwrap_or(0.0);
+            Ok(opt_vector(args, "rotation")?.unwrap_or([0.0, turn, 0.0]))
+        };
+        let outline = || -> Result<Vec<[f32; 2]>, LinkError> {
+            let points = need(args, "points")?.as_array().ok_or_else(|| bad("`points` is a list of [x, z]"))?;
+            let points: Option<Vec<[f32; 2]>> = points
+                .iter()
+                .map(|point| {
+                    let pair = point.as_array()?;
+                    Some([pair.first()?.as_f64()? as f32, pair.get(1)?.as_f64()? as f32])
+                })
+                .collect();
+            let points = points.ok_or_else(|| bad("each of `points` is [x, z], in metres"))?;
+            if points.len() < 3 {
+                return Err(bad("an outline has three points or more"));
+            }
+            Ok(points)
+        };
+        let placed = || -> Result<([f32; 3], [f32; 3]), LinkError> {
+            let at = opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?;
+            let size = opt_vector(args, "size")?.ok_or_else(|| bad("`size` is missing"))?;
+            Ok((at, size))
+        };
+        let mut data = match call {
+            "voxels.box" | "voxels.ramp" => {
+                let (at, size) = placed()?;
+                let shape = if call == "voxels.box" { VoxelEditShape::Box } else { VoxelEditShape::Ramp };
+                VoxelEditData { shape, at, size, rotation: turned()?, ..VoxelEditData::default() }
+            }
+            "voxels.area" => VoxelEditData::area(outline()?, needed("low")?, needed("high")?, None),
+            _ => VoxelEditData::cover(outline()?, needed("depth")?, None),
+        };
+        data.fill = fill;
+        data.tint = tint_of(args)?;
+        data.clear = number("clear").unwrap_or(0.0).max(0.0);
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        let volumes: Vec<Entity> = self
+            .game
+            .engine
+            .world
+            .query_ref::<(Entity, &VoxelVolume)>()
+            .into_iter()
+            .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        let mut reached = 0;
+        for entity in volumes {
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            if voxear_engine::voxel_volumes::shape_edit(&mut self.game.engine.world, &data, Some(entity)) > 0 {
+                reached += 1;
+                self.record_change(entity, before);
+            }
+        }
+        done(json!({ "reached": reached }))
+    }
+
+    fn voxels_set(&mut self, call: &str, args: &Json) -> Called {
+        use voxear_render::{VoxelKind, VoxelVolume};
+        let points = need(args, "points")?.as_array().ok_or_else(|| bad("`points` is a list of [x, y, z]"))?;
+        let points: Option<Vec<Vec3>> = points
+            .iter()
+            .map(|point| {
+                let p = point.as_array()?;
+                Some(Vec3::new(p.first()?.as_f64()? as f32, p.get(1)?.as_f64()? as f32, p.get(2)?.as_f64()? as f32))
+            })
+            .collect();
+        let points = points.ok_or_else(|| bad("each of `points` is [x, y, z], in metres"))?;
+        let kind = match call {
+            "voxels.place" => {
+                let _ = need(args, "material")?;
+                material_of(args, "material")?.map(|material| VoxelKind { material, tint: tint_of(args).ok().flatten() })
+            }
+            _ => None,
+        };
+        let only = match args.get("obj") {
+            Some(obj) if !obj.is_null() => Some(link::resolve_obj(&self.game, obj)?),
+            _ => None,
+        };
+        let volumes: Vec<Entity> = self
+            .game
+            .engine
+            .world
+            .query_ref::<(Entity, &VoxelVolume)>()
+            .into_iter()
+            .filter(|(entity, volume)| volume.endless && only.is_none_or(|only| only == *entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        let mut set = 0;
+        for entity in volumes {
+            let Some(before) = ObjState::of(&self.game.engine.world, entity) else { continue };
+            let world = &mut self.game.engine.world;
+            let count = match call {
+                "voxels.restore" => {
+                    voxear_engine::voxel_volumes::unset_voxels(world, &points, Some(entity));
+                    points.len()
+                }
+                _ => voxear_engine::voxel_volumes::set_voxels(world, &points, kind, Some(entity)),
+            };
+            if count > 0 {
+                set += count;
+                self.record_change(entity, before);
+            }
+        }
+        done(json!({ "set": set }))
     }
 
     fn voxel_prints_make(&mut self, args: &Json) -> Called {
@@ -3221,4 +3338,30 @@ fn listed_settings(
     let categories: Vec<Json> =
         categories.iter().map(|c| json!({ "name": c.name, "about": c.about, "manual": c.manual })).collect();
     json!({ "categories": categories, "settings": listed })
+}
+
+/// The ground or paving argument `name` names, none where it is not given.
+fn material_of(args: &Json, name: &str) -> Result<Option<voxear_render::VoxelMaterial>, LinkError> {
+    let Some(given) = args.get(name).filter(|given| !given.is_null()) else { return Ok(None) };
+    let text = given.as_str().unwrap_or_default();
+    match voxear_render::VoxelMaterial::named(text) {
+        Some(material) => Ok(Some(material)),
+        None => Err(refuse(
+            ErrorKind::WrongValue,
+            format!("{text} is not a ground or a paving: {}", crate::link::VOXEL_MATERIALS.join(", ")),
+        )),
+    }
+}
+
+/// The `tint` argument, [r, g, b] from 0 to 255: none where it is not given.
+fn tint_of(args: &Json) -> Result<Option<[u8; 3]>, LinkError> {
+    let Some(given) = args.get("tint").filter(|given| !given.is_null()) else { return Ok(None) };
+    let parts: Option<Vec<u8>> = given
+        .as_array()
+        .map(|parts| parts.iter().map(|part| part.as_f64().map(|v| v.round().clamp(0.0, 255.0) as u8)).collect())
+        .unwrap_or(None);
+    match parts.as_deref() {
+        Some(&[r, g, b]) => Ok(Some([r, g, b])),
+        _ => Err(bad("`tint` is [r, g, b], each from 0 to 255")),
+    }
 }

@@ -171,9 +171,9 @@ pub use lightmaps::{
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
 pub use voxel_volume::{
-    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, MOST_VOXELS_A_METRE, VoxelCounts, VoxelEdit, VoxelGenerator,
+    GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, PAVING_COLORS as VOXEL_PAVING_COLORS, MOST_VOXELS_A_METRE, VoxelCounts, VoxelEdit, VoxelGenerator,
     VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings,
-    VoxelPrinted, VoxelRayHit, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, print::MOST_COLOURS as MOST_PRINT_COLOURS,
+    VoxelChanges, VoxelHeld, VoxelKind, VoxelPrinted, VoxelRayHit, VoxelSet, VoxelShape, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, print::MOST_COLOURS as MOST_PRINT_COLOURS,
     raycast as voxel_raycast, voxel_print_model,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
@@ -1091,6 +1091,19 @@ impl Renderer {
         size: f32,
     ) -> Result<Vec<[f32; 5]>> {
         voxel_volume::generated_at(&self.gpu, (&self.pipelines, &self.bindless), world, places, size)
+    }
+
+    /// What the endless Voxel Volume of `entity` holds on the GPU at each of
+    /// `cells`, in voxels from its corner: a palette place and one, or 0 for
+    /// nothing; and its palette's colours, as sRGB. For checking the GPU's
+    /// voxels against the CPU's, once the cells' columns are made: none
+    /// where the Obj has no endless volume drawn.
+    pub fn voxels_on_gpu(
+        &self,
+        entity: voxear_ecs::Entity,
+        cells: &[[i32; 3]],
+    ) -> Result<Option<(Vec<u32>, Vec<[u8; 4]>)>> {
+        self.voxels.probe(&self.gpu, (&self.pipelines, &self.bindless), entity, cells)
     }
 
     /// Makes every Voxel Volume in `world` and brings it up, waiting at most

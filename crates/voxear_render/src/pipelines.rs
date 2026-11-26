@@ -230,6 +230,9 @@ pub struct Pipelines {
     /// pass and the opaque one, each a triangle over the screen writing its
     /// own depth.
     pub voxel_coarse: vk::Pipeline,
+    /// What voxels a volume holds at given cells, for checking the GPU's
+    /// against the CPU's.
+    pub voxel_probe: vk::Pipeline,
     pub voxel_depth: vk::Pipeline,
     pub voxel_forward: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
@@ -1052,6 +1055,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
+            voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
             voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
@@ -1481,6 +1485,7 @@ impl Pipelines {
             self.block_depth,
             self.block_forward_on_depth,
             self.voxel_coarse,
+            self.voxel_probe,
             self.voxel_depth,
             self.voxel_forward,
             self.voxel_world_columns,

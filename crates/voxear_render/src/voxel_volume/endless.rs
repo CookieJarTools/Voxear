@@ -23,8 +23,8 @@ use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint, VoxelTrees,
-    VoxelVolume, print,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, PAVING_COLORS, VoxelEdit, VoxelGenerator, VoxelGround,
+    VoxelChanges, VoxelMaterial, VoxelPrint, VoxelShape, VoxelTrees, VoxelVolume, edit, print,
     rivers::{self, GpuVoxelWater, LaidRivers},
     trees,
 };
@@ -75,21 +75,34 @@ const COUNTERS: u64 = 4;
 /// The most trees placed round a column, and the numbers each takes.
 const MAX_TREES: u64 = 32;
 const TREE_WORDS: u64 = 8;
-/// The most edits that reach a column being made (`MOST_COLUMN_EDITS` in
-/// `shaders/voxel_world.slang`).
-const MOST_COLUMN_EDITS: u64 = 1024;
+/// The most edits that reach a column being made and the trees round it
+/// (`MOST_COLUMN_EDITS` in `shaders/voxel_world.slang`).
+const MOST_COLUMN_EDITS: u64 = 4096;
 /// The most voxel columns a window is across: 256 sector columns.
 const LARGEST_WINDOW: u32 = 256;
 /// The words an edit takes as the GPU reads it (`EDIT_WORDS` in
-/// `shaders/voxel_world.slang`), and the mark over a print's number in
-/// place of a ball's fill.
-const EDIT_WORDS: usize = 16;
-const PRINT_EDIT: u32 = 1 << 31;
+/// `shaders/voxel_world.slang`), its kinds, and its marks.
+const EDIT_WORDS: usize = 32;
+const EDIT_BALL: u32 = 0;
+const EDIT_BOX: u32 = 1;
+const EDIT_RAMP: u32 = 2;
+const EDIT_AREA: u32 = 3;
+const EDIT_COVER: u32 = 4;
+const EDIT_PRINT: u32 = 5;
+const EDIT_VOXELS: u32 = 6;
+const EDIT_FIT: u32 = 1 << 16;
+const EDIT_WIDENED: u32 = 1 << 17;
 /// Where the prints' records start in their words, and the words each takes.
 const PRINTS_AT: usize = 4;
 const PRINT_WORDS: usize = 13;
-/// The most colours a volume's palette holds: a material is a byte.
-const MOST_COLOURS: usize = 256;
+/// The most colours a volume's palette holds. A material is a byte: below
+/// [`SHARED_COLOURS`] a place every brick shares (the ground's, the pavings'
+/// and the trees'), above it a place in the brick's own bank of 128, the
+/// first bank the palette's places 128 to 255, the next 256 to 383, and so on
+/// (`voxelColour` in `shaders/voxels.slang`).
+pub(crate) const MOST_COLOURS: usize = 256 + 31 * BANK;
+const SHARED_COLOURS: usize = 128;
+const BANK: usize = 128;
 
 /// The colours of the ground a generator makes, as sRGB, in the palette
 /// after the volume's own ground's: rock in three shades, sand, snow and
@@ -105,6 +118,10 @@ pub(crate) const GENERATED_COLORS: [[u8; 4]; 9] = [
     [128, 120, 108, 255], // 20 gravel
     [104, 98, 90, 255],
 ];
+
+/// How many colours the ground, a generator's ground and the pavings take
+/// at the start of the palette, which tinted fills are tinted from.
+const BASE_COLOURS: usize = GROUND_COLORS.len() + GENERATED_COLORS.len() + PAVING_COLORS.len();
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -229,13 +246,18 @@ pub(crate) struct Endless {
     /// The edits its columns are made with, as the GPU reads them, with room
     /// for more; and the edits that reach each column being made.
     edits: Arc<Vec<VoxelEdit>>,
+    changes: Arc<VoxelChanges>,
+    edit_total: u32,
     edit_buffer: Option<Buffer>,
     job_edits: Buffer,
-    /// Every print its edits have printed, in the order first printed, and
-    /// where each one's colours are in the palette; their voxels as the GPU
-    /// reads them; and the palette's colours before theirs. Prints and
-    /// colours are only ever added, so the columns made keep theirs.
-    prints: Vec<(Arc<VoxelPrint>, Vec<u8>)>,
+    /// Every print its edits have printed, in the order first printed;
+    /// their voxels as the GPU reads them; the places in the palette of
+    /// each print's colours in each tint it is printed in, and of each
+    /// paving's or ground's tinted; and the palette's colours before
+    /// theirs. Prints and colours are only ever added, so the columns made
+    /// keep theirs.
+    prints: Vec<Arc<VoxelPrint>>,
+    tables: std::collections::HashMap<Tinted, Vec<u32>>,
     print_buffer: Option<Buffer>,
     colours: Vec<[u8; 4]>,
     base_colours: usize,
@@ -392,16 +414,117 @@ fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow:
     Room { brick_pages: brick_pages.ceil() as u32, material_pages: material_pages.ceil() as u32 }
 }
 
-/// A palette's colours in a buffer the GPU reads.
+/// A palette's colours in a buffer the GPU reads: each colour's sRGB, and
+/// over it, for a colour of a bank, the shared place nearest it, which a
+/// voxel of it takes in a brick of another bank.
 fn palette_buffer(gpu: &Gpu, colours: &[[u8; 4]]) -> Result<Buffer> {
-    let words: Vec<u32> =
-        colours.iter().map(|c| u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16).collect();
+    let words = palette_words(colours);
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
     let palette = gpu.create_buffer("voxel world palette", (words.len() as u64 * 4).max(16), usage, MemoryLocation::GpuOnly)?;
     gpu.upload_buffer(&palette, 0, bytemuck::cast_slice(&words))?;
     Ok(palette)
+}
+
+fn palette_words(colours: &[[u8; 4]]) -> Vec<u32> {
+    let shared = &colours[..colours.len().min(SHARED_COLOURS)];
+    colours
+        .iter()
+        .enumerate()
+        .map(|(at, c)| {
+            let rgb = u32::from(c[0]) | u32::from(c[1]) << 8 | u32::from(c[2]) << 16;
+            let nearest = if at < SHARED_COLOURS { 0 } else { nearest_of(shared, *c) as u32 };
+            rgb | nearest << 24
+        })
+        .collect()
+}
+
+/// The place in `colours` of the one nearest `colour`.
+fn nearest_of(colours: &[[u8; 4]], colour: [u8; 4]) -> usize {
+    let distance = |c: &[u8; 4]| (0..3).map(|i| (i32::from(c[i]) - i32::from(colour[i])).pow(2)).sum::<i32>();
+    colours.iter().enumerate().min_by_key(|(_, c)| distance(c)).map_or(0, |(i, _)| i)
+}
+
+/// The bank a palette place is in: none for a shared one.
+fn bank_of(place: usize) -> Option<usize> {
+    match place {
+        p if p < SHARED_COLOURS => None,
+        p if p < SHARED_COLOURS + BANK => Some(0),
+        p => Some((p - SHARED_COLOURS - BANK) / BANK + 1),
+    }
+}
+
+/// Where bank `bank`'s places start in the palette.
+fn bank_start(bank: usize) -> usize {
+    if bank == 0 { SHARED_COLOURS } else { SHARED_COLOURS + BANK * bank }
+}
+
+/// The places in `palette` of a table's colours `wanted` (a print's in a
+/// tint, or a fill's tinted): each shared place a colour is, else all in one
+/// bank where they fit, the palette's last or a new one, so a brick of one
+/// building has every colour of it. With every bank full, the nearest.
+fn place_table(palette: &mut Vec<[u8; 4]>, wanted: &[[u8; 4]]) -> Vec<u32> {
+    let same = |a: &[u8; 4], b: &[u8; 4]| a[..3] == b[..3];
+    let shared = palette.len().min(SHARED_COLOURS);
+    let mut places: Vec<Option<usize>> =
+        wanted.iter().map(|colour| palette[..shared].iter().position(|c| same(c, colour))).collect();
+    // The colours of it not shared, once each, in as few banks as they take.
+    let mut left: Vec<[u8; 4]> = Vec::new();
+    for (colour, place) in wanted.iter().zip(&places) {
+        if place.is_none() && !left.iter().any(|c| same(c, colour)) {
+            left.push(*colour);
+        }
+    }
+    for chunk in left.chunks(BANK) {
+        // The palette's last bank, if it has them all already or room for those it hasn't; else the next.
+        let last = bank_of(palette.len().saturating_sub(1).max(SHARED_COLOURS)).unwrap_or(0);
+        let within = |palette: &Vec<[u8; 4]>, bank: usize| {
+            let start = bank_start(bank).min(palette.len());
+            let end = (bank_start(bank) + BANK).min(palette.len());
+            (start, end)
+        };
+        let (start, end) = within(palette, last);
+        let missing = chunk.iter().filter(|colour| !palette[start..end].iter().any(|c| same(c, colour))).count();
+        let room = (bank_start(last) + BANK).saturating_sub(palette.len().max(bank_start(last)));
+        let bank = if missing <= room {
+            Some(last)
+        } else if last + 1 < (MOST_COLOURS - SHARED_COLOURS) / BANK {
+            Some(last + 1)
+        } else {
+            None
+        };
+        let Some(bank) = bank else {
+            // Every bank full: the nearest the palette has.
+            for (colour, place) in wanted.iter().zip(places.iter_mut()) {
+                if place.is_none() && chunk.iter().any(|c| same(c, colour)) {
+                    *place = Some(nearest_of(palette, *colour));
+                }
+            }
+            continue;
+        };
+        // The palette filled out to the bank's start, with the colour before.
+        while palette.len() < bank_start(bank) {
+            let filler = palette.last().copied().unwrap_or([0, 0, 0, 255]);
+            palette.push(filler);
+        }
+        for colour in chunk {
+            let (start, end) = within(palette, bank);
+            let at = match palette[start..end].iter().position(|c| same(c, colour)) {
+                Some(at) => start + at,
+                None => {
+                    palette.push(*colour);
+                    palette.len() - 1
+                }
+            };
+            for (wanted, place) in wanted.iter().zip(places.iter_mut()) {
+                if place.is_none() && same(wanted, colour) {
+                    *place = Some(at);
+                }
+            }
+        }
+    }
+    places.into_iter().map(|place| place.unwrap_or(0) as u32).collect()
 }
 
 /// An endless volume's palette's colours, its own ground's, a generator's
@@ -413,10 +536,11 @@ fn forest_buffers(
     volume: &VoxelVolume,
     models: bool,
 ) -> Result<(Vec<[u8; 4]>, Option<(Buffer, u32, f32)>, Option<trees::Models>)> {
-    let first = (GROUND_COLORS.len() + GENERATED_COLORS.len()) as u32;
+    let first = BASE_COLOURS as u32;
     let forest = trees::forest(&volume.trees, first);
     let tree_colors = forest.as_ref().map(|forest| forest.colors.clone()).unwrap_or_default();
-    let all: Vec<[u8; 4]> = GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&tree_colors).copied().collect();
+    let all: Vec<[u8; 4]> =
+        GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&PAVING_COLORS).chain(&tree_colors).copied().collect();
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
@@ -614,9 +738,12 @@ impl Endless {
             tree_carried,
             models,
             edits: Arc::default(),
+            changes: Arc::default(),
+            edit_total: 0,
             edit_buffer: None,
             job_edits,
             prints: Vec::new(),
+            tables: std::collections::HashMap::new(),
             print_buffer: None,
             base_colours: colours.len(),
             colours,
@@ -641,7 +768,7 @@ impl Endless {
         };
         endless.rivers = laid_rivers(gpu, volume, endless.program.is_some(), window, endless.forest.as_ref())?;
         // No column is made yet, and no frame reads what the edits' buffers took the place of.
-        for buffer in endless.set_edits(gpu, &volume.edits)? {
+        for buffer in endless.set_edits(gpu, &volume.edits, &volume.changes)? {
             gpu.destroy_buffer(buffer);
         }
         Ok(endless)
@@ -651,19 +778,30 @@ impl Endless {
     /// from the edits it had, from the first that does, have the columns
     /// they reach made again. Gives back the buffers let go, where the
     /// edits outgrew theirs or printed prints it had none of.
-    pub fn set_edits(&mut self, gpu: &Gpu, edits: &Arc<Vec<VoxelEdit>>) -> Result<Vec<Buffer>> {
-        if Arc::ptr_eq(&self.edits, edits) || self.edits == *edits {
-            self.edits = edits.clone();
+    pub fn set_edits(
+        &mut self,
+        gpu: &Gpu,
+        edits: &Arc<Vec<VoxelEdit>>,
+        changes: &Arc<VoxelChanges>,
+    ) -> Result<Vec<Buffer>> {
+        let same_edits = Arc::ptr_eq(&self.edits, edits) || self.edits == *edits;
+        let same_changes = Arc::ptr_eq(&self.changes, changes) || self.changes == *changes;
+        if same_edits && same_changes {
+            (self.edits, self.changes) = (edits.clone(), changes.clone());
             return Ok(Vec::new());
         }
         let same = self.edits.iter().zip(edits.iter()).take_while(|(a, b)| a == b).count();
-        let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
-        for edit in self.edits[same..].iter().chain(&edits[same..]) {
-            // The columns the edit reaches, with a voxel's border, are made again; and where it carves or prints,
-            // those the trees standing in it reach, as they grow no more.
-            let (low, high) = edit.reach();
-            let trees =
-                if edit.fill.is_none() { self.forest.as_ref().map_or(0.0, |(_, _, reach)| reach + 1.5) } else { 0.0 };
+        let voxel = self.voxel();
+        let mut reached: Vec<(Vec3, Vec3)> =
+            self.edits[same..].iter().chain(&edits[same..]).map(VoxelEdit::reach).collect();
+        // The bricks whose voxels were set or let go.
+        reached.extend(changes.changed_from(&self.changes).into_iter().map(|(low, high)| {
+            (Vec3::from(low.map(|a| a as f32)) * voxel, Vec3::from(high.map(|a| (a + 1) as f32)) * voxel)
+        }));
+        for (low, high) in reached {
+            // The columns the edit reaches, with a voxel's border, are made again; and those the trees standing in it
+            // reach, as they may grow no more, or grow again.
+            let trees = self.forest.as_ref().map_or(0.0, |(_, _, reach)| reach + 1.5 + trees::CELL);
             let low = ((low - trees) / voxel - 1.0) / 64.0;
             let high = ((high + trees) / voxel + 1.0) / 64.0;
             for z in low.z.floor() as i32..=high.z.floor() as i32 {
@@ -675,8 +813,102 @@ impl Endless {
                 }
             }
         }
+        self.changes = changes.clone();
+        let gone = self.write_edits(gpu, edits)?;
+        self.edits = edits.clone();
+        Ok(gone)
+    }
+
+    fn voxel(&self) -> f32 {
+        1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32
+    }
+
+    /// Writes `edits` for the GPU: the prints they print that it has none of
+    /// yet taken in, the colours they are printed or tinted in added to the
+    /// palette, and their words, outlines and colour tables. Gives back the
+    /// buffers let go.
+    fn write_edits(&mut self, gpu: &Gpu, edits: &[VoxelEdit]) -> Result<Vec<Buffer>> {
         let mut gone = self.add_prints(gpu, edits)?;
-        let words: Vec<u32> = edits.iter().flat_map(|edit| self.edit_words(edit, voxel)).collect();
+        let voxel = self.voxel();
+        let colours_before = self.colours.len();
+        let changes = self.changes.clone();
+        let bricks = changes.bricks().count();
+        let mut words = vec![0u32; (edits.len() + bricks) * EDIT_WORDS];
+        // Each colour table once, however many edits share it.
+        let mut placed: std::collections::HashMap<Tinted, u32> = std::collections::HashMap::new();
+        for (i, edit) in edits.iter().enumerate() {
+            let (mut edit_words, points) = self.edit_words(edit, voxel);
+            if matches!(edit.shape, VoxelShape::Area { .. } | VoxelShape::Cover { .. }) {
+                edit_words[29] = words.len() as u32;
+                edit_words[30] = (points.len() / 2) as u32;
+                words.extend(points);
+            }
+            let tinted = match edit.print() {
+                Some(printed) => Some(Tinted::Print(printed.print.id, edit.tint)),
+                None => edit.fill.zip(edit.tint).map(|(material, tint)| Tinted::Fill(material, tint)),
+            };
+            if let Some(tinted) = tinted {
+                let at = match placed.get(&tinted) {
+                    Some(&at) => at,
+                    None => {
+                        let table = self.table(&tinted);
+                        let at = words.len() as u32;
+                        words.extend_from_slice(&table);
+                        placed.insert(tinted, at);
+                        at
+                    }
+                };
+                edit_words[21] = at;
+            }
+            words[i * EDIT_WORDS..][..EDIT_WORDS].copy_from_slice(&edit_words);
+        }
+        // The voxels set one at a time over them all, an edit a brick: their kinds first, each its fill and its colour
+        // table where it is tinted.
+        let kinds_at = words.len() as u32;
+        let kinds: Vec<(u32, Option<Tinted>)> = changes
+            .kinds()
+            .iter()
+            .map(|kind| (kind.material as u32 + 1, kind.tint.map(|tint| Tinted::Fill(kind.material, tint))))
+            .collect();
+        words.extend(std::iter::repeat_n(0, kinds.len() * 2));
+        for (k, (fill, tinted)) in kinds.into_iter().enumerate() {
+            words[kinds_at as usize + k * 2] = fill;
+            if let Some(tinted) = tinted {
+                let at = match placed.get(&tinted) {
+                    Some(&at) => at,
+                    None => {
+                        let table = self.table(&tinted);
+                        let at = words.len() as u32;
+                        words.extend_from_slice(&table);
+                        placed.insert(tinted, at);
+                        at
+                    }
+                };
+                words[kinds_at as usize + k * 2 + 1] = at;
+            }
+        }
+        for (i, (brick, changed)) in changes.bricks().enumerate() {
+            let low = Vec3::from(brick.map(|a| (a * 8) as f32));
+            let mut edit_words = [0u32; EDIT_WORDS];
+            let middle = low + 4.0;
+            edit_words[..4].copy_from_slice(&[middle.x.to_bits(), middle.y.to_bits(), middle.z.to_bits(), 8f32.to_bits()]);
+            edit_words[4] = EDIT_VOXELS;
+            for (k, v) in [low.x, low.y, low.z, low.x + 8.0, low.y + 8.0, low.z + 8.0].into_iter().enumerate() {
+                edit_words[6 + k] = v.to_bits();
+            }
+            edit_words[21] = kinds_at;
+            for (k, a) in brick.iter().enumerate() {
+                edit_words[22 + k] = (a * 8) as u32;
+            }
+            edit_words[29] = words.len() as u32;
+            words.extend(changed.set.iter().flat_map(|&word| [word as u32, (word >> 32) as u32]));
+            words.extend(changed.codes.chunks(4).map(|four| u32::from_le_bytes([four[0], four[1], four[2], four[3]])));
+            words[(edits.len() + i) * EDIT_WORDS..][..EDIT_WORDS].copy_from_slice(&edit_words);
+        }
+        self.edit_total = (edits.len() + bricks) as u32;
+        if self.colours.len() != colours_before {
+            gone.push(std::mem::replace(&mut self.palette, palette_buffer(gpu, &self.colours)?));
+        }
         let bytes = (words.len() as u64 * 4).max(16);
         if self.edit_buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {
             // Room for half as many again, so a script carving a tunnel grows it seldom.
@@ -688,61 +920,133 @@ impl Endless {
             gone.extend(self.edit_buffer.replace(buffer));
         }
         if let Some(buffer) = &self.edit_buffer {
-            gpu.upload_buffer(buffer, 0, bytemuck::cast_slice(&words))?;
+            for (i, piece) in bytemuck::cast_slice::<u32, u8>(&words).chunks(64 << 20).enumerate() {
+                gpu.upload_buffer(buffer, (i * (64 << 20)) as u64, piece)?;
+            }
         }
-        self.edits = edits.clone();
         Ok(gone)
     }
 
-    /// An edit as the GPU reads it (`EDIT_WORDS` in `shaders/voxel_world.slang`),
-    /// in the world's voxels: where its ball's middle is or its print's
-    /// origin, how far it reaches from there, and its fill or its print;
-    /// for a print, how many of its voxels a voxel of the world is, the box
-    /// it reaches, and how it is turned back.
-    fn edit_words(&self, edit: &VoxelEdit, voxel: f32) -> [u32; EDIT_WORDS] {
-        let middle = edit.at / voxel;
-        let radius = (edit.radius / voxel).max(0.0);
-        let mut words = [0u32; EDIT_WORDS];
-        words[..4].copy_from_slice(&[middle.x.to_bits(), middle.y.to_bits(), middle.z.to_bits(), radius.to_bits()]);
-        match &edit.print {
-            Some(printed) => {
-                let index = self.prints.iter().position(|(print, _)| print.id == printed.print.id).unwrap_or(0);
-                words[4] = PRINT_EDIT | index as u32;
-                // Less than nothing where it is looked at round each voxel's middle too.
-                let scale = printed.print.voxels_per_metre as f32 * voxel;
-                words[5] = if edit.widened(voxel) { -scale } else { scale }.to_bits();
-                let (low, high) = edit.reach();
-                let (low, high) = (low / voxel, high / voxel);
-                for (i, v) in [low.x, low.y, low.z, high.x, high.y, high.z].into_iter().enumerate() {
-                    words[6 + i] = v.to_bits();
-                }
-                let back = printed.rotation.inverse();
-                for (i, v) in [back.x, back.y, back.z, back.w].into_iter().enumerate() {
-                    words[12 + i] = v.to_bits();
-                }
-            }
-            None => words[4] = edit.fill.map_or(0, |material| material as u32 + 1),
+    /// The places in the palette a print's colours or a tinted fill's take
+    /// (`editColour` and `editTinted` in `shaders/voxel_world.slang`): for a
+    /// print, its palette's colours in their tint; for a fill, every colour
+    /// of the ground and the pavings, those of its own ground or paving in
+    /// its tint. Added to the palette where they are new, the nearest it has
+    /// where it is full.
+    fn table(&mut self, tinted: &Tinted) -> Vec<u32> {
+        if let Some(table) = self.tables.get(tinted) {
+            return table.clone();
         }
-        words
+        let table: Vec<u32> = match *tinted {
+            Tinted::Print(id, tint) => {
+                let print = self.prints.iter().find(|print| print.id == id).cloned();
+                let palette = print.map(|print| print.palette.clone()).unwrap_or_default();
+                let shades: Vec<[u8; 4]> = match tint {
+                    Some(tint) => tinted_colours(&palette, tint),
+                    None => palette,
+                };
+                place_table(&mut self.colours, &shades)
+            }
+            Tinted::Fill(material, tint) => {
+                let own = places_of(material);
+                let base: Vec<[u8; 4]> = self.colours[..BASE_COLOURS].to_vec();
+                let shades = tinted_colours(&own.iter().map(|&at| base[at]).collect::<Vec<_>>(), tint);
+                let placed = place_table(&mut self.colours, &shades);
+                (0..BASE_COLOURS)
+                    .map(|at| match own.iter().position(|&o| o == at) {
+                        Some(k) => placed[k],
+                        None => at as u32,
+                    })
+                    .collect()
+            }
+        };
+        self.tables.insert(tinted.clone(), table.clone());
+        table
     }
 
-    /// Takes in the prints `edits` print that it has none of yet: their
-    /// colours added to the palette, the nearest it has where it is full,
-    /// and their voxels to the prints' buffer. Gives back the buffers let go.
+    /// An edit as the GPU reads it (`EDIT_WORDS` in `shaders/voxel_world.slang`),
+    /// but for where its outline and colour table are: where it is and how
+    /// far a ball round there reaches, its kind, fill and marks, and the box
+    /// it reaches, in the world's voxels; then its shape in whole numbers,
+    /// as the CPU works it out ([`edit::Fixed`]).
+    fn edit_words(&self, edit: &VoxelEdit, voxel: f32) -> ([u32; EDIT_WORDS], Vec<u32>) {
+        let mut words = [0u32; EDIT_WORDS];
+        let (low, high) = edit.reach();
+        let (low, high) = (low / voxel, high / voxel);
+        let at = edit.at() / voxel;
+        let fill = edit.fill.map_or(0, |material| material as u32 + 1);
+        let corner = |i: usize| Vec3::new([low.x, high.x][i & 1], [low.y, high.y][i >> 1 & 1], [low.z, high.z][i >> 2]);
+        let mut radius = (0..8).map(|i| corner(i).distance(at)).fold(0.0, f32::max) + 1.0;
+        let fixed = edit::Fixed::of(edit, voxel);
+        let whole = |v: i64| v as i32 as u32;
+        let mut put = |at: usize, values: &[i64]| {
+            for (k, &v) in values.iter().enumerate() {
+                words[at + k] = whole(v);
+            }
+        };
+        for (i, row) in fixed.back.iter().enumerate() {
+            put(12 + i * 3, row);
+        }
+        put(22, &fixed.at);
+        let kind = match &edit.shape {
+            VoxelShape::Ball { radius: r, .. } => {
+                radius = r / voxel + 1.0;
+                put(25, &[fixed.size[0]]);
+                EDIT_BALL
+            }
+            VoxelShape::Box { .. } | VoxelShape::Ramp { .. } => {
+                put(25, &fixed.size);
+                put(28, &[fixed.clear]);
+                if matches!(edit.shape, VoxelShape::Ramp { .. }) { EDIT_RAMP } else { EDIT_BOX }
+            }
+            VoxelShape::Area { .. } => {
+                put(25, &[fixed.low, fixed.high]);
+                put(28, &[fixed.clear]);
+                EDIT_AREA
+            }
+            VoxelShape::Cover { .. } => {
+                words[18] = fixed.cover[0] as u32;
+                words[19] = fixed.cover[1] as u32;
+                // Reaching all the way up and down: the box alone says where.
+                radius = 1.0e30;
+                EDIT_COVER
+            }
+            VoxelShape::Print(printed) => {
+                let index = self.prints.iter().position(|print| print.id == printed.print.id).unwrap_or(0);
+                put(25, &[index as i64, fixed.per_metre[0], fixed.per_metre[1]]);
+                put(29, &fixed.origin);
+                EDIT_PRINT
+            }
+        };
+        let marks = match edit.print() {
+            Some(printed) => {
+                (if printed.fit { EDIT_FIT } else { 0 }) | (if fixed.widened { EDIT_WIDENED } else { 0 })
+            }
+            None => 0,
+        };
+        words[..4].copy_from_slice(&[at.x.to_bits(), at.y.to_bits(), at.z.to_bits(), radius.to_bits()]);
+        words[4] = kind | fill << 8 | marks;
+        for (i, v) in [low.x, low.y, low.z, high.x, high.y, high.z].into_iter().enumerate() {
+            words[6 + i] = v.to_bits();
+        }
+        let points = fixed.points.iter().flat_map(|p| [whole(p[0]), whole(p[1])]).collect();
+        (words, points)
+    }
+
+    /// Takes in the prints `edits` print that it has none of yet, their
+    /// voxels to the prints' buffer. Gives back the buffer let go.
     fn add_prints(&mut self, gpu: &Gpu, edits: &[VoxelEdit]) -> Result<Vec<Buffer>> {
         let mut added = false;
-        for printed in edits.iter().filter_map(|edit| edit.print.as_ref()) {
-            if self.prints.iter().any(|(print, _)| print.id == printed.print.id) {
+        for printed in edits.iter().filter_map(VoxelEdit::print) {
+            if self.prints.iter().any(|print| print.id == printed.print.id) {
                 continue;
             }
-            let places = printed.print.palette.iter().map(|&colour| place_in(&mut self.colours, colour)).collect();
-            self.prints.push((printed.print.clone(), places));
+            self.prints.push(printed.print.clone());
             added = true;
         }
         if !added {
             return Ok(Vec::new());
         }
-        let mut gone = vec![std::mem::replace(&mut self.palette, palette_buffer(gpu, &self.colours)?)];
         let words = prints_words(&self.prints);
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::TRANSFER_DST
@@ -751,8 +1055,7 @@ impl Endless {
         for (i, piece) in bytemuck::cast_slice::<u32, u8>(&words).chunks(64 << 20).enumerate() {
             gpu.upload_buffer(&buffer, (i * (64 << 20)) as u64, piece)?;
         }
-        gone.extend(self.print_buffer.replace(buffer));
-        Ok(gone)
+        Ok(self.print_buffer.replace(buffer).into_iter().collect())
     }
 
     /// Makes `volume`'s ground in the buffers it has, where they fit it: its
@@ -775,13 +1078,17 @@ impl Endless {
             return Ok(None);
         }
         let (program, caves) = program_buffers(gpu, program)?;
-        let (mut colours, forest, _) = forest_buffers(gpu, volume, false)?;
-        // The prints' colours after the ground's and the trees', where they were.
-        colours.extend_from_slice(&self.colours[self.base_colours.min(self.colours.len())..]);
-        let palette = palette_buffer(gpu, &colours)?;
+        let (colours, forest, _) = forest_buffers(gpu, volume, false)?;
+        // The prints' and tints' colours placed again after the ground's and the trees', with every column made over.
+        self.base_colours = colours.len();
         self.colours = colours;
+        self.tables.clear();
+        let edits = self.edits.clone();
+        let mut gone_edits = self.write_edits(gpu, &edits)?;
+        let palette = palette_buffer(gpu, &self.colours)?;
         let mut gone: Vec<Buffer> =
             std::mem::replace(&mut self.program, program).map(|(buffer, _)| buffer).into_iter().collect();
+        gone.append(&mut gone_edits);
         gone.extend(
             std::mem::replace(&mut self.volume, caves).into_iter().flat_map(|(words, carried)| [words, carried]),
         );
@@ -952,6 +1259,49 @@ impl Endless {
         (record, self.corner + at)
     }
 
+    /// What the GPU holds at each of `cells`, in voxels from the volume's
+    /// corner: a palette place and one, or 0 for nothing; and the palette's
+    /// colours. For checking the GPU's voxels against the CPU's: the cells'
+    /// columns must be made.
+    pub fn probe(
+        &self,
+        gpu: &Gpu,
+        (pipelines, bindless): (&Pipelines, &Bindless),
+        cells: &[[i32; 3]],
+    ) -> Result<(Vec<u32>, Vec<[u8; 4]>)> {
+        #[repr(C)]
+        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Probe {
+            volume: GpuVoxelVolume,
+            cells: u64,
+            found: u64,
+            count: u32,
+            pad: u32,
+        }
+        let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        let count = cells.len().max(1) as u64;
+        let at = self.window_sector;
+        let local: Vec<[i32; 3]> = cells.iter().map(|c| [c[0] - at[0] * 64, c[1], c[2] - at[2] * 64]).collect();
+        let asked = gpu.create_buffer("voxel probe cells", count * 12, usage, MemoryLocation::CpuToGpu)?;
+        asked.write(0, &local);
+        let found = gpu.create_buffer("voxel probe found", count * 4, usage, MemoryLocation::GpuToCpu)?;
+        let record = gpu.create_buffer("voxel probe", size_of::<Probe>() as u64, usage, MemoryLocation::CpuToGpu)?;
+        let probe =
+            Probe { volume: self.drawn().0, cells: asked.address, found: found.address, count: cells.len() as u32, pad: 0 };
+        record.write(0, std::slice::from_ref(&probe));
+        let push = crate::gpu::Push { buffers: record.address, ..bytemuck::Zeroable::zeroed() };
+        gpu.immediate(|cmd| unsafe {
+            gpu.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipelines.voxel_probe);
+            bindless.push(gpu, cmd, &push);
+            gpu.device.cmd_dispatch(cmd, (cells.len() as u32).div_ceil(64), 1, 1);
+        })?;
+        let out = bytemuck::cast_slice::<u8, u32>(&found.read()[..cells.len() * 4]).to_vec();
+        for buffer in [asked, found, record] {
+            gpu.destroy_buffer(buffer);
+        }
+        Ok((out, self.colours.clone()))
+    }
+
     /// The buffers the walk reads, which making columns writes.
     pub fn pools(&self) -> [&Buffer; 3] {
         [&self.table, &self.bricks, &self.materials]
@@ -1037,7 +1387,7 @@ impl Endless {
             rivers: self.rivers.as_ref().map_or(0, |rivers| rivers.table.address),
             river_window: self.rivers.as_ref().map_or(0, |rivers| rivers.window),
             river_pad: 0,
-            edit_count: self.edits.len() as u32,
+            edit_count: self.edit_total,
             edit_pad: 0,
             brick_pages: self.room.brick_pages,
             jobs,
@@ -1103,11 +1453,12 @@ impl Recording {
             device.cmd_dispatch(cmd, groups[0], groups[1], groups[2]);
         };
         run(pipelines.voxel_world_columns, [((SIDE * SIDE) as u32).div_ceil(64), jobs, 1]);
+        // The edits that reach each column before its trees, whose feet they may take away.
+        run(pipelines.voxel_world_edits, [1, jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_tops, [((TOPS * TOPS) as u32).div_ceil(64), jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_trees, [1, jobs, 1]);
-        run(pipelines.voxel_world_edits, [1, jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_candidates, [1, jobs, 1]);
         barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
@@ -1184,38 +1535,24 @@ impl Endless {
     }
 }
 
-/// The place of `colour` in a palette, added where there is room, else the
-/// nearest the palette has.
-fn place_in(colours: &mut Vec<[u8; 4]>, colour: [u8; 4]) -> u8 {
-    if let Some(at) = colours.iter().position(|c| c[..3] == colour[..3]) {
-        return at as u8;
-    }
-    if colours.len() < MOST_COLOURS {
-        colours.push(colour);
-        return (colours.len() - 1) as u8;
-    }
-    let distance = |c: &[u8; 4]| (0..3).map(|i| (i32::from(c[i]) - i32::from(colour[i])).pow(2)).sum::<i32>();
-    colours.iter().enumerate().min_by_key(|(_, c)| distance(c)).map_or(0, |(i, _)| i as u8)
-}
-
 /// Prints as the GPU reads them (`PRINTS_AT` in `shaders/voxel_world.slang`):
 /// how many, then for each its bricks along X, Y and Z, where its grid, its
 /// bricks and its materials start among the words, its size in voxels and
 /// where its origin is, and where its footprint starts; then each one's
-/// grid, bricks and materials, these four to a word, as places in the
-/// volume's palette, and its footprint.
-fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
+/// grid, bricks and materials, these four to a word, as places in its own
+/// palette (which each edit's colour table makes places in the volume's),
+/// and its footprint.
+fn prints_words(prints: &[Arc<VoxelPrint>]) -> Vec<u32> {
     let mut words = vec![0u32; PRINTS_AT + prints.len() * PRINT_WORDS];
     words[0] = prints.len() as u32;
-    for (i, (print, places)) in prints.iter().enumerate() {
+    for (i, print) in prints.iter().enumerate() {
         let across = print.bricks_across();
         let grid = words.len() as u32;
         words.extend_from_slice(&print.grid);
         let bricks = words.len() as u32;
         words.extend_from_slice(&print.bricks);
         let materials = words.len() as u32;
-        let bytes: Vec<u8> = print.materials.iter().map(|&m| places.get(usize::from(m)).copied().unwrap_or(0)).collect();
-        words.extend(bytes.chunks(4).map(|four| {
+        words.extend(print.materials.chunks(4).map(|four| {
             let mut word = [0u8; 4];
             word[..four.len()].copy_from_slice(four);
             u32::from_le_bytes(word)
@@ -1242,6 +1579,50 @@ fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
     }
     debug_assert_eq!(print::BRICK_WORDS, 17);
     words
+}
+
+/// What a colour table is made for: a print's palette in a tint (or its
+/// own colours), or a ground's or a paving's colours in a tint.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Tinted {
+    Print(u64, Option<[u8; 3]>),
+    Fill(VoxelMaterial, [u8; 3]),
+}
+
+/// The places among the palette's first colours a fill of `material` takes
+/// (`fillVoxel` in `shaders/voxel_world.slang`).
+fn places_of(material: VoxelMaterial) -> Vec<usize> {
+    let generated = GROUND_COLORS.len();
+    let paving = generated + GENERATED_COLORS.len();
+    match material {
+        VoxelMaterial::Dirt => vec![1],
+        VoxelMaterial::Grass => vec![0, 1],
+        VoxelMaterial::Rock => vec![generated, generated + 1, generated + 2],
+        VoxelMaterial::Sand => vec![generated + 3, generated + 4],
+        VoxelMaterial::Snow => vec![generated + 5, generated + 6, generated + 1],
+        VoxelMaterial::Gravel => vec![generated + 7, generated + 8],
+        _ => {
+            let first = paving + (material as usize - VoxelMaterial::Cobbles as usize) * 4;
+            (first..first + 4).collect()
+        }
+    }
+}
+
+/// `colours` in `tint`: their average made the tint, each shaded from it
+/// as it was from their average.
+fn tinted_colours(colours: &[[u8; 4]], tint: [u8; 3]) -> Vec<[u8; 4]> {
+    if colours.is_empty() {
+        return Vec::new();
+    }
+    let mean: [f32; 3] =
+        [0, 1, 2].map(|i| colours.iter().map(|c| f32::from(c[i])).sum::<f32>() / colours.len() as f32);
+    colours
+        .iter()
+        .map(|c| {
+            let shade = |i: usize| (f32::from(c[i]) / mean[i].max(1.0) * f32::from(tint[i])).round().clamp(0.0, 255.0) as u8;
+            [shade(0), shade(1), shade(2), c[3]]
+        })
+        .collect()
 }
 
 /// What `world` makes at each of `places`, `[x, y, z]` in metres in its
@@ -1293,4 +1674,38 @@ pub(crate) fn generated_at(
         gpu.destroy_buffer(buffer);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sixty_kinds_of_building_each_keep_their_colours_in_a_bank_of_their_own_or_a_shared_one() {
+        let mut palette: Vec<[u8; 4]> = GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&PAVING_COLORS).copied().collect();
+        let mut tables = Vec::new();
+        for kind in 0..60u8 {
+            // Thirty colours a kind, all its own but its first, which is the ground's dirt.
+            let mut colours: Vec<[u8; 4]> = (0..29u8).map(|k| [kind * 4, k * 8, 255 - kind, 255]).collect();
+            colours.insert(0, GROUND_COLORS[1]);
+            tables.push((colours.clone(), place_table(&mut palette, &colours)));
+        }
+        assert!(palette.len() <= MOST_COLOURS, "{} colours", palette.len());
+        for (colours, places) in &tables {
+            assert_eq!(places[0], 1, "the dirt is the shared dirt");
+            // Each colour where the table says, and all a kind's own colours in one bank.
+            for (colour, &place) in colours.iter().zip(places) {
+                assert_eq!(palette[place as usize][..3], colour[..3]);
+            }
+            let banks: std::collections::HashSet<_> = places[1..].iter().map(|&p| bank_of(p as usize)).collect();
+            assert_eq!(banks.len(), 1, "one bank: {banks:?}");
+        }
+        // The same kind printed again takes the places it had.
+        let again = place_table(&mut palette, &tables[59].0);
+        assert_eq!(again, tables[59].1);
+        // Over a shared colour's place, a bank's colour says the shared one nearest it.
+        let words = palette_words(&palette);
+        let at = tables[10].1[5] as usize;
+        assert_eq!((words[at] >> 24) as usize, nearest_of(&palette[..SHARED_COLOURS], palette[at]));
+    }
 }

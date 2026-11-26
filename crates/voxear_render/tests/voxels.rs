@@ -1180,3 +1180,301 @@ fn an_endless_volume_shows_its_generators_overhangs_and_caves() {
     let pixels = render(&mut renderer, &generated_view(world, cave[0], cave[1], -4.0, 5.0), 3);
     keep_image("generated inside a cave.png", &pixels);
 }
+
+/// What `renderer` holds on the GPU over the box of voxels from `low`,
+/// `size` a side, for `scene`'s endless volume, against what the CPU finds
+/// (`VoxelSolids`): every voxel the GPU keeps is solid on the CPU with open
+/// air beside it, and every such voxel the GPU keeps, where `edited` says a
+/// voxel or one beside it is edited (given each voxel and its column's
+/// ground). Gives how many differ there, how many the GPU keeps, and what
+/// it keeps at each, X fastest. Elsewhere the GPU keeps a row of voxels
+/// under the ground's sides that no one sees, and a generator's height may
+/// round to the voxel over or under on the CPU at a few columns, which are
+/// counted apart.
+fn gpu_against_cpu(
+    renderer: &Renderer,
+    scene: &World,
+    (low, size): ([i32; 3], [i32; 3]),
+    edited: &dyn Fn(voxear_core::math::IVec3, i32) -> bool,
+) -> (usize, usize, Vec<u32>) {
+    let (entity, volume) = scene
+        .query_ref::<(voxear_ecs::Entity, &VoxelVolume)>()
+        .into_iter()
+        .map(|(entity, volume)| (entity, volume.clone()))
+        .next()
+        .unwrap();
+    let mut cells = Vec::new();
+    for z in 0..size[2] {
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                cells.push([low[0] + x, low[1] + y, low[2] + z]);
+            }
+        }
+    }
+    let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+    // The CPU's, with a border of one for the air beside each.
+    let solids = voxear_render::VoxelSolids::of(&volume).unwrap();
+    let wide = size.map(|a| a + 2);
+    let mut solid = vec![false; (wide[0] * wide[1] * wide[2]) as usize];
+    solids.fill(low.map(|a| a - 1), wide, &mut solid);
+    let at = |x: i32, y: i32, z: i32| solid[((x + 1) + wide[0] * ((y + 1) + wide[1] * (z + 1))) as usize];
+    let heights = solids.heights([low[0] - 1, low[2] - 1], [wide[0], wide[2]]);
+    let height = |x: i32, z: i32| heights[((x + 1) + wide[0] * (z + 1)) as usize];
+    let near = |x: i32, y: i32, z: i32| {
+        [(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)].iter().any(|&(dx, dy, dz)| {
+            let c = voxear_core::math::IVec3::new(low[0] + x + dx, low[1] + y + dy, low[2] + z + dz);
+            edited(c, height(x + dx, z + dz))
+        })
+    };
+    let (mut differ, mut kept, mut apart) = (0, 0, 0);
+    let mut shown = 0;
+    for z in 0..size[2] {
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let seen = at(x, y, z)
+                    && [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+                        .iter()
+                        .any(|&(dx, dy, dz)| !at(x + dx, y + dy, z + dz));
+                let gpu = found[(x + size[0] * (y + size[1] * z)) as usize] != 0;
+                kept += usize::from(gpu);
+                if gpu != seen && !near(x, y, z) {
+                    apart += 1;
+                } else if gpu != seen {
+                    differ += 1;
+                    if shown < 8 {
+                        eprintln!("at {:?}: the GPU {}, the CPU {}", [low[0] + x, low[1] + y, low[2] + z], gpu, seen);
+                        shown += 1;
+                    }
+                }
+            }
+        }
+    }
+    if apart > 0 {
+        eprintln!("{apart} voxels of the ground no edit reaches differ");
+    }
+    (differ, kept, found)
+}
+
+/// Rolling Hills seen from 14 m over (8, 8), with no grass, flowers or
+/// trees, so the CPU and the GPU keep the same voxels.
+fn bare_hills_view() -> World {
+    let mut scene = generated_view(Arc::new(without_rivers(&starter("Rolling Hills"))), 8.0, 8.0, 14.0, 90.0);
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
+    }
+    scene
+}
+
+#[test]
+fn an_endless_volumes_boxes_banks_areas_covers_and_fitted_prints_are_the_cpus_to_the_voxel() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut scene = bare_hills_view();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let ground = |x: f32, z: f32| {
+        voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(x, 47.0, z), -Vec3::Y, 60.0).expect("the ground").point
+    };
+    let turn = |degrees: f32| Quat::from_rotation_y(degrees.to_radians());
+    // A hut 3 m a side and 2.5 m tall, a voxel's shell with a door, its origin at the middle of its foot.
+    let hut = VoxelPrint::from_voxels([48, 40, 48], 16, Vec3::new(24.0, 0.0, 24.0), vec![[180, 150, 110, 255], [90, 60, 40, 255]], VoxelPrintSettings::default(), |c| {
+        let wall = c[0] == 0 || c[0] == 47 || c[2] == 0 || c[2] == 47;
+        let door = c[2] == 0 && (20..28).contains(&c[0]) && c[1] < 30;
+        if c[1] == 39 { 2 } else if wall && !door { 1 } else { 0 }
+    });
+    let l_shape = vec![[1.0, 9.0], [7.0, 9.0], [7.0, 12.0], [4.0, 12.0], [4.0, 15.0], [1.0, 15.0]];
+    let plot = ground(4.0, 12.0).y;
+    let edits = vec![
+        VoxelEdit::boxed(ground(4.0, 4.0), Vec3::new(3.0, 0.5, 2.0), turn(20.0), Some(VoxelMaterial::Cobbles)).clearing(1.5),
+        VoxelEdit::ramp(ground(12.0, 3.0) - Vec3::Y, Vec3::new(2.0, 1.5, 4.0), turn(-30.0), Some(VoxelMaterial::Dirt)),
+        VoxelEdit::area(l_shape, plot - 0.5, plot + 0.25, Some(VoxelMaterial::Flagstones)).clearing(2.0),
+        VoxelEdit::cover(vec![[10.0, 10.0], [15.0, 10.5], [14.5, 15.0], [10.5, 14.0]], 0.25, Some(VoxelMaterial::Bricks)).clearing(0.5),
+        VoxelEdit::printed(Arc::new(hut), ground(8.0, 20.0), turn(12.0)).fitted(Some(VoxelMaterial::Ashlar)),
+        VoxelEdit::boxed(ground(16.0, 16.0), Vec3::new(2.0, 1.0, 2.0), Quat::IDENTITY, Some(VoxelMaterial::Planks)).tinted(Some([200, 60, 60])),
+        VoxelEdit::boxed(ground(3.0, 18.0) - Vec3::Y * 3.0, Vec3::new(3.0, 2.5, 3.0), turn(45.0), None),
+    ];
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(edits.clone());
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("shaped edits from above.png", &pixels);
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let voxel = 1.0 / 16.0;
+    let mut wrong = Vec::new();
+    for (i, edit) in edits.iter().enumerate() {
+        let (least, most) = edit.reach();
+        let least = if least.y < -1000.0 { Vec3::new(least.x, 18.0, least.z) } else { least };
+        let most = if most.y > 1000.0 { Vec3::new(most.x, 30.0, most.z) } else { most };
+        let low = (least / voxel).floor().as_ivec3() - 3;
+        let high = (most / voxel).ceil().as_ivec3() + 3;
+        let size = (high - low).to_array();
+        let reaches = |c: voxear_core::math::IVec3, ground: i32| edit.held(c, voxel, ground) != voxear_render::VoxelHeld::Not;
+        let (differ, kept, _) = gpu_against_cpu(&renderer, &scene, (low.to_array(), size), &reaches);
+        let count = (size[0] * size[1] * size[2]) as usize;
+        eprintln!("edit {i}: {differ} of {count} voxels differ, {kept} kept");
+        assert!(kept > 100, "edit {i}: the GPU keeps its voxels: {kept}");
+        if differ != 0 {
+            wrong.push((i, differ));
+        }
+    }
+    assert!(wrong.is_empty(), "the GPU's voxels are the CPU's but for edits (edit, voxels): {wrong:?}");
+    // The cobbled box's top, seen: its stones' three shades and their joints, and nothing else.
+    let entity = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap().0;
+    let colours_at = |cells: &[[i32; 3]]| {
+        let (found, palette) = renderer.voxels_on_gpu(entity, cells).unwrap().unwrap();
+        found.into_iter().filter(|&m| m != 0).map(|m| palette[m as usize - 1]).collect::<Vec<_>>()
+    };
+    let top = |at: Vec3, height: f32| {
+        let y = ((at.y + height) / voxel).floor() as i32 - 1;
+        let middle = (at / voxel).as_ivec3();
+        (-8..8).flat_map(move |dz| (-8..8).map(move |dx| [middle.x + dx, y, middle.z + dz])).collect::<Vec<_>>()
+    };
+    let cobbles = colours_at(&top(edits[0].at(), 0.5));
+    let paving = &voxear_render::VOXEL_PAVING_COLORS;
+    assert!(cobbles.len() == 256, "the box's top is all there: {}", cobbles.len());
+    assert!(cobbles.iter().all(|c| paving[..4].contains(c)), "cobbles' colours: {cobbles:?}");
+    assert!(cobbles.contains(&paving[3]), "with joints between the stones");
+    assert!((0..3).filter(|&k| cobbles.contains(&paving[k])).count() >= 2, "in more than one shade");
+    // The tinted planks: their average the tint's.
+    let planks = colours_at(&top(edits[5].at(), 1.0));
+    assert!(planks.len() == 256);
+    let mean = [0, 1, 2].map(|i| planks.iter().map(|c| f32::from(c[i])).sum::<f32>() / planks.len() as f32);
+    assert!(mean[0] > 150.0 && mean[1] < 90.0 && mean[2] < 90.0, "red planks: {mean:?}");
+    // Over the street's level the L is cleared two metres; under it, flagstones.
+    let _ = volume;
+}
+
+#[test]
+fn voxels_dug_and_placed_one_at_a_time_are_the_cpus_and_go_over_the_edits() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut scene = bare_hills_view();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let ground = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(8.0, 47.0, 8.0), -Vec3::Y, 60.0).unwrap().point;
+    let top = (ground * 16.0).floor().as_ivec3() - voxear_core::math::IVec3::Y;
+    // A box of ashlar, a trench dug a voxel wide through it and the ground, and a wall of red bricks built in it.
+    let slab = VoxelEdit::boxed(ground, Vec3::new(3.0, 0.5, 3.0), Quat::IDENTITY, Some(VoxelMaterial::Ashlar));
+    let mut changes = voxear_render::VoxelChanges::default();
+    let red = voxear_render::VoxelKind { material: VoxelMaterial::Bricks, tint: Some([200, 40, 40]) };
+    for x in -24..24 {
+        for y in -6..9 {
+            changes.set(top + voxear_core::math::IVec3::new(x, y, 0), None);
+        }
+    }
+    for x in -6..6 {
+        for y in 9..20 {
+            changes.set(top + voxear_core::math::IVec3::new(x, y, 3), Some(red));
+        }
+    }
+    {
+        let volumes = scene.query::<&mut VoxelVolume>();
+        let volume = volumes.into_iter().next().unwrap();
+        volume.edits = Arc::new(vec![slab]);
+        volume.changes = Arc::new(changes);
+    }
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("voxels dug and placed from above.png", &pixels);
+    let low = (top - voxear_core::math::IVec3::new(30, 10, 30)).to_array();
+    let made = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let reaches = |c: voxear_core::math::IVec3, ground: i32| {
+        made.changes.get(c).is_some() || made.edits[0].held(c, 1.0 / 16.0, ground) != voxear_render::VoxelHeld::Not
+    };
+    let (differ, kept, found) = gpu_against_cpu(&renderer, &scene, (low, [60, 40, 60]), &reaches);
+    eprintln!("{differ} differ, {kept} kept");
+    assert_eq!(differ, 0, "the GPU's voxels are the CPU's");
+    // The trench is open through the slab, and the wall stands red.
+    let entity = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap().0;
+    let (_, palette) = renderer.voxels_on_gpu(entity, &[]).unwrap().unwrap();
+    let at = |c: voxear_core::math::IVec3| {
+        let d = c - IVec3::from(low);
+        found[(d.x + 60 * (d.y + 40 * d.z)) as usize]
+    };
+    use voxear_core::math::IVec3;
+    assert_eq!(at(top + IVec3::new(0, 4, 0)), 0, "dug through the slab");
+    let wall = at(top + IVec3::new(0, 19, 3));
+    assert!(wall != 0, "the wall's top");
+    let [r, g, b, _] = palette[wall as usize - 1];
+    // A brick's shade or its joint's, both in the red tint.
+    assert!(r > 150 && r > g + 100 && r > b + 100, "red bricks: {r} {g} {b}");
+}
+
+#[test]
+fn sixty_kinds_of_building_each_keep_their_own_colours() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut scene = bare_hills_view();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    // A house a metre and a half a side, sixteen colours in stripes, printed in sixty tints in a square round the camera.
+    let colours: Vec<[u8; 4]> = (0..16u8).map(|k| [80 + k * 8, 120 - k * 4, 60 + k * 5, 255]).collect();
+    let house = Arc::new(VoxelPrint::from_voxels([24, 24, 24], 16, Vec3::new(12.0, 0.0, 12.0), colours.clone(), VoxelPrintSettings::default(), |c| {
+        (c[0] % 16) as u8 + 1
+    }));
+    let mut edits = Vec::new();
+    let mut placed = Vec::new();
+    for k in 0..60u32 {
+        let (x, z) = ((k % 8) as f32 * 2.0 - 0.0, (k / 8) as f32 * 2.0 - 0.0);
+        let at = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(x, 47.0, z), -Vec3::Y, 60.0).unwrap().point;
+        let tint = [(k * 37 % 200 + 40) as u8, (k * 91 % 200 + 40) as u8, (k * 53 % 200 + 40) as u8];
+        edits.push(VoxelEdit::printed(house.clone(), at, Quat::IDENTITY).tinted(Some(tint)));
+        placed.push((at, tint));
+    }
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(edits);
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("sixty tints from above.png", &pixels);
+    let entity = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap().0;
+    let mean = [0, 1, 2].map(|i| colours.iter().map(|c| f32::from(c[i])).sum::<f32>() / 16.0);
+    let mut wrong = 0;
+    let mut looked = 0;
+    let edits = scene.query::<&VoxelVolume>().into_iter().next().unwrap().edits.clone();
+    for (edit, (at, tint)) in edits.iter().zip(&placed) {
+        // The house's roof, all of its sixteen stripes, each its colour in the house's tint, as the CPU says it is.
+        let middle = (*at * 16.0).floor().as_ivec3();
+        let cells: Vec<[i32; 3]> = (-13..13).flat_map(|dx| (20..26).map(move |dy| [middle.x + dx, middle.y + dy, middle.z])).collect();
+        let (found, palette) = renderer.voxels_on_gpu(entity, &cells).unwrap().unwrap();
+        for (cell, place) in cells.iter().zip(found) {
+            let voxear_render::VoxelHeld::Colour(index) = edit.held(voxear_core::math::IVec3::from(*cell), 1.0 / 16.0, -1000) else { continue };
+            if place == 0 {
+                continue;
+            }
+            let colour = colours[usize::from(index) - 1];
+            let want = [0, 1, 2].map(|i| (f32::from(colour[i]) / mean[i] * f32::from(tint[i])).round().clamp(0.0, 255.0) as u8);
+            looked += 1;
+            if palette[place as usize - 1][..3] != want {
+                wrong += 1;
+            }
+        }
+    }
+    assert!(looked > 60 * 20, "the roofs are seen: {looked}");
+    eprintln!("{wrong} of {looked} roof voxels not in their own colour");
+    assert_eq!(wrong, 0, "every house in its own colours");
+}
+
+#[test]
+fn a_column_takes_over_a_thousand_edits_as_the_cpu_does() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut scene = bare_hills_view();
+    let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let ground = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(6.0, 47.0, 6.0), -Vec3::Y, 60.0).unwrap().point;
+    // A stepped pyramid of 1,330 slabs a quarter of a metre a side and an eighth tall, in one column of 4 m.
+    let mut edits = Vec::new();
+    for layer in 0..12 {
+        let side = 19 - layer;
+        for k in 0..side * 7 {
+            let (i, j) = (k % side, k / side);
+            let at = Vec3::new(4.25 + i as f32 * 0.17 + layer as f32 * 0.08, ground.y + layer as f32 * 0.125, 4.25 + j as f32 * 0.4);
+            let material = [VoxelMaterial::Ashlar, VoxelMaterial::Bricks, VoxelMaterial::Cobbles][(layer + k) as usize % 3];
+            edits.push(VoxelEdit::boxed(at, Vec3::new(0.25, 0.125, 0.25), Quat::IDENTITY, Some(material)));
+        }
+    }
+    let count = edits.len();
+    assert!(count > 1024, "{count} edits");
+    scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(edits);
+    render(&mut renderer, &scene, 3);
+    let low = ((Vec3::new(4.0, ground.y, 4.0) * 16.0).floor().as_ivec3() - 4).to_array();
+    let made = scene.query::<&VoxelVolume>().into_iter().next().unwrap().edits.clone();
+    let boxes: Vec<(Vec3, Vec3)> = made.iter().map(|edit| edit.reach()).collect();
+    let reaches = |c: voxear_core::math::IVec3, ground: i32| {
+        let p = (c.as_vec3() + 0.5) / 16.0;
+        made.iter().zip(&boxes).any(|(edit, (least, most))| {
+            p.cmpge(*least).all() && p.cmple(*most).all() && edit.held(c, 1.0 / 16.0, ground) != voxear_render::VoxelHeld::Not
+        })
+    };
+    let (differ, kept, _) = gpu_against_cpu(&renderer, &scene, (low, [72, 36, 72]), &reaches);
+    eprintln!("{count} edits: {differ} voxels differ, {kept} kept");
+    assert!(kept > 1000);
+    assert_eq!(differ, 0, "every edit drawn as the CPU finds it");
+}

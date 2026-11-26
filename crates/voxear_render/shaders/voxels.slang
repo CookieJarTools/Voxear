@@ -127,6 +127,13 @@ int voxelBrickAt(VoxelVolume volume, int3 b)
     return int(volume.pages[slot * 64u + (at >> 6)] * 64u + (at & 63u));
 }
 
+// The palette place of a brick's voxel's material: below 128 a place every brick shares, above it a place in the bank
+// the brick keeps over its average colour (src/voxel_volume/endless.rs), the first bank the palette's places 128 to 255.
+uint voxelPlace(uint* bits, uint material)
+{
+    return material < 128u ? material : material + (bits[19] >> 27) * 128u;
+}
+
 bool voxelSolid(VoxelVolume volume, int3 cell)
 {
     int brick = voxelBrickAt(volume, cell >> 3);
@@ -402,8 +409,7 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
             before += countbits(bits[k]);
         }
         uint at = bits[18] + before;
-        uint material = (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u;
-        packed = volume.palette[material];
+        packed = volume.palette[voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u)];
     }
     float3 srgb = float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0;
     // Each voxel a shade of its own, so a field of one colour still reads as small cubes.
@@ -478,6 +484,48 @@ bool voxelPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
         start = max(nearest - 12.0 * volumes->volumes[0].voxel, 0.0);
     }
     return voxelsTrace(volumes, voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, hit);
+}
+
+// What the probe reads (Renderer::voxels_on_gpu), at push.buffers: a volume, and `count` cells of it, x, y and z a
+// word each, from its window's least sector for an endless one; and where it writes what each holds: its palette
+// place and one, or 0 for nothing.
+struct VoxelProbe
+{
+    VoxelVolume volume;
+    int* cells;
+    uint* found;
+    uint count;
+    uint pad;
+};
+
+// The voxels a volume holds at cells, for checking the GPU's voxels against the CPU's: a thread a cell.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelProbe(uint3 id: SV_DispatchThreadID)
+{
+    VoxelProbe* probe = (VoxelProbe*)push.buffers;
+    if (id.x >= probe->count)
+    {
+        return;
+    }
+    VoxelVolume volume = probe->volume;
+    int3 cell = int3(probe->cells[id.x * 3], probe->cells[id.x * 3 + 1], probe->cells[id.x * 3 + 2]);
+    int brick = voxelBrickAt(volume, cell >> 3);
+    uint found = 0;
+    int3 l = cell & 7;
+    uint index = uint(l.x + 8 * (l.y + 8 * l.z));
+    uint* bits = volume.bricks + uint(max(brick, 0)) * VOXEL_BRICK_WORDS;
+    if (brick >= 0 && voxelBit(bits, index))
+    {
+        uint before = countbits(bits[index >> 5] & ((1u << (index & 31u)) - 1u));
+        for (uint k = 0; k < (index >> 5); k++)
+        {
+            before += countbits(bits[k]);
+        }
+        uint at = bits[18] + before;
+        found = voxelPlace(bits, (volume.materials[at >> 2] >> ((at & 3u) * 8u)) & 255u) + 1u;
+    }
+    probe->found[id.x] = found;
 }
 
 // The coarse rays: each walks against whole bricks, as if each brick were solid, and keeps how far it went.

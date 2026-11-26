@@ -6,14 +6,14 @@ A **Voxel Print** (`.voxprint`) is a model made into voxels: a sandbag wall, a c
 
 ## Making one
 
-Right-click a model in the Project panel (a `.gltf`, `.glb`, `.fbx` or `.boxmodel`) and choose **Make Voxel Print**. The print is made beside the model, with the model's name, at 16 voxels a metre, and shown in the Inspector.
+Right-click a model in the Project panel (a `.gltf`, `.glb`, `.fbx` or `.boxmodel`) and choose **Make Voxel Print**. The print is made beside the model, with the model's name, at 16 voxels a metre, and shown in the Inspector. It is made on a thread of its own while the editor goes on: a scanned piece whose file is 100 MB takes about five seconds, and a note says when it is done.
 
 Each triangle of the model fills the voxels it passes through, in the colour its picture has where the triangle is nearest the voxel's middle; a voxel many triangles pass through takes their average. The voxels inside the skin are then filled, each the colour of the skin nearest it, and every colour is made the nearest of a few. A model's pixels under its material's alpha cut-off leave no voxels, so a torn cloth keeps its holes.
 
 The Inspector shows its size in voxels and in metres, how many voxels are solid, how many colours it has, and how large its file is. **Made From** says how it is made:
 
 - **Model**: the model it is made from.
-- **Voxels a Metre**: how small its voxels are: as many as the volumes it goes in, for voxels of the same size as theirs. A print of another size is printed all the same, each of the volume's voxels taking the print's voxel at its middle.
+- **Voxels a Metre**: how small its voxels are: as many as the volumes it goes in, for voxels of the same size as theirs. A print of another size is printed all the same, each of the volume's voxels taking the print's voxel at its middle, or near it, so a thin piece is not lost.
 - **Scale**: multiplies the model's size.
 - **Colours**: the most colours its voxels are in, up to 64. A volume holds 256 colours in all, the ground's and trees' among them; past those, a print's colours are the nearest the volume has.
 - **Fill**: what it leaves inside its skin. **Solid** fills wherever the outside can't reach, so a closed model is solid all through. **Sealed** fills too where the skin is round a place on five of its six sides, for a model whose skin is open, as a scan with no underside; an open crate's inside is filled with it, so leave such a model Solid. **Shell** keeps the skin alone, a voxel thick.
@@ -38,7 +38,11 @@ Voxels.Print(SandbagWall, lip, turn: 90f);
 Voxels.Print(SandbagWall, lip, new Vector3(8f, 90f, 0f));
 ```
 
-It is printed once the frame is done. `vox editor call` makes and prints them too, each print one step to undo:
+It is printed once the frame is done.
+
+No grass or flowers grow where a print stands, in its box over any column of it that has a voxel, so an open hut's floor and a crate's inside are bare; nor does a tree whose foot is there or under it, as far below its foot as it is tall, nor one whose foot a ball carved out.
+
+Turned other than by quarter turns, or made of voxels smaller than the volume's, a print is looked at round each of the volume's voxels' middles as well as at it, a quarter of a voxel toward its corners: a wall one voxel thick stays whole, its voxels meeting face to face, a little thicker than it was. `vox editor call` makes and prints them too, each print one step to undo:
 
 ```
 vox editor call voxel_prints.make '{ "model": "Models/Crate.fbx", "voxels_per_metre": 16 }'
@@ -47,7 +51,7 @@ vox editor call voxel_prints.info '{ "print": "Models/Crate.voxprint" }'
 vox editor call voxels.print '{ "print": "Models/Crate.voxprint", "at": [12, 24, 9], "turn": 30 }'
 ```
 
-`voxel_prints.make` with a `model` makes a new print, beside the model unless `path` says where; with a `print`, it makes that one again as it was made, but for what the call gives. It also takes `scale`, `colours` and `pictures`: `[{ "part": "material0", "picture": "Models/Crate_BaseColor.png" }]`.
+`voxel_prints.make` with a `model` makes a new print, beside the model unless `path` says where; with a `print`, it makes that one again as it was made, but for what the call gives. It also takes `scale`, `colours` and `pictures`: `[{ "part": "material0", "picture": "Models/Crate_BaseColor.png" }]`. It makes the print before it answers, so the answer can say what was made; with `"background": true` it answers at once and makes it on a thread of its own, as the Project panel's menu does, and `voxel_prints.info` finds it once it is made.
 
 The scene keeps each print with the volume's other changes, in order:
 
@@ -60,7 +64,5 @@ rotation = [0.0, 30.0, 0.0]
 
 ## What it doesn't do yet
 
-- A print is printed whole where it is placed: it doesn't fit itself to the ground, and grass and trees aren't cleared from inside it, so a tree may grow through an open hut.
-- Turned other than by quarter turns, a print's voxels are those whose middles fall in the print's, so a wall one voxel thick may show gaps; make thin pieces at more voxels a metre than the volume.
+- A print is printed whole where it is placed: it doesn't fit itself to the ground.
 - A volume of a set size can't take prints, only an endless one.
-- Making a print reads the whole model on the editor's own thread: a scanned piece whose file is 100 MB takes about five seconds, the editor waiting.

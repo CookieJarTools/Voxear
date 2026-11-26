@@ -878,6 +878,24 @@ fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_on
     let again = json!({ "print": "Models/Pyramid.voxprint", "voxels_per_metre": 16 });
     let finer = done(&mut editor, &mut renderer, "voxel_prints.make", again);
     assert!(finer["solid"].as_u64() > made["solid"].as_u64(), "{finer} against {made}");
+    // Made on a thread of its own, as the Project panel's menu makes it, the editor going on meanwhile.
+    let background = json!({
+        "model": "Models/Pyramid.gltf",
+        "path": "Models/Pyramid Coarse.voxprint",
+        "voxels_per_metre": 4,
+        "background": true,
+    });
+    let making = done(&mut editor, &mut renderer, "voxel_prints.make", background);
+    assert_eq!(making["making"]["path"], "Models/Pyramid Coarse.voxprint", "{making}");
+    let mut waited = 0;
+    while !dir.path().join("Models/Pyramid Coarse.voxprint").is_file() || editor.is_making_prints() {
+        frames(&mut editor, &mut renderer, 1);
+        waited += 1;
+        assert!(waited < 600, "made within 600 frames");
+    }
+    let coarse =
+        done(&mut editor, &mut renderer, "voxel_prints.info", json!({ "print": "Models/Pyramid Coarse.voxprint" }));
+    assert_eq!(coarse["voxels_per_metre"], 4, "{coarse}");
     let wrong = json!({ "model": "Scenes/Main.scene" });
     assert!(ask(&mut editor, &mut renderer, "voxel_prints.make", wrong).is_err(), "a scene is no model");
     // Printed into an endless volume, turned.

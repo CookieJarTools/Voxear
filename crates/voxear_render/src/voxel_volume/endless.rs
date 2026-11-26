@@ -85,7 +85,7 @@ const EDIT_WORDS: usize = 16;
 const PRINT_EDIT: u32 = 1 << 31;
 /// Where the prints' records start in their words, and the words each takes.
 const PRINTS_AT: usize = 4;
-const PRINT_WORDS: usize = 12;
+const PRINT_WORDS: usize = 13;
 /// The most colours a volume's palette holds: a material is a byte.
 const MOST_COLOURS: usize = 256;
 
@@ -619,10 +619,13 @@ impl Endless {
         let same = self.edits.iter().zip(edits.iter()).take_while(|(a, b)| a == b).count();
         let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
         for edit in self.edits[same..].iter().chain(&edits[same..]) {
-            // The columns the edit reaches, with a voxel's border, are made again.
+            // The columns the edit reaches, with a voxel's border, are made again; and where it carves or prints,
+            // those the trees standing in it reach, as they grow no more.
             let (low, high) = edit.reach();
-            let low = (low / voxel - 1.0) / 64.0;
-            let high = (high / voxel + 1.0) / 64.0;
+            let trees =
+                if edit.fill.is_none() { self.forest.as_ref().map_or(0.0, |(_, _, reach)| reach + 1.5) } else { 0.0 };
+            let low = ((low - trees) / voxel - 1.0) / 64.0;
+            let high = ((high + trees) / voxel + 1.0) / 64.0;
             for z in low.z.floor() as i32..=high.z.floor() as i32 {
                 for x in low.x.floor() as i32..=high.x.floor() as i32 {
                     let slot = self.slot_of([x, z]) as usize;
@@ -665,7 +668,9 @@ impl Endless {
             Some(printed) => {
                 let index = self.prints.iter().position(|(print, _)| print.id == printed.print.id).unwrap_or(0);
                 words[4] = PRINT_EDIT | index as u32;
-                words[5] = (printed.print.voxels_per_metre as f32 * voxel).to_bits();
+                // Less than nothing where it is looked at round each voxel's middle too.
+                let scale = printed.print.voxels_per_metre as f32 * voxel;
+                words[5] = if edit.widened(voxel) { -scale } else { scale }.to_bits();
                 let (low, high) = edit.reach();
                 let (low, high) = (low / voxel, high / voxel);
                 for (i, v) in [low.x, low.y, low.z, high.x, high.y, high.z].into_iter().enumerate() {
@@ -1090,8 +1095,9 @@ fn place_in(colours: &mut Vec<[u8; 4]>, colour: [u8; 4]) -> u8 {
 /// Prints as the GPU reads them (`PRINTS_AT` in `shaders/voxel_world.slang`):
 /// how many, then for each its bricks along X, Y and Z, where its grid, its
 /// bricks and its materials start among the words, its size in voxels and
-/// where its origin is; then each one's grid, bricks and materials, these
-/// four to a word, as places in the volume's palette.
+/// where its origin is, and where its footprint starts; then each one's
+/// grid, bricks and materials, these four to a word, as places in the
+/// volume's palette, and its footprint.
 fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
     let mut words = vec![0u32; PRINTS_AT + prints.len() * PRINT_WORDS];
     words[0] = prints.len() as u32;
@@ -1108,6 +1114,8 @@ fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
             word[..four.len()].copy_from_slice(four);
             u32::from_le_bytes(word)
         }));
+        let footprint = words.len() as u32;
+        words.extend(print.footprint());
         let at = PRINTS_AT + i * PRINT_WORDS;
         let o = print.origin;
         words[at..at + PRINT_WORDS].copy_from_slice(&[
@@ -1123,6 +1131,7 @@ fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
             o.x.to_bits(),
             o.y.to_bits(),
             o.z.to_bits(),
+            footprint,
         ]);
     }
     debug_assert_eq!(print::BRICK_WORDS, 17);

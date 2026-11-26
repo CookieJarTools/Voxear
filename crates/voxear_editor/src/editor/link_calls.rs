@@ -2647,6 +2647,17 @@ impl Editor {
                 voxear_engine::voxel_prints::path_for(&model.unwrap_or_default())
             }
         };
+        // On a thread of its own, as the Project panel's menu makes it: the answer says it is begun, and
+        // `voxel_prints.info` finds it once it is made.
+        if args.get("background").and_then(Json::as_bool) == Some(true) {
+            if self.print_jobs.iter().any(|job| job.path == path) {
+                return Err(refuse(ErrorKind::WrongValue, format!("{path} is being made already")));
+            }
+            let job = voxear_engine::voxel_prints::PrintJob::new(&self.game.content, &settings)
+                .map_err(|error| refuse(ErrorKind::WrongValue, format!("{error:#}")))?;
+            self.start_print(&path, job);
+            return done(json!({ "making": { "path": path } }));
+        }
         let started = std::time::Instant::now();
         let (print, guid) = voxear_engine::voxel_prints::make_file(&mut self.game.content, &path, &settings)
             .map_err(|error| refuse(ErrorKind::WrongValue, format!("{error:#}")))?;

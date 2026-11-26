@@ -253,6 +253,45 @@ impl VoxelPrint {
         (least, most)
     }
 
+    /// A bit for each of its columns of voxels, X fastest then Z, set where
+    /// the column has any solid: what it stands over, where grass and trees
+    /// do not grow.
+    pub fn footprint(&self) -> Vec<u32> {
+        let mut bits = vec![0u32; (self.size[0] * self.size[2]).div_ceil(32) as usize];
+        let across = self.bricks_across();
+        for bz in 0..across[2] {
+            for by in 0..across[1] {
+                for bx in 0..across[0] {
+                    let brick = self.grid[(bx + across[0] * (by + across[1] * bz)) as usize];
+                    if brick == EMPTY {
+                        continue;
+                    }
+                    let words = &self.bricks[brick as usize * BRICK_WORDS..][..16];
+                    for index in 0..BRICK_CELLS as u32 {
+                        if words[(index >> 5) as usize] >> (index & 31) & 1 == 0 {
+                            continue;
+                        }
+                        let (x, z) = (bx * BRICK + index % 8, bz * BRICK + index / 64);
+                        if x < self.size[0] && z < self.size[2] {
+                            let column = x + self.size[0] * z;
+                            bits[(column >> 5) as usize] |= 1 << (column & 31);
+                        }
+                    }
+                }
+            }
+        }
+        bits
+    }
+
+    /// Whether it stands over column (`x`, `z`) of its voxels.
+    pub fn covers(&self, x: i32, z: i32, footprint: &[u32]) -> bool {
+        if x < 0 || z < 0 || x >= self.size[0] as i32 || z >= self.size[2] as i32 {
+            return false;
+        }
+        let column = (x + self.size[0] as i32 * z) as u32;
+        footprint.get((column >> 5) as usize).is_some_and(|word| word >> (column & 31) & 1 != 0)
+    }
+
     /// The bytes its GPU record and voxels take.
     pub fn bytes(&self) -> usize {
         self.grid.len() * 4 + self.bricks.len() * 4 + self.materials.len()

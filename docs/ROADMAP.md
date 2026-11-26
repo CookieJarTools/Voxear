@@ -4654,8 +4654,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   the level has none (`ocean::seas`; **Sea** in the Inspector, `Voxels.Sea`, field `sea`), an Ocean on the volume's
   Obj setting its look; and the game's water reads the rivers' and lakes' points, so crates and boats float and
   drift down a river's current, characters wade and swim in it (`Voxels.WaterAt` in C#, `voxels.water_at`).
-  Not yet: water filling a pit carved beside a river; the sea calming what floats over voxel shallows, until bodies
-  collide with voxels; the sea stops nowhere inland, so a cave dug below its level is wet (research/small-voxels.md).
+  Not yet: water filling a pit carved beside a river; the sea calming what floats over voxel shallows beyond the
+  collision chunks round it; the sea stops nowhere inland, so a cave dug below its level is wet (research/small-voxels.md).
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A

@@ -959,14 +959,27 @@ read Oceans, Pools, Streams and worlds of blocks but not the voxel rivers.
   from the same points, not run through the graph again: a column's points are worked out once, on the river
   threads, and kept.
 - **The engine's water asks it** after Pools and worlds of blocks and before Streams and the sea, so a Buoyancy
-  floats on it and drifts with its current, a Character Controller wading it is carried, and everything that reads `water::sample` (wakes, splashes, heat) sees it. C# has
-  `Voxels.WaterAt` and `Voxels.Sea`/`SeaLevel`; `vox editor call voxels.water_at`.
+  floats on it and drifts with its current, a Character Controller wading it is carried, and everything that reads
+  `water::sample` (wakes, splashes, heat) sees it. C# has `Voxels.WaterAt` and `Voxels.Sea`/`SeaLevel`;
+  `vox editor call voxels.water_at`.
+- **Interpolated, not the highest of four.** `Ground::river` (`solid.rs`) gives the highest water of the four points
+  round a column, as the GPU's `riverAt` reads it for grass and trees. What floats reads the points interpolated, as
+  the water's squares are drawn, so it rides the surface seen, not a step at each point.
 
-RESULTS_HERE
+Measured on Rolling Hills (seed 7) at 16 voxels a metre:
 
-Not done: the sea's waves calming what floats over voxel shallows (the engine measures depth with physics rays, and
-the volume has no collider yet); the sea standing under the ground inland, so a cave dug below sea level is under
-water where the Sea is on; waterfalls pushing down what is under them.
+- A river 1.6 m deep: the surface found where the generator has it, to the centimetre, and between the points within
+  10 cm of the generator's own water; its current the generator's.
+- A crate dropped in settles with its middle 2 cm off the surface and drifts 1.84 m down a 1.1 m/s current in 3 s;
+  a character standing in it is carried 2.97 m.
+- Archipelago's coast, seen from 3 m over the sea: the sea's water in 17,272 of 17,280 pixels out to sea that showed
+  its floor with the Sea off.
+
+![The generator's sea at an Archipelago shore](../images/small-voxels/generated-sea.webp)
+
+Not done: what floats over voxel shallows feels the ground only within the chunks made for collision round it, a few
+metres, so the sea calms it less than it is drawn; the sea standing under the ground inland, so a cave dug below sea
+level is under water where the Sea is on; waterfalls pushing down what is under them.
 
 ## Kept elsewhere
 

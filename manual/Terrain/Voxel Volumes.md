@@ -68,7 +68,7 @@ if (Voxels.WaterAt(floatAt, out var river))
 
 ### The sea
 
-An endless volume with a generator has the generator's sea: an [[The Ocean|Ocean]] filling the level at the generator's **Sea Level**, its waves, foam and shores as an Ocean as it comes has them. Crates and ships float on it and characters swim in it as on any Ocean. Its waves are drawn calmer over the volume's shallows; what floats there still rides them as out at sea, until bodies collide with the volume. There is no Ocean to add by hand.
+An endless volume with a generator has the generator's sea: an [[The Ocean|Ocean]] filling the level at the generator's **Sea Level**, its waves, foam and shores as an Ocean as it comes has them. Crates and ships float on it and characters swim in it as on any Ocean. Its waves are drawn calmer over the volume's shallows; what floats there feels only the ground made for collision a few metres round it, so it rides them a little rougher than they look. There is no Ocean to add by hand.
 
 - An **Ocean of the level's own** is the sea in place of the volume's, standing where its Obj is.
 - An **Ocean on the volume's Obj** sets how the sea looks and moves, its weather, wind and colours, and it stands at the generator's sea level, not at the Obj's place.

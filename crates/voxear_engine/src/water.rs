@@ -1022,13 +1022,13 @@ mod tests {
         // The water's surface and current where the generator has them, read between the points its water is drawn from.
         let found = sample(&world, Vec3::new(x, bottom + 0.2, z)).expect("the river's water");
         let [cx, cz] = generator.current(x, z).unwrap();
-        let current = Vec3::new(cx, 0.0, cz);
+        let downstream = Vec3::new(cx, 0.0, cz);
         eprintln!(
-            "river at {x} {z}: water {top:.2} bed {bottom:.2}; found {:.2} flowing {}, generator's {current}",
+            "river at {x} {z}: water {top:.2} bed {bottom:.2}; found {:.2} flowing {}, generator's {downstream}",
             found.height, found.flow
         );
         assert!((found.height - top).abs() < 0.15, "its surface at {:.2}, not {top:.2}", found.height);
-        assert!(found.flow.dot(current) > 0.7 * current.length_squared(), "{} along {current}", found.flow);
+        assert!(found.flow.dot(downstream) > 0.7 * downstream.length_squared(), "{} along {downstream}", found.flow);
         assert_eq!(current(&world, Vec3::new(x, top, z)), found.flow);
         assert!(sample(&world, Vec3::new(x, bottom - 3.0, z)).is_none(), "no water deep under its bed");
         // A crate dropped in floats half under and rides the current; a character standing in it is carried.
@@ -1039,7 +1039,7 @@ mod tests {
         let mut physics = PhysicsScene::new();
         let dt = 1.0 / 60.0;
         let mut heights = Vec::new();
-        for step in 0..90 {
+        for step in 0..180 {
             update(&mut world, f64::from(step as f32 * dt));
             voxear_scene::propagate_transforms(&mut world);
             float(&world, &mut physics);
@@ -1050,9 +1050,9 @@ mod tests {
         }
         let along = |entity: Entity| {
             let at = world.get::<Transform>(entity).unwrap().position;
-            (Vec3::new(at.x - x, 0.0, at.z - z)).dot(current.normalize())
+            (Vec3::new(at.x - x, 0.0, at.z - z)).dot(downstream.normalize())
         };
-        let settled = heights[60..].iter().fold(0.0f32, |most, off| most.max(off.abs()));
+        let settled = heights[120..].iter().fold(0.0f32, |most, off| most.max(off.abs()));
         eprintln!(
             "crate carried {:.2} m, {settled:.2} m off the surface; character carried {:.2} m",
             along(floating),

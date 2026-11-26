@@ -4768,6 +4768,17 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     where it rests. Grass is cut where the blade meets it, stubble left, clippings flying.
   - A felled tree is kept as its foot and stump height; GPU, collision and rays agree to the voxel.
   - Not yet: felling off the main thread (0.14 s a tree), bodies kept by a save.
+- **Buildings that come loose and give way (2026-11-26).**
+  - What is built (filled, printed, placed) holds by touching the ground, or earth with the volume's Anchor. A dig,
+    carve or `Voxels.Blast` lets what it cuts off fall: checked from the voxels dug, by half-metre bricks, then voxels.
+  - Then a graph of the bricks round it bears its own weight: joins split into pull or push, shear and bending, each
+    against what it bore at rest plus what its stuff bears. Solved by a direct sparse (envelope Cholesky) solve,
+    factored again from the first brick a break touches, on a thread of its own; load paths as a cheaper setting
+    (0.16 ms against 90 ms on 1,068 bricks). What gives way comes loose round by round, tipping in: a house with its
+    corner blown out sags and falls in.
+  - Pieces that hit hard dig what they hit, small ones and those past Most Pieces are dust, and each is stamped back
+    where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
+  - Designed, not built: a collapse over the network, about 1 KB of piece snapshots for a house's corner.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

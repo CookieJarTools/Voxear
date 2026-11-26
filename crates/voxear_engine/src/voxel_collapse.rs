@@ -45,7 +45,7 @@ const IMPACT_GAP: f32 = 0.25;
 /// The most voxels a dig or carve is looked over for what it dug out.
 const MOST_LOOKED_OVER: f32 = 8.0e6;
 /// The most dust clouds one change raises.
-const MOST_DUST: usize = 24;
+const MOST_DUST: usize = 5;
 
 /// How a blast is made: whether what comes loose falls or is taken away,
 /// how fast what it cuts off is thrown away from it at once, in metres a
@@ -324,7 +324,39 @@ fn raise_dust(world: &mut World, places: impl Iterator<Item = Vec3>) {
     let every = places.len().div_ceil(MOST_DUST);
     for at in places.into_iter().step_by(every.max(1)) {
         let effect = voxear_render::EffectRef::Builtin(voxear_render::Starter::Dust);
-        crate::particles::play(world, effect, (at, Quat::IDENTITY), None, None);
+        let cloud = crate::particles::play(world, effect, (at, Quat::IDENTITY), None, None);
+        world.insert(cloud, Dusting(DUST_FOR));
+    }
+}
+
+/// How long a cloud of dust is sent out for, in seconds: a puff, its dust
+/// then settling.
+const DUST_FOR: f32 = 0.8;
+
+/// A cloud of dust still being sent out: for how many seconds more.
+struct Dusting(f32);
+
+impl Component for Dusting {}
+
+/// Stops the clouds of dust whose time is up sending out more.
+fn settle_dust(world: &mut World, dt: f32) {
+    let clouds: Vec<(Entity, f32)> =
+        world.query_ref::<(Entity, &Dusting)>().into_iter().map(|(e, left)| (e, left.0 - dt)).collect();
+    if clouds.is_empty() {
+        return;
+    }
+    let now = crate::particles::now(world) as f32;
+    for (cloud, left) in clouds {
+        if left > 0.0 {
+            if let Some(kept) = world.get_mut::<Dusting>(cloud) {
+                kept.0 = left;
+            }
+            continue;
+        }
+        world.remove::<Dusting>(cloud);
+        if let Some(playback) = world.get_mut::<voxear_render::ParticlePlayback>(cloud) {
+            playback.stopped = Some(now);
+        }
     }
 }
 
@@ -373,6 +405,7 @@ pub fn step(world: &mut World, dt: f32, events: &[PhysicsEvent]) {
     }
     hits(world, dt, events);
     keep_to_most(world);
+    settle_dust(world, dt);
 }
 
 /// Built pieces that slowed hard dig out what they hit in their volume;

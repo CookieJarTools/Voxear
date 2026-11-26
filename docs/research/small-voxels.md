@@ -1406,6 +1406,89 @@ Cutting for the RPG's world: grass, cover and crops a blade passes through, and 
 - **Not yet:** felling off the main thread; pieces lying as bodies kept by a save; leaves of a felled piece in the
   volume's own look while it falls.
 
+## Stage 7 on: buildings that come loose and give way (2026-11-26)
+
+What is built in an endless volume now falls when its supports are cut, and gives way under its own weight, in four
+stages, each measured before the next.
+
+- **Cut off from what holds** (`voxel_volume/collapse.rs`). Every voxel an edit fills, a print prints or a game places
+  is built; the ground as made holds, and so does earth filled or placed untinted while the volume's **Anchor** is
+  Earth (Ground: the ground alone; Everything: nothing comes loose). `Ground::made_in` says what made each voxel of
+  a box, the same pass `VoxelSolids::fill` makes, and a test checks the two agree voxel for voxel. The check starts at
+  the voxels just dug: their built neighbours are seeds. It goes over half-metre bricks first, the bricks whose built
+  voxels touch across faces, finding which touch what holds and how far each brick is from one; then over voxels,
+  nearest first by those distances, stopping as soon as it meets what holds. A brick part with nothing rooted comes
+  loose whole without the voxel search finding its way. A wall over a breach cut at both ends: 56 bricks and 3,456
+  voxels looked at, 9 ms (development build). Under 40 voxels is crumbs; a piece's voxels keep their colours,
+  pavings laid as the GPU lays them (`pavedVoxel` ported to `paved_place`), so rubble looks like the wall it was.
+- **Under its own weight** (`voxel_volume/strain.rs`). The built voxels round a change, at most 4,000 bricks, become a
+  graph: a node per brick (its mass from what it is made of: stone 2,400 kg/m³, brick 1,900, wood 600, earth 1,600,
+  glass 2,500, its middle of mass), a join where neighbouring bricks' voxels touch (as many faces, their middle, the
+  weaker brick's stuff), and held joins to what holds and to built bricks past the 4,000. Two ways of finding the
+  loads were built and measured:
+  - *Solved*: each brick a rigid body with six ways to move, each join a spring at its middle, along and across it
+    and turning about and along it (stiffness from the stuff, the area and its second moment). The matrix is kept as
+    an envelope in reversed Cuthill–McKee order and factored L Lᵀ; a broken join or a brick come loose changes only
+    rows from its first brick on, and only those are factored again (847 of 1,632 rows a round on average).
+  - *Paths*: each brick's weight goes down the cheapest way to what holds (down 2, across 3, up 6), shared among the
+    joins that way by their faces, its moment the carried weight times how far its middle is across from the join.
+  Each join's load is split into pull or push, shear and bending moment. It breaks where any has grown over what it
+  bore at rest by more than the weaker stuff bears (pull, push, shear, bend, a few kilopascals for earth to tens for
+  stone and wood): the baseline is kept per join (`VoxelStrainMemory`), so whatever stands at rest stands (a test
+  checks a house at rest breaks nothing by either way), and a join that bears less than before is none the worse. A
+  join pushed together bears more shear (friction, 0.6) and more bending (until what pushes it leaves its middle
+  third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
+  what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
+  again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Measured** (development build, shared CPU). A house of 1,068 bricks, 2,158 joins: paths 0.16 ms, solve 90 ms.
+    A 5 × 4 m brick house with a plank roof, its corner blown out by a 3.6 m ball: 241 bricks, 476 joins, 13 rounds;
+    Solved breaks 72 joins and lets 12,876 voxels go in 9 releases, 148 ms all told, 35 ms of it solving; Paths 50
+    joins, 13,166 voxels in 3 releases, 107 ms. Before friction was added, Paths brought the whole house down
+    where the solve brought down the corner; with it they agree on a blown corner, but Paths never shares a load
+    between two supports. **Picked: Solved**, run on a thread of its own per volume (`voxel_collapse.rs` in the
+    engine), so the cost is a short wait before the first round, not a frame; Paths stays a setting for many
+    buildings at once.
+  - A 2.6 m ball low on the wall breaks nothing: a band of wall survives over the hole and carries the roof like a
+    lintel, which is right. The shot used a 3.6 m ball high on the corner.
+- **Falling and many pieces** (engine `voxel_collapse.rs`, reusing felling's bodies). A blast digs at once and raises
+  dust; the volume's thread works out the rest; what was cut off is thrown away from the blast, and each round of what
+  gave way comes loose 0.22 s after the last, tipping over the edge of its foot toward the damage, so the house sags
+  and falls in. Pieces that slow by 3.5 m/s and lose 1.5 kJ dig out what they hit (a ball of (energy / 60 kJ)^⅓, 0.15
+  to 0.6 m) and settle that in turn; pieces meeting each other chip. A piece under 320 voxels is dust, no body;
+  past the volume's **Most Pieces** (24; a view draws 64 volumes) the smallest falling turn to dust. A piece lying
+  still a second is stamped back into the volume where it lies: it is built again, rubble that can be blown in turn.
+  Dust is the built-in Dust effect sent out for 0.8 s, at most 5 clouds a change (24 hid the house).
+- **CPU and GPU.** What comes loose is dug a voxel at a time into the changes both make the ground from. GPU test
+  `a_house_blown_in_is_drawn_as_the_cpu_finds_it_after_what_came_loose_was_dug_out`: a house on hills blown in and
+  every round dug, 0 of 33,536 surface voxels differ (the hills' own known one-voxel differences aside).
+
+### A collapse over the network: a design
+
+What a collapse needs to send is small, because nearly all of it is worked out the same way on every machine; only
+the bodies' falls are not, as the physics library isn't bit-for-bit alike across machines.
+
+- **What is the same everywhere.** A blast goes out as an edit does (its middle, its radius, its number in the
+  volume's list): every machine digs the same voxels, and works out the same settle from the same volume and the same
+  kept loads at rest. Each piece is then named by the blast's number, its round and its place in the round, and
+  every machine makes the same piece from the same voxels. Nothing about a piece's shape is sent. The server is the
+  one whose order counts: a client's blast is a request, which the server numbers and sends on; a client may dig its
+  own at once and fix it up if the server's order differs.
+- **What the server sends.** The server runs the bodies, and twenty times a second sends a snapshot of the pieces
+  that moved, each against the last snapshot that client said it had: the piece's number, how far it moved since in
+  whole millimetres (each axis a few bits, sized to the number), and where it turned, its turn as the three smallest
+  parts of its quaternion in 11 bits each and which was left out. A piece new to the client is sent whole. Clients
+  draw what they are sent, a snapshot behind, between the last two.
+- **Rest.** A piece's rest is the server's: it sends the piece's number and its last pose, as quantised, and every
+  machine stamps the piece there, the server too from the same quantised pose, so the voxels placed are the same
+  everywhere without being sent (12 bytes a piece).
+- **Measured** (engine test `measure_how_many_bytes_a_house_falling_in_costs_over_the_network`, the same house and
+  blast, a snapshot every 3 steps, answers 100 ms behind): 6 pieces falling at most, all stamped; 857 to 1,287 bytes
+  for the whole collapse over three runs, at most 57 bytes in one snapshot, 340 to 430 bytes a second while pieces
+  fell. The blast itself is an edit of about 20 bytes. A player joining after gets the region files' changed bricks,
+  as for any other dig.
+- Not built: the messages, ordering the blasts and the stamps among other edits, and pieces chipping each other the
+  same everywhere (chips are the server's alone in this design, and would go as small digs of the piece).
+
 
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

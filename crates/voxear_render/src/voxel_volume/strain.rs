@@ -529,7 +529,6 @@ impl Envelope {
 /// The direct solve: the graph's nodes in an order that keeps the
 /// envelope narrow, the matrix and its factors.
 struct Solver {
-    order: Vec<usize>,
     place: Vec<usize>,
     matrix: Envelope,
     /// The first row whose factors are out of date.
@@ -583,7 +582,7 @@ impl Solver {
                 first[p * 6 + k] = least * 6;
             }
         }
-        let mut solver = Self { order, place, matrix: Envelope::new(first), stale: 0 };
+        let mut solver = Self { place, matrix: Envelope::new(first), stale: 0 };
         for j in (0..graph.joins.len()).filter(|&j| !graph.joins[j].broken) {
             solver.put(graph, j, 1.0);
         }

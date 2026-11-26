@@ -130,6 +130,32 @@ pub(super) struct Look {
 const B: i32 = 8;
 const CELLS: usize = 512;
 
+/// Which of its four colours paving `paving` (cobbles 0, flagstones,
+/// bricks, planks, ashlar) has at voxel `c`, as the GPU lays its stones
+/// and joints: the last a joint's.
+fn paved_place(paving: u32, c: IVec3, voxel: f32, seed: u32) -> usize {
+    let (metres, row_shift, course_shift) = match paving {
+        0 => (Vec3::new(0.2, 0.2, 0.2), 0.1, 0.1),
+        1 => (Vec3::new(0.6, 0.3, 0.45), 0.3, 0.0),
+        2 => (Vec3::new(0.25, 0.125, 0.25), 0.0, 0.125),
+        3 => (Vec3::new(2.0, 0.25, 0.2), 0.7, 0.0),
+        _ => (Vec3::new(0.5, 0.25, 0.5), 0.0, 0.25),
+    };
+    let n = 1.0 / voxel;
+    let size = (metres * n).round().as_ivec3().max(IVec3::splat(2));
+    let (row, course) = (c.z.div_euclid(size.z), c.y.div_euclid(size.y));
+    let course_by = (course_shift * n).round() as i32 * course;
+    let shift = (row_shift * n).round() as i32 * row + course_by;
+    let q = IVec3::new(c.x + shift, c.y, c.z + course_by);
+    let cell = q.div_euclid(size);
+    let local = q - cell * size;
+    let joint = local.x == 0 || local.z == 0 || (matches!(paving, 2 | 4) && local.y == 0);
+    if joint {
+        return 3;
+    }
+    (super::ground::hash(cell.x, cell.y, cell.z, seed.wrapping_add(57 + paving)) % 3) as usize
+}
+
 /// A brick's voxels: what each is, and each built one's look.
 pub(super) struct Brick {
     pub class: [u8; CELLS],
@@ -203,19 +229,21 @@ impl<'a> Grid<'a> {
         at
     }
 
-    /// The colour a material filled or placed has at `c`, tinted by `tint`.
+    /// The colour a material filled or placed has at `c`, tinted by `tint`:
+    /// a paving's as the GPU lays its stones and joints (`pavedVoxel` in
+    /// `shaders/voxel_world.slang`), a ground's one of its shades.
     fn fill_colour(&self, material: VoxelMaterial, tint: Option<[u8; 3]>, c: IVec3) -> [u8; 4] {
         let own: Vec<[u8; 4]> = places_of(material).into_iter().map(|at| self.base[at]).collect();
         let shades = match tint {
             Some(tint) => tinted_colours(&own, tint),
             None => own,
         };
-        // A paving's last is its joints'; any of the rest at each voxel.
-        let n = if material.is_paving() { shades.len() - 1 } else { shades.len() }.max(1);
-        let h = (c.x as u32).wrapping_mul(0x8DA6_B343)
-            ^ (c.y as u32).wrapping_mul(0xD816_3841)
-            ^ (c.z as u32).wrapping_mul(0xCB1A_B31F);
-        shades[((h ^ (h >> 13)) % n as u32) as usize]
+        let seed = self.volume.ground.map_or(super::VoxelGround::default().seed, |ground| ground.seed);
+        let place = match material.is_paving() {
+            true => paved_place(material as u32 - VoxelMaterial::Cobbles as u32, c, self.voxel, seed),
+            false => super::ground::hash(c.x, c.y, c.z, seed) as usize % shades.len().max(1),
+        };
+        shades[place.min(shades.len() - 1)]
     }
 
     fn classify(&mut self, made: Made, c: IVec3) -> (u8, u16) {

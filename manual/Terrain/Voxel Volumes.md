@@ -512,10 +512,10 @@ What each brick is made of:
 A print's voxels and pieces stamped back are made of what the volume's **Built Of** says, stone unless set. Its **Strain** says how the loads are found:
 
 - **Solved**: the joins are taken as stiff springs between bricks that move and turn, and solved at once (a direct sparse solve; after a break only the part of it from the first brick the break touches is worked out again). True to arches, and to a load shared between two walls. As it comes.
-- **Paths**: each brick's weight goes down the cheapest way to what holds, shared among the joins that way. Hundreds of times faster, but a load it moves to a new way breaks more than it would: the same blown-out corner brings a whole house down.
+- **Paths**: each brick's weight goes down the cheapest way to what holds, shared among the joins that way. Hundreds of times faster, and a house blown at its corner comes down about as far; but a load is never shared between two supports, so a span held at both ends bends as if held at one.
 - **Off**: only what is cut off comes loose.
 
-On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a millisecond; a blown corner, every round and the voxels with them, about a fifth of a second, while the game goes on. At most 4,000 bricks round a change are looked at; what is built past them is taken as holding.
+On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a millisecond; a blown corner, every round and the voxels with them, about a seventh of a second, while the game goes on. A join pushed together holds better against sliding and bending, as a wall's stones do under their own weight, so a wall standing on the ground stands when its roof is gone. At most 4,000 bricks round a change are looked at; what is built past them is taken as holding.
 
 **Falling and resting.** A piece that hits the volume hard digs out what it hits, as a small blast does, and what that cuts off falls too; pieces that hit each other chip where they meet, dust flying. A piece of fewer than 320 voxels is dust, no body, and so is the smallest falling once more fall at once than the volume's **Most Pieces** (24 unless set; a view draws 64 volumes). Once a piece has lain still for a second it is stamped back into the volume where it lies, voxels placed in its own colours, built again: rubble on the floor that can be blown out in turn. `Voxels.Piece`, `Voxels.StampPiece` and `Voxels.RemovePiece` work on a fallen piece's Obj as on a felled tree's.
 

@@ -1918,10 +1918,25 @@ mod tests {
         use crate::VoxelMaterial;
         let mut volume = flat();
         let edits = std::sync::Arc::make_mut(&mut volume.edits);
-        edits.push(VoxelEdit::boxed(Vec3::new(4.0, 1.0, 4.0), Vec3::new(0.5, 3.5, 3.0), Quat::IDENTITY, Some(VoxelMaterial::Ashlar)));
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(4.0, 1.0, 4.0),
+            Vec3::new(0.5, 3.5, 3.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Ashlar),
+        ));
         let far = 4.25 + long;
-        edits.push(VoxelEdit::boxed(Vec3::new(far - 0.25, 1.0, 4.0), Vec3::new(0.5, 2.5, 0.5), Quat::IDENTITY, Some(VoxelMaterial::Ashlar)));
-        edits.push(VoxelEdit::boxed(Vec3::new(4.25 + long * 0.5, 3.5, 4.0), Vec3::new(long, 0.25, 2.0), Quat::IDENTITY, Some(floor)));
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(far - 0.25, 1.0, 4.0),
+            Vec3::new(0.5, 2.5, 0.5),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Ashlar),
+        ));
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(4.25 + long * 0.5, 3.5, 4.0),
+            Vec3::new(long, 0.25, 2.0),
+            Quat::IDENTITY,
+            Some(floor),
+        ));
         let mut memory = VoxelStrainMemory::default();
         let blast = super::super::collapse::VoxelBlast { at: Vec3::new(far - 0.25, 2.0, 4.0), radius: 0.7 };
         let (_, done) = super::super::collapse::blast(&volume, blast, &mut memory);
@@ -1941,7 +1956,11 @@ mod tests {
         let round = done.loose.iter().find(|round| !round.hinges.is_empty()).unwrap();
         let sizes: Vec<(usize, IVec3)> = round.pieces.iter().map(|p| (p.voxels.len(), p.low)).collect();
         let piece = &round.pieces[hinge.piece];
-        assert!(piece.voxels.len() > 800 && piece.low.x < 72, "the floor by the wall is the hinged piece: {} of {sizes:?}", hinge.piece);
+        assert!(
+            piece.voxels.len() > 800 && piece.low.x < 72,
+            "the floor by the wall is the hinged piece: {} of {sizes:?}",
+            hinge.piece
+        );
         // Stone snaps clean.
         let done = floor_on_a_post(1.5, crate::VoxelMaterial::Flagstones);
         assert!(done.loose.iter().all(|round| round.hinges.is_empty()) && !done.loose.is_empty());

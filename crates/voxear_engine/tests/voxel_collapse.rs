@@ -354,3 +354,126 @@ fn measure_how_many_bytes_a_house_falling_in_costs_over_the_network() {
     );
     assert!(made > 0 && total > 0);
 }
+
+/// Plays `seconds`, letting the clock catch up while the volume settles, and gives each step's bodies of what was
+/// built: each its Obj, place, turn and whether it is hinged or hangs.
+fn play_watching(game: &mut Game, seconds: f32, mut each: impl FnMut(&Game)) {
+    let mut time = 0.0;
+    while time < seconds {
+        tick(game);
+        time += 1.0 / 60.0;
+        each(game);
+    }
+}
+
+/// A floor of planks `long` metres out from a wall to a post, the post blown out, played 12 seconds: how many pieces
+/// hung hinged, how many of those snapped off their hinge, how far one bent at most, in degrees, and how low the
+/// middle of one went while hinged.
+fn floor_blown_off_its_post(long: f32) -> (usize, usize, f32, f32) {
+    use voxear_engine::voxel_collapse::PieceHinge;
+    let (_dir, mut game) = game();
+    let world = &mut game.engine.world;
+    let post = 4.25 + long - 0.25;
+    shape_edit(world, &boxed([4.0, 1.0, 8.0], [0.5, 3.5, 3.0], Some(VoxelMaterial::Ashlar)), None);
+    shape_edit(world, &boxed([post, 1.0, 8.0], [0.5, 2.5, 0.5], Some(VoxelMaterial::Ashlar)), None);
+    shape_edit(world, &boxed([4.25 + long * 0.5, 3.5, 8.0], [long, 0.25, 2.0], Some(VoxelMaterial::Planks)), None);
+    let options = BlastOptions { throw: 0.0, ..BlastOptions::default() };
+    blast(&mut game.engine.world, Vec3::new(post, 2.0, 8.0), 0.7, options, None);
+    let mut seen: std::collections::HashSet<Entity> = std::collections::HashSet::new();
+    let mut snapped: std::collections::HashSet<Entity> = std::collections::HashSet::new();
+    let (mut most_bent, mut lowest) = (0.0f32, f32::MAX);
+    play_watching(&mut game, 12.0, |game| {
+        let world = &game.engine.world;
+        for (e, _, t) in world.query_ref::<(Entity, &PieceHinge, &voxear_scene::Transform)>().into_iter() {
+            seen.insert(e);
+            most_bent = most_bent.max(2.0 * t.rotation.w.abs().min(1.0).acos().to_degrees());
+            lowest = lowest.min(t.position.y);
+        }
+        for e in &seen {
+            if world.get::<PieceHinge>(*e).is_none()
+                && world.get::<VoxelPieceBody>(*e).is_some_and(|b| b.fall != PieceFall::Resting)
+            {
+                snapped.insert(*e);
+            }
+        }
+    });
+    (seen.len(), snapped.len(), most_bent, lowest)
+}
+
+#[test]
+fn a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_snaps() {
+    // A metre and a half out: it bends and hangs on, never reaching the ground.
+    let (hinged, snapped, bent, lowest) = floor_blown_off_its_post(1.5);
+    eprintln!("1.5 m: {hinged} hinged, {snapped} snapped, bent at most {bent:.1} degrees, as low as {lowest:.2} m");
+    assert!(hinged >= 1 && snapped == 0 && lowest > 2.5, "{hinged} {snapped} {bent} {lowest}");
+    // Six metres out, twice as heavy twice as far as three would be: it bends until it snaps.
+    let (hinged, snapped, bent, _) = floor_blown_off_its_post(6.0);
+    eprintln!("6 m: {hinged} hinged, {snapped} snapped, bent at most {bent:.1} degrees");
+    assert!(hinged >= 1 && snapped >= 1, "it bent through and snapped: {hinged} hinged, {snapped} snapped, {bent}");
+}
+
+#[test]
+fn a_slab_blown_off_its_posts_hangs_from_a_rope_and_swings_and_falls_once_cut() {
+    use voxear_engine::voxel_ropes::{RopeHolds, cut, hang};
+    let (_dir, mut game) = game();
+    let world = &mut game.engine.world;
+    // A slab of planks two metres square on four posts, a rope tied three metres over its middle holding it.
+    for (x, z) in [(7.25, 7.25), (8.75, 7.25), (7.25, 8.75), (8.75, 8.75)] {
+        shape_edit(world, &boxed([x, 1.0, z], [0.5, 1.5, 0.5], Some(VoxelMaterial::Ashlar)), None);
+    }
+    shape_edit(world, &boxed([8.0, 2.5, 8.0], [2.0, 0.25, 2.0], Some(VoxelMaterial::Planks)), None);
+    let rope = hang(&mut game.engine.world, Vec3::new(8.5, 5.75, 8.0), Vec3::new(8.03, 2.6, 8.03), 0.0, 0.0);
+    play_watching(&mut game, 1.0, |_| {});
+    // Its posts blown out, thrown a little: it hangs, and swings under where it is tied.
+    for (x, z) in [(7.25, 7.25), (8.75, 7.25), (7.25, 8.75), (8.75, 8.75)] {
+        blast(
+            &mut game.engine.world,
+            Vec3::new(x, 1.7, z),
+            0.45,
+            BlastOptions { throw: 1.0, ..BlastOptions::default() },
+            None,
+        );
+    }
+    let (mut hanging, mut swung, mut lowest) = (0, 0.0f32, f32::MAX);
+    play_watching(&mut game, 6.0, |game| {
+        let world = &game.engine.world;
+        if let Some(piece) = world.get::<RopeHolds>(rope).and_then(|holds| holds.piece) {
+            if let Some(t) = world.get::<voxear_scene::Transform>(piece) {
+                hanging += 1;
+                swung = swung.max((t.position.x - 8.5).abs().max((t.position.z - 8.0).abs()));
+                lowest = lowest.min(t.position.y);
+            }
+        }
+    });
+    eprintln!("hung for {hanging} steps, swung {swung:.2} m across, its middle as low as {lowest:.2} m");
+    assert!(hanging > 100, "the slab hangs from the rope");
+    assert!(swung > 0.1, "and swings: {swung}");
+    assert!(lowest > 1.3, "under the rope, over the ground: {lowest}");
+    // Cut: it falls and rests on the ground, stamped back.
+    assert!(cut(&mut game.engine.world, rope));
+    let before = volume(&game).changes.count();
+    play_until_settled(&mut game, 15.0);
+    let pieces = game.engine.world.query_ref::<&VoxelPieceBody>().into_iter().filter(|body| body.built).count();
+    assert_eq!(pieces, 0, "it rested and was stamped back");
+    assert!(volume(&game).changes.count() > before, "where it fell");
+}
+
+#[test]
+fn what_was_built_held_by_nothing_but_a_rope_hangs_once_tied() {
+    use voxear_engine::voxel_ropes::{RopeHolds, hang};
+    let (_dir, mut game) = game();
+    // A box built in the air, a rope tied over it.
+    shape_edit(&mut game.engine.world, &boxed([8.0, 3.0, 8.0], [1.0, 1.0, 1.0], Some(VoxelMaterial::Planks)), None);
+    let rope = hang(&mut game.engine.world, Vec3::new(9.0, 6.0, 8.0), Vec3::new(8.0, 3.9, 8.0), 0.0, 0.0);
+    let mut hung = 0;
+    play_watching(&mut game, 4.0, |game| {
+        if game.engine.world.get::<RopeHolds>(rope).and_then(|holds| holds.piece).is_some() {
+            hung += 1;
+        }
+    });
+    assert!(hung > 60, "it hangs from the rope: {hung}");
+    let held = game.engine.world.get::<RopeHolds>(rope).and_then(|holds| holds.piece).unwrap();
+    let at = game.engine.world.get::<voxear_scene::Transform>(held).unwrap().position;
+    // Tied off to one side, it swung under where it is tied.
+    assert!(at.x > 8.2 && at.y > 2.5, "{at}");
+}

@@ -170,17 +170,17 @@ public static unsafe partial class Voxels
 	public static float SeaLevel => Native.IsConnected && SeaCall(-1, out var level) ? level : float.NaN;
 
 	/// <summary>
-	/// How the endless Voxel Volumes' rivers and lakes are drawn, as their Water in the Inspector: smooth, or as voxels
-	/// of water. Setting it sets every one's; reading it gives the first one's, or <see cref="VoxelWaterLook.Smooth"/>
-	/// without one or without the engine.
+	/// How the endless Voxel Volumes' rivers and lakes are drawn, as their Water in the Inspector: as voxels of water,
+	/// as they come, or smooth. Setting it sets every one's; reading it gives the first one's, or
+	/// <see cref="VoxelWaterLook.Voxels"/> without one or without the engine.
 	/// <code>
-	/// // The whole world in small cubes, its rivers too.
-	/// Voxels.WaterLook = VoxelWaterLook.Voxels;
+	/// // Smooth water over the small cubes.
+	/// Voxels.WaterLook = VoxelWaterLook.Smooth;
 	/// </code>
 	/// </summary>
 	public static VoxelWaterLook WaterLook
 	{
-		get => Native.IsConnected && Native.Api->VoxelWaterLook(-1) == 1 ? VoxelWaterLook.Voxels : VoxelWaterLook.Smooth;
+		get => Native.IsConnected && Native.Api->VoxelWaterLook(-1) == 0 ? VoxelWaterLook.Smooth : VoxelWaterLook.Voxels;
 		set
 		{
 			if (Native.IsConnected)

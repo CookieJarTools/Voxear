@@ -1229,6 +1229,9 @@ struct Frame
     CullCamera cull;
     // A second plane as `cut`: the camera's far limit, where it has one (src/camera.rs far_plane).
     float4 clip;
+    // As invViewProj, but to a place from the camera's: a ray's way worked out from two places in the world a few
+    // centimetres apart is lost far from the world's middle.
+    Mat4 eyeRays;
 };
 
 // How much of a gradient sky's colours is its light from all round.
@@ -1313,16 +1316,17 @@ struct EyeRay
 // camera for a perspective camera, from its point of the near plane along cameraForward for an orthographic one.
 EyeRay eyeRay(Frame* frame, float2 ndc)
 {
-    float4 near = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
+    float4 near = transform(frame->eyeRays, float4(ndc, 1.0, 1.0));
+    float3 fromEye = near.xyz / near.w;
     EyeRay ray;
     if (isOrthographic(frame))
     {
-        ray.origin = near.xyz / near.w;
+        ray.origin = frame->cameraPosition + fromEye;
         ray.direction = frame->cameraForward;
         return ray;
     }
     ray.origin = frame->cameraPosition;
-    ray.direction = normalize(near.xyz / near.w - frame->cameraPosition);
+    ray.direction = normalize(fromEye);
     return ray;
 }
 
@@ -2173,6 +2177,12 @@ struct VoxelVolume
     // each in the layer its height in sectors wraps to.
     uint layers;
     uint pad;
+    // A ring's hole: the box the ring inside it draws, which the walk passes over, in its voxels from its corner along X
+    // and Z, least then most; none where the most is not past the least.
+    float4 hole;
+    // A ring's outer box, a square round the camera within what it has made, past which it draws nothing: the hole of
+    // the ring round it. In the same voxels; none where the most is not past the least.
+    float4 outer;
 };
 
 struct VoxelVolumes
@@ -2189,7 +2199,22 @@ struct VoxelVolumes
     uint seenOn;
     uint4* seen;
     uint seenWidth;
-    uint pad;
+    // Whether the sun reaches each pixel past the voxels (voxelShadowFragment in voxels.slang), for whatever the depth
+    // passes drew there, 1 lit and 0 in a voxel's shadow: a texture, or NO_TEXTURE where no such pass is drawn.
+    uint shadowMask;
+    // The light kept round the camera for the voxels (voxelLightAround), a cell a brick: each cell's light, its sky's
+    // in the low byte, its voxels' glow's over it and that glow's colour over those as 5, 6 and 5 bits; and what lets
+    // light through each cell (voxelLightCells in voxels.slang). Where cell 0 is, how wide a cell is (0 with none kept)
+    // and how many cells there are along each axis.
+    uint* light;
+    uint2* lightCells;
+    float3 lightCorner;
+    float lightCell;
+    int3 lightSize;
+    // Whether the depth pass keeps the first see-through voxel each pixel's ray passed through, in `glass`, as it
+    // keeps what it met in `seen`: how far in metres, its side, volume and colour, and the frame's number and one.
+    uint glassOn;
+    uint4* glass;
     VoxelVolume volumes[MAX_VOXEL_VOLUMES];
 };
 
@@ -2432,6 +2457,92 @@ bool blockLightAround(float3 position, out float2 lit, out float4 glow)
     glow = volume->glow;
     lit = weight > 1e-4 ? sum / weight : float2(0.0, 0.0);
     return true;
+}
+
+// A cell of the voxels' light lets as many fifteenths of the light through to the next along x, y and z as the low
+// three nibbles of its first word say (voxelLightCells in voxels.slang), is open by as many as the next, and is solid
+// where that is 0.
+static const uint VOXEL_CELL_OPEN_SHIFT = 12u;
+
+// The sky light and glow at `position`, on a surface facing `normal`, each from 0 to 1, in the light kept round the
+// camera for the voxels, and the glow's colour, as bright as its brightest channel: read between the cells round it
+// that are not solid along the two axes the surface lies along, and from the cell in front of it along the third, so a
+// wall's face takes the light of the air before it and never what is behind the wall. False where none is kept.
+bool voxelLightAround(float3 position, float3 normal, out float2 lit, out float3 colour)
+{
+    lit = float2(1.0, 0.0);
+    colour = 0.0;
+    VoxelVolumes* voxels = buffers()->voxelVolumes;
+    if (voxels == nullptr || voxels->count == 0 || voxels->lightCell <= 0.0)
+    {
+        return false;
+    }
+    float3 n = abs(normal);
+    int axis = n.x >= n.y && n.x >= n.z ? 0 : (n.y >= n.z ? 1 : 2);
+    float3 inCells = (position + normal * (0.25 * voxels->lightCell) - voxels->lightCorner) / voxels->lightCell;
+    float3 at = inCells - 0.5;
+    int3 low = int3(floor(at));
+    low[axis] = int(floor(inCells[axis]));
+    if (any(low < int3(-1)) || any(low >= voxels->lightSize))
+    {
+        return false;
+    }
+    float3 f = at - float3(low);
+    float2 sum = 0.0;
+    float3 tint = 0.0;
+    float weight = 0.0;
+    for (uint corner = 0; corner < 8; corner++)
+    {
+        int3 step = int3(corner & 1, (corner >> 1) & 1, corner >> 2);
+        if (step[axis] != 0)
+        {
+            continue;
+        }
+        int3 cell = low + step;
+        if (any(cell < int3(0)) || any(cell >= voxels->lightSize))
+        {
+            continue;
+        }
+        uint index = uint((cell.y * voxels->lightSize.z + cell.z) * voxels->lightSize.x + cell.x);
+        float open = float((voxels->lightCells[index].x >> VOXEL_CELL_OPEN_SHIFT) & 15u) / 15.0;
+        if (open <= 0.0)
+        {
+            continue;
+        }
+        float3 share = lerp(1.0 - f, f, float3(step));
+        share[axis] = 1.0;
+        // A cell mostly solid counts for less, as its air is the least of what is round the point.
+        float w = share.x * share.y * share.z * (0.25 + 0.75 * open);
+        uint light = voxels->light[index];
+        float2 here = float2(float(light & 255u), float((light >> 8) & 255u)) / 255.0;
+        float3 hue = float3(float((light >> 27) & 31u) / 31.0, float((light >> 21) & 63u) / 63.0, float((light >> 16) & 31u) / 31.0);
+        sum += w * here;
+        tint += w * here.y * hue;
+        weight += w;
+    }
+    if (weight <= 1e-4)
+    {
+        return false;
+    }
+    lit = sum / weight;
+    float most = max(max(tint.r, tint.g), max(tint.b, 1e-4));
+    colour = tint / most;
+    return true;
+}
+
+// How bright the voxels' glow is at its brightest, and how dark it is where none of the sky's light reaches, as the
+// light kept for blocks has them by default (BlockLight and DARKEST_SKY in src/blocks.rs).
+static const float VOXEL_GLOW_BRIGHTNESS = 1.0;
+static const float VOXEL_DARKEST_SKY = 0.012;
+
+// voxelLightAround as blockLightAround gives it: the sky light and glow from 0 to 1, and the glow's colour as bright as
+// it is with the darkest of the sky's light under it.
+bool voxelLitAround(float3 position, float3 normal, out float2 lit, out float4 glow)
+{
+    float3 colour;
+    bool found = voxelLightAround(position, normal, lit, colour);
+    glow = float4(colour * VOXEL_GLOW_BRIGHTNESS, VOXEL_DARKEST_SKY);
+    return found;
 }
 
 // Whether a lamp's shadow list, or the two-sided one beside it, holds anything this frame.

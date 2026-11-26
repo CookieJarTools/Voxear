@@ -235,6 +235,14 @@ pub struct Pipelines {
     pub voxel_probe: vk::Pipeline,
     pub voxel_depth: vk::Pipeline,
     pub voxel_forward: vk::Pipeline,
+    /// The voxels' shadows on whatever the depth passes drew, traced from each pixel.
+    pub voxel_shadows: vk::Pipeline,
+    /// The voxels' see-through voxels over everything opaque.
+    pub voxel_glass: vk::Pipeline,
+    /// The light kept round the camera for the voxels: what lets it through each cell, and a step of spreading it.
+    pub voxel_light_cells: vk::Pipeline,
+    pub voxel_light_sky: vk::Pipeline,
+    pub voxel_light_spread: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
     pub voxel_world_columns: vk::Pipeline,
     pub voxel_world_tops: vk::Pipeline,
@@ -1074,6 +1082,9 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
             })?,
             voxel_coarse: maker.compute("Voxel coarse rays", voxels, c"voxelCoarse")?,
+            voxel_light_cells: maker.compute("Voxel light cells", voxels, c"voxelLightCells")?,
+            voxel_light_sky: maker.compute("Voxel light sky", voxels, c"voxelLightSky")?,
+            voxel_light_spread: maker.compute("Voxel light spread", voxels, c"voxelLightSpread")?,
             voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
@@ -1122,6 +1133,19 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Opaque (voxels)", voxels, c"voxelVertex", c"voxelOpaque")
+            })?,
+            voxel_glass: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Glass (voxels)", voxels, c"voxelVertex", c"voxelGlass")
+            })?,
+            voxel_shadows: graphics(&GraphicsPipelineDesc {
+                color_formats: &[AO_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Voxel shadows", voxels, c"voxelVertex", c"voxelShadowFragment")
             })?,
             block_wireframe: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
@@ -1507,6 +1531,11 @@ impl Pipelines {
             self.voxel_probe,
             self.voxel_depth,
             self.voxel_forward,
+            self.voxel_shadows,
+            self.voxel_glass,
+            self.voxel_light_cells,
+            self.voxel_light_sky,
+            self.voxel_light_spread,
             self.voxel_world_columns,
             self.voxel_world_tops,
             self.voxel_world_trees,

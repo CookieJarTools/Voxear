@@ -368,8 +368,8 @@ one.
 | 2. **Voxel World made on the GPU** | A world of small voxels throughout, made by a generator graph compiled to compute shaders, round the camera, in one ring at first; ground, grass and hills | <0.1 ms a frame while walking | 110 MB for 256 m of ground and grass | 3–4 |
 | 3. **Plants and trees of small voxels** | Ground cover, grown plants and crowns as voxel stamps filled on the GPU; then models shared between bricks so a forest costs one tree per kind | +0.5 ms | 230 MB a 256 m forest unshared; tens of MB shared | 3 |
 | 4. **Editing a voxel at a time** | `Voxels` in C#, an editor brush, changed bricks in region files, edit commands over the network, picking | – | changed bricks only | 2–3 |
-| 5. **Distance in rings** | 1/16, 1/8, 1/4 m rings and coarser to the horizon, made as they come into view, far rings kept on disk | +0.5 ms | 400–760 MB | 3 |
-| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid | 1–2 ms | – | 2 |
+| 5. **Distance in rings** (built, below) | 1/16, 1/8, 1/4 m rings and coarser to the horizon, made as they come into view, far rings kept on disk | +0.5 ms (measured: +8 ms for land to the horizon in view) | 400–760 MB (measured: 500–620 MB) | 3 |
+| 6. **Lighting at voxel scale** | GI rays in voxels, occlusion and glowing voxels, light from torches and the sky in a grid; begun 2026-11-26: shadows on everything, light indoors, glass | 1–2 ms | – | 2 |
 | 7. **Physics, navigation and debris at voxel scale** | Collision from the bricks round each body, broken pieces as falling voxel objects, voxel characters | – | – | 3–4 |
 
 Block Worlds drawn as patterns of small voxels (option D) can follow any time after stage 1, for the worlds of
@@ -1150,6 +1150,175 @@ what the CPU and the GPU make the ground from, and both are small.
 - **Saves** keep the same: the edits added since the scene loaded, and the region files.
 
 Not built yet: the messages and the join; the bytes they would carry are what the scene and the region files hold.
+## Stage 6 begun: shadows, light indoors and glass (2026-11-26)
+
+The Realm's city moving onto Voxel Volumes needed three things lighting gave its blocks: things standing among the
+voxels shadowed by them, rooms and cellars dark but for their lanterns, and windows of glass.
+
+- **Voxels shadow everything** (`voxelShadowFragment` in `shaders/voxels.slang`). The voxels are in no shadow map.
+  Once the depth passes have drawn the picture, a pass traces a ray towards the sun from each pixel through the
+  voxels, whatever is drawn there, and writes whether it got through. Models, blocks, terrain and grass read it
+  with the contact shadows, as they all share one lit fragment shader. A voxel's ray starts as its own lit pass
+  started it before, a group or a brick out at the coarser levels, found by the hit the depth pass kept for the
+  pixel; anything else's starts a voxel and a half out along its normal, more where a pixel is wider. The voxels'
+  lit pass no longer traces its own. Tracing into a shadow map instead was set aside: four cascades of 2048² are
+  16M rays a frame, eight times the screen's.
+- **Light kept round the camera** (`voxel_volume/light.rs`, `voxelLightCells`, `voxelLightSky` and
+  `voxelLightSpread`). This is the plan's grid at the bricks' half metre, as the light kept for blocks is a byte a
+  block, 96 × 48 × 96 cells. A cell keeps sky light and glow, with the glow's colour in 16 bits.
+  - What lets light through a cell is worked out each frame from its brick: for each side, the lines from that side
+    to the cell's middle that meet no voxel. Two cells pass light by the lines open from one middle to the other,
+    matched line by line, so a cell is the light at its middle. A wall a few voxels thick anywhere in a brick keeps
+    light out, and the air over a floor in a brick's lower half is open to the sky.
+  - The sky is found straight down from the top row afresh each frame. Then four steps spread light a step less a
+    cell (a level a metre, as blocks), read from last frame's moved as the camera moved, 32 steps when the volumes
+    are new.
+  - Voxels, models and grass read it between the cells round them that are not solid. Along the axis the surface
+    faces, the cell before it is read alone, so a wall's face never takes the light of the far side.
+  - It is shared by the lighting with blocks' (`blockSkyShare`, `blockGlowShare`, the same darkest sky and glow
+    brightness). A room of voxels with a lamp of light 15 looks as the blocks test's room of blocks does.
+- **Glass and glowing voxels.** A palette colour's kind is kept on the GPU after the palette's colours, a byte a
+  place: how see-through (0 to 15) and how bright it glows (0 to 15). On the CPU it is `255 - kind` in the colour's
+  fourth byte, so every palette until now is plain. A brick with any such voxel, or with water of voxels, is marked
+  in the lowest bits of its average colour, so only those bricks are looked into; its top bits are its palette bank.
+  - The walk passes through a see-through voxel and keeps the first it met. The depth pass writes it beside what it
+    met, and **Glass (voxels)** draws it lit over everything opaque, blended by how solid it is and what it reflects.
+  - Sun shadow rays pass through glass and water. In the light kept round the camera, glass, water and glowing voxels
+    let light through, and a glowing voxel's cell gives its glow. A glowing voxel shines, its colour times four at light 15.
+  - A print's colours are made glass or lights by its settings' `materials`, in its Inspector's **Glass and Lights**
+    or `voxel_prints.materials`. Its id takes them in, so volumes printing it are made again.
+
+![The pillar's shadow across a model's slab, which voxels did not shadow before](../images/small-voxels/shadow-on-a-model.webp)
+
+![A house of voxels open to the sky, roofed and shut, roofed with a door, and shut with a lantern](../images/small-voxels/rooms-sky-door-lantern.webp)
+
+![The blocks test's sealed room lit by a lamp block, and the same room of voxels lit by a lamp of voxels](../images/small-voxels/room-blocks-and-voxels.webp)
+
+![A stone wall, and the same wall with a window of glass, the red pillar inside seen through it](../images/small-voxels/window-glass.webp)
+
+What went wrong on the way, worth knowing for the rest of stage 6:
+
+- **Sides in the wrong order.** The six sides were listed y-first and their axis taken as x-first, so light crossed each
+  cell by the wrong axis's openness and a sealed room was sky-lit.
+- **Lines through a whole cell** kept the sky out of the air over a floor in a cell's lower half, as no line crossed
+  the cell, and a flat field went dark.
+- **Hollow ground.** An edited brick keeps only the voxels open air is beside, so under the ground's skin and inside
+  thick walls there is nothing. Past a volume's window and under its floor, where no brick is, light came round
+  underneath and up into rooms. Those are solid now; inside a volume, the hollows are sealed by their skin.
+- **Counts, not lines.** Two cells passed light when each had *some* lines open across their side, though not the
+  same ones, and light got through the foot of every wall. Lines are matched one by one now.
+- **Stale light.** Light kept from the frame before falls a step a step, so a scene changed at once kept its old
+  light. Other voxel buffers or palettes, as a generator changed in the Inspector or a print added, start it afresh.
+- **A lamp of voxels a metre wide** filled its cells, which were then solid and kept their glow in. Glowing voxels
+  let light through now, as a block of light does.
+
+Measured on an RTX 3070 shared with other sessions: a street of six houses (5 × 4 × 6 m, glass windows, gables)
+printed into Rolling Hills without its rivers, with a dozen figures among them, seen from 20 m up at 1920 × 1080.
+Each number is the least of 60 frames, three runs each, on the commit this was built on and with it:
+
+| | Before | Now |
+|---|---|---|
+| Frame, post-processing on | 6.57 ms | 6.96 ms |
+| Frame, post-processing off | 6.36 ms | 6.79 ms |
+| Depth (voxels) | 2.04 ms | 2.21 ms |
+| Opaque (voxels), shadows traced in it before | 3.41 ms | 0.88 ms |
+| Voxel shadows | – | 2.27 ms |
+| Light round the camera (cells, sky, 4 spread steps) | – | 0.26 ms |
+| Glass (voxels) | – | 0.13 ms |
+
+The shadows cost what the lit pass's tracing did, now for every pixel. The rest is the light, the glass and the
+glass's look-ups in the depth pass (`measure_a_street_of_houses` in `tests/voxels.rs`).
+
+![The street before and after, from 20 m up](../images/small-voxels/street-before-after.webp)
+
+![Close up: the windows are glass now and the houses dark inside but by their doors](../images/small-voxels/street-close-before-after.webp)
+
+Not done:
+
+- **Lamps.** A Light's light isn't stopped by voxels, so a lamp in a room lights the walls outside it. Lamps'
+  shadow maps could take the voxels as the sun's mask does, a ray a texel, kept while the lamp and voxels stand
+  still; or each lit pixel could trace to the few lamps near it.
+- **Fog, particles and water** read the sun's shadow maps and not the voxels' mask.
+- **Glass** lets the sun through untinted, and only the nearest glass in a pixel is drawn.
+- **GI rays through voxels**, the rest of the stage. Worlds of blocks are lit without the probe GI, so it waits.
+- **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
+  commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
+  walk's, not the light's.
+
+## Stage 5, distance in rings (2026-11-26)
+
+An endless volume's **Distance** carries its ground on past its reach, in rings round the full detail
+(`rings_of` in `voxel_volume.rs`, `endless.rs`, `voxelsTrace` in `voxels.slang`).
+
+- **Each ring is an endless volume of its own.** Its voxels are twice the size of the ring's inside it and its reach
+  twice as far: at 16 voxels a metre and a reach of 64 m, 1/8 m to 128 m, 1/4 m to 256 m, 1/2 m to 512 m, then 1 m
+  as far as the distance. Its window is as many columns across as the finest's, each column as wide as its voxels.
+  The same passes make it from the same generator, ground, grass, trees and edits.
+- **Where a ring stops and the next begins.** Each ring draws only inside its outer box, a square round the camera
+  as far each way as its window surely reaches, within the columns it has made all of, its edges on the grid of the
+  next ring's voxels. The next ring passes over that box, its hole: its walk starts where the ray comes out of it,
+  set exactly on its edge. A ray from the camera leaves the hole once and never goes back in. A voxel met first past
+  an edge is lit as its top, never as a side the edge cut.
+- **No sector at a time.** At first each ring's edge was the box of columns it had made, which jumps a sector (4 m,
+  8 m, …) when the window moves: moving the camera 10 cm over a sector's edge changed 6,900 more pixels than the
+  same move within a sector, in a band along the edge. With the box going with the camera, 1,100 to 1,400 more, 5%
+  over the move's own, and no band.
+- **A ring's voxels where it begins are about a pixel.** At 1080p a pixel 64 m off is about 7 cm, so the finest ring
+  draws its groups of 1/8 m there, and the first ring begins with voxels of 1/8 m; every ring after begins at twice
+  the distance with voxels twice the size.
+- **The shade of each voxel is worked out from its place in the world**, not from its place in the window: it changed
+  whenever a window moved, and a ring's voxel now takes the shade of the finer ring's group of its size.
+- **Grass in a ring** grows on each column with the finer ring's chance, as tall as a blade of it, in whole voxels of
+  the ring's own; a blade under half a voxel is left out. Standing for the finer columns under it (grass where any
+  has a blade, as tall as the tallest) made the rings' ground a lit carpet, 13 levels lighter on average than full
+  detail; this way the averages are within 3. Flowers are as many fewer as they are larger, and left out of rings of
+  four times the voxels and more.
+- **Trees in a ring stand off its bricks' grid.** On a ring's bricks they would stand up to seven of its voxels aside
+  and sunk, 7 m in the ring of a metre. They stand on the finest ring's grid instead, as near as the ring's voxels
+  go, so a tree crossing a ring's edge stays where it was; their voxels are looked up in the plant's bricks a voxel
+  at a time, and no brick names a plant's. Crowns far off stay loose cubes in their shades.
+- **What a ring keeps.** A ring makes no column wholly inside the ring within it, a column short of its edges. Its
+  room is sized from what rings were measured to keep: 150 bricks and 17 KB a column in the first ring, 125 and
+  13 KB after, and per tree a hectare 3, 2, 1.4 and 0.7 bricks, as their trees share no plant's bricks.
+- **Columns a frame.** A ring's columns come into view as many times less often as its voxels are larger, so it
+  makes as many times fewer a frame, two at least; while loading, as many as the finest. With every ring making as
+  many as the finest, frames where all the rings crossed a sector at once took 21 ms; now 10 to 11.
+- **Rivers and water in rings.** Each ring lays its generator's rivers into its columns as the finest does, at its
+  own voxels, so their beds go on past the reach; with water of voxels, the water fills them there too. Smooth water's
+  squares and waterfalls' lips are laid by the finest ring alone, over its whole window: past it, rivers of smooth
+  water are dry beds.
+- **The lit pass's own walk.** Carrying the hole and the outer box in the walk, or in the loop over the volumes,
+  made the lit pass 0.5 to 1.3 ms slower for every volume, rings or none, though the depth pass was not: the GPU
+  runs that large shader with less room. Its shadow rays and its fallback walk keep the plain loop. A shadow ray from
+  a voxel walks a ring of another size from three of the larger voxels out, and a ring whose hole it starts in from
+  where it comes out of it. A view with rings always draws its depth pass first, so the lit pass never walks a ring
+  itself. Volumes without rings draw as on master, within the runs' noise: the generator measurement's four still
+  views light in 2.23, 4.51, 4.94 and 2.63 ms against master's 2.27, 4.49, 5.26 and 3.54, their depth up to 6% more.
+
+![Rolling Hills with oaks and pines seen to 2 km in rings](../images/small-voxels/rings-to-the-horizon.webp)
+
+**Measured** (Rolling Hills, 100 oaks and pines a hectare, reach 64 m, 16 voxels a metre, from 40 m over a hillside
+looking across the land, 1920×1080, the GPU shared with other sessions, least of 60 frames):
+
+| | Today: to 64 m | Rings to 1 km | Rings to 2 km | No trees, to 64 m | No trees, rings to 2 km |
+|---|---|---|---|---|---|
+| On the GPU | 122 MB | 500 MB | 618 MB | 94 MB | 433 MB |
+| Made before the frames | 1.7 s | 3.0 s | 5.4 s | 0.6 s | 2.4 s |
+| Frame | 4.7 ms | 12.7 ms | 12.9 ms | 2.1 ms | 9.8 ms |
+| Depth / lit (voxels) | 1.4 / 2.5 ms | 5.3 / 5.7 ms | 5.7 / 5.4 ms | 0.5 / 1.0 ms | 3.9 / 4.4 ms |
+| Flying at 10 m/s: making, median (most) | 1.9 (4.2) ms | 2.7 (9.7) ms | 2.7 (11) ms | 1.4 (3.6) ms | 0.6 (3.9) ms |
+
+The view today is sky past 64 m, about nine tenths of it; in rings the land fills the lower half to the horizon. The
+cost is that of the pixels of ground: a view full of near hills costs about 8 ms today (stage 2's table). Without
+trees the frame grew with the rings in view, measured before the lit pass had a walk of its own: 4.2, 5.9, 8.0 and
+9.2 ms to 128, 256, 512 and 1,024 m. The test (`an_endless_volume_is_seen_past_its_reach_in_coarser_rings`) draws
+the same hills in rings and in full detail to 192 m: 8×8 blocks of ground differ by 12 levels on average, mostly the
+trees' and voxels' own grain.
+
+- **Not done.** Far rings are made again as they come into view, not kept on disk. The frame with the land to the horizon is three times today's view of sky;
+  the far crowns' rays are most of the depth pass. The finest ring was at most 16 sectors tall (64 m at 16 voxels a
+  metre), so hills taller than it were cut flat near the camera and whole further out; it may now be 1,024 m tall
+  (below).
 
 ## Ground hundreds of metres tall (2026-11-26)
 

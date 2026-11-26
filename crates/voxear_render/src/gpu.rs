@@ -496,6 +496,10 @@ pub struct GpuFrame {
     /// A second plane nothing behind is drawn, as `cut`: the camera's far
     /// limit, where it has one (see `camera::far_plane`).
     pub clip: [f32; 4],
+    /// As `inv_view_proj`, but to the camera's position from its own place:
+    /// rays worked out from it keep their way far from the world's middle,
+    /// where two points of the world a few centimetres apart lose it.
+    pub eye_rays: Mat4Cols,
 }
 
 /// The camera a view culls and picks LODs from. Its own, as
@@ -1805,6 +1809,7 @@ mod tests {
                 + trails
                 + 192
                 + 16
+                + 64
         );
         assert_eq!(size_of::<GpuCull>(), 192);
         assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);

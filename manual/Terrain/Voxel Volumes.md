@@ -20,6 +20,34 @@ With **Endless** on, the volume's own ground goes on without end. It is made on 
 
 A reach of 64 m at 16 voxels a metre keeps about 100 MB on the GPU. The ground round a camera standing still is made in under a second. Flying at 10 m/s, new columns 4 m a side are made on about one frame in eight, for about 0.8 ms of the GPU's time each.
 
+## Seen far off
+
+An endless volume's **Distance** carries its ground on past its reach, as far as a town across a valley or a coast seen from a ship: in metres each way, and 0 for none. Past the reach it is drawn in rings round the full detail:
+
+- Each ring's voxels are twice the size of the ring's inside it, and it reaches twice as far. At 16 voxels a metre and a reach of 64 m: voxels of 1/8 m to 128 m, 1/4 m to 256 m, 1/2 m to 512 m, then of a metre as far as the Distance.
+- Each ring is made on the GPU from the same ground or generator, grass, trees and changes as the volume itself, as it comes into view. Far crowns stay loose cubes in their own shades. Flowers are left out where they would be smaller than a pixel.
+- Where one ring meets the next is a square round the camera that moves on with it, so nothing pops as you go. At 1080p with a reach of 64 m, a ring's voxels are about a pixel across where it begins, as the full detail's are drawn two by two there.
+
+With 100 oaks and pines a hectare on rolling hills, at a reach of 64 m on an RTX 3070:
+
+| Distance | On the GPU | Made before the frames | A view across the land at 1080p |
+|---|---|---|---|
+| None | 122 MB | 1.7 s | 4.7 ms, sky past 64 m |
+| 1 km | 500 MB | 3.0 s | 12.7 ms |
+| 2 km | 618 MB | 5.4 s | 12.9 ms |
+
+Without trees, rings to 2 km take 433 MB against 94 MB. What a view costs goes with how much ground it shows: the land to the horizon costs what a view full of near ground does.
+
+`vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "distance", "value": 2048}`. In the scene:
+
+```toml
+[obj.voxel_volume]
+size = [16.0, 64.0, 16.0]
+endless = true
+reach = 64.0
+distance = 2048.0
+```
+
 ## Ground from a world generator
 
 An endless volume can take its ground from one of the project's [[Generator Graphs|world generators]]: pick it as its **Generator**. The generator's graph runs on the GPU, a voxel column at a time, and the volume shows that graph's land in small voxels, its hills, valleys and gullies to the voxel. The generator's ground at a place is the CPU's to within a millimetre or so.
@@ -46,8 +74,7 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 - **Rivers** are found on the CPU, as a world of blocks finds them, and laid into the GPU's ground (below).
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Raised Land, Spires, Fins, Chasms, Slope Mask) makes the volume's own ground instead, and the Console names the node.
-- An endless volume's ground far from its Obj, as a world tens of kilometres across has it, is drawn streaked: put the volume's Obj near the camera and its **Offset** where the camera's ground lies in the generator's world.
-- An endless volume is at most 256 of its sectors tall, 64 voxels each: 1,024 m at 16 voxels a metre. Land higher than its top is cut off flat there. Give a world of mountains a tall volume and set its **Floor** under its lowest ground: for a world whose ground runs from 54 m under its sea to peaks of 576 m, a volume 640 m tall with its floor at -60 m holds all of it.
+- An endless volume is at most 256 of its sectors tall, 64 voxels each: 1,024 m at 16 voxels a metre. Land higher than its top is cut off flat there. Give a world of mountains a tall volume and set its **Floor** under its lowest ground: for a world whose ground runs from 54 m under its sea to peaks of 655 m, a volume 720 m tall with its floor at -60 m holds all of it.
 - Each 4 m column keeps only the sectors round its own ground: 24 of them, 96 m at 16 voxels a metre, from the lowest that holds anything up. A height costs nearly nothing for that: on the same hills, a volume 512 m tall keeps 127 MB against 120 MB for one 48 m tall, and draws in the same time. Where a column's ground, its trees and what is built on it rise more than 96 m within its 4 m, the lowest of it is left out; the steepest columns of a mountainous world 51 km across rise 56 m.
 
 ### Rivers and lakes
@@ -55,7 +82,7 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 A generator's **Rivers** node finds its rivers, lakes and waterfalls on the CPU, over the grid of points it works them out from. They are laid into the volume's ground as it is made:
 
 - **The ground is cut for them.** For each 4 m column, the CPU works out how much the rivers lower the ground (or raise it, in the low rim that holds a river in) at points half a metre apart, and how high their water stands. The GPU adds that change, read smoothly between the points, to the height its graph made. Riverbeds are gravel, sand along the water's edge, and nothing grows under the water.
-- **The water is drawn over them**, as a world of blocks' rivers and lakes are: still where a lake lies level, its ripples carried downstream where a river flows, a line of foam where it meets the bank, and the reflections and the view of the bed through it. Where a river drops over a cliff, its water leaves the lip and curves down into the pool below, pale and torn into white strands lower down, and churns the pool white where it lands.
+- **The water is drawn**, as voxels of water as it comes (see Water of voxels, below), or smooth, as a world of blocks' rivers and lakes are: still where a lake lies level, its ripples carried downstream where a river flows, a line of foam where it meets the bank, and the reflections and the view of the bed through it. Where a river drops over a cliff, its water leaves the lip and curves down into the pool below, pale and torn into white strands lower down, and churns the pool white where it lands.
 - **Rays and changes meet the same ground.** `Voxels.Raycast` reads the same points, so it meets the riverbed the GPU draws, and a ball carved or filled lands where the ray met it.
 - **Things float and swim in them.** The game's water reads the same points too: a crate or a boat with a Buoyancy floats on a river or a lake and drifts down its current, a character wading a river is pushed along by it as its **Water Push** says, and one in deeper water swims. Its current runs down the water's slope, faster the steeper, as the generator's does; a lake lies still.
 
@@ -77,8 +104,8 @@ if (Voxels.WaterAt(floatAt, out var river))
 
 A volume's **Water** sets how its rivers and lakes are drawn:
 
-- **Smooth**, as it comes: a smooth surface over the voxels, as described above.
-- **Voxels**: the water is voxels as small as the ground's, so it steps where the ground steps and its edges are the voxels' own.
+- **Voxels**, as it comes: the water is voxels as small as the ground's, so it steps where the ground steps and its edges are the voxels' own.
+- **Smooth**: a smooth surface over the voxels, as described above.
   - Each voxel is shaded by how deep the water is under it, from sandy where it is shallow to deep green-blue, with ripples, reflections and glints over it, and foam where it meets the bank.
   - Where its top drops a voxel down a sloping river, the step's side is lit as the top, so the river reads as one surface.
   - A waterfall is voxels of water thrown over its lip, each falling as thrown water falls, blue-green as it leaves the lip and whiter the faster it falls. They spread and break up lower down, and some splash back up off the pool, which churns white where they land.
@@ -86,7 +113,7 @@ A volume's **Water** sets how its rivers and lakes are drawn:
 
 Water of voxels costs no more than smooth water. A river at 1920 × 1080 on an RTX 3070 is 8.6 ms a frame against 10.5, and a waterfall 8.7 against 9.9. Making a column costs the same either way.
 
-A script sets it with `Voxels.WaterLook = VoxelWaterLook.Voxels`, for every endless volume. `vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "water", "value": "Voxels"}`. The scene writes `water = "voxels"`, and nothing while it is smooth.
+A script sets it with `Voxels.WaterLook = VoxelWaterLook.Smooth`, for every endless volume. `vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "water", "value": "Smooth"}`. The scene writes `water = "smooth"`, and nothing while it is voxels.
 
 ### The sea
 
@@ -408,19 +435,41 @@ Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Vo
 
 ## How it is drawn
 
-A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog. Its voxels shadow each other, traced through the volume towards the sun.
+A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog.
+
+### Shadows
+
+Its voxels shadow each other, and everything else standing among them: models, characters, doors and ships, blocks, terrain and grass. They are in no shadow map. Once the depth of the picture is drawn, a ray is traced from each pixel towards the sun through the voxels, from whatever is drawn there; what it meets puts the pixel in shadow, as sharp as the voxels are. The Profiler calls it **Voxel shadows**. It reaches 64 m towards the sun.
+
+### Light indoors and underground
+
+Under a roof, in a cellar or a cave, the sky's light is shut out, and what glows lights the room, as a [[Block Light|world of blocks]] is lit:
+
+- **The sky's light** reaches everything the sky is open over, straight down, and spreads from there a step less for each metre, through doors and windows and under eaves. A room with its door shut is dark.
+- **Voxels that glow**, a lantern's flame or a lamp, light what is round them in their own colour, as a block's Light does, a step less for each metre: a light of 15 reaches fifteen metres. A glowing voxel shines with its own light too. Which colours of a [[Voxel Prints|Voxel Print]] glow is chosen in its Inspector.
+- Models, characters and grass standing in a room are lit as its voxels are, so a figure in a cellar is in the dark too.
+
+The light is kept round the camera on the GPU, a value for each half-metre brick, 48 m across and 24 m tall, and worked out afresh as the voxels change: a few steps of it a frame, all of it when the volumes are new. A brick lets light through as far as lines through its voxels are open, so a wall a few voxels thick in the middle of a brick still keeps it out. Past the light kept, the sky's light is as it is in the open. The Profiler calls it **Voxel light cells**, **Voxel light sky** and **Voxel light spread**: together about 0.3 ms at 1080p on an RTX 3070.
+
+Lamps (Light components) light the voxels as they light anything; their light isn't stopped by voxels yet.
+
+### Glass
+
+A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Only the nearest glass in a pixel is drawn, and far off, where the voxels are drawn two by two or a brick at a time, it is drawn as solid. The Profiler calls it **Glass (voxels)**.
 
 By the sea, a volume's ground is part of the sea floor the waves feel, as meshes standing still are: the waves calm and shorten over its shallows, and foam runs along the shore where they meet it. The floor is found by walking straight down through the voxels round the camera, as far out as the volume reaches.
 
 Far off, where a voxel is smaller than half a pixel, it is drawn as groups of two by two by two, and further still as whole bricks of eight voxels a side in their average colour, so far grass and leaves don't shimmer.
 
-The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)** say what volumes cost. A meadow 80 m by 120 m with sixty trees, seen from in it at 1920 × 1080 on an RTX 3070, takes about 0.1 ms for the coarse rays, 2 ms for the depth pass and 3.8 ms to light.
+The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **Opaque (voxels)** and **Glass (voxels)** say what volumes cost. A street of six houses with glass in their windows and a dozen figures among them, on Rolling Hills seen from 20 m up at 1920 × 1080 on an RTX 3070, takes about 0.2 ms for the coarse rays, 2.2 ms for the depth pass, 2.3 ms for the shadows, 0.9 ms to light, 0.1 ms for the glass and 0.3 ms for the light kept round the camera: the whole frame 7.0 ms, against 6.6 ms before voxels shadowed models and lit rooms.
 
 ## What it doesn't do yet
 
-- Its voxels cast no shadow onto meshes, blocks or terrain.
+- Lamps' light isn't stopped by voxels: a lamp in a room lights the walls outside it too. Glowing voxels are the way to light a room.
+- Its voxels don't shadow the scene's fog or its particles, and water and glass meshes don't take their shadows.
+- Glass lets the sun through untinted, and only the nearest glass in a pixel is drawn.
 - It isn't turned or scaled with its Obj.
-- It is drawn whole, however far away it is; an endless one ends at its reach.
+- One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.

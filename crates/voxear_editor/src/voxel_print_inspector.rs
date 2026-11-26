@@ -3,12 +3,14 @@
 //! file's size; and how it is made, which **Make Again** makes it from: its
 //! **Model**, how many voxels a metre, how large, how many colours, what it
 //! leaves inside its skin, and a picture for each of the model's parts
-//! whose file names none, as a model exported without its pictures.
+//! whose file names none, as a model exported without its pictures; and
+//! which of its colours are glass or lights.
 //!
 //! Its settings change nothing until it is made again, as making it reads
-//! the whole model (see `editor::voxel_prints`).
+//! the whole model (see `editor::voxel_prints`); but for its glass and
+//! lights, which change it at once.
 
-use voxear_render::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
+use voxear_render::{VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture, VoxelPrintSettings};
 use voxear_ui::{DragSource, NodeId, Ui};
 
 use crate::{
@@ -27,7 +29,14 @@ pub enum PrintChange {
     Ping(String),
     /// Make Again: the print made from its model as the fields say.
     Make(VoxelPrintSettings),
+    /// Its colours made glass or lights, as these say.
+    Materials(Vec<VoxelPrintMaterial>),
 }
+
+/// What a colour of a print can be made, as its Glass and Lights choices:
+/// how see-through and how bright a light, each from 0 to 15.
+const LOOKS: [(&str, u8, u8); 5] =
+    [("Solid", 0, 0), ("Glass", 14, 0), ("Frosted Glass", 9, 0), ("Light", 0, 15), ("Dim Light", 0, 9)];
 
 /// A field of a print that names an asset: its model, or the picture of one
 /// of the model's parts.
@@ -59,6 +68,8 @@ pub struct VoxelPrintFields {
     filled: bool,
     slots: Vec<RefSlot>,
     make: NodeId,
+    /// Each colour of its palette and its choice of what it is.
+    looks: Vec<([u8; 3], NodeId)>,
 }
 
 impl VoxelPrintFields {
@@ -113,7 +124,8 @@ impl VoxelPrintFields {
         let make = ui.button(root, "Make Again");
         ui.add_class(make, "add-component");
         ui.set_tooltip(make, "Make it from its model as these settings say", None);
-        Self { settings, per_metre, scale, colours, fill, pictures, filled: false, slots, make }
+        let looks = print.map(|print| glass_and_lights(ui, root, print)).unwrap_or_default();
+        Self { settings, per_metre, scale, colours, fill, pictures, filled: false, slots, make, looks }
     }
 
     /// Whether the model's parts are wanted, to list a picture for each.
@@ -199,8 +211,47 @@ impl VoxelPrintFields {
         {
             settings.fill = fill;
         }
+        if self.looks.iter().any(|(_, choice)| ui.changed(*choice)) {
+            let materials = self
+                .looks
+                .iter()
+                .filter_map(|&(colour, choice)| {
+                    let (_, glass, light) = LOOKS.get(ui.selected_option(choice)).copied()?;
+                    (glass > 0 || light > 0).then_some(VoxelPrintMaterial { colour, glass, light })
+                })
+                .collect::<Vec<_>>();
+            self.settings.materials = materials.clone();
+            return Some(PrintChange::Materials(materials));
+        }
         ui.clicked(self.make).then(|| PrintChange::Make(self.settings.clone()))
     }
+}
+
+/// Its colours, each with its swatch and a choice of what it is: solid,
+/// glass or a light.
+fn glass_and_lights(ui: &mut Ui, root: NodeId, print: &VoxelPrint) -> Vec<([u8; 3], NodeId)> {
+    let rows = part(ui, root, "Glass and Lights", "light");
+    let mut looks = Vec::new();
+    for colour in &print.palette {
+        let rgb = [colour[0], colour[1], colour[2]];
+        let hex = format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
+        let row = prop(ui, rows, &hex);
+        let holder = ui.panel(row, voxear_ui::Style::default());
+        ui.add_class(holder, "vector");
+        ui.add_class(holder, "color");
+        let swatch = ui.panel(holder, voxear_ui::Style::default());
+        ui.add_class(swatch, "swatch");
+        ui.set_inline_style(swatch, &format!("background-color: {hex}"));
+        let given = print.settings.materials.iter().find(|material| material.colour == rgb);
+        let picked = given
+            .and_then(|given| LOOKS.iter().position(|&(_, glass, light)| given.glass == glass && given.light == light))
+            .unwrap_or_default();
+        let choice = ui.dropdown(holder, &LOOKS.map(|(name, _, _)| name), picked);
+        ui.add_class(choice, "value-choice");
+        ui.set_tooltip(row, "Glass is seen through; a light glows and lights what is round it", None);
+        looks.push((rgb, choice));
+    }
+    looks
 }
 
 /// A picture field for a part, with its cross.

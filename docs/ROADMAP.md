@@ -4516,7 +4516,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stages 4 and 7 begun)
+## Small voxels (in progress: stages 1, 2 and 5 built, stage 3 mostly, stages 4, 6 and 7 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4651,8 +4651,9 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   tread 4 cm). Its ground is its biomes': the one painted, else the nearest by climate, borders ragged as the
   world's, each laying its own top, under, deep, steep and shore blocks in their blocks' colours, grass in its top
   block's colour where that is green; the GPU picks the CPU's biome at 8192 places of 8192, and collision places
-  trees by the same. Not yet: rock layers; the Realm's Spires and Arches; a volume taller than 16 sectors (64 m at 16
-  voxels a metre); ground drawn streaked tens of kilometres from the volume's Obj.
+  trees by the same. Since (2026-11-26): ground tens of kilometres from the volume's Obj is drawn as near it, each
+  pixel's ray worked out from the camera's own place, not from two places of the world a few centimetres apart.
+  Not yet: rock layers; the Realm's Spires and Arches. Since: volumes up to 1,024 m tall (below).
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.
@@ -4674,7 +4675,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   deep the water is, its steps lit as its top, ripples drifting over it. Its waterfalls are voxels thrown over their
   lips, falling as thrown water falls, whiter the faster they go, splashing off a churned pool. A whole frame costs
   less than with smooth water: 8.6 ms over a river against 10.5. A first try that walked through the water to the bed
-  cost 4.4 ms more and striped sloping rivers.
+  cost 4.4 ms more and striped sloping rivers. Voxels is the look a volume comes with; Smooth is the other.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A
@@ -4715,6 +4716,40 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   each brick keeping the bank most of its voxels are in. A print's colours in each tint, and a tinted fill's, go
   together into one bank, so sixty kinds of building of thirty colours each keep every colour; a print takes up to
   128.
+- **Stage 5 built (2026-11-26): distance in rings.** An endless Voxel Volume's **Distance** (`distance` in the scene
+  and `field.set`) carries its ground on past its reach in rings, each an endless volume of its own with voxels
+  twice the size and twice the reach of the ring inside it (1/8, 1/4, 1/2 m, then 1 m as far as the distance), made
+  on the GPU by the same generator, grass, trees and edits. Each ring draws inside a square round the camera that
+  moves on with it, and the next walks from that square's edge, so nothing pops where they meet: a 10 cm move over a
+  sector's edge changes 5% more pixels than one within a sector, against 30% with edges a sector at a time. Each
+  voxel's shade goes by its place in the world, so a window moving no longer changes it. Trees in rings stand where
+  the finest ring has them, off the ring's coarse bricks, and far crowns stay loose cubes. A ring makes nothing the
+  ring inside it has made, and fewer columns a frame; rivers' beds are cut in every ring, and water of voxels fills
+  them. Measured with 100 trees a hectare at reach 64 m, 1080p: 122 MB and 4.7 ms for today's view, 500 MB and 12.7
+  ms to 1 km, 618 MB and 12.9 ms to 2 km; without trees 433 MB to 2 km. The lit pass keeps a plain walk of its own,
+  as carrying the rings' edges made it 0.5–1.3 ms slower for every volume. Next: far rings kept on disk.
+- **Stage 6 begun (2026-11-26): shadows, light indoors and glass.**
+  - **Voxels shadow everything.** After the depth passes, **Voxel shadows** traces a ray towards the sun from each
+    pixel, through the voxels, whatever is drawn there. Models, blocks, terrain and grass take it with the contact
+    shadows. The voxels' own shadow moved there from their lit pass.
+  - **Light indoors and underground.** On the GPU, round the camera, a cell for each half-metre brick holds sky light
+    and glow, as a world of blocks keeps a byte a block. It is 48 × 24 × 48 m.
+    - A cell lets light through by the lines open through its voxels and its neighbour's, so a thin wall mid-brick
+      keeps light out.
+    - Each frame the sky is found straight down, then a few steps spread it, moved as the camera moved.
+    - Ground under its kept skin, and what is past a volume's sides and under its floor, counts as solid.
+    - Voxels, models and grass are lit by it as by block light: a room with its door shut is black, a lamp of
+      voxels lights a room as a lamp block does.
+  - **Glowing and see-through voxels.** A colour's kind is kept after the palette's colours, a byte a place. A print's
+    colours are made glass or lights in its Inspector's **Glass and Lights**, by `voxel_prints.materials`, or in its
+    settings. Water of voxels lets the light through as glass does.
+    - Glowing voxels shine and light the cells round them in their own colour.
+    - The walk passes through glass and keeps the first glass it met. **Glass (voxels)** draws it lit over what is
+      behind, reflecting the sky, with the sun through it onto the floor.
+  - Measured: a street of six houses with glass windows and a dozen figures at 1080p, the least of 60 frames, is
+    7.0 ms against 6.6 ms before. Shadows are 2.3 ms, the light kept round the camera 0.3 ms, glass 0.1 ms.
+  - Not yet: lamps' light stopped by voxels, voxel shadows in fog and on particles and water, tinted sunlight through
+    glass, GI rays through voxels.
 - **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
   voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
   whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest

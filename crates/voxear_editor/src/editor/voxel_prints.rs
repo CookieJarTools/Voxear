@@ -55,6 +55,22 @@ impl Editor {
         });
     }
 
+    /// Makes `materials` the colours of the print at `path` made glass or
+    /// lights, and prints it so in every volume printing it.
+    pub(super) fn set_print_materials(
+        &mut self,
+        path: &str,
+        materials: Vec<voxear_render::VoxelPrintMaterial>,
+    ) -> Result<voxear_render::VoxelPrint, String> {
+        let print = voxear_engine::voxel_prints::set_materials(&mut self.game.content, path, materials)
+            .map_err(|error| format!("Could not change {path}: {error:#}"))?;
+        if let Some(guid) = self.game.content.db().guid_of(path) {
+            voxear_engine::voxel_volumes::reprint(&mut self.game.content, &mut self.game.engine.world, guid);
+        }
+        self.files_seen();
+        Ok(print)
+    }
+
     /// Whether a print is being made.
     pub fn is_making_prints(&self) -> bool {
         !self.print_jobs.is_empty()

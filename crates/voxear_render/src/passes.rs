@@ -331,7 +331,10 @@ pub fn record(
     // Models blending into the ground read the terrains' heights and shares too.
     let grounds = frame.terrain.iter().flat_map(|terrains| &terrains.heights);
     let grounds = grounds.map(|&id| (id, BufferAccess::ShaderRead));
-    let shading_buffers: Vec<_> = edge_buffers.iter().copied().chain(counted).chain(grounds).collect();
+    // And what is lit by the light kept round the camera for the voxels reads it.
+    let voxel_light = frame.voxels.iter().flat_map(|voxels| &voxels.light).map(|&id| (id, BufferAccess::ShaderRead));
+    let shading_buffers: Vec<_> =
+        edge_buffers.iter().copied().chain(counted).chain(grounds).chain(voxel_light).collect();
     drawing.extend(counted);
 
     let (count_handle, stats_handle) = (draws.count_handle, draws.stats_handle);
@@ -615,11 +618,13 @@ pub fn record(
     // Drawn as depth first, then shaded over it, for what reads the depth before shading, and whenever each pixel's
     // normal is wanted, as a shader pack's passes may want it.
     let through = frame.through;
+    let voxel_shadows = frame.voxels.as_ref().and_then(|voxels| voxels.shadow);
     let depth_first = ambient_occlusion.is_some()
         || contact_shadows.is_some()
         || reflections.is_some()
         || through
-        || frame.surface.is_some();
+        || frame.surface.is_some()
+        || frame.voxels.is_some();
     if let Some(atmosphere) = frame.atmosphere.filter(|_| frame.own_sky) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
@@ -651,6 +656,7 @@ pub fn record(
         images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
+        images.extend(voxel_shadows.map(|shadows| (shadows, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
         // The GI's probes, which shading and reflections read.
         images.extend(frame.probes.into_iter().flat_map(|probes| {
@@ -918,6 +924,9 @@ pub fn record(
             if let Some(contact) = contact_shadows {
                 ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);
             }
+            if let (Some(voxels), Some(surface)) = (&frame.voxels, frame.surface) {
+                crate::voxel_volume::record_shadows(fg, (pipelines, push), voxels, (depth, surface));
+            }
             if let Some((target, history)) = reflections {
                 let surface = frame.surface.expect("the depth passes' surface");
                 let images = (depth, surface);
@@ -974,6 +983,9 @@ pub fn record(
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::voxel_volume::record_opaque(fg, (pipelines, shading_push), voxels, images, targets, &shading_buffers);
+                // Their glass over everything opaque.
+                let images = shading(ImageAccess::ColorAttachment);
+                crate::voxel_volume::record_glass(fg, (pipelines, shading_push), voxels, images, (hdr, depth), &shading_buffers);
             }
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {

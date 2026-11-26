@@ -4651,6 +4651,10 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   waterfalls pouring down their faces; `Voxels.Raycast` and edits meet the cut bed. Voxel ground is in the sea floor
   map, so waves calm over voxel shallows and foam on the shore. A column takes 0.104 ms with rivers as without.
   Not yet: water filling a pit carved beside a river, swimming in voxel rivers (research/small-voxels.md).
+- **Waterfalls that fall (2026-11-26).** A voxel river's waterfall leaves its lip and curves down the cliff into its
+  pool, as thrown water falls, in two swaying sheets with ragged sides, the front one torn into strands lower down;
+  pale, lit through by the sun behind; its pool churned white over 3 m. Before, it was a flat wall standing out from
+  the cliff.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A

@@ -632,6 +632,21 @@ fn measure_rivers_and_a_coast() {
                 camera.rotation = Quat::from_rotation_y(turn) * Quat::from_rotation_x(-8f32.to_radians());
                 scene
             }
+            "falls-side" => {
+                // From 12 m off to its side and downstream, 4 m over its pool, looking at its middle.
+                let (fx, fz, top, foot, down) = fall;
+                let (x, z) = (fx + down * 9.0, fz + 9.0);
+                let mut scene = generated_view(alpine.clone(), x, z, 0.0, 0.0);
+                let floor =
+                    scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
+                let eye = Vec3::new(x, foot + 4.0 - floor, z);
+                let to = Vec3::new(fx, (top + foot) * 0.5 - floor, fz) - eye;
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                camera.position = eye;
+                camera.rotation =
+                    Quat::from_rotation_y(to.x.atan2(to.z)) * Quat::from_rotation_x((-to.y).atan2(to.x.hypot(to.z)));
+                scene
+            }
             // From 6 m over the river's water, looking 35° down.
             _ => generated_view(hills.clone(), x, z, water - bed + 6.0, 35.0),
         };

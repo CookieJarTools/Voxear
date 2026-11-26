@@ -25,7 +25,7 @@ use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 use super::{
     GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint, VoxelTrees,
     VoxelVolume, print,
-    rivers::{self, GpuVoxelWater, LaidRivers},
+    rivers::{self, ColumnWater, GpuVoxelWater, LaidRivers},
     trees,
 };
 use crate::pipelines::Pipelines;
@@ -268,7 +268,7 @@ pub(crate) struct Endless {
     /// a count of its changes.
     rivers: Option<LaidRivers>,
     waiting: bool,
-    water: Vec<Vec<GpuVoxelWater>>,
+    water: Vec<ColumnWater>,
     water_changes: u64,
 }
 
@@ -636,7 +636,7 @@ impl Endless {
             corner: Vec3::ZERO,
             rivers: None,
             waiting: false,
-            water: vec![Vec::new(); (window * window) as usize],
+            water: vec![ColumnWater::default(); (window * window) as usize],
             water_changes: 0,
         };
         endless.rivers = laid_rivers(gpu, volume, endless.program.is_some(), window, endless.forest.as_ref())?;
@@ -791,7 +791,7 @@ impl Endless {
         gone.extend(std::mem::replace(&mut self.rivers, laid).map(|rivers| rivers.table));
         self.from = volume.clone();
         self.made.iter_mut().for_each(|made| *made = None);
-        self.water.iter_mut().for_each(Vec::clear);
+        self.water.iter_mut().for_each(|water| *water = ColumnWater::default());
         self.water_changes += 1;
         Ok(Some(gone))
     }
@@ -882,7 +882,7 @@ impl Endless {
                 let floor = self.from.generator.as_ref().map_or(0.0, |generator| generator.floor);
                 rivers::water_quads(&grid, column, (self.corner, floor, voxel))
             }
-            None => Vec::new(),
+            None => ColumnWater::default(),
         };
         let kept = &mut self.water[slot as usize];
         if !(kept.is_empty() && quads.is_empty()) {
@@ -900,10 +900,14 @@ impl Endless {
         }
     }
 
-    /// The water over its rivers and lakes, each square in the world, and
-    /// how many times it has changed.
-    pub fn water(&self) -> (impl Iterator<Item = &GpuVoxelWater>, u64) {
-        (self.water.iter().flatten(), self.water_changes)
+    /// The water over its rivers and lakes, each square in the world, then
+    /// the squares its waterfalls pour over, and how many times it has
+    /// changed.
+    #[allow(clippy::type_complexity)]
+    pub fn water(&self) -> ((impl Iterator<Item = &GpuVoxelWater>, impl Iterator<Item = &GpuVoxelWater>), u64) {
+        let squares = self.water.iter().flat_map(|water| &water.squares);
+        let falls = self.water.iter().flat_map(|water| &water.falls);
+        ((squares, falls), self.water_changes)
     }
 
     fn slot_of(&self, column: [i32; 2]) -> u32 {

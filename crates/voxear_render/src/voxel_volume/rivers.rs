@@ -368,109 +368,278 @@ fn work(layer: &Weak<RiverLayer>) {
 
 /// A square of water over an endless volume's rivers and lakes, as
 /// `voxelWaterVertex` in `shaders/water.slang` draws it: its least corner
-/// along X and Z in the world and how wide it is; how high each corner is,
-/// in the order (0, 0), (1, 0), (0, 1), (1, 1); which way and how fast it
-/// flows, in metres a second; whether it is the face of a waterfall (bit
-/// 0), and the sides of it, a still top, that a fall lands beside (bits 1
-/// to 4: +x, -x, +z and -z).
+/// along X and Z in the world and how wide it is, and for each corner, in
+/// the order (0, 0), (1, 0), (0, 1), (1, 1), how high it is; which way and
+/// how fast it flows, in metres a second; and how churned it is below a
+/// waterfall, a byte a corner.
+///
+/// A square a waterfall pours over is drawn by `voxelFallVertex` instead:
+/// in place of its corners' heights, the height of the water at its top,
+/// how far it falls, how fast it leaves the lip, and which way out from the
+/// cliff each corner looks (a byte each, a 256th of a turn from +X towards
+/// +Z, as the bits of a number); how far each corner is
+/// along the fall, from its lip (0) to where it lands (255), a byte a
+/// corner; and which corners have water, a bit each.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVoxelWater {
     pub corner: [f32; 2],
     pub size: f32,
-    pub fall: u32,
+    pub wet: u32,
     pub heights: [f32; 4],
     pub flow: [f32; 2],
-    pub pad: [f32; 2],
+    pub churn: u32,
+    pub along: u32,
 }
 
-/// How much higher a waterfall's top is than its foot, in metres, for a
-/// square to be drawn as its face.
-const FALL_FACE: f32 = 0.3;
+/// The water over one column: its still and flowing squares, and the squares
+/// its waterfalls pour over.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ColumnWater {
+    pub squares: Vec<GpuVoxelWater>,
+    pub falls: Vec<GpuVoxelWater>,
+}
+
+impl ColumnWater {
+    pub fn is_empty(&self) -> bool {
+        self.squares.is_empty() && self.falls.is_empty()
+    }
+}
+
+/// How far below a waterfall its pool churns, in points of the grid.
+const CHURNED: f32 = 6.0;
+
+/// Four numbers from 0 to 1 as bytes in a word, the first lowest.
+fn bytes(values: [f32; 4]) -> u32 {
+    values
+        .iter()
+        .enumerate()
+        .map(|(k, v)| ((v.clamp(0.0, 1.0) * 255.0).round() as u32) << (8 * k))
+        .fold(0, |a, b| a | b)
+}
 
 /// The water over column `column`'s squares of points, in the world, the
 /// volume's corner at `corner` and its floor at `floor` metres of the
-/// generator's world, its voxels `voxel` across: a quad on each square with
-/// water at any corner, its dry corners as high as its highest wet one, so
-/// the water reaches into the bank beside it and the ground hides it there.
+/// generator's world, its voxels `voxel` across.
+///
+/// A still or flowing square has water at any corner, its dry corners as
+/// high as its highest wet one, so the water reaches into the bank beside
+/// it and the ground hides it there. A square with a point of a waterfall
+/// at a corner is the fall's: the river's node keeps the water at the
+/// fall's top past the cliff its lip cuts, as far as the fall's foot; here
+/// each point is placed along the fall, from the last point before it (its
+/// lip) to the first after it (where it lands), and the GPU draws the water
+/// curving down from the lip as falling water does.
 pub(crate) fn water_quads(
     grid: &RiverGrid,
     column: [i32; 2],
     (corner, floor, voxel): (voxear_core::math::Vec3, f32, f32),
-) -> Vec<GpuVoxelWater> {
+) -> ColumnWater {
+    let mut made = ColumnWater::default();
     if !grid.water.iter().any(|&water| wet(water)) {
-        return Vec::new();
+        return made;
     }
     let step = GRID_STEP as f32 * voxel;
     let at = |i: usize, j: usize| grid.water[j * GRID + i];
+    let falls = |i: usize, j: usize| grid.falls[j * GRID + i];
     let height = |water: f32| corner.y + water - floor;
-    // How high each square's corners stand, where it has water.
-    let square = |i: usize, j: usize| -> Option<[f32; 4]> {
-        let corners = [at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)];
-        let highest = corners.into_iter().filter(|&water| wet(water)).fold(f32::MIN, f32::max);
-        (highest > f32::MIN).then(|| corners.map(|water| height(if wet(water) { water } else { highest })))
-    };
-    let falling = |i: usize, j: usize| {
-        square(i, j).is_some_and(|h| {
-            let (low, high) = h.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &h| (lo.min(h), hi.max(h)));
-            let fell =
-                [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)].iter().any(|&(a, b)| grid.falls[b * GRID + a] > 0.0);
-            fell && high - low > FALL_FACE
-        })
-    };
-    let mut quads = Vec::new();
-    // The column's own squares: from its corner's point to the far corner's.
-    for j in 1..GRID - 2 {
-        for i in 1..GRID - 2 {
-            let Some(heights) = square(i, j) else { continue };
-            let mut fall = u32::from(falling(i, j));
-            if fall == 0 {
-                // A still top beside a fall's face, where the fall lands: the sides it lies beside, and lower.
-                let low = heights.iter().copied().fold(f32::MAX, f32::min);
-                let sides = [(i + 1, j), (i.wrapping_sub(1), j), (i, j + 1), (i, j.wrapping_sub(1))];
-                for (bit, &(a, b)) in sides.iter().enumerate() {
-                    if a < GRID - 1
-                        && b < GRID - 1
-                        && falling(a, b)
-                        && square(a, b).is_some_and(|h| h.iter().any(|&h| h > low + FALL_FACE))
-                    {
-                        fall |= 2 << bit;
+    let fall_point = |i: usize, j: usize| wet(at(i, j)) && falls(i, j) > 0.0;
+    // How far along its fall each point of one is, from the last point before it at its top to the first after it
+    // at its foot, looked for along X and Z.
+    let mut along = [f32::NAN; GRID_POINTS];
+    for j in 0..GRID {
+        for i in 0..GRID {
+            if !fall_point(i, j) {
+                continue;
+            }
+            let (top, drop) = (at(i, j), falls(i, j));
+            let mut before = usize::MAX;
+            let mut after = usize::MAX;
+            for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                for n in 1..GRID as i32 {
+                    let (a, b) = (i as i32 + di * n, j as i32 + dj * n);
+                    if a < 0 || b < 0 || a >= GRID as i32 || b >= GRID as i32 {
+                        break;
+                    }
+                    let (a, b) = (a as usize, b as usize);
+                    let water = at(a, b);
+                    if !wet(water) {
+                        break;
+                    }
+                    if water < top - drop * 0.5 {
+                        after = after.min(n as usize);
+                        break;
+                    }
+                    if !fall_point(a, b) {
+                        before = before.min(n as usize);
+                        break;
                     }
                 }
             }
-            // Down the water's slope, faster the steeper, as a generator's current runs, read over three squares
-            // along each axis where they have water. Water falling less than 3 mm a metre lies still; the way it
-            // flows is one of sixteen and its speed in half metres a second, so a stretch of river flows as one and
-            // its ripples run on unbroken from square to square.
-            let level = |i: usize, j: usize| Some(at(i, j)).filter(|&water| wet(water));
-            let across = |a: usize, b: usize, other: usize, x: bool| {
-                let (low, high) =
-                    if x { (level(a, other), level(b, other)) } else { (level(other, a), level(other, b)) };
-                low.zip(high).map(|(low, high)| (high - low) / ((b - a) as f32 * step))
+            // At the column's edge the fall may go on past its points: as far again as it has come.
+            let (before, after) = match (before, after) {
+                (usize::MAX, usize::MAX) => (1, 1),
+                (usize::MAX, after) => (GRID, after),
+                (before, usize::MAX) => (before, before.max(2)),
+                found => found,
             };
-            let slope = |x: bool, along: usize, side: usize| {
-                let (from, to) = (along.saturating_sub(1), (along + 2).min(GRID - 1));
-                let rows = [side, side + 1]
-                    .map(|other| across(from, to, other, x).or_else(|| across(along, along + 1, other, x)));
-                let found: Vec<f32> = rows.into_iter().flatten().collect();
-                if found.is_empty() { 0.0 } else { found.iter().sum::<f32>() / found.len() as f32 }
-            };
-            let (gx, gz) = (slope(true, i, j), slope(false, j, i));
-            let steep = (gx * gx + gz * gz).sqrt();
-            let flow = match steep < 0.003 || fall & 1 != 0 {
-                true => [0.0, 0.0],
-                false => {
-                    let speed = ((6.0 * steep.sqrt()).clamp(0.4, 4.0) * 2.0).round() / 2.0;
-                    let way = ((-gz).atan2(-gx) / std::f32::consts::TAU * 16.0).round() * std::f32::consts::TAU / 16.0;
-                    [way.cos() * speed, way.sin() * speed]
-                }
-            };
-            let x = corner.x + (column[0] * 64 + (i as i32 - 1) * GRID_STEP) as f32 * voxel;
-            let z = corner.z + (column[1] * 64 + (j as i32 - 1) * GRID_STEP) as f32 * voxel;
-            quads.push(GpuVoxelWater { corner: [x, z], size: step, fall, heights, flow, pad: [0.0; 2] });
+            along[j * GRID + i] = before as f32 / (before + after) as f32;
         }
     }
-    quads
+    // Which way out from its cliff each point of a fall and round it looks, the way it is further along, shared by the
+    // squares round it so the sheets they draw bend as one.
+    let known = |i: usize, j: usize| -> Option<f32> {
+        if fall_point(i, j) {
+            return Some(along[j * GRID + i]);
+        }
+        None
+    };
+    let outward = |i: usize, j: usize| -> f32 {
+        let side = |a: Option<usize>, b: Option<usize>, x: bool| {
+            let read = |n: usize| if x { known(n, j) } else { known(i, n) };
+            match (a.and_then(read), b.and_then(read)) {
+                (Some(low), Some(high)) => (high - low) * 0.5,
+                (Some(low), None) => (if x { known(i, j) } else { known(i, j) }).map_or(0.0, |here| here - low),
+                (None, Some(high)) => (if x { known(i, j) } else { known(i, j) }).map_or(0.0, |here| high - here),
+                (None, None) => 0.0,
+            }
+        };
+        let (here_x, here_z) = (i, j);
+        let gx = side(here_x.checked_sub(1), (here_x + 1 < GRID).then_some(here_x + 1), true);
+        let gz = side(here_z.checked_sub(1), (here_z + 1 < GRID).then_some(here_z + 1), false);
+        if gx.abs() + gz.abs() < 1e-4 { f32::NAN } else { gz.atan2(gx) }
+    };
+    let mut ways = [f32::NAN; GRID_POINTS];
+    for j in 0..GRID {
+        for i in 0..GRID {
+            ways[j * GRID + i] = outward(i, j);
+        }
+    }
+    // Points not on a fall look the way the nearest that are do.
+    let fallen_way = |i: usize, j: usize| -> f32 {
+        let mut best = (f32::MAX, 0.0);
+        for b in 0..GRID {
+            for a in 0..GRID {
+                let way = ways[b * GRID + a];
+                let far = (a as f32 - i as f32).powi(2) + (b as f32 - j as f32).powi(2);
+                if !way.is_nan() && far < best.0 {
+                    best = (far, way);
+                }
+            }
+        }
+        best.1
+    };
+    // How churned each point below a fall is: most beside where it lands, less the further from it.
+    let mut churn = [0.0f32; GRID_POINTS];
+    for j in 0..GRID {
+        for i in 0..GRID {
+            if !fall_point(i, j) {
+                continue;
+            }
+            let foot = at(i, j) - falls(i, j);
+            for b in 0..GRID {
+                for a in 0..GRID {
+                    let water = at(a, b);
+                    if !wet(water) || fall_point(a, b) || water > foot + 0.5 {
+                        continue;
+                    }
+                    let far = ((a as f32 - i as f32).powi(2) + (b as f32 - j as f32).powi(2)).sqrt();
+                    let here = &mut churn[b * GRID + a];
+                    *here = here.max(1.0 - (far - 1.0).max(0.0) / CHURNED);
+                }
+            }
+        }
+    }
+    let flow_of = |i: usize, j: usize, heights: &[f32; 4]| {
+        // Down the water's slope, faster the steeper, as a generator's current runs, read over three squares along
+        // each axis where they have water. Water falling less than 3 mm a metre lies still; the way it flows is one
+        // of sixteen and its speed in half metres a second, so a stretch of river flows as one and its ripples run
+        // on unbroken from square to square.
+        let level = |i: usize, j: usize| Some(at(i, j)).filter(|&water| wet(water));
+        let across = |a: usize, b: usize, other: usize, x: bool| {
+            let (low, high) = if x { (level(a, other), level(b, other)) } else { (level(other, a), level(other, b)) };
+            low.zip(high).map(|(low, high)| (high - low) / ((b - a) as f32 * step))
+        };
+        let slope = |x: bool, along: usize, side: usize| {
+            let (from, to) = (along.saturating_sub(1), (along + 2).min(GRID - 1));
+            let rows =
+                [side, side + 1].map(|other| across(from, to, other, x).or_else(|| across(along, along + 1, other, x)));
+            let found: Vec<f32> = rows.into_iter().flatten().collect();
+            if found.is_empty() { 0.0 } else { found.iter().sum::<f32>() / found.len() as f32 }
+        };
+        let _ = heights;
+        let (gx, gz) = (slope(true, i, j), slope(false, j, i));
+        let steep = (gx * gx + gz * gz).sqrt();
+        match steep < 0.003 {
+            true => [0.0, 0.0],
+            false => {
+                let speed = ((6.0 * steep.sqrt()).clamp(0.4, 4.0) * 2.0).round() / 2.0;
+                let way = ((-gz).atan2(-gx) / std::f32::consts::TAU * 16.0).round() * std::f32::consts::TAU / 16.0;
+                [way.cos() * speed, way.sin() * speed]
+            }
+        }
+    };
+    // The column's own squares: from its corner's point to the far corner's.
+    for j in 1..GRID - 2 {
+        for i in 1..GRID - 2 {
+            let points = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
+            let waters = points.map(|(a, b)| at(a, b));
+            let highest = waters.into_iter().filter(|&water| wet(water)).fold(f32::MIN, f32::max);
+            if highest == f32::MIN {
+                continue;
+            }
+            let x = corner.x + (column[0] * 64 + (i as i32 - 1) * GRID_STEP) as f32 * voxel;
+            let z = corner.z + (column[1] * 64 + (j as i32 - 1) * GRID_STEP) as f32 * voxel;
+            let wet_bits =
+                points.iter().enumerate().fold(0u32, |bits, (k, &(a, b))| bits | u32::from(wet(at(a, b))) << k);
+            if points.iter().any(|&(a, b)| fall_point(a, b)) {
+                // A fall's square: its corners along the fall, those before it at its lip and those after it where
+                // it lands, and dry ones as far along as its wet ones are on average.
+                let drop =
+                    points.iter().map(|&(a, b)| if fall_point(a, b) { falls(a, b) } else { 0.0 }).fold(0.0, f32::max);
+                let top = highest;
+                let mut ats = points.map(|(a, b)| match (fall_point(a, b), wet(at(a, b))) {
+                    (true, _) => along[b * GRID + a],
+                    (false, true) if at(a, b) > top - drop * 0.5 => 0.0,
+                    (false, true) => 1.0,
+                    (false, false) => f32::NAN,
+                });
+                let known: Vec<f32> = ats.iter().copied().filter(|v| !v.is_nan()).collect();
+                let mean = known.iter().sum::<f32>() / known.len().max(1) as f32;
+                ats.iter_mut().filter(|v| v.is_nan()).for_each(|v| *v = mean);
+                // Leaving its lip as fast as it must to land where the node says, 1.6 m out.
+                let speed = 1.6 / (2.0 * drop.max(0.1) / 9.81).sqrt();
+                let turns = points.map(|(a, b)| {
+                    let way = ways[b * GRID + a];
+                    let way = if way.is_nan() { fallen_way(a, b) } else { way };
+                    way.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
+                });
+                let looks =
+                    f32::from_bits(bytes(turns.map(|t| if t >= 255.5 / 256.0 { 0.0 } else { t * 256.0 / 255.0 })));
+                made.falls.push(GpuVoxelWater {
+                    corner: [x, z],
+                    size: step,
+                    wet: wet_bits,
+                    heights: [height(top), drop, speed, looks],
+                    flow: [0.0, 0.0],
+                    churn: 0,
+                    along: bytes(ats),
+                });
+                continue;
+            }
+            let heights = waters.map(|water| height(if wet(water) { water } else { highest }));
+            made.squares.push(GpuVoxelWater {
+                corner: [x, z],
+                size: step,
+                wet: wet_bits,
+                heights,
+                flow: flow_of(i, j, &heights),
+                churn: bytes(points.map(|(a, b)| churn[b * GRID + a])),
+                along: 0,
+            });
+        }
+    }
+    made
 }
 
 #[cfg(test)]
@@ -493,25 +662,34 @@ mod tests {
     }
 
     #[test]
-    fn water_reaches_into_the_bank_and_a_fall_is_drawn_as_its_face() {
+    fn water_reaches_into_the_bank_and_a_fall_curves_from_its_lip_into_a_churned_pool() {
         let mut grid = RiverGrid::dry();
-        // A river along X, three points wide, falling 3 m between its fifth and sixth points.
+        // A river along X, three points wide, at 10 m to its lip after point 4, its water kept at its top past the
+        // lip over points 5 and 6, then 3 m lower.
         for j in 4..7 {
             for i in 0..GRID {
                 let at = j * GRID + i;
-                grid.water[at] = if i <= 5 { 10.0 } else { 7.0 };
-                grid.falls[at] = if i == 5 { 3.0 } else { 0.0 };
+                grid.water[at] = if i <= 6 { 10.0 } else { 7.0 };
+                grid.falls[at] = if i == 5 || i == 6 { 3.0 } else { 0.0 };
             }
         }
         grid.laid = true;
-        let quads = water_quads(&grid, [0, 0], (voxear_core::math::Vec3::ZERO, 0.0, 1.0 / 16.0));
-        // Squares 3 to 6 along Z have water at a corner: 4 rows of 8.
-        assert_eq!(quads.len(), 32);
-        let faces: Vec<_> = quads.iter().filter(|quad| quad.fall & 1 != 0).collect();
-        assert!(!faces.is_empty() && faces.iter().all(|quad| quad.corner[0] == 2.0));
-        assert!(quads.iter().any(|quad| quad.fall & 4 != 0), "the pool beside the fall's foot churns");
+        let made = water_quads(&grid, [0, 0], (voxear_core::math::Vec3::ZERO, 0.0, 1.0 / 16.0));
+        // Squares 3 to 6 along Z have water at a corner: 4 rows of 8, those touching points 5 and 6 the fall's.
+        assert_eq!(made.squares.len() + made.falls.len(), 32);
+        assert_eq!(made.falls.len(), 12, "squares 4 to 6 of each row");
+        let fall = made.falls.iter().find(|fall| fall.corner == [1.5, 2.0]).expect("the fall's first square");
+        let along = |word: u32, k: u32| (word >> (8 * k)) & 255;
+        // From its lip at point 4 to a third and two thirds of the way at points 5 and 6, landing at point 7.
+        assert_eq!((along(fall.along, 0), along(fall.along, 1)), (0, 85));
+        assert_eq!(fall.heights[..2], [10.0, 3.0]);
+        let last = made.falls.iter().find(|fall| fall.corner == [2.5, 2.0]).unwrap();
+        assert_eq!((along(last.along, 0), along(last.along, 1)), (170, 255));
+        // The pool beside where it lands churns, less further off.
+        let churn = |x: f32| made.squares.iter().find(|s| s.corner == [x, 2.0]).map_or(0, |s| s.churn & 255);
+        assert!(churn(3.0) > churn(3.5) && churn(3.5) > 0, "{} {}", churn(3.0), churn(3.5));
         // A dry corner stands as high as the wet one beside it.
-        let edge = quads.iter().find(|quad| quad.corner == [0.0, 1.0]).expect("a square on the bank");
+        let edge = made.squares.iter().find(|quad| quad.corner == [0.0, 1.0]).expect("a square on the bank");
         assert_eq!(edge.heights, [10.0; 4]);
     }
 }

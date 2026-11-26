@@ -889,12 +889,20 @@ in from the CPU, as streamed worlds of blocks take them: as a change of height t
 
 ![A shore of Archipelago, before and after](../images/small-voxels/shore-before-after.webp)
 
-![A waterfall 7.6 m high in Alpine, from its pool](../images/small-voxels/waterfall.webp)
+![A waterfall 7.6 m high in Alpine, from beside its pool: a wall of water standing out from the cliff (above), and
+falling from its lip (below)](../images/small-voxels/waterfall.webp)
 
-A fall's face was first drawn as a world of blocks' falling water is, and read as tinted glass: the cut bed showed
-through it and its threads were grey with the sun behind. A river's fall drops metres at a time, so its face is now
-mostly pale, hiding what is behind it, and lit through by the sun behind as spray is. Its foot churns only in the
-squares beside it, half a metre out.
+**Waterfalls.** The river's node cuts a cliff at a fall's lip and keeps the water at the fall's top for 1.6 m past it,
+over the air, then at its foot. Drawn as squares of that, a fall was a flat wall of water 1.6 m out from the cliff
+under a shelf of water, its sides standing out past the rock. Now each point of the fall is placed along it, from
+the last point before it (the lip) to the first after it (where it lands), and the squares those points stand on are
+drawn as a fine grid (8 × 8 quads a square, `voxelFallVertex`): leaving the lip level and falling ever more steeply,
+as thrown water does, landing where the node says and plunging 0.4 m under its pool. Two sheets, the back one nearer
+the cliff the lower it is, sway in and out more the lower they are; the front one tears into strands lower down; the
+sides are ragged where the river's water ends. Each point has its one way out from the cliff, shared by the squares
+round it, or the sheets split along the squares' seams. Its face is pale, hiding the cliff behind it, and lit through
+by the sun behind as spray is. The pool churns white where it lands, in patches that come and go, thinning out over
+3 m. A fall 7.6 m high and 6 m wide costs the water pass 0.4 ms more at 1080p.
 
 Not done:
 

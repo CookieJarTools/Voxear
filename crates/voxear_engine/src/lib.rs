@@ -72,6 +72,7 @@ pub mod smoke;
 pub mod storm_sounds;
 pub mod storms;
 pub mod voxel_prints;
+pub mod voxel_mobs;
 pub mod voxel_volumes;
 pub mod tick_smoothing;
 pub use voxear_localization as localization;

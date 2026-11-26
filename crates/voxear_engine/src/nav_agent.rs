@@ -527,6 +527,13 @@ pub fn step_agents(world: &mut World, delta: f32) {
         .filter_map(|(entity, corner, size, blocks)| walked_of(world, entity, corner, size, blocks))
         .collect();
 
+    // The dimensions with an endless Voxel Volume's ground to walk.
+    let voxel_ground: Vec<DimensionId> = world
+        .query_ref::<(Entity, &voxear_render::VoxelVolume)>()
+        .into_iter()
+        .filter(|(_, volume)| volume.endless)
+        .map(|(entity, _)| dimension_of(world, entity))
+        .collect();
     // The level's nav mesh for each agent type: its own, or the Default one's.
     let meshes: Vec<Option<(Arc<voxear_nav::mesh::NavMesh>, Vec3)>> =
         (0..crate::navigation::AGENT_TYPES).map(|slot| crate::navigation::level_nav_for(world, slot as u8)).collect();
@@ -605,6 +612,9 @@ pub fn step_agents(world: &mut World, delta: f32) {
         } else if let Some((mesh, offset)) = mesh_of(&agent) {
             // No world of blocks under it: the level's nav mesh, where it has one.
             plan_mesh(world, &agent, &mut state, mesh, *offset, dimension, &portals, layer, at, delta, &mut budget);
+        } else if voxel_ground.contains(&dimension) {
+            // On an endless Voxel Volume's ground: straight there, until voxel ground has ways found over it.
+            plan_straight(&agent, &mut state, at);
         } else {
             state.wanted = Vec3::ZERO;
         }
@@ -1009,6 +1019,36 @@ fn plan_mesh(
     state.arrived = left <= agent.stopping_distance + 0.15
         && matches!(state.status, PathStatus::Complete | PathStatus::None)
         && crossing.is_none();
+}
+
+/// Plans an agent's way straight to where it is going, over ground with no
+/// places to find a way over: an endless Voxel Volume's. It walks into what
+/// stands in its way, and goes round other agents.
+fn plan_straight(agent: &NavAgent, state: &mut NavAgentState, at: Vec3) {
+    state.planned_for = agent.destination.filter(|_| !agent.stopped);
+    let Some(destination) = state.planned_for else {
+        state.corners.clear();
+        (state.wanted, state.arrived, state.status) = (Vec3::ZERO, true, PathStatus::None);
+        return;
+    };
+    if state.corners.last() != Some(&destination) {
+        state.corners = vec![at, destination];
+        state.next = 1;
+        state.status = PathStatus::Complete;
+        state.cost = at.distance(destination);
+        (state.jumps, state.doors, state.links) = (vec![false; 2], Vec::new(), vec![None; 2]);
+    }
+    let steering = Steering {
+        speed: agent.speed,
+        acceleration: agent.acceleration,
+        stopping: agent.stopping_distance,
+        brakes: agent.auto_brake,
+        corner: agent.radius.max(0.3),
+    };
+    let corners = state.corners.clone();
+    let wanted = steer::wanted(at, &corners, state.next, &steering);
+    state.wanted = Vec3::new(wanted.x, 0.0, wanted.y);
+    state.arrived = steer::remaining(at, &corners, state.next) <= agent.stopping_distance + 0.15;
 }
 
 /// Moves an agent by the velocity chosen for it, as it moves, and keeps

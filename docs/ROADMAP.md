@@ -4658,6 +4658,13 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   Rigidbodies and where they will be in half a second, nearest first on workers of their own; a change makes again
   only the chunks it reaches. Walking at 6 m/s through a wood on a generator's hills costs about 0.2 ms a step.
   Not yet: volumes of a set size, navigation.
+- **What grows where, and mobs (2026-11-26).** An endless Voxel Volume grows crops and ground cover of its own
+  voxels on the ground it is told (meadow grass, wheat, barley, flax and cabbages, in rows on ploughed earth), keeps
+  each kind of tree, crop and mob within or out of World Areas by their Area Tags, as structures in a world of blocks
+  do, and spawns mobs from prefabs on its ground round the player. Block Mobs walk a volume's ground straight to
+  where they are sent and wander it. Inspector rows, `vox editor call field.set`, and the scene's `cover`, `mobs`,
+  `within` and `never_within`. The CPU keeps trees to the areas as the GPU does. Making a column costs what it did.
+  Not yet: ways found round obstacles on voxel ground, painted areas, harvesting.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -22,6 +22,27 @@
 //! plant = "Plants/Oak.voxplant"
 //! per_hectare = 40.0
 //!
+//! A kind of tree may keep within World Areas of some tags and out of
+//! those of others, each an Area Tag data asset, by its number:
+//!
+//! [[obj.voxel_volume.trees]]
+//! plant = "Plants/Apple.voxplant"
+//! per_hectare = 120.0
+//! within = ["…the Orchard tag's number…"]
+//!
+//! Crops and ground cover grow on the ground they say, each kind of its own
+//! voxels (`meadow_grass`, `wheat`, `barley`, `flax` or `cabbage`), the
+//! first that grows on a voxel column taking it in place of the grass:
+//!
+//! [[obj.voxel_volume.cover]]
+//! kind = "wheat"
+//! on = ["grass"]
+//! soil = "dirt"
+//! height = 0.9
+//! rows = 0.25
+//! density = 0.7
+//! within = ["…the Fields tag's number…"]
+//!
 //! [[obj.voxel_volume.stamps]]
 //! model = "Plants/Oak.boxmodel"
 //! at = [12.0, 2.0, 9.0]
@@ -59,7 +80,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial, VoxelStamp, VoxelTrees, VoxelVolume};
+use voxear_assets::AssetGuid;
+use voxear_render::{
+    VoxelArea, VoxelAreaRules, VoxelCover, VoxelCoverKind, VoxelEdit, VoxelGenerator, VoxelGround, VoxelMaterial,
+    VoxelStamp, VoxelTrees, VoxelVolume,
+};
 
 use crate::content::Content;
 
@@ -95,6 +120,12 @@ pub struct VoxelVolumeData {
     /// The kinds of tree scattered through an endless volume's ground.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trees: Vec<VoxelTreesData>,
+    /// The crops and ground cover grown on an endless volume's ground.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cover: Vec<VoxelCoverData>,
+    /// The mobs that spawn on an endless volume's ground round the player.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mobs: Vec<crate::voxel_mobs::VoxelMobsData>,
     /// What was changed in an endless volume, in the order it was changed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<VoxelEditData>,
@@ -173,11 +204,82 @@ impl VoxelEditData {
 pub struct VoxelTreesData {
     pub plant: String,
     pub per_hectare: f32,
+    /// The World Areas it grows in, by their tags (Area Tag data assets),
+    /// and those it never grows in: anywhere where it names none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<AssetGuid>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub never_within: Vec<AssetGuid>,
 }
 
 impl Default for VoxelTreesData {
     fn default() -> Self {
-        Self { plant: String::new(), per_hectare: 40.0 }
+        Self { plant: String::new(), per_hectare: 40.0, within: Vec::new(), never_within: Vec::new() }
+    }
+}
+
+/// The rules of what keeps within areas of the tags `within` and out of
+/// those of `never`, as the renderer reads them.
+pub fn area_rules(within: &[AssetGuid], never: &[AssetGuid]) -> VoxelAreaRules {
+    VoxelAreaRules {
+        within: within.iter().map(|tag| tag.to_u128()).collect(),
+        never: never.iter().map(|tag| tag.to_u128()).collect(),
+    }
+}
+
+/// A kind of crop or ground cover grown on an endless volume, as a scene
+/// writes it (see `voxear_render::VoxelCover`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxelCoverData {
+    pub kind: VoxelCoverKind,
+    /// The ground it grows on: grass where none.
+    pub on: Vec<VoxelMaterial>,
+    pub density: f32,
+    pub height: f32,
+    pub rows: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soil: Option<VoxelMaterial>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<AssetGuid>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub never_within: Vec<AssetGuid>,
+}
+
+impl Default for VoxelCoverData {
+    fn default() -> Self {
+        Self::of(VoxelCoverKind::default())
+    }
+}
+
+impl VoxelCoverData {
+    /// A kind as it is first grown: its own height, rows and density, crops
+    /// in ploughed earth, anywhere there is grass.
+    pub fn of(kind: VoxelCoverKind) -> Self {
+        let made = VoxelCover::of(kind);
+        Self {
+            kind,
+            on: made.on,
+            density: made.density,
+            height: made.height,
+            rows: made.rows,
+            soil: made.soil,
+            within: Vec::new(),
+            never_within: Vec::new(),
+        }
+    }
+
+    /// The cover the renderer grows.
+    pub fn made(&self) -> VoxelCover {
+        VoxelCover {
+            kind: self.kind,
+            on: self.on.clone(),
+            density: self.density.clamp(0.0, 1.0),
+            height: self.height.max(0.0),
+            rows: self.rows.max(0.0),
+            soil: self.soil,
+            areas: area_rules(&self.within, &self.never_within),
+        }
     }
 }
 
@@ -213,6 +315,8 @@ impl Default for VoxelVolumeData {
             generator_floor: None,
             generator_at: [0.0, 0.0],
             trees: Vec::new(),
+            cover: Vec::new(),
+            mobs: Vec::new(),
             edits: Vec::new(),
         }
     }
@@ -280,6 +384,8 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         reach: data.reach,
         generator,
         trees,
+        cover: data.cover.iter().map(VoxelCoverData::made).collect(),
+        areas: Arc::default(),
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
     }
 }
@@ -424,13 +530,18 @@ fn trees_of(content: &mut Content, kind: &VoxelTreesData) -> Option<VoxelTrees> 
     };
     let wood = color(plant.wood.as_ref(), [104, 78, 56]);
     let leaves = color(plant.leaves.as_ref(), if conifer { [38, 92, 52] } else { [70, 128, 46] });
-    Some(VoxelTrees { plant, per_hectare: kind.per_hectare.max(0.0), wood, leaves })
+    let areas = area_rules(&kind.within, &kind.never_within);
+    Some(VoxelTrees { plant, per_hectare: kind.per_hectare.max(0.0), wood, leaves, areas })
 }
 
 /// Gives `entity` the Voxel Volume `data` makes, and keeps `data` as how it
 /// is written: for a volume added or changed.
 pub fn set(content: &mut Content, world: &mut World, entity: Entity, data: VoxelVolumeData) {
-    let volume = made(content, &data);
+    let mut volume = made(content, &data);
+    // The areas it had, until they are found again, so its ground is not made twice.
+    if let Some(had) = world.get::<VoxelVolume>(entity).filter(|_| keeps_to_areas(&volume, Some(&data))) {
+        volume.areas = had.areas.clone();
+    }
     world.insert(entity, volume);
     world.insert(entity, VoxelVolumeSource(data));
 }
@@ -467,6 +578,73 @@ pub fn reprint(content: &mut Content, world: &mut World, guid: voxear_assets::As
         .collect();
     for (entity, data) in using {
         set(content, world, entity, data);
+    }
+}
+
+/// Whether any of an endless volume's trees, cover or mobs (as `data`
+/// writes them) keeps within or out of World Areas.
+pub fn keeps_to_areas(volume: &VoxelVolume, data: Option<&VoxelVolumeData>) -> bool {
+    let ruled = |rules: &VoxelAreaRules| !rules.within.is_empty() || !rules.never.is_empty();
+    let mobs = data.is_some_and(|data| data.mobs.iter().any(|kind| !kind.within.is_empty() || !kind.never_within.is_empty()));
+    volume.endless
+        && (mobs
+            || volume.trees.iter().any(|kind| ruled(&kind.areas))
+            || volume.cover.iter().any(|kind| ruled(&kind.areas)))
+}
+
+/// Gives every endless volume whose trees or cover keep to World Areas the
+/// outlined areas of its dimension with tags, laid out from its corner:
+/// each frame, its ground made again only where they changed. Painted
+/// areas belong to a world of blocks' Area map and are left out.
+pub fn sync_areas(world: &mut World) {
+    use voxear_scene::{Destroying, Transform, WorldTransform};
+    let volumes: Vec<(Entity, Vec3)> = world
+        .query_ref::<(Entity, &VoxelVolume, Option<&VoxelVolumeSource>, &Transform, Option<&WorldTransform>)>()
+        .into_iter()
+        .filter(|(_, volume, source, ..)| keeps_to_areas(volume, source.map(|source| &source.0)))
+        .map(|(entity, _, _, local, placed)| (entity, placed.map_or(local.position, |placed| placed.0.w_axis.truncate())))
+        .collect();
+    if volumes.is_empty() {
+        return;
+    }
+    let areas: Vec<(voxear_scene::DimensionId, VoxelArea)> = world
+        .query_ref::<(Entity, &crate::world_areas::WorldArea, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(obj, area, ..)| {
+            area.shape == crate::world_areas::AreaShape::Outline
+                && area.tags.iter().any(|entry| entry.tag.is_some())
+                && voxear_scene::is_active(world, *obj)
+        })
+        .map(|(obj, area, local, placed)| {
+            // Not placed in the world yet, before its first frame: where its own place puts it.
+            let placed = placed.map_or_else(|| local.matrix(), |placed| placed.0);
+            let found = VoxelArea {
+                outline: area.world_outline(&placed),
+                low: area.low,
+                high: area.high,
+                tags: area.tags.iter().filter_map(|entry| entry.tag).map(AssetGuid::to_u128).collect(),
+            };
+            (voxear_scene::dimension_of(world, obj), found)
+        })
+        .collect();
+    for (entity, corner) in volumes {
+        let here = voxear_scene::dimension_of(world, entity);
+        let laid: Vec<VoxelArea> = areas
+            .iter()
+            .filter(|(dimension, _)| *dimension == here)
+            .map(|(_, area)| VoxelArea {
+                outline: area.outline.iter().map(|&[x, z]| [x - corner.x, z - corner.z]).collect(),
+                low: area.low.map(|low| low - corner.y),
+                high: area.high.map(|high| high - corner.y),
+                tags: area.tags.clone(),
+            })
+            .collect();
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity)
+            && *volume.areas != laid
+        {
+            volume.areas = Arc::new(laid);
+        }
     }
 }
 
@@ -672,8 +850,8 @@ mod timing {
         let oak = PlantDef { height: [8.0, 12.0], crown_width: [7.0, 10.0], ..PlantDef::default() };
         let pine = PlantDef { kind: PlantKind::Conifer, height: [12.0, 17.0], trunk: 1.0, crown_width: [5.0, 7.0], crown_height: [9.0, 13.0], ..PlantDef::default() };
         let trees = vec![
-            VoxelTrees { plant: Arc::new(oak), per_hectare: 60.0, wood: [104, 78, 56], leaves: [70, 128, 46] },
-            VoxelTrees { plant: Arc::new(pine), per_hectare: 40.0, wood: [92, 64, 44], leaves: [38, 92, 52] },
+            VoxelTrees { plant: Arc::new(oak), per_hectare: 60.0, wood: [104, 78, 56], leaves: [70, 128, 46], areas: Default::default() },
+            VoxelTrees { plant: Arc::new(pine), per_hectare: 40.0, wood: [92, 64, 44], leaves: [38, 92, 52], areas: Default::default() },
         ];
         for (name, generator, trees) in [
             ("own hills", None, Vec::new()),

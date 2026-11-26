@@ -12,6 +12,8 @@ Add one with **Add Component ▸ Rendering ▸ Voxel Volume**, or make one with 
 - **Voxels a Metre**: how small its voxels are. 16 makes voxels about 6 cm across; 8 makes them 12 cm, and 32 about 3 cm. Halving the voxels' size takes about four to five times the memory.
 - **Roughness**: how rough its voxels are, from 0 to 1.
 
+Its box's least corner is at its Obj's place, and it turns with its Obj about there: a crate of voxels tumbles, and a felled tree's piece falls and lies as voxels. Each pixel's ray is walked through the volume in its own frame, so a turned volume costs what an upright one does. An endless volume is never turned.
+
 A volume is made again on a thread of its own whenever it changes; until then the last one made is drawn. A meadow 80 m by 120 m at 16 voxels a metre, with sixty trees stamped in, takes under two seconds.
 
 ## Endless ground
@@ -422,7 +424,7 @@ if (Voxels.Raycast(camera.Position, camera.Forward, out var blade, 2f, VoxelRayM
 
 **Felling.** Logs in a cut are cut out. Then every log no longer joined to the ground through other logs comes loose, with the leaves nearest it: a trunk cut through takes the whole crown, a branch cut off takes only itself and its leaves. What holds is how the logs touch, not which tree they belong to, so a branch resting on another tree's trunk, or on a wall, stays up. The stump stays.
 
-What comes loose is taken out of the volume and falls as a body of its own: an Obj named Felled tree, with a Rigidbody as heavy as its wood, collider boxes made of its logs, and drawn from its own voxels. It hangs where it was cut for a moment, while collision round it is made again without it, then tips over its stump the way the cut said, or away from the cut, and falls. Once it has lain still for a second it is at rest, and the volume's **Felled** says what becomes of it:
+What comes loose is taken out of the volume and falls as a body of its own: an Obj named Felled tree, with a Rigidbody as heavy as its wood, collider boxes made of its logs, and its voxels a Voxel Volume of their own on an Obj under it, which turns with it: it falls and lies as voxels, lit and shadowed as the ground is. It hangs where it was cut for a moment, while collision round it is made again without it, then tips over its stump the way the cut said, or away from the cut, and falls. Once it has lain still for a second it is at rest, and the volume's **Felled** says what becomes of it:
 
 - **Body**: it stays a body, which can be pushed and rolled, until the level is left.
 - **Stamped**: it becomes voxels of the volume again where it lies, solid as the ground, each in its own colour, and its Obj goes away.
@@ -450,7 +452,7 @@ if (felled is { } tree && Voxels.Piece(tree, out var lying) && lying.Resting)
 }
 ```
 
-`pieces:` says what happens at once: `Fall` (as it comes) or `Remove`, the tree gone over its stump and nothing falling. `rest:` says what a fallen piece becomes once still: `Stay`, `Stamp` or `Remove`; left out, the volume's Felled says. `Voxels.Piece` asks what a piece's Obj is, and `Voxels.StampPiece` and `Voxels.RemovePiece` stamp it where it lies or take it away at any time. A felled piece's leaves are drawn in cubes of two or four voxels when there are many of them, so a whole crown stays a mesh of tens of thousands of vertices.
+`pieces:` says what happens at once: `Fall` (as it comes) or `Remove`, the tree gone over its stump and nothing falling. `rest:` says what a fallen piece becomes once still: `Stay`, `Stamp` or `Remove`; left out, the volume's Felled says. `Voxels.Piece` asks what a piece's Obj is, and `Voxels.StampPiece` and `Voxels.RemovePiece` stamp it where it lies or take it away at any time. A stamped piece's own volume is drawn a second longer, while the ground makes its voxels again, so it doesn't blink.
 
 A tree felled through its trunk is kept as the column of its foot and the height of its stump, a few bytes, and the GPU, collision and rays all leave out what it grew over that height. What a branch, or a tree held up by a neighbour, loses is dug out a voxel at a time. A stamped tree's voxels are voxels placed one at a time, so a wood stamped flat costs as much as building it would.
 
@@ -550,7 +552,7 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - Lamps' light isn't stopped by voxels: a lamp in a room lights the walls outside it too. Glowing voxels are the way to light a room.
 - Its voxels don't shadow the scene's fog or its particles, and water and glass meshes don't take their shadows.
 - Glass lets the sun through untinted, and only the nearest glass in a pixel is drawn.
-- It isn't turned or scaled with its Obj.
+- It isn't scaled with its Obj. One of a set size turns with its Obj, about its corner; an endless one doesn't turn. A view draws up to 64 volumes, a felled piece one each.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
 - Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.

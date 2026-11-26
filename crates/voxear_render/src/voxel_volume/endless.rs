@@ -1687,6 +1687,7 @@ impl Endless {
             pad: 0,
             hole: voxels(self.hole),
             outer: voxels(self.outer),
+            turn: [0.0; 4],
         };
         (record, self.corner + at)
     }

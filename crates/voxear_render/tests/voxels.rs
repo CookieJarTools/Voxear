@@ -2880,3 +2880,48 @@ fn trees_felled_are_gone_over_their_stumps_on_the_gpu_as_on_the_cpu_and_cut_gras
     assert!(stumps * 2 >= trunks.len() * 4, "the stumps stand: {stumps}");
     assert_eq!(blades, 0, "the cut grass is gone");
 }
+
+#[test]
+fn a_volume_is_turned_with_its_obj_its_voxels_lit_and_shadowing_as_they_lie() {
+    let Some(mut renderer) = renderer() else { return };
+    // Turned a third of the way round the up axis about its middle: the field from above is the same field, its
+    // pillar's top red where it was and its shadow still to the east, as the sun is where it was.
+    let mut world = field(false);
+    let turn = Quat::from_rotation_y(30f32.to_radians());
+    for (_, place) in world.query::<(&VoxelVolume, &mut Transform)>() {
+        place.rotation = turn;
+        place.position = Vec3::new(8.0, 0.0, 8.0) - turn * Vec3::new(8.0, 0.0, 8.0);
+    }
+    let pixels = render(&mut renderer, &world, 4);
+    keep_image("voxel field turned.png", &pixels);
+    check_field(&pixels);
+    // The volume's square turned too: its corner, unturned on the ground, is sky now, and ground lies past its old side.
+    let at = |x: f32, z: f32| {
+        let (px, py) = from_above(20.0, x, z);
+        rgb_at(&pixels, px.min(WIDTH - 1), py.min(HEIGHT - 1))
+    };
+    let green = |[r, g, b]: [i32; 3]| g > r + 20 && g > b + 20;
+    assert!(!green(at(0.5, 0.5)), "the unturned corner is not ground now: {:?}", at(0.5, 0.5));
+    assert!(green(at(8.0, -1.0)), "the turned square reaches past the old side: {:?}", at(8.0, -1.0));
+
+    // A pillar tipped over onto its side by turning its volume a quarter round Z: red along X, a metre wide.
+    let mut world = field(false);
+    let tipped = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    for (volume, place) in world.query::<(&mut VoxelVolume, &mut Transform)>() {
+        volume.ground = None;
+        place.rotation = tipped;
+        // The pillar's foot (8, 1, 8) of the volume lies at (9, 1, 8) of the world.
+        place.position = Vec3::new(9.0, 1.0, 8.0) - tipped * Vec3::new(8.0, 1.0, 8.0);
+    }
+    let pixels = render(&mut renderer, &world, 4);
+    keep_image("voxel pillar tipped.png", &pixels);
+    let red = |x: f32, z: f32| {
+        let (px, py) = from_above(20.0, x, z);
+        let [r, g, b] = rgb_at(&pixels, px, py);
+        r > g * 2 && r > b * 2 && r > 40
+    };
+    for x in [6.5, 7.5, 8.5] {
+        assert!(red(x, 8.0), "the tipped pillar lies along X at {x}");
+    }
+    assert!(!red(8.0, 6.0) && !red(8.0, 10.0) && !red(4.0, 8.0), "and is a metre wide, three long");
+}

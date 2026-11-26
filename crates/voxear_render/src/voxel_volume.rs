@@ -3,7 +3,9 @@
 //! (`shaders/voxels.slang`), lit as anything else is.
 //!
 //! A Voxel Volume is an Obj's box of voxels, its least corner at the Obj's
-//! place. It is filled from its own ground (grass and flowers of voxels on
+//! place, turned with the Obj about there: each ray is walked in the
+//! volume's own frame, so a felled tree's piece falls and rolls as voxels.
+//! An endless one is never turned. It is filled from its own ground (grass and flowers of voxels on
 //! rolling ground, [`VoxelGround`]) and from box models stamped into it,
 //! their cubes turned into the volume's voxels: a sculpted tree of 1/16 m
 //! cubes becomes a tree of the volume's voxels. Its voxels are made on a
@@ -13,9 +15,8 @@
 //! Its voxels shadow each other, and meshes, blocks, terrain and grass, by
 //! a ray traced towards the sun from each pixel (**Voxel shadows**), and
 //! take the shadows of everything else from the shadow maps. What it does
-//! not do yet (`docs/research/small-voxels.md`): it is not turned or scaled
-//! with its Obj; and it is drawn whole, however far, its far voxels drawn
-//! coarser.
+//! not do yet (`docs/research/small-voxels.md`): it is not scaled with its
+//! Obj; and it is drawn whole, however far, its far voxels drawn coarser.
 
 pub mod bricks;
 mod changes;
@@ -648,6 +649,9 @@ pub(crate) struct GpuVoxelVolume {
     /// made, past which it draws nothing: the hole of the ring round it. In
     /// the same voxels; none where the most is not past the least.
     outer: [f32; 4],
+    /// How it is turned about its corner with its Obj, as a quaternion: all
+    /// 0 for not turned, as an endless volume never is.
+    turn: [f32; 4],
 }
 
 /// A view's volumes (`VoxelVolumes` in shaders/common.slang).
@@ -748,18 +752,25 @@ impl VoxelVolumes {
         voxear_core::profile_scope!("Voxel Volumes");
         self.drawn.clear();
         let mut seen = Vec::new();
-        let found: Vec<(Entity, VoxelVolume, Vec3)> = world
+        let found: Vec<(Entity, VoxelVolume, Vec3, Quat)> = world
             .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
             .without::<voxear_scene::Destroying>()
             .without::<voxear_scene::Hidden>()
             .into_iter()
             .map(|(entity, volume, local, placed)| {
-                (entity, volume.clone(), placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+                let (corner, turn) = match placed {
+                    Some(placed) => {
+                        let (_, turn, at) = placed.0.to_scale_rotation_translation();
+                        (at, turn)
+                    }
+                    None => (local.position, local.rotation),
+                };
+                (entity, volume.clone(), corner, turn)
             })
             .collect();
         let camera = camera_of(world);
         self.camera = camera;
-        for (entity, volume, corner) in found {
+        for (entity, volume, corner, turn) in found {
             seen.push(entity);
             if volume.endless {
                 let rings = rings_of(&volume);
@@ -806,7 +817,10 @@ impl VoxelVolumes {
                 }
             }
             if let Some((_, resident)) = self.resident.get(&entity) {
-                self.drawn.push((resident.record, corner));
+                // Turned with its Obj about its corner; unturned, it keeps the walk it had.
+                let turned = turn.angle_between(Quat::IDENTITY) > 1e-5;
+                let turn = if turned { turn.normalize().to_array() } else { [0.0; 4] };
+                self.drawn.push((GpuVoxelVolume { turn, ..resident.record }, corner));
             }
         }
         let gone: Vec<Entity> = self.endless.keys().filter(|entity| !seen.contains(entity)).copied().collect();
@@ -1231,6 +1245,7 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         pad: 0,
         hole: [0.0; 4],
         outer: [0.0; 4],
+        turn: [0.0; 4],
     };
     Ok(Resident { buffer, record, bytes: total as u64, bricks: packed.brick_count() })
 }

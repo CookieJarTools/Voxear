@@ -5,7 +5,8 @@
 //! are felled, what comes loose of them a body of its own.
 //!
 //! A felled piece ([`VoxelPieceBody`]) is an Obj with a Rigidbody, its
-//! collider boxes of its logs, drawn from its voxels as a mesh of cubes. It
+//! collider boxes of its logs, and its voxels a Voxel Volume of their own
+//! on an Obj under it, which turns with it as it falls. It
 //! hangs where it was cut until the ground's collision round it has been
 //! made again without it, then tips the way it was cut and falls. Once it
 //! has lain still a moment it rests: it stays a body, which can be pushed,
@@ -120,6 +121,9 @@ pub struct VoxelPieceBody {
     pub toward: Vec3,
     /// What becomes of it at rest: none for what its volume's Felled says.
     pub rest: Option<PieceRest>,
+    /// The Obj under it whose Voxel Volume holds its voxels, its corner at
+    /// the least corner of the piece's box.
+    pub look: Entity,
     /// How far its logs reach from its place, in metres.
     pub reach: f32,
     pub fall: PieceFall,
@@ -199,14 +203,13 @@ fn spawn(
     cut_at: Vec3,
     options: CutOptions,
 ) -> Entity {
-    let toward = options.toward;
     let middle = piece.middle();
     let place = corner + piece.low.as_vec3() * piece.voxel + middle;
     let boxes: Vec<(Vec3, Vec3)> = piece.boxes(MOST_BOXES).into_iter().map(|(at, half)| (at - middle, half)).collect();
     let mass = (piece.logs() as f32 * piece.voxel.powi(3) * WOOD).max(1.0);
     // Away from the cut, across; straight down a trunk, a way of its own.
     let away = (place - cut_at) * Vec3::new(1.0, 0.0, 1.0);
-    let toward = toward.map(|way| way * Vec3::new(1.0, 0.0, 1.0)).filter(|way| way.length() > 1e-3);
+    let toward = options.toward.map(|way| way * Vec3::new(1.0, 0.0, 1.0)).filter(|way| way.length() > 1e-3);
     let toward = toward.unwrap_or(if away.length() > 0.2 {
         away
     } else {
@@ -218,18 +221,25 @@ fn spawn(
     let collider = Collider { friction: 0.8, acoustic: Acoustic::Wood, ..Collider::default() };
     let rigidbody = Rigidbody { mass, kinematic: true, angular_drag: 0.3, ..Rigidbody::default() };
     let reach = boxes.iter().map(|(at, half)| at.length() + half.length()).fold(0.0, f32::max);
+    let roughness = world.get::<VoxelVolume>(volume).map_or(0.8, |made| made.roughness);
+    let piece = Arc::new(piece);
+    let entity = world.spawn((Transform::from_position(place), voxear_scene::Name("Felled tree".into())));
+    // Its voxels, as a volume of their own as large as its box, its corner the box's, turned with the body.
+    let look = world.spawn((Transform::from_position(-middle), voxear_scene::Name("Felled tree voxels".into())));
+    world.insert(look, voxear_scene::Parent(entity));
+    world.insert(look, piece_volume(&piece, roughness));
     let body = VoxelPieceBody {
         volume,
-        piece: Arc::new(piece),
+        piece,
         middle,
         toward: toward.normalize(),
         rest: options.rest,
+        look,
         reach,
         fall: PieceFall::Waiting,
         falling: 0.0,
         still: 0.0,
     };
-    let entity = world.spawn((Transform::from_position(place), voxear_scene::Name("Felled tree".into())));
     world.insert(entity, collider);
     world.insert(entity, ColliderBoxes { key, boxes: boxes.into() });
     world.insert(entity, rigidbody);
@@ -237,11 +247,37 @@ fn spawn(
     entity
 }
 
+/// A piece's voxels as a Voxel Volume of a set size, as large as its box,
+/// its voxels the piece's own in their colours, as rough as the volume it
+/// came from.
+pub fn piece_volume(piece: &VoxelPiece, roughness: f32) -> VoxelVolume {
+    let model = piece_model(piece, Vec3::ZERO);
+    let stamp = voxear_render::VoxelStamp { model: Arc::new(model), at: Vec3::ZERO, turn: 0.0, scale: 1.0 };
+    VoxelVolume {
+        size: Vec3::from(piece.size.map(|a| a as f32)) * piece.voxel,
+        voxels_per_metre: (1.0 / piece.voxel).round() as u32,
+        roughness,
+        ground: None,
+        stamps: vec![stamp],
+        ..VoxelVolume::default()
+    }
+}
+
 /// Moves the felled pieces on, after each physics step: those waiting let
 /// go once the ground round them is made again without them, those let go
 /// tipped, and those that have lain still a moment at rest, stamped back
 /// into their volume where they lie if it says so.
 pub fn fall(world: &mut World, dt: f32) {
+    // The voxels of pieces stamped back are let go once the volume has made them its own.
+    let lingering: Vec<(Entity, f32)> =
+        world.query_ref::<(Entity, &Lingering)>().into_iter().map(|(entity, left)| (entity, left.0 - dt)).collect();
+    for (entity, left) in lingering {
+        if left <= 0.0 {
+            world.despawn(entity);
+        } else if let Some(kept) = world.get_mut::<Lingering>(entity) {
+            kept.0 = left;
+        }
+    }
     let found: Vec<(Entity, VoxelPieceBody)> =
         world.query_ref::<(Entity, &VoxelPieceBody)>().into_iter().map(|(e, body)| (e, body.clone())).collect();
     if found.is_empty() {
@@ -302,11 +338,40 @@ pub fn fall(world: &mut World, dt: f32) {
     }
     world.insert_resource(physics);
     for (entity, body, (position, rotation)) in stamp {
-        if let Some(body) = body {
-            stamp_back(world, &body, position, rotation);
+        match body {
+            Some(body) => {
+                stamp_back(world, &body, position, rotation);
+                let look = body.look;
+                world.despawn(entity);
+                linger(world, look, position, rotation, body.middle);
+            }
+            None => {
+                let look = world.get::<VoxelPieceBody>(entity).map(|body| body.look);
+                look.map(|look| world.despawn(look));
+                world.despawn(entity);
+            }
         }
-        world.despawn(entity);
     }
+}
+
+/// How long the voxels of a piece stamped back are still drawn as its own,
+/// in seconds, while its volume makes them again as its own.
+const LINGER: f32 = 1.0;
+
+/// Marks the Voxel Volume of a piece stamped back, drawn a moment longer:
+/// how many seconds are left.
+struct Lingering(f32);
+
+impl Component for Lingering {}
+
+/// Keeps piece look `look` where its body lay, its body at `position`,
+/// turned `rotation`, for [`LINGER`] seconds.
+fn linger(world: &mut World, look: Entity, position: Vec3, rotation: Quat, middle: Vec3) {
+    world.remove::<voxear_scene::Parent>(look);
+    if let Some(place) = world.get_mut::<Transform>(look) {
+        (place.position, place.rotation) = (position - rotation * middle, rotation);
+    }
+    world.insert(look, Lingering(LINGER));
 }
 
 /// What felled piece `entity` is: none for an Obj that is not one.
@@ -325,14 +390,14 @@ pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
     };
     stamp_back(world, &body, position, rotation);
     world.despawn(entity);
+    linger(world, body.look, position, rotation, body.middle);
     true
 }
 
 /// Takes felled piece `entity` away: whether it was a piece.
 pub fn remove_piece(world: &mut World, entity: Entity) -> bool {
-    if world.get::<VoxelPieceBody>(entity).is_none() {
-        return false;
-    }
+    let Some(look) = world.get::<VoxelPieceBody>(entity).map(|body| body.look) else { return false };
+    world.despawn(look);
     world.despawn(entity);
     true
 }
@@ -399,94 +464,6 @@ pub fn tend_cuts(world: &mut World, dt: f32) {
     world.insert_resource(clocks);
 }
 
-/// The meshes drawn for felled pieces, by their Objs, to let go once those
-/// are gone.
-#[derive(Default)]
-struct PieceMeshes(Vec<(Entity, voxear_render::MeshHandle, Vec<voxear_render::MaterialHandle>)>);
-
-/// Gives each felled piece a mesh of its voxels' cubes to be drawn with,
-/// and lets go of the meshes of those gone.
-pub fn draw(world: &mut World, renderer: &mut voxear_render::Renderer) {
-    let mut meshes = world.remove_resource::<PieceMeshes>().unwrap_or_default();
-    meshes.0.retain(|(entity, mesh, materials)| {
-        let kept = world.get::<VoxelPieceBody>(*entity).is_some();
-        if !kept {
-            renderer.free_mesh(*mesh);
-            materials.iter().for_each(|material| renderer.free_material(*material));
-        }
-        kept
-    });
-    let undrawn: Vec<(Entity, Arc<VoxelPiece>, Vec3)> = world
-        .query_ref::<(Entity, &VoxelPieceBody)>()
-        .without::<voxear_render::MeshRenderer>()
-        .without::<Undrawn>()
-        .into_iter()
-        .map(|(entity, body)| (entity, body.piece.clone(), body.middle))
-        .collect();
-    for (entity, piece, middle) in undrawn {
-        let (model, mesh) = piece_mesh(&piece, middle);
-        let made = renderer.add_mesh(&mesh).and_then(|mesh| Ok((mesh, renderer.upload_look(&model.prepared(""))?)));
-        match made {
-            Ok((mesh, materials)) => {
-                match materials.first() {
-                    Some(&material) => world.insert(entity, voxear_render::MeshRenderer::new(mesh, material)),
-                    None => world.insert(entity, Undrawn),
-                };
-                meshes.0.push((entity, mesh, materials));
-            }
-            Err(error) => {
-                // Not tried again each frame: it stays a body, unseen.
-                tracing::warn!("a felled tree's piece could not be drawn: {error:#}");
-                world.insert(entity, Undrawn);
-            }
-        }
-    }
-    world.insert_resource(meshes);
-}
-
-/// Marks a felled piece whose mesh could not be made, not to try again.
-struct Undrawn;
-
-impl Component for Undrawn {}
-
-/// How many voxels of leaves a piece may have and still be drawn in cubes of
-/// one voxel, then of two: past those, of four. A crown of leaves drawn a
-/// voxel to a cube is most of a million vertices.
-const FINE_LEAVES: usize = 2_000;
-const HALF_LEAVES: usize = 15_000;
-
-/// A piece's mesh, in metres from `middle`: its logs a cube a voxel, its
-/// leaves in cubes of one, two or four voxels a side as there are more of
-/// them, a cube the colour of the first of its voxels; and the box model of
-/// its logs, whose look (its palette's texture) both are drawn with.
-pub fn piece_mesh(piece: &VoxelPiece, middle: Vec3) -> (voxear_render::BoxModel, voxear_render::MeshData) {
-    let (logs, leaves): (Vec<_>, Vec<_>) = piece.voxels.iter().copied().partition(|(_, place)| piece.is_wood(*place));
-    let coarse: u16 = match leaves.len() {
-        n if n <= FINE_LEAVES => 1,
-        n if n <= HALF_LEAVES => 2,
-        _ => 4,
-    };
-    let wood = VoxelPiece { voxels: logs, ..piece.clone() };
-    let mut grouped: Vec<([u16; 3], u8)> =
-        leaves.into_iter().map(|(c, place)| (c.map(|a| a / coarse), place)).collect();
-    grouped.sort_by_key(|(c, _)| *c);
-    grouped.dedup_by_key(|(c, _)| *c);
-    let crown = VoxelPiece {
-        voxels: grouped,
-        size: piece.size.map(|a| a.div_ceil(u32::from(coarse))),
-        voxel: piece.voxel * f32::from(coarse),
-        ..piece.clone()
-    };
-    let model = piece_model(&wood, middle);
-    let mut mesh = model.mesh();
-    let more = piece_model(&crown, middle).mesh();
-    let first = mesh.vertices.len() as u32;
-    mesh.vertices.extend(more.vertices);
-    mesh.indices.extend(more.indices.iter().map(|index| index + first));
-    mesh.skin.clear();
-    (model, mesh)
-}
-
 /// A piece as a box model of its voxels' cubes, one bone, in boxes of at
 /// most the largest grid a side, its origin at `middle` metres from its
 /// box's least corner.
@@ -520,7 +497,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_pieces_model_is_its_voxels_round_its_middle() {
+    fn a_pieces_model_is_its_voxels_round_its_middle_and_its_volume_holds_them_where_they_were() {
         let piece = VoxelPiece {
             low: voxear_core::math::IVec3::ZERO,
             size: [2, 300, 1],
@@ -535,5 +512,9 @@ mod tests {
         assert_eq!(boxes.len(), 2, "{boxes:?}");
         assert!(boxes.iter().any(|(from, _)| from.y == -16.0), "the first a metre under its middle: {boxes:?}");
         assert!(!model.mesh().indices.is_empty());
+        // As a volume of its own, each voxel where it was, and nothing between.
+        let (packed, _) = piece_volume(&piece, 0.8).build();
+        assert!(packed.get([0, 0, 0]) != 0 && packed.get([1, 299, 0]) != 0, "its voxels");
+        assert_eq!(packed.get([1, 0, 0]), 0, "nothing where it has none");
     }
 }

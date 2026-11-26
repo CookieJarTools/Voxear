@@ -1676,9 +1676,6 @@ impl Game {
         }
         self.shader_pack_requests();
         crate::voxel_volumes::print_from_scripts(&mut self.content, &mut self.engine.world);
-        if let Some(renderer) = renderer.as_deref_mut() {
-            crate::voxel_felling::draw(&mut self.engine.world, renderer);
-        }
         let texture_pack = self.engine.scripts_mut().and_then(|scripts| scripts.take_texture_pack_requests().pop());
         if let Some((reference, remember)) = texture_pack {
             match crate::texture_packs::wear(&mut self.content, &reference) {

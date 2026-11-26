@@ -4760,8 +4760,9 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - `Voxels.Cut` (a ball or points) and `Voxels.Slice` (an axe's thin cut) cut an endless volume's grass, cover and
     crops, which fade and grow back over the volume's Regrow seconds, and cut through logs and leaves. A ray can meet
     cover. The brush has a Cut mode; `vox editor call voxels.cut` does the same.
-  - What is no longer joined to the ground by logs comes loose and falls as a body (boxes of its logs, drawn from its
-    voxels), then stays a body or is stamped back where it lies: the volume's Felled, or the game's choice per cut
+  - Voxel Volumes of a set size turn with their Obj. What is no longer joined to the ground by logs comes loose and
+    falls as a body (boxes of its logs, its voxels a turned volume of their own), then stays a body or is stamped
+    back where it lies: the volume's Felled, or the game's choice per cut
     and per piece (`VoxelPieces`, `VoxelPieceRest`, `Voxels.StampPiece`).
   - A felled tree is kept as its foot and stump height; GPU, collision and rays agree to the voxel.
   - Not yet: felling off the main thread (0.14 s a tree), bodies kept by a save.

@@ -1382,11 +1382,16 @@ Cutting for the RPG's world: grass, cover and crops a blade passes through, and 
   held by a neighbour loses, is dug a voxel at a time. A trunk cut by a slice: 576 voxels dug, 137 bytes of region
   file. On the GPU and the CPU the same: 1,148 of 1,148 voxels up 14 felled trunks agree; the crowns' pixels in the
   view went from 48,535 to 3,064.
-- **Pieces fall as bodies.** Collision boxes of the logs, joined along X, Z and Y, at most 192, a voxel or two or four
-  at a time (a new compound shape in the physics library); drawn as box model cubes, the logs a voxel each, the leaves
-  of a big piece four voxels each. A whole crown a voxel a cube was 809,000 vertices and ran the frame out of mesh
-  space; logs 29,000 and leaves at four voxels 17,000. A piece waits until collision round it is made again without
-  it (about a second, in the background), then tips about its stump; it rests after a second lying still.
+- **Pieces fall as bodies of voxels.** Collision boxes of the logs, joined along X, Z and Y, at most 192, a voxel or
+  two or four at a time (a new compound shape in the physics library). Its voxels are a Voxel Volume of a set size
+  on an Obj under the body, which turns with it: Voxel Volumes now turn with their Obj, each volume's record
+  carrying a quaternion, each walk turning the ray into the volume's own frame and the face met back out (the depth,
+  lit, glass and shadow walks, sway, and the light kept round the camera). Drawn first as box-model cubes, a whole
+  crown a cube a voxel was 809,000 vertices and ran the frame out of mesh space, and looked unlike the ground; as a
+  volume it is the ground's own look. The light kept round the camera took all past a volume's box as solid, which
+  blacked out the wood round a small floating volume: that is now only an endless one's window. A piece waits until
+  collision round it is made again without it (about a second, in the background), then tips about its stump; it
+  rests after a second lying still. A stamped piece's volume lingers a second while the ground is made again.
 - **Measured** (development build, shared CPU): felling a 10 m oak takes 0.14 s on the CPU, most of it working out
   its blocks' pieces and leaves; first versions took 0.45 s, before the pieces were found on each block's own grid
   and trees' logs were looked for only near the cut trees.

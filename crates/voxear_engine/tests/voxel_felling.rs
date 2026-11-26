@@ -124,13 +124,23 @@ fn a_felled_tree_stamped_back_where_it_rests_is_the_volumes_voxels_again() {
     let (_dir, mut game) = game(VoxelFelled::Stamped);
     let (_, pieces) = fell_one(&mut game);
     let before = volume(&game).changes.count();
-    let voxels = game.engine.world.get::<VoxelPieceBody>(pieces[0]).unwrap().piece.voxels.len();
+    let body = game.engine.world.get::<VoxelPieceBody>(pieces[0]).unwrap().clone();
+    let voxels = body.piece.voxels.len();
+    // Its voxels a volume of their own under it, which turns with it.
+    let look = game.engine.world.get::<VoxelVolume>(body.look).expect("its voxels' volume").clone();
+    assert!(!look.endless && look.stamps.len() == 1, "{look:?}");
+    assert_eq!(game.engine.world.get::<voxear_scene::Parent>(body.look).map(|p| p.0), Some(pieces[0]));
     let took = play_until_rested(&mut game, 60.0);
     eprintln!("stamped after {took:.1} s");
     assert!(game.engine.world.get::<VoxelPieceBody>(pieces[0]).is_none(), "the piece's Obj is gone");
     let after = volume(&game).changes.count();
     let placed = after.saturating_sub(before) as usize;
     assert!(placed * 2 > voxels, "its voxels placed in the volume: {placed} of {voxels}");
+    // Its own volume is drawn a moment longer, while the ground's is made again, then let go.
+    for _ in 0..90 {
+        game.tick(1.0 / 60.0, None);
+    }
+    assert!(game.engine.world.get::<VoxelVolume>(body.look).is_none(), "its own voxels let go");
 }
 
 #[test]

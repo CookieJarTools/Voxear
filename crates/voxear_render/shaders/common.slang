@@ -2559,17 +2559,27 @@ bool voxelLightAround(float3 position, float3 normal, out float2 lit, out float3
 // How many lamps of a pixel's cluster the voxels' shadows pass looks for in the voxels' way, a bit each.
 static const uint VOXEL_LAMP_BITS = 24;
 
-// Whether the voxels stand between the pixel and the `i`th lamp of its cluster, as the voxels' shadows pass found.
-bool voxelLampOut(float2 pixel, uint i)
+// What of the `i`th lamp of its cluster's light reaches the pixel past the voxels, as the voxels' shadows pass found:
+// none where they stand in its way, the colour of their glass where it came through it, all of it otherwise.
+float3 voxelLampThrough(float2 pixel, uint i)
 {
     VoxelVolumes* voxels = buffers()->voxelVolumes;
     if (voxels == nullptr || voxels->count == 0 || voxels->lampMask == NO_TEXTURE || i >= VOXEL_LAMP_BITS)
     {
-        return false;
+        return 1.0;
     }
     // Kept at half the picture's size.
-    uint bits = uint(textures[NonUniformResourceIndex(voxels->lampMask)].Load(int3(int2(pixel) / 2, 0)).r);
-    return ((bits >> i) & 1u) != 0u;
+    float4 mask = textures[NonUniformResourceIndex(voxels->lampMask)].Load(int3(int2(pixel) / 2, 0));
+    if (((uint(mask.r) >> i) & 1u) != 0u)
+    {
+        return 0.0;
+    }
+    if (((uint(mask.g) >> i) & 1u) == 0u)
+    {
+        return 1.0;
+    }
+    uint tint = uint(mask.b);
+    return float3(tint & 255u, (tint >> 8) & 255u, (tint >> 16) & 255u) / 255.0;
 }
 
 // The colour of the glass of voxels the sun came through to the pixel, white where none.

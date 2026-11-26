@@ -14,7 +14,8 @@
 // Built twice: with the GPU's ray tracing, and with SOFTWARE_RAYS, walking
 // hierarchies of the scene's triangles in the compute shader
 // (trace_software.slang), for GPUs without it. Either way, the rays walk
-// the view's Voxel Volumes too (voxels.slang), and take the nearer.
+// the view's Voxel Volumes too (voxels.slang), and take the nearer; through
+// their glass, a ray and the sun take its colour.
 
 // The probes need no light under water, and compiling it here stops Slang with an internal error.
 #define NO_UNDERWATER_LIGHT
@@ -226,6 +227,18 @@ bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
     return traceScene(frame, origin, direction, far, true).found || ddgiVoxelHit(frame, origin, direction, far, voxel);
 }
 
+// How much of the sun's light reaches `origin` along `direction`: none past the scene or a voxel, the colour of the
+// glass of voxels it came through, all of it otherwise.
+float3 ddgiSunThrough(Frame* frame, float3 origin, float3 direction)
+{
+    VoxelHit voxel;
+    if (traceScene(frame, origin, direction, 1e4, true).found || ddgiVoxelHit(frame, origin, direction, 1e4, voxel))
+    {
+        return 0.0;
+    }
+    return voxelGlassTint(voxel);
+}
+
 // The light a voxel the ray met at `position`, on its face `normal`, sends back along it: as a surface the ray met
 // does (ddgiShadeHit), lit by the sun past the scene and the voxels, the lamps, the light the probes held last frame
 // round it, and its own glow.
@@ -245,10 +258,8 @@ float3 ddgiShadeVoxel(Frame* frame, VoxelVolume volume, VoxelHit hit, float3 pos
     float3 lit = 0.0;
     float3 off = position + normal * voxelLift(hit.level) * volume.voxel;
     bool sunLit = frame->bake.source != GI_BOTH || frame->bake.sunMode == LIGHT_MODE_REALTIME;
-    if (sunLit && facing > 0.0 && !ddgiBlocked(frame, off, toSun, 1e4))
-    {
-        lit += albedo / PI * sunLight * facing;
-    }
+    float3 through = sunLit && facing > 0.0 ? ddgiSunThrough(frame, off, toSun) : 0.0;
+    lit += albedo / PI * sunLight * through * facing;
     uint firstLight = frame->bake.source == GI_BOTH ? frame->bake.bakeLights : 0;
     for (uint i = firstLight; i < frame->lightCount; i++)
     {
@@ -388,9 +399,10 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     // Not sharper than a capture's texels can show: a mirror's highlight would be one bright texel.
     s.roughness = shiny ? max(hit.rough, 0.2) : 1.0;
     float3 lit = 0.0;
-    if (sunLit && facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
+    float3 through = sunLit && facing > 0.0 ? ddgiSunThrough(frame, position + normal * 0.02, toSun) : 0.0;
+    if (any(through > 0.0))
     {
-        float3 sun = sunLight * glassSun(frame, position, normal);
+        float3 sun = sunLight * glassSun(frame, position, normal) * through;
         lit += shiny ? shade(s, toSun, sun) : albedo / PI * sun * facing;
     }
     for (uint i = firstLight; i < frame->lightCount; i++)
@@ -521,6 +533,8 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         // The back of a surface, seen from inside it: no light, and marked by its distance's sign.
         result = back ? float4(0.0, 0.0, 0.0, -t) : float4(light, t);
     }
+    // Through glass of voxels on its way, what the ray met takes the glass's colour.
+    result.rgb *= voxelGlassTint(voxel);
     storageImagesRgba16f[push.output][ddgiRayTexel(index, cascade, thread.x)] = result;
 }
 

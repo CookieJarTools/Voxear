@@ -758,9 +758,10 @@ pub(crate) struct GpuVoxelVolumes {
 
 /// The voxels' shadows pass's targets: the sun's, lit and the colour of the
 /// glass it came through, and which lamps of each pixel's cluster the
-/// voxels stand in the way of, a bit each, as a whole number.
+/// voxels stand in the way of, a bit each, as a whole number, which came
+/// through their glass, and that glass's colour.
 pub(crate) const SUN_SHADOW_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
-pub(crate) const LAMP_SHADOW_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+pub(crate) const LAMP_SHADOW_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 /// The sun map's texels a side (`VOXEL_SUN_MAP` in `shaders/common.slang`),
 /// and its bytes, kept after what the depth pass met.
 const SUN_MAP: u32 = 256;

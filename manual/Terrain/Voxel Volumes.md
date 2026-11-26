@@ -629,7 +629,7 @@ With **Global Illumination** on in the post-processing, its probes light rooms i
 
 ### Glass
 
-A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Only the nearest glass in a pixel is drawn, and far off, where the voxels are drawn two by two or a brick at a time, it is drawn as solid. The Profiler calls it **Glass (voxels)**.
+A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, taking its colour; a lamp's light through a window lies on the ground outside in the glass's colour, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Only the nearest glass in a pixel is drawn. A brick of voxels holding glass is walked voxel by voxel however far off it is, so the light of lamps and the GI's rays pass its glass at any distance, and take its colour: with the GI on, sun through a red window bounces red round the room. The Profiler calls it **Glass (voxels)**.
 
 By the sea, a volume's ground is part of the sea floor the waves feel, as meshes standing still are: the waves calm and shorten over its shallows, and foam runs along the shore where they meet it. The floor is found by walking straight down through the voxels round the camera, as far out as the volume reaches.
 
@@ -639,7 +639,7 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 
 ## What it doesn't do yet
 
-- Only the first 24 lamps whose light reaches a pixel are looked for behind voxels. Glass of voxels tints only the sun, not lamps; only the nearest glass in a pixel is drawn. Glass meshes don't take the voxels' shadows.
+- Only the first 24 lamps whose light reaches a pixel are looked for behind voxels. Only the nearest glass in a pixel is drawn. Lamps whose light reaches a pixel through glass all take the colour of the first one's glass. Glass meshes don't take the voxels' shadows.
 - Fog, particles and water take the voxels' shadows from a map 64 m across round the camera, a texel 25 cm; past it, none.
 - It isn't scaled with its Obj. One of a set size turns with its Obj, about its corner; an endless one doesn't turn. A view draws up to 64 volumes, a felled piece one each.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.

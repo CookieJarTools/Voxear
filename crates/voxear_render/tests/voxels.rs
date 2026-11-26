@@ -13,7 +13,7 @@ use voxear_render::{
 use voxear_scene::Transform;
 use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
 use voxear_terrain::generate::{
-    Cells, Landmass, OwnVoxels, Preset, WorldGen,
+    Cells, Graph, Landmass, OwnVoxels, Preset, WorldGen,
     nodes::{NodeKind, Output, Rivers},
     starters,
 };
@@ -321,6 +321,102 @@ fn a_generators_ground_and_climate_on_the_gpu_are_the_cpus() {
             places.len()
         );
     }
+}
+
+/// A generator whose ground is output `port` of a node of `kind`, with
+/// output 0 of a node of each of `sources` wired into its inputs in order.
+fn node_world(kind: NodeKind, port: usize, sources: &[NodeKind]) -> WorldGen {
+    let mut graph = Graph::default();
+    let sources: Vec<_> = sources.iter().map(|source| graph.add(source.clone(), [0.0, 0.0])).collect();
+    let node = graph.add(kind, [200.0, 0.0]);
+    for (input, source) in sources.iter().enumerate() {
+        assert!(graph.connect(*source, 0, node, input), "input {input} takes a field");
+    }
+    let output = graph.add(NodeKind::Output(Output::default()), [400.0, 0.0]);
+    assert!(graph.connect(node, port, output, Output::HEIGHT), "output {port} is a field");
+    WorldGen::new(5, 1.0, 0.0, graph)
+}
+
+#[test]
+fn peaks_plateaus_smoothing_world_edges_and_painted_maps_on_the_gpu_are_the_cpus() {
+    use voxear_terrain::generate::{
+        nodes::{EdgeShape, Noise, PaintedMapKind, PaintedMapNode, Peaks, Plateaus, Smooth, WorldEdge},
+        painted::{Painted, PaintedMaps},
+    };
+    let Some(renderer) = renderer() else { return };
+    // Hills painted high round (100, 100), land painted low along a strip, a biome painted in a patch.
+    let painted = Painted::new(9, PaintedMaps::default());
+    painted.change(|maps| {
+        maps.height.paint([100.0, 100.0], 300.0, 0.5, &|_, cover| Some(cover * 120.0));
+        maps.land.paint([-400.0, 50.0], 250.0, 0.2, &|_, cover| Some(1.0 - cover));
+        maps.biome.paint([0.0, -200.0], 180.0, 0.0, &|_, _| Some(7.0));
+    });
+    let read = |map: PaintedMapKind, default: f32| {
+        NodeKind::PaintedMap(PaintedMapNode { map, default, painted: Some(painted.clone()) })
+    };
+    let rough = NodeKind::Noise(Noise { size: 30.0, low: -20.0, high: 20.0, ..Noise::default() });
+    let plateaus = Plateaus { river: 4.0, canyon: 30.0, ramps: 0.6, rim: 1.5, wander: 0.6, ..Plateaus::default() };
+    let worlds = [
+        ("peaks", node_world(NodeKind::Peaks(Peaks::default()), Peaks::HEIGHT, &[])),
+        (
+            "peaks' crests",
+            node_world(NodeKind::Peaks(Peaks { sharpness: 0.8, ..Peaks::default() }), Peaks::CRESTS, &[]),
+        ),
+        ("plateaus", node_world(NodeKind::Plateaus(plateaus.clone()), Plateaus::HEIGHT, &[])),
+        ("plateaus' walls", node_world(NodeKind::Plateaus(plateaus.clone()), Plateaus::WALLS, &[])),
+        ("plateaus' floor", node_world(NodeKind::Plateaus(Plateaus { rim: -2.0, ..plateaus }), Plateaus::FLOOR, &[])),
+        ("smoothed noise", node_world(NodeKind::Smooth(Smooth { radius: 12.0 }), 0, &[rough.clone()])),
+        (
+            "a sea past the edge",
+            node_world(NodeKind::WorldEdge(WorldEdge { width: 120.0, ..WorldEdge::default() }), 0, &[rough.clone()]),
+        ),
+        (
+            "cliffs past the edge",
+            node_world(
+                NodeKind::WorldEdge(WorldEdge { shape: EdgeShape::Cliffs, level: 160.0, ..WorldEdge::default() }),
+                0,
+                &[rough.clone()],
+            ),
+        ),
+        ("inside the edge", node_world(NodeKind::WorldEdge(WorldEdge::default()), 1, &[])),
+        ("a painted height", node_world(read(PaintedMapKind::Height, -3.0), 0, &[])),
+        ("a painted land", node_world(read(PaintedMapKind::Land, 0.5), 0, &[])),
+        ("a painted biome", node_world(read(PaintedMapKind::Biome, -1.0), 0, &[])),
+    ];
+    // Places a voxel apart in a patch of ground, others a few metres apart over a kilometre, and others kilometres
+    // apart.
+    let mut places: Vec<[f32; 2]> =
+        (0..64 * 64).map(|i| [(i % 64) as f32 / 16.0 + 100.0, (i / 64) as f32 / 16.0 - 40.0]).collect();
+    places.extend((0..64 * 64).map(|i| [(i % 64) as f32 * 17.3 - 600.0, (i / 64) as f32 * 16.1 - 500.0]));
+    places.extend((0..4096).map(|i| [(i % 64) as f32 * 157.3 - 5000.0, (i / 64) as f32 * 149.1 - 4700.0]));
+    let xs: Vec<f32> = places.iter().map(|place| place[0]).collect();
+    let zs: Vec<f32> = places.iter().map(|place| place[1]).collect();
+    let asked: Vec<[f32; 3]> = places.iter().map(|&[x, z]| [x, 0.0, z]).collect();
+    let mut failed = Vec::new();
+    for (name, world) in &worlds {
+        let made = renderer.generated_on_gpu(world, &asked, 1.0 / 16.0).expect("the generator runs on the GPU");
+        let mut heights = vec![0.0; places.len()];
+        world.heights(&xs, &zs, &mut heights);
+        let (mut furthest, mut near, mut far, mut low, mut high) = (0.0f32, 0, 0, f32::MAX, f32::MIN);
+        for (at, gpu) in made.iter().enumerate() {
+            let apart = (gpu[0] - heights[at]).abs();
+            furthest = furthest.max(apart);
+            near += usize::from(apart < (heights[at].abs() * 1e-5).max(0.001));
+            far += usize::from(apart > 0.05);
+            (low, high) = (low.min(heights[at]), high.max(heights[at]));
+        }
+        eprintln!(
+            "{name}: {low:.2} to {high:.2}, {near} of {} within a millimetre, {far} over 5 cm apart, at most {furthest}",
+            places.len()
+        );
+        // Each rounding the GPU does its own way moves a height by a hair, more on heights of a kilometre; a wall's
+        // foot, a stair's tread or a summit's cell lands on the other side of its line where a rounding differs, a
+        // few places in ten thousand.
+        if high <= low || near * 1000 < places.len() * 980 || far * 1000 > places.len() {
+            failed.push(*name);
+        }
+    }
+    assert!(failed.is_empty(), "not the CPU's on the GPU: {failed:?}");
 }
 
 /// An endless volume made by a starter generator, seen from `height` metres

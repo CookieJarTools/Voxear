@@ -317,17 +317,21 @@ fn volume_fields(make: &mut GpuWorldMake, cells: &GpuVolume, voxel: f32) {
     make.depth = voxels(cells.depth);
 }
 
-/// A program's words in a buffer the GPU reads.
+/// A program's words in a buffer the GPU reads, what its steps read beside
+/// their own numbers (painted maps) after them.
 fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
+    let words = [program.words.as_slice(), program.data.as_slice()].concat();
     let buffer = gpu.create_buffer(
         "voxel world program",
-        (program.words.len() as u64 * 4).max(16),
+        (words.len() as u64 * 4).max(16),
         vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
         MemoryLocation::GpuOnly,
     )?;
-    gpu.upload_buffer(&buffer, 0, bytemuck::cast_slice(&program.words))?;
+    for (i, piece) in bytemuck::cast_slice::<u32, u8>(&words).chunks(64 << 20).enumerate() {
+        gpu.upload_buffer(&buffer, (i * (64 << 20)) as u64, piece)?;
+    }
     Ok(buffer)
 }
 

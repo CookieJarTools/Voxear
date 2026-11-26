@@ -26,6 +26,7 @@
 //! as the highest thing reaching it: its own level, or a neighbour's wall,
 //! rubble or ramp, each falling away from the line where the two meet.
 
+use crate::generate::gpu::{GpuOp, GpuStep};
 use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec, noise3d::seed_for};
@@ -208,6 +209,10 @@ struct Winding {
 }
 
 impl Kernel for Winding {
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Winding).number(self.size).whole(self.seed))
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("plateau river").number(self.size).whole(self.seed);
     }
@@ -332,6 +337,17 @@ impl Cut {
 }
 
 impl Kernel for Cut {
+    fn gpu(&self) -> Option<GpuStep> {
+        let mut step = GpuStep::new(GpuOp::Plateaus).number(self.size).whole(self.seed).number(self.wall);
+        step = step.number(self.talus).number(self.rim).number(self.river).number(self.canyon).number(self.ramps);
+        step = step.number(self.ramp_slope).number(self.step).number(self.wander).whole(self.port as u32);
+        step = step.whole(self.heights.len() as u32);
+        for (height, edge) in self.heights.iter().zip(&self.edges) {
+            step = step.number(*height).number(*edge);
+        }
+        Some(step)
+    }
+
     fn key(&self, key: &mut Key) {
         key.name("plateaus").whole(self.port as u32).whole(self.heights.len() as u32);
         for (height, edge) in self.heights.iter().zip(&self.edges) {

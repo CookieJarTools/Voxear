@@ -1429,6 +1429,27 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     Ok(written)
 }
 
+/// The ground generator of the world of blocks `guid` as its chunks are made
+/// by it: its world generator shaped by its biomes' land, its painted maps
+/// read, its rivers and its own overhangs and caves wired in; and its
+/// biomes, where it lists any. None where it is not generated.
+pub fn world_ground(
+    content: &mut Content,
+    guid: AssetGuid,
+) -> Option<(Arc<WorldGen>, Option<Arc<voxear_terrain::generate::WorldBiomes>>, f32)> {
+    let loaded = content.block_world(guid)?;
+    let file = &loaded.file;
+    let mut generate = file.generate.clone()?;
+    let landed = generator(content, file)?;
+    if let Some(painted) = content.painted(guid, false) {
+        generate.placed = generate.placed.map(|placed| painted_biomes(&placed, &painted));
+        generate.painted = voxear_terrain::blocks::generate::PaintedRef(Some(painted));
+    }
+    let size = file.block_size.max(0.01);
+    let ground = voxear_terrain::blocks::generate::ground_generator(&generate, &landed, size);
+    Some((ground, generate.placed.clone(), size))
+}
+
 /// What a generated world of blocks' chunks are made from, as its file and
 /// its blocks are now: none without a generator.
 pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_terrain::blocks::stream::BlockMaking> {

@@ -81,7 +81,8 @@ pub struct VoxelVolumeData {
     pub endless: bool,
     pub reach: f32,
     /// The world generator an endless volume's ground is made by, a
-    /// reference to a `.worldgen`: none for its own ground.
+    /// reference to a `.worldgen`, or to a generated world of blocks for
+    /// the ground its chunks are made of: none for its own ground.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generator: Option<String>,
     /// How high the generator's ground is at the volume's floor, in metres
@@ -258,9 +259,11 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         }
     }
     let generator = data.generator.as_deref().and_then(|reference| {
-        let found = content.world_gen(reference);
+        let found = generator_of(content, reference);
         if found.is_none() {
-            tracing::warn!("a Voxel Volume's generator {reference} is not a world generator in the project");
+            tracing::warn!(
+                "a Voxel Volume's generator {reference} is not a world generator or a generated world of blocks in the project"
+            );
         }
         found
     });
@@ -281,6 +284,19 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         generator,
         trees,
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
+    }
+}
+
+/// The world generator `reference` names: a `.worldgen`, or a world of
+/// blocks' ground generator, as its chunks are made by it (its biomes'
+/// land, its painted maps, its rivers; see `blocks::world_ground`).
+fn generator_of(content: &mut Content, reference: &str) -> Option<Arc<voxear_terrain::generate::WorldGen>> {
+    let guid = content.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+    match content.db().get(guid).map(|entry| entry.kind) {
+        Some(voxear_assets::AssetKind::BlockWorld) => {
+            crate::blocks::world_ground(content, guid).map(|(ground, _, _)| ground)
+        }
+        _ => content.world_gen(reference),
     }
 }
 

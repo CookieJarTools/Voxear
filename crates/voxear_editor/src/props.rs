@@ -5065,14 +5065,14 @@ pub fn pick(
             true
         }
         (Prop::VoxelGenerator, Pick::Asset(choice)) => {
-            // One of the project's world generators, or none for the volume's own ground.
+            // One of the project's world generators or worlds of blocks, or none for the volume's own ground.
             use voxear_engine::voxel_volumes::VoxelVolumeSource;
             let generator = match choice {
                 None => None,
                 Some(path) => {
                     let guid = game.content.parse(path).ok().and_then(|reference| reference.guid());
                     let kind = guid.and_then(|guid| game.content.db().get(guid)).map(|entry| entry.kind);
-                    if kind != Some(AssetKind::WorldGen) {
+                    if kind != Some(AssetKind::WorldGen) && kind != Some(AssetKind::BlockWorld) {
                         return false;
                     }
                     Some(path.clone())
@@ -5462,7 +5462,12 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return found;
         }
         Prop::ParticleLightMap => return fields::assets_of(game, Some(AssetKind::Texture)),
-        Prop::VoxelGenerator => return fields::assets_of(game, Some(AssetKind::WorldGen)),
+        Prop::VoxelGenerator => {
+            // The project's world generators, then its worlds of blocks, whose ground generators it can run.
+            let mut found = fields::assets_of(game, Some(AssetKind::WorldGen));
+            found.extend(fields::assets_of(game, Some(AssetKind::BlockWorld)).into_iter().skip(1));
+            return found;
+        }
         Prop::VoxelTreePlant(_) | Prop::VoxelTreeAdd => return fields::assets_of(game, Some(AssetKind::Plant)),
         Prop::ParticleGraph => {
             // None, then the project's particle graphs by their paths.

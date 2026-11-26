@@ -285,11 +285,14 @@ fn an_endless_volumes_ground_is_cut_by_its_generators_rivers_with_their_water_ov
     let Some(mut renderer) = renderer() else { return };
     let rivered = Arc::new(starter("Rolling Hills"));
     let ([x, z], water, bed) = river_in(&rivered, 0.8);
-    // Straight down from 8 m over the river's water, the volume's floor 24 m under its bed.
-    let scene = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    // Straight down from 8 m over the river's water, the volume's floor 24 m under its bed, its water smooth.
+    let mut scene = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
     let mut bare = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
     for volume in bare.query::<&mut VoxelVolume>() {
         volume.generator.as_mut().unwrap().world = Arc::new(rivered.without_rivers());
+    }
+    for volume in scene.query::<&mut VoxelVolume>().into_iter().chain(bare.query::<&mut VoxelVolume>()) {
+        volume.water = voxear_render::VoxelWaterLook::Smooth;
     }
     let volume = |scene: &World| scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
     let camera = scene.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.position;
@@ -794,11 +797,15 @@ fn an_endless_volumes_rivers_drawn_as_voxels_of_water_show_its_water_and_not_its
     let rivered = Arc::new(starter("Rolling Hills"));
     let ([x, z], water, bed) = river_in(&rivered, 0.8);
     // Straight down from 8 m over the river's water, as smooth water and as voxels of water.
-    let smooth = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
-    let mut voxels = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
-    for volume in voxels.query::<&mut VoxelVolume>() {
-        volume.water = voxear_render::VoxelWaterLook::Voxels;
+    let mut smooth = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    for volume in smooth.query::<&mut VoxelVolume>() {
+        volume.water = voxear_render::VoxelWaterLook::Smooth;
     }
+    let voxels = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    assert_eq!(
+        voxels.query_ref::<&VoxelVolume>().into_iter().next().unwrap().water,
+        voxear_render::VoxelWaterLook::Voxels
+    );
     let drawn_smooth = render(&mut renderer, &smooth, 3);
     let made = renderer.stats().voxels.bytes;
     let drawn = render(&mut renderer, &voxels, 3);
@@ -1036,9 +1043,9 @@ fn measure_rivers_and_a_coast() {
             if case == "trees" {
                 volume.trees = oaks_and_pines();
             }
-            // `RIVER_WATER=voxels` draws the rivers' water as voxels.
-            if std::env::var("RIVER_WATER").is_ok_and(|look| look == "voxels") {
-                volume.water = voxear_render::VoxelWaterLook::Voxels;
+            // `RIVER_WATER=smooth` draws the rivers' water smooth.
+            if std::env::var("RIVER_WATER").is_ok_and(|look| look == "smooth") {
+                volume.water = voxear_render::VoxelWaterLook::Smooth;
             }
         }
         let started = std::time::Instant::now();
@@ -1318,8 +1325,9 @@ fn an_endless_volume_prints_a_voxel_print_turned_where_it_is_placed_and_a_carve_
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(vec![crate_at, pit]);
     let carved = render(&mut renderer, &scene, 3);
     keep_image("print carved from above.png", &carved);
+    // Its inside lies in the pit's shadow, a dark red: red well over green and blue, as no dirt or grass is.
     let [r, g, b] = around(&carved, 8.0, 8.0);
-    assert!(r > g + 40 && r > b + 40, "inside the crate: {r} {g} {b}");
+    assert!(r > 20 && r > 3 * g.max(b), "inside the crate: {r} {g} {b}");
 }
 
 #[test]

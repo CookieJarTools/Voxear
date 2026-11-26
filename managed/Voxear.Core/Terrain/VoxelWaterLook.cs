@@ -9,6 +9,6 @@ public enum VoxelWaterLook
 	Smooth,
 
 	/// <summary>Voxels of water as small as the ground's, shaded by how deep they are; waterfalls are voxels of water
-	/// thrown over their lips, whiter the faster they fall.</summary>
+	/// thrown over their lips, whiter the faster they fall. As they come.</summary>
 	Voxels,
 }

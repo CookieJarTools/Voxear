@@ -171,9 +171,9 @@ pub struct VoxelVolumeData {
     /// where the level has no Ocean of its own: on unless written off.
     #[serde(skip_serializing_if = "is_on")]
     pub sea: bool,
-    /// How an endless volume's rivers and lakes are drawn: smooth, or as
-    /// voxels of water (`water = "voxels"`).
-    #[serde(skip_serializing_if = "is_smooth")]
+    /// How an endless volume's rivers and lakes are drawn: as voxels of
+    /// water, or smooth (`water = "smooth"`).
+    #[serde(skip_serializing_if = "is_voxels")]
     pub water: VoxelWaterLook,
 }
 
@@ -181,8 +181,8 @@ fn is_on(on: &bool) -> bool {
     *on
 }
 
-fn is_smooth(look: &VoxelWaterLook) -> bool {
-    *look == VoxelWaterLook::Smooth
+fn is_voxels(look: &VoxelWaterLook) -> bool {
+    *look == VoxelWaterLook::Voxels
 }
 
 /// A change to an endless volume as a scene writes it, in metres from the

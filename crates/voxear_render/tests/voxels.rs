@@ -216,7 +216,9 @@ fn an_endless_volumes_ground_made_on_the_gpu_is_the_ground_a_volume_makes_on_the
             count += 1;
         }
     }
-    assert!(far * 200 < count, "{far} of {count} pixels differ by more than 24 levels");
+    // The volume made on the CPU is drawn a few hundred pixels otherwise from one run to the next where a ray grazes
+    // a blade of grass, and a ray worked out a little otherwise moves which: about 110 to 180 differ.
+    assert!(far * 100 < count, "{far} of {count} pixels differ by more than 24 levels");
     let [r, g, b] = rgb_at(&endless, WIDTH / 2, HEIGHT / 2);
     assert!(g > r && g > b, "grass under the camera: {r} {g} {b}");
 }
@@ -1995,4 +1997,61 @@ fn a_column_takes_over_a_thousand_edits_as_the_cpu_does() {
     eprintln!("{count} edits: {differ} voxels differ, {kept} kept");
     assert!(kept > 1000);
     assert_eq!(differ, 0, "every edit drawn as the CPU finds it");
+}
+
+#[test]
+fn an_endless_volumes_ground_far_from_its_obj_is_drawn_as_near_it() {
+    // The same ground seen 24 km from the volume's Obj, and with the volume's Obj under the camera and its offset there.
+    let Some(mut far_renderer) = renderer() else { return };
+    let world = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let far = 24000.0;
+    let mut scene = generated_view(world.clone(), far + 8.0, far + 8.0, 6.0, 25.0);
+    let made = render(&mut far_renderer, &scene, 3);
+    keep_image("far from its obj.png", &made);
+    drop(far_renderer);
+    let Some(mut near_renderer) = renderer() else { return };
+    let ground = world.height_at(far + 8.0, far + 8.0);
+    scene = generated_view(world, 8.0, 8.0, 6.0, 25.0);
+    for volume in scene.query::<&mut VoxelVolume>() {
+        let generator = volume.generator.as_mut().unwrap();
+        generator.at = [far, far];
+        generator.floor = ground - 24.0;
+    }
+    let near = render(&mut near_renderer, &scene, 3);
+    keep_image("near its obj.png", &near);
+    // Grass and flowers are placed by the voxel's place in the generator's world, which the offset moves, so the two
+    // are not the same pixel for pixel: the ground's shading is the same over squares of 20 pixels, and a streaked
+    // picture has many more pixels the same as the one beside them than as the one under them.
+    let block = |pixels: &[u8], bx: u32, by: u32| {
+        let mut sum = [0i32; 3];
+        for y in by * 20..by * 20 + 20 {
+            for x in bx * 20..bx * 20 + 20 {
+                let c = rgb_at(pixels, x, y);
+                (0..3).for_each(|i| sum[i] += c[i]);
+            }
+        }
+        sum.map(|s| s / 400)
+    };
+    let blocks = (0..HEIGHT / 20).flat_map(|by| (0..WIDTH / 20).map(move |bx| (bx, by)));
+    let differ = blocks
+        .filter(|&(bx, by)| {
+            let (a, b) = (block(&made, bx, by), block(&near, bx, by));
+            (0..3).any(|i| (a[i] - b[i]).abs() > 12)
+        })
+        .count();
+    let runs = |pixels: &[u8]| {
+        let same = |a: [i32; 3], b: [i32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() <= 2);
+        let (mut across, mut down) = (0, 0);
+        for y in 180..HEIGHT - 1 {
+            for x in 0..WIDTH - 1 {
+                across += usize::from(same(rgb_at(pixels, x, y), rgb_at(pixels, x + 1, y)));
+                down += usize::from(same(rgb_at(pixels, x, y), rgb_at(pixels, x, y + 1)));
+            }
+        }
+        across as f32 / down.max(1) as f32
+    };
+    let (far_runs, near_runs) = (runs(&made), runs(&near));
+    eprintln!("{differ} of 576 squares differ; across over down {far_runs:.2} far, {near_runs:.2} near");
+    assert!(differ * 8 < 576, "{differ} squares of 20 pixels differ from the ground drawn near its Obj");
+    assert!(far_runs < near_runs * 1.2, "streaked: {far_runs:.2} pixels the same across for each down, {near_runs:.2} near");
 }

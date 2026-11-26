@@ -46,7 +46,6 @@ Most of the generator's nodes run on the GPU: Noise, Math, Curve, Warp, Gullies,
 - **Rivers** are found on the CPU, as a world of blocks finds them, and laid into the GPU's ground (below).
 - A generator's **Volume** runs on the GPU when it is made of Solid, Combine, Noise 3D, Overhangs, Tunnels and Chambers: its overhangs, tunnels and pockets are drawn in voxels, with grass and flowers on ground the overhangs moved, and rock in the walls of caves. A **Cave Network**'s great halls are left out. A Volume with Raised Land, Spires, Fins, Arches or Roof is left out, and the ground is its height made solid.
 - A graph with a node that cannot run on the GPU (Raised Land, Spires, Fins, Chasms, Slope Mask) makes the volume's own ground instead, and the Console names the node.
-- An endless volume's ground far from its Obj, as a world tens of kilometres across has it, is drawn streaked: put the volume's Obj near the camera and its **Offset** where the camera's ground lies in the generator's world.
 - An endless volume is at most 16 of its sectors tall, 64 voxels each: 64 m at 16 voxels a metre, 256 m at 4. Land higher than its top is cut off flat there.
 
 ### Rivers and lakes

@@ -1229,6 +1229,9 @@ struct Frame
     CullCamera cull;
     // A second plane as `cut`: the camera's far limit, where it has one (src/camera.rs far_plane).
     float4 clip;
+    // As invViewProj, but to a place from the camera's: a ray's way worked out from two places in the world a few
+    // centimetres apart is lost far from the world's middle.
+    Mat4 eyeRays;
 };
 
 // How much of a gradient sky's colours is its light from all round.
@@ -1313,16 +1316,17 @@ struct EyeRay
 // camera for a perspective camera, from its point of the near plane along cameraForward for an orthographic one.
 EyeRay eyeRay(Frame* frame, float2 ndc)
 {
-    float4 near = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
+    float4 near = transform(frame->eyeRays, float4(ndc, 1.0, 1.0));
+    float3 fromEye = near.xyz / near.w;
     EyeRay ray;
     if (isOrthographic(frame))
     {
-        ray.origin = near.xyz / near.w;
+        ray.origin = frame->cameraPosition + fromEye;
         ray.direction = frame->cameraForward;
         return ray;
     }
     ray.origin = frame->cameraPosition;
-    ray.direction = normalize(near.xyz / near.w - frame->cameraPosition);
+    ray.direction = normalize(fromEye);
     return ray;
 }
 

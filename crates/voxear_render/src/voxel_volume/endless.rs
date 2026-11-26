@@ -2035,7 +2035,7 @@ enum Tinted {
 
 /// The places among the palette's first colours a fill of `material` takes
 /// (`fillVoxel` in `shaders/voxel_world.slang`).
-fn places_of(material: VoxelMaterial) -> Vec<usize> {
+pub(super) fn places_of(material: VoxelMaterial) -> Vec<usize> {
     let generated = GROUND_COLORS.len();
     let paving = generated + GENERATED_COLORS.len();
     match material {
@@ -2054,7 +2054,7 @@ fn places_of(material: VoxelMaterial) -> Vec<usize> {
 
 /// `colours` in `tint`: their average made the tint, each shaded from it
 /// as it was from their average.
-fn tinted_colours(colours: &[[u8; 4]], tint: [u8; 3]) -> Vec<[u8; 4]> {
+pub(super) fn tinted_colours(colours: &[[u8; 4]], tint: [u8; 3]) -> Vec<[u8; 4]> {
     if colours.is_empty() {
         return Vec::new();
     }

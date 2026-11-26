@@ -99,9 +99,11 @@ impl VoxelCut {
     }
 }
 
-/// What came loose of a volume's trees: its voxels, from the least corner
-/// of their box, each a place in its palette and one; which of its colours
-/// are wood; and how large a voxel is, in metres.
+/// What came loose of a volume's trees, or of what was built in it: its
+/// voxels, from the least corner of their box, each a place in its palette
+/// and one; which of its colours are solid (a tree's wood, all of what was
+/// built); how large a voxel is, in metres; and how heavy it is, in
+/// kilograms.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoxelPiece {
     /// Its box's least voxel, in voxels from the volume's corner, and how
@@ -112,6 +114,7 @@ pub struct VoxelPiece {
     pub palette: Vec<[u8; 4]>,
     pub wood: Vec<bool>,
     pub voxel: f32,
+    pub mass: f32,
 }
 
 impl VoxelPiece {
@@ -316,6 +319,9 @@ pub fn cut(volume: &VoxelVolume, cut: &VoxelCut) -> (VoxelChanges, VoxelCutDone)
     done.pieces = pieces;
     (changes, done)
 }
+
+/// How heavy wood is, in kilograms a cubic metre.
+const WOOD: f32 = 650.0;
 
 /// The fewest voxels of logs that come loose as a piece: fewer are a chip
 /// of the kerf, dug out with it.
@@ -729,7 +735,7 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
             found.sort_by_key(|(c, ..)| [c.z, c.y, c.x]);
             let mut palette: Vec<[u8; 4]> = Vec::new();
             let mut wood: Vec<bool> = Vec::new();
-            let voxels = found
+            let voxels: Vec<([u16; 3], u8)> = found
                 .into_iter()
                 .map(|(c, colour, is_wood)| {
                     let place = match palette.iter().zip(&wood).position(|(p, w)| *p == colour && *w == is_wood) {
@@ -744,7 +750,9 @@ fn loosen(volume: &VoxelVolume, woods: &Woods, cut: &[Tree], changes: &mut Voxel
                 })
                 .collect();
             let size = (most - least + 1).to_array().map(|a| a as u32);
-            VoxelPiece { low: least, size, voxels, palette, wood, voxel }
+            let logs = voxels.iter().filter(|(_, place)| wood[usize::from(*place) - 1]).count();
+            let mass = logs as f32 * voxel.powi(3) * WOOD;
+            VoxelPiece { low: least, size, voxels, palette, wood, voxel, mass }
         })
         .collect()
 }

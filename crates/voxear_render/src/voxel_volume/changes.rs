@@ -301,6 +301,13 @@ impl VoxelChanges {
         })
     }
 
+    /// The code voxel `cell` is set to, its kind's place and one, 0 for air
+    /// or where it is not set.
+    pub fn code(&self, cell: IVec3) -> u8 {
+        let (brick, local) = Self::split(cell);
+        self.bricks.get(&brick).map_or(0, |changed| changed.codes[ChangedBrick::index(local)])
+    }
+
     /// Whether any voxel is set in the brick at `brick`.
     pub fn has_brick(&self, brick: [i32; 3]) -> bool {
         self.bricks.contains_key(&brick)

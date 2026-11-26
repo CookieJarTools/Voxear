@@ -20,6 +20,8 @@
 
 pub mod bricks;
 mod changes;
+mod collapse;
+mod strain;
 mod edit;
 mod endless;
 mod fell;
@@ -44,6 +46,11 @@ use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
 pub use changes::{CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelFelledTree, VoxelChanges, VoxelKind, VoxelSet};
 pub use fell::{VoxelCut, VoxelCutDone, VoxelPiece, cut as voxel_cut, stamp as voxel_stamp, tree_trunks as voxel_tree_trunks};
+pub use collapse::{
+    CRUMBS as VOXEL_CRUMBS, VoxelAnchor, VoxelBlast, VoxelBlastDone, VoxelLoosened, VoxelSettled, VoxelStuff,
+    blast as voxel_blast, loosen as voxel_loosen, settle as voxel_settle,
+};
+pub use strain::{JoinLoad as VoxelJoinLoad, VoxelRound, VoxelStrain, VoxelStrainDone, VoxelStrainMemory};
 pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
@@ -120,6 +127,15 @@ pub struct VoxelVolume {
     /// How many seconds an endless volume's cut grass, cover and crops take
     /// to grow back: none for never.
     pub regrow: f32,
+    /// What holds up what is built in an endless volume, so that what is cut
+    /// off from it comes loose.
+    pub anchor: VoxelAnchor,
+    /// What an endless volume's printed voxels are made of, and those
+    /// stamped back from pieces: how heavy and how strong.
+    pub built: VoxelStuff,
+    /// How an endless volume finds where what is built gives way under its
+    /// own weight.
+    pub strain: VoxelStrain,
 }
 
 /// What a tree felled in an endless Voxel Volume becomes once it has
@@ -431,6 +447,9 @@ impl Default for VoxelVolume {
             water: VoxelWaterLook::Voxels,
             felled: VoxelFelled::Body,
             regrow: 0.0,
+            anchor: VoxelAnchor::Earth,
+            built: VoxelStuff::Stone,
+            strain: VoxelStrain::Solved,
         }
     }
 }

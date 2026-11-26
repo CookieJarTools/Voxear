@@ -989,6 +989,44 @@ Not done: what floats over voxel shallows feels the ground only within the chunk
 metres, so the sea calms it less than it is drawn; the sea standing under the ground inland, so a cave dug below sea
 level is under water where the Sea is on; waterfalls pushing down what is under them.
 
+## What grows where, and mobs (2026-11-26)
+
+The Realm needs crops in its fields, trees only in its woods and orchards and none in the city, and animals on its
+ground. A world of blocks does these with ground cover on chosen blocks, structures kept to World Areas by their
+tags, and Block Mobs walking its blocks' places. An endless volume now does the same.
+
+- **World Areas** (`voxel_volume/growth.rs`). The engine gives each endless volume whose trees, cover or mobs name
+  an Area Tag the outlined World Areas of its dimension, laid out from its corner, again whenever one moves. Only
+  areas holding a tag some rule names go to the GPU: each its box, its lowest and highest ground in voxels, its tags
+  as bits (at most 32 tags a volume) and its corners. The trees pass asks each tree's foot after `grassAt`
+  (`treeAllowed`); `solid.rs` asks the same of each foot with the same numbers in the same order, so collision and
+  rays find the trees where they are drawn. A test of a wood kept west of a line, pines kept out of a town in it,
+  finds no tree east of it on the GPU or the CPU, and 95% of pixels agreeing.
+- **Crops and ground cover.** Each kind is a shape of the tops pass, a voxel column at a time, like grass: meadow
+  grass scattered with a few seed heads; wheat, barley and flax as stalks a voxel across in rows, with ears or
+  flowers; cabbages as domes of leaves on a grid, pale at the middle, with darker leaves spread low round them. The
+  first kind whose ground and areas hold takes the column, in place of the grass, and may turn its ground to dirt.
+  The column word was repacked to hold a stalk's head: its length and material beside the stem's, and a bit that
+  keeps flowers out of a field.
+- **Mobs** (`voxear_engine::voxel_mobs`). A volume lists prefabs to keep round the player, by density, ground and
+  areas; the game spawns them on ground no steeper than 45°, found by a ray down, between a near and a far ring, and
+  takes them away a fifth again beyond the far ring. A Block Mob on a volume, with no world of blocks under it,
+  walks straight where it is sent and wanders to places it can stand, giving up on one after 12 s. Finding ways
+  round what stands in the way waits for navigation over voxels.
+- **Measured** at 1920 × 1080 on Rolling Hills with 100 oaks and pines a hectare, reach 64 m, the GPU 98% busy with
+  other sessions' work (so only the comparison holds):
+
+  | | Making, flying at 10 m/s | Depth + lit, least of 60 |
+  |---|---|---|
+  | Neither | least 1.01 ms, median 2.00 ms a frame | 4.05 + 3.67 ms |
+  | Trees kept to 24 areas of 8 corners | least 1.00 ms, median 1.81 ms | 4.26 + 4.44 ms |
+  | And wheat, cabbages and meadow grass | least 1.01 ms, median 1.85 ms | 4.04 + 4.20 ms |
+
+  The areas and cover cost nothing measurable in making a column; the drawing differs by what is in view. 400 CPU
+  rays down through the wood took 1.32 s without areas and 1.36 s with them.
+- **One fault on the way.** Reading the flower's foot column before checking it was near read past a job's columns
+  and lost the device: a test with flowers on caught it, the tree tests having flowers off.
+
 ## Kept elsewhere
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in

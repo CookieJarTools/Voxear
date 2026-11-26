@@ -18,6 +18,7 @@
 
 pub mod bricks;
 mod endless;
+mod growth;
 pub(crate) use endless::generated_at;
 mod ground;
 pub mod print;
@@ -35,10 +36,12 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
 pub use ground::{GROUND_COLORS, VoxelGround};
+pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
+pub use voxear_terrain::generate::structures::AreaRules as VoxelAreaRules;
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
 pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
-pub use solid::VoxelSolids;
+pub use solid::{VoxelSolids, ground_at as voxel_ground_at};
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;
@@ -74,6 +77,13 @@ pub struct VoxelVolume {
     /// The trees scattered through an endless volume's ground, each kind as
     /// many to a hectare as it says, where the ground grows grass.
     pub trees: Vec<VoxelTrees>,
+    /// The crops and ground cover grown on an endless volume's ground, each
+    /// kind on the ground it says, the first that grows on a voxel column
+    /// taking it, in place of the ground's own grass.
+    pub cover: Vec<VoxelCover>,
+    /// The World Areas its trees and cover keep within or out of, by their
+    /// tags: those of its Obj's dimension, laid out from the volume's corner.
+    pub areas: Arc<Vec<VoxelArea>>,
     /// The changes made to an endless volume, in the order they were made:
     /// balls carved out of it or filled with ground, and Voxel Prints
     /// printed into it, a later one over an earlier. Each column is made
@@ -236,6 +246,104 @@ pub struct VoxelTrees {
     /// The colours of its wood and its leaves, as sRGB.
     pub wood: [u8; 3],
     pub leaves: [u8; 3],
+    /// The World Areas it grows in, by their tags, and those it never grows
+    /// in: anywhere where it names none.
+    pub areas: VoxelAreaRules,
+}
+
+/// A World Area as an endless Voxel Volume's trees and cover keep to it:
+/// its outline along X and Z, the lowest and highest ground it holds, in
+/// metres from the volume's corner and floor (none for any), and its tags
+/// by their assets' numbers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoxelArea {
+    pub outline: Vec<[f32; 2]>,
+    pub low: Option<f32>,
+    pub high: Option<f32>,
+    pub tags: Vec<u128>,
+}
+
+/// A kind of crop or ground cover grown on an endless Voxel Volume's ground,
+/// of its voxels: stalks a voxel across with heads of grain or flowers,
+/// or round heads of leaves, in rows or scattered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoxelCover {
+    pub kind: VoxelCoverKind,
+    /// The ground it grows on: grass where none.
+    pub on: Vec<VoxelMaterial>,
+    /// How much of the ground it takes grows a stalk or a head, from 0 to 1.
+    pub density: f32,
+    /// How tall it grows, in metres: for cabbages, how wide a head is.
+    pub height: f32,
+    /// How far apart its rows are, in metres, along X: 0 for none,
+    /// scattered as grass is.
+    pub rows: f32,
+    /// What the ground it grows on is turned to, as a ploughed field's
+    /// earth: none to leave the ground as it is.
+    pub soil: Option<VoxelMaterial>,
+    /// The World Areas it grows in, by their tags, and those it never grows
+    /// in: anywhere where it names none.
+    pub areas: VoxelAreaRules,
+}
+
+/// What a kind of cover is, each of its own voxels and colours.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelCoverKind {
+    /// Tall grass gone to seed, scattered.
+    #[default]
+    MeadowGrass,
+    /// Straw stalks with golden ears, in rows.
+    Wheat,
+    /// Paler and shorter than wheat, with longer ears.
+    Barley,
+    /// Thin green stems with blue flowers.
+    Flax,
+    /// Round heads of leaves, in rows.
+    Cabbage,
+}
+
+impl VoxelCoverKind {
+    pub const ALL: [Self; 5] = [Self::MeadowGrass, Self::Wheat, Self::Barley, Self::Flax, Self::Cabbage];
+
+    /// As the editor names it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::MeadowGrass => "Meadow Grass",
+            Self::Wheat => "Wheat",
+            Self::Barley => "Barley",
+            Self::Flax => "Flax",
+            Self::Cabbage => "Cabbage",
+        }
+    }
+
+    /// The one named so.
+    pub fn named(name: &str) -> Option<Self> {
+        let flat = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+        Self::ALL.into_iter().find(|kind| flat(kind.name()) == flat(name))
+    }
+
+    /// How tall it grows, in metres, how far apart its rows are, and how
+    /// much of its ground it takes, as a new kind is given them.
+    pub fn defaults(self) -> (f32, f32, f32) {
+        match self {
+            Self::MeadowGrass => (0.55, 0.0, 0.45),
+            Self::Wheat => (0.9, 0.25, 0.7),
+            Self::Barley => (0.75, 0.25, 0.7),
+            Self::Flax => (0.65, 0.2, 0.6),
+            Self::Cabbage => (0.3, 0.55, 0.85),
+        }
+    }
+}
+
+impl VoxelCover {
+    /// A kind as it is first grown: on grass, its own height, rows and
+    /// density, crops in ploughed earth, anywhere.
+    pub fn of(kind: VoxelCoverKind) -> Self {
+        let (height, rows, density) = kind.defaults();
+        let soil = (kind != VoxelCoverKind::MeadowGrass).then_some(VoxelMaterial::Dirt);
+        Self { kind, on: vec![VoxelMaterial::Grass], density, height, rows, soil, areas: VoxelAreaRules::default() }
+    }
 }
 
 /// A world generator an endless Voxel Volume's ground is made by, run on
@@ -379,6 +487,8 @@ impl Default for VoxelVolume {
             reach: 64.0,
             generator: None,
             trees: Vec::new(),
+            cover: Vec::new(),
+            areas: Arc::default(),
             edits: Arc::default(),
             sea: true,
         }
@@ -398,6 +508,8 @@ impl PartialEq for VoxelVolume {
             && self.reach == other.reach
             && self.generator == other.generator
             && self.trees == other.trees
+            && self.cover == other.cover
+            && (Arc::ptr_eq(&self.areas, &other.areas) || self.areas == other.areas)
             && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
     }
 }

@@ -133,6 +133,89 @@ plant = "Plants/Pine.voxplant"
 per_hectare = 20.0
 ```
 
+### Trees in their World Areas
+
+A kind of tree can keep to [[World Areas]], as a world of blocks' structures do: its **Within** row picks an Area Tag, and the kind grows only inside World Areas with that tag; its **Not Within** row picks one it never grows in. Leave both at None for trees everywhere there is grass. With a wood and an orchard marked out by areas, oaks set **Within** the wood's tag and apple trees **Within** the orchard's grow only there, and a town's area keeps them all out.
+
+- The areas are those outlined on Objs in the volume's dimension, between their Low and High where they have them. Areas painted on a world of blocks' Area map don't reach a volume.
+- A kind's **A Hectare** still holds inside its areas: a wood of 60 oaks a hectare has as many as before, just only there.
+- Moving an area, or the volume, makes the trees again where it reaches. Collision and `Voxels.Raycast` find the trees where they are drawn.
+
+`vox editor call field.set` sets them as `tree_within` and `tree_not_within`, `#2` for the second kind and so on, picking a tag by its path. A scene can give a kind several tags of each, by their numbers:
+
+```toml
+[[obj.voxel_volume.trees]]
+plant = "Plants/Apple.voxplant"
+per_hectare = 120.0
+within = ["…the Orchard tag's number…"]
+never_within = ["…the Town tag's number…"]
+```
+
+## Crops and ground cover
+
+An endless volume grows crops and ground cover of its own voxels on the ground you choose, in place of its grass: **Add Cover** picks a kind, each drawn its own way.
+
+| Kind | What it is |
+|---|---|
+| Meadow Grass | Tall grass, scattered, a few blades gone to seed. Flowers still grow among it |
+| Wheat | Straw-coloured stalks in rows, each with a golden ear |
+| Barley | Paler and shorter than wheat, with longer ears |
+| Flax | Thin green stems in rows, some with a blue flower |
+| Cabbage | Round heads of leaves in rows, pale at the middle, ringed by darker leaves spread low |
+
+Each kind's rows:
+
+- **Cover**: the kind. None takes it away.
+- **On**: the ground it grows on: grass, dirt, rock, sand, snow or gravel, as the volume's ground is there.
+- **Soil**: what the ground under it turns to. Crops start as Dirt, so a field shows ploughed earth between its rows; None leaves the ground as it is.
+- **Height**: how tall it grows, in metres; for cabbages, how wide a head is.
+- **Rows**: how far apart its rows are, in metres, along X. 0 scatters it as grass is.
+- **Density**: how much of its ground grows a stalk or a head, from 0 to 1.
+- **Within** and **Not Within**: Area Tags, as for trees: wheat set Within a Fields tag grows only in the fields.
+
+The first kind in the list that grows on a spot takes it, so put the crops kept to their fields first and a Meadow Grass for everywhere else last. Ground no kind takes grows the volume's own grass. Cover is drawn, and moves in the wind, but isn't solid: it's walked through, and rays pass it. Cover, and trees kept to two dozen areas, make the ground no slower to make than grass alone.
+
+`vox editor call field.set` sets the rows as the Inspector does: `cover`, `cover_on`, `cover_soil`, `cover_height`, `cover_rows`, `cover_density`, `cover_within` and `cover_not_within` for the first kind, the same with `#2` for the second, and `add_cover`. In the scene:
+
+```toml
+[[obj.voxel_volume.cover]]
+kind = "wheat"
+on = ["grass"]
+soil = "dirt"
+height = 0.9
+rows = 0.25
+density = 0.7
+within = ["…the Fields tag's number…"]
+
+[[obj.voxel_volume.cover]]
+kind = "meadow_grass"
+height = 0.55
+density = 0.45
+```
+
+## Mobs
+
+An endless volume can spawn mobs on its ground round the player while the game plays. **Add Mob** picks a prefab; give it a [[Block Mobs|Block Mob]] and a Character, and it walks the volume's ground.
+
+- **Mob**: the prefab. None takes it away.
+- **A Hectare** and **Most**: how many to a hectare round the player, and the most there are at once.
+- **On**: the ground they spawn on.
+- **Near** and **Far**: they spawn no nearer the player than Near and no further than Far, in metres, on ground no steeper than 45°. Once the player is a fifth again further than Far from one, it is taken away, and another comes nearer.
+- **Within** and **Not Within**: Area Tags, as for trees: sheep set Within a Pasture tag spawn only in the pastures.
+
+The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume walks straight to where it's sent and wanders about where it was spawned, picking places it can stand. It doesn't yet find a way round what is in its way: one that can't get somewhere within 12 seconds gives up and picks somewhere else. A navigation of voxel ground can be put in the engine through `voxear_engine::voxel_ways`: every agent on a volume walks the ways it finds.
+
+```toml
+[[obj.voxel_volume.mobs]]
+prefab = "…the prefab's number…"
+per_hectare = 3.0
+most = 6
+on = ["grass"]
+near = 20.0
+far = 70.0
+within = ["…the Pasture tag's number…"]
+```
+
 ## Box models stamped in
 
 A [[Box Models|box model]]'s sculpted cubes can be stamped into a volume, turned into its voxels: a tree sculpted at 16 cubes a metre becomes a tree of the volume's voxels. Each stamp is the model, where its feet stand in metres from the volume's corner, how far it is turned about Y in degrees, and how many times its size it is. A model's cubes larger than the volume's voxels fill all the voxels they cover; smaller ones are rounded to the voxels.
@@ -234,5 +317,5 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 - It isn't turned or scaled with its Obj.
 - It is drawn whole, however far away it is; an endless one ends at its reach.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
-- An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
+- An endless one's trees can't be felled, and every tree of a kind is one of four plants. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A volume of a set size doesn't collide yet; an endless one does.

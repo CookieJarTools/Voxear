@@ -581,12 +581,14 @@ mod tests {
                 per_hectare: 80.0,
                 wood: [90, 60, 40],
                 leaves: [60, 120, 40],
+                areas: Default::default(),
             },
             VoxelTrees {
                 plant: Arc::new(PlantDef { kind: PlantKind::Conifer, ..PlantDef::default() }),
                 per_hectare: 40.0,
                 wood: [80, 50, 30],
                 leaves: [30, 80, 40],
+                areas: Default::default(),
             },
         ];
         let forest = forest(&trees, 22).expect("trees");
@@ -622,6 +624,7 @@ mod tests {
             per_hectare: 80.0,
             wood: [90, 60, 40],
             leaves: [60, 120, 40],
+            areas: Default::default(),
         };
         let forest = forest(&[oak], 22).expect("trees");
         let palette = vec![[100, 100, 100, 255]; 32];

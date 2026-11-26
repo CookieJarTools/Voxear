@@ -23,8 +23,9 @@ use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelBiomes, VoxelEdit, VoxelGenerator, VoxelGround,
-    VoxelPrint, VoxelTrees, VoxelVolume, print,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelBiomes, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint, VoxelTrees,
+    VoxelVolume, print,
+    growth::{self, Growth},
     rivers::{self, ColumnWater, GpuVoxelWater, LaidRivers},
     trees,
 };
@@ -147,7 +148,9 @@ struct GpuWorldMake {
     job_edits: u64,
     prints: u64,
     biomes: u64,
+    column_grounds: u64,
     rivers: u64,
+    growth: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -205,6 +208,9 @@ pub(crate) struct Endless {
     empty: Buffer,
     heights: Buffer,
     columns: Buffer,
+    /// What each column of a job is made of where it is a biome's ground,
+    /// beside its word in `columns` (`columnGrounds`).
+    column_grounds: Buffer,
     slots: Buffer,
     loose: Buffer,
     counters: Buffer,
@@ -223,6 +229,9 @@ pub(crate) struct Endless {
     forest: Option<(Buffer, u32, f32)>,
     /// Its generator's biomes as the GPU reads them, where it has any.
     biomes: Option<Buffer>,
+    /// What grows where: the areas its trees and cover keep to, and its
+    /// cover's kinds.
+    growth: Buffer,
     trees: Buffer,
     tree_carried: Buffer,
     /// Its trees' plants as voxels in each of their turns, where it has
@@ -289,6 +298,8 @@ pub(crate) fn same_ground(a: &VoxelVolume, b: &VoxelVolume) -> bool {
         && a.ground == b.ground
         && a.generator == b.generator
         && a.trees == b.trees
+        && a.cover == b.cover
+        && (Arc::ptr_eq(&a.areas, &b.areas) || a.areas == b.areas)
 }
 
 /// The program `generator` runs on the GPU, if its graph can run there:
@@ -421,10 +432,12 @@ fn forest_buffers(
     volume: &VoxelVolume,
     models: bool,
 ) -> Result<(Vec<[u8; 4]>, Option<(Buffer, u32, f32)>, Option<trees::Models>, Option<Buffer>)> {
-    let first = (GROUND_COLORS.len() + GENERATED_COLORS.len()) as u32;
+    let cover_colors = growth::cover_colors(&volume.cover);
+    let first = (GROUND_COLORS.len() + GENERATED_COLORS.len() + cover_colors.len()) as u32;
     let forest = trees::forest(&volume.trees, first);
     let tree_colors = forest.as_ref().map(|forest| forest.colors.clone()).unwrap_or_default();
-    let mut all: Vec<[u8; 4]> = GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&tree_colors).copied().collect();
+    let mut all: Vec<[u8; 4]> =
+        GROUND_COLORS.iter().chain(&GENERATED_COLORS).chain(&cover_colors).chain(&tree_colors).copied().collect();
     let biomes = volume.generator.as_ref().and_then(|generator| generator.biomes.as_deref());
     let biomes = match biomes.map(|biomes| biome_words(biomes, &mut all)) {
         Some(words) => {
@@ -477,6 +490,20 @@ fn biome_words(biomes: &VoxelBiomes, palette: &mut Vec<[u8; 4]>) -> Vec<u32> {
         words.push(u32::from(place) | u32::from(shade) << 8 | u32::from(green) << 16);
     }
     words
+}
+
+/// The words of what grows where on `volume` (see [`growth`]), as the GPU
+/// reads them.
+fn growth_buffer(gpu: &Gpu, volume: &VoxelVolume) -> Result<Buffer> {
+    let voxel = 1.0 / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
+    let first = (GROUND_COLORS.len() + GENERATED_COLORS.len()) as u32;
+    let words = Growth::new(&volume.areas, &volume.trees, &volume.cover, voxel).words(&volume.cover, voxel, first);
+    let usage = vk::BufferUsageFlags::STORAGE_BUFFER
+        | vk::BufferUsageFlags::TRANSFER_DST
+        | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+    let buffer = gpu.create_buffer("voxel world growth", words.len() as u64 * 4, usage, MemoryLocation::GpuOnly)?;
+    gpu.upload_buffer(&buffer, 0, bytemuck::cast_slice(&words))?;
+    Ok(buffer)
 }
 
 /// What a volume's trees' plants' voxels are made from: its kinds that grow,
@@ -562,6 +589,7 @@ impl Endless {
         let table = make("table", slots_in * u64::from(tall) * ENTRY_WORDS * 4, none)?;
         let (colours, forest, made, biomes) = forest_buffers(gpu, volume, true)?;
         let palette = palette_buffer(gpu, &colours)?;
+        let growth = growth_buffer(gpu, volume)?;
         let trees = make("trees", jobs * MAX_TREES * TREE_WORDS * 4, none)?;
         let tree_carried = make("tree carried", jobs * 64 * MOST_CARRIED as u64 * 4, none)?;
         let empty = make("empty sector", 25 * 4, none)?;
@@ -570,6 +598,7 @@ impl Endless {
         gpu.upload_buffer(&empty, 0, bytemuck::cast_slice(&nothing))?;
         let heights = make("heights", jobs * SIDE * SIDE * 4, none)?;
         let columns = make("columns", jobs * TOPS * TOPS * 4, none)?;
+        let column_grounds = make("column grounds", jobs * TOPS * TOPS * 4, none)?;
         let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
@@ -647,6 +676,7 @@ impl Endless {
             empty,
             heights,
             columns,
+            column_grounds,
             slots,
             loose,
             counters,
@@ -656,6 +686,7 @@ impl Endless {
             volume: caves,
             forest,
             biomes,
+            growth,
             trees,
             tree_carried,
             models,
@@ -832,6 +863,7 @@ impl Endless {
             std::mem::replace(&mut self.volume, caves).into_iter().flat_map(|(words, carried)| [words, carried]),
         );
         gone.push(std::mem::replace(&mut self.palette, palette));
+        gone.push(std::mem::replace(&mut self.growth, growth_buffer(gpu, volume)?));
         gone.extend(std::mem::replace(&mut self.forest, forest).map(|(buffer, _, _)| buffer));
         gone.extend(std::mem::replace(&mut self.biomes, biomes));
         let laid = laid_rivers(gpu, volume, self.program.is_some(), self.window, self.forest.as_ref())?;
@@ -851,6 +883,7 @@ impl Endless {
             &self.materials,
             &self.heights,
             &self.columns,
+            &self.column_grounds,
             &self.slots,
             &self.loose,
             &self.grounds,
@@ -1071,6 +1104,7 @@ impl Endless {
             depth: 0.0,
             forest: self.forest.as_ref().map_or(0, |(buffer, _, _)| buffer.address),
             biomes: self.biomes.as_ref().map_or(0, |buffer| buffer.address),
+            column_grounds: self.column_grounds.address,
             trees: self.trees.address,
             tree_carried: self.tree_carried.address,
             tree_kinds: self.forest.as_ref().map_or(0, |(_, kinds, _)| *kinds),
@@ -1087,6 +1121,7 @@ impl Endless {
             job_edits: self.job_edits.address,
             prints: self.print_buffer.as_ref().map_or(0, |buffer| buffer.address),
             rivers: self.rivers.as_ref().map_or(0, |rivers| rivers.table.address),
+            growth: self.growth.address,
             river_window: self.rivers.as_ref().map_or(0, |rivers| rivers.window),
             river_pad: 0,
             edit_count: self.edits.len() as u32,
@@ -1208,11 +1243,13 @@ impl Endless {
             self.empty,
             self.heights,
             self.columns,
+            self.column_grounds,
             self.slots,
             self.loose,
             self.counters,
             self.candidates,
             self.grounds,
+            self.growth,
             self.trees,
             self.tree_carried,
             self.pages,

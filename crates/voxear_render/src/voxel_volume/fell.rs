@@ -142,7 +142,7 @@ impl VoxelPiece {
     pub fn boxes(&self, most: usize) -> Vec<(Vec3, Vec3)> {
         let mut coarse = 1;
         loop {
-            let boxes = self.boxes_at(coarse);
+            let boxes = self.boxes_at(coarse, true, 1);
             if boxes.len() <= most || coarse >= 16 {
                 return boxes;
             }
@@ -150,15 +150,18 @@ impl VoxelPiece {
         }
     }
 
-    fn boxes_at(&self, coarse: i32) -> Vec<(Vec3, Vec3)> {
+    /// Boxes of its logs (`wood`) or leaves, `coarse` voxels a side at a
+    /// time, a block solid where at least `least` of its voxels are.
+    fn boxes_at(&self, coarse: i32, wood: bool, least: usize) -> Vec<(Vec3, Vec3)> {
         let size = self.size.map(|a| (a as i32 + coarse - 1) / coarse);
         let index = |c: [i32; 3]| (c[0] + size[0] * (c[1] + size[1] * c[2])) as usize;
-        let mut solid = vec![false; (size[0] * size[1] * size[2]) as usize];
+        let mut counts = vec![0usize; (size[0] * size[1] * size[2]) as usize];
         for (c, place) in &self.voxels {
-            if self.is_wood(*place) {
-                solid[index(c.map(|a| i32::from(a) / coarse))] = true;
+            if self.is_wood(*place) == wood && *place != 0 {
+                counts[index(c.map(|a| i32::from(a) / coarse))] += 1;
             }
         }
+        let mut solid: Vec<bool> = counts.iter().map(|&n| n >= least.max(1)).collect();
         let mut boxes = Vec::new();
         let each = coarse as f32 * self.voxel;
         for z in 0..size[2] {
@@ -208,6 +211,10 @@ pub struct VoxelCutDone {
     pub columns: usize,
     pub voxels: usize,
     pub pieces: Vec<VoxelPiece>,
+    /// Where grass, cover or crops were cut, in metres from the volume's
+    /// corner, at the cut: a place in each half metre or so, for what flies
+    /// up from it.
+    pub mown: Vec<Vec3>,
 }
 
 /// How tall the tallest of a volume's grass and cover grows, in voxels.
@@ -235,41 +242,45 @@ pub fn cut(volume: &VoxelVolume, cut: &VoxelCut) -> (VoxelChanges, VoxelCutDone)
     if low.cmpgt(high).any() {
         return (changes, done);
     }
-    // The grass of each column it reaches, over the column's top.
+    // The grass of each column it reaches, cut where the cut first meets it going up from the ground: what is under
+    // that stays.
     let layer = cover_layer(volume, voxel);
     ground.heights_for(low.x, low.z, [high.x - low.x + 1, high.z - low.z + 1]);
-    let mut columns: HashSet<[i32; 2]> = HashSet::new();
+    let mut columns: HashMap<[i32; 2], i32> = HashMap::new();
     match cut {
         VoxelCut::Points(points) => {
             for p in points {
                 let c = (*p / voxel).floor().as_ivec3();
                 let h = ground.height(c.x, c.z);
-                if c.y >= h && c.y <= h + layer + 1 {
-                    columns.insert([c.x, c.z]);
+                if c.y > h && c.y <= h + layer {
+                    let keep = columns.entry([c.x, c.z]).or_insert(i32::MAX);
+                    *keep = (*keep).min(c.y - h - 1);
                 }
             }
         }
-        VoxelCut::Ball { at, .. } | VoxelCut::Slice { at, .. } => {
+        VoxelCut::Ball { .. } | VoxelCut::Slice { .. } => {
             for z in low.z..=high.z {
                 for x in low.x..=high.x {
                     let h = ground.height(x, z);
-                    // The voxel of the grass's layer nearest the middle, or any a slice passes through.
-                    let reached = match cut {
-                        VoxelCut::Slice { .. } => (h + 1..=h + layer).any(|y| cut.holds(IVec3::new(x, y, z), voxel)),
-                        _ => {
-                            cut.holds(IVec3::new(x, ((at.y / voxel).floor() as i32).clamp(h + 1, h + layer), z), voxel)
-                        }
-                    };
-                    if reached {
-                        columns.insert([x, z]);
+                    if let Some(y) = (h + 1..=h + layer).find(|&y| cut.holds(IVec3::new(x, y, z), voxel)) {
+                        columns.insert([x, z], y - h - 1);
                     }
                 }
             }
         }
     }
-    for [x, z] in &columns {
-        done.columns += usize::from(changes.cut(*x, *z));
+    let mut mown: Vec<([i32; 2], Vec3)> = Vec::new();
+    for ([x, z], keep) in &columns {
+        if changes.cut(*x, *z, (*keep).clamp(0, 254) as u8) {
+            done.columns += 1;
+            let at = Vec3::new(*x as f32 + 0.5, (ground.height(*x, *z) + 1 + keep) as f32, *z as f32 + 0.5) * voxel;
+            mown.push(([x.div_euclid(8), z.div_euclid(8)], at));
+        }
     }
+    // One place in each brick's column of those cut.
+    mown.sort_by_key(|(brick, _)| *brick);
+    mown.dedup_by_key(|(brick, _)| *brick);
+    done.mown = mown.into_iter().map(|(_, at)| at).collect();
     let Some(woods) = woods.as_deref() else { return (changes, done) };
     // The logs and leaves it reaches are dug out.
     let near = ground.trees_near(low, high);
@@ -836,8 +847,8 @@ pub(super) fn cover_over(ground: &mut Ground, x: i32, z: i32) -> Option<(i32, i3
         None if kind == GRASS => volume.ground.map_or(0.0, |g| if g.grass > 0.0 { g.grass_height } else { 0.0 }),
         None => 0.0,
     };
-    let left = volume.changes.cut_left(x, z).map_or(1.0, |left| f32::from(left) / f32::from(super::changes::FULL));
-    let blades = (tall * left / voxel).round() as i32;
+    let blades = (tall / voxel).round() as i32;
+    let blades = volume.changes.cut_left(x, z).map_or(blades, |left| blades.min(i32::from(left)));
     (blades > 0).then_some((h, blades))
 }
 

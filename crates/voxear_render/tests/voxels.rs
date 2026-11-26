@@ -2835,10 +2835,14 @@ fn trees_felled_are_gone_over_their_stumps_on_the_gpu_as_on_the_cpu_and_cut_gras
     eprintln!("{} trees felled in {pieces} pieces, in {felling:?}", trunks.len());
     // Where two trees grow into each other, one may hold the other up.
     assert!(pieces * 10 >= trunks.len() * 8, "most come loose: {pieces} pieces of {} trees", trunks.len());
-    // The grass round them faded away.
-    let mut changes = (*cut.changes).clone();
-    changes.tend_cuts(255, 0);
-    cut.changes = Arc::new(changes);
+    // And a slice a quarter of a metre over the ground beside each, the other way: stubble under it.
+    let stubble: Vec<Vec3> = mown.iter().map(|at| *at - Vec3::new(5.0, 0.0, 0.0)).collect();
+    for at in &stubble {
+        let h = solids.heights([(at.x * 16.0).floor() as i32, (at.z * 16.0).floor() as i32], [1, 1])[0];
+        let slice = voxear_render::VoxelCut::Slice { at: Vec3::new(at.x, (h + 1) as f32 / 16.0 + 0.25, at.z), across: Vec3::Y, radius: 0.6 };
+        let (changes, _) = voxear_render::voxel_cut(&cut, &slice);
+        cut.changes = Arc::new(changes);
+    }
     *scene.query::<&mut VoxelVolume>().into_iter().next().unwrap() = cut.clone();
     let after = render(&mut renderer, &scene, 3);
     keep_image("felling after.png", &after);
@@ -2874,6 +2878,18 @@ fn trees_felled_are_gone_over_their_stumps_on_the_gpu_as_on_the_cpu_and_cut_gras
         }
     }
     let blades = blades_at(&renderer, &solids);
+    // Under the slice the blades stand four voxels tall at most; nothing over that.
+    let (mut short, mut over) = (0, 0);
+    for at in &stubble {
+        let c = (*at * 16.0).floor().as_ivec3();
+        let h = solids.heights([c.x, c.z], [1, 1])[0];
+        let cells: Vec<[i32; 3]> = (1..12).map(|dy| [c.x, h + dy, c.z]).collect();
+        let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+        short += found[..4].iter().filter(|&&m| m != 0).count();
+        over += found[4..].iter().filter(|&&m| m != 0).count();
+    }
+    eprintln!("stubble: {short} voxels under the slice, {over} over it");
+    assert!(short > 0 && over == 0, "the slice leaves stubble: {short} under, {over} over");
     eprintln!("{agree} of {all} voxels up the trunks agree; {stumps} stump voxels; {blades_before} blade voxels, {blades} left");
     assert!(blades_before > mown.len() * 4, "grass grew there: {blades_before}");
     assert!(agree * 100 >= all * 97, "the GPU's felled trees are the CPU's: {agree} of {all}");

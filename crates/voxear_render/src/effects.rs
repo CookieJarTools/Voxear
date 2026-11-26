@@ -366,10 +366,11 @@ pub enum Starter {
     Explosion,
     Magic,
     Mud,
+    Clippings,
 }
 
 impl Starter {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Fire,
         Self::Smoke,
         Self::Sparks,
@@ -381,6 +382,7 @@ impl Starter {
         Self::Explosion,
         Self::Magic,
         Self::Mud,
+        Self::Clippings,
     ];
 
     /// As the editor shows it.
@@ -397,6 +399,7 @@ impl Starter {
             Self::Explosion => "Explosion",
             Self::Magic => "Magic",
             Self::Mud => "Mud",
+            Self::Clippings => "Clippings",
         }
     }
 
@@ -1069,6 +1072,32 @@ impl Starter {
                     },
                 ),
             ],
+            Self::Clippings => vec![named(
+                "Blades",
+                ParticleSystem {
+                    mesh: Some(ParticleMesh::Builtin(BuiltinMesh::Chunk)),
+                    rate: 0.0,
+                    burst: 36,
+                    looping: false,
+                    duration: 2.0,
+                    lifetime: [1.2, 2.2],
+                    speed: [1.2, 3.2],
+                    size: [0.035, 0.07],
+                    color: [0.36, 0.6, 0.16, 1.0],
+                    color_end: [0.44, 0.62, 0.2, 1.0],
+                    opacity_curve: Curve::new(&[[0.0, 1.0], [0.8, 1.0], [1.0, 0.0]]),
+                    angle: 35.0,
+                    radius: 0.25,
+                    gravity: 0.5,
+                    drag: 2.0,
+                    spin: 500.0,
+                    softness: 0.0,
+                    collision: ParticleCollision::Depth,
+                    bounce: 0.05,
+                    friction: 0.9,
+                    ..haze
+                },
+            )],
             Self::Mud => vec![
                 named(
                     "Clods",

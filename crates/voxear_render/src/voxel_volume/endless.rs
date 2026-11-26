@@ -402,7 +402,7 @@ fn felled_table(changes: &VoxelChanges) -> Vec<u32> {
 /// less one, a power of two, then three words a slot, a sector column of
 /// the finest voxels and where its bytes start among these words and one,
 /// 0 in an empty slot; then for each sector column with any cut, a byte a
-/// voxel column of how much of its blades is left, 255 for all.
+/// voxel column of how many voxels of its blades are left, 255 for all.
 fn cuts_table(changes: &VoxelChanges) -> Vec<u32> {
     let mut sectors: std::collections::BTreeMap<[i32; 2], Vec<u8>> = std::collections::BTreeMap::new();
     for (brick, cut) in changes.cuts() {

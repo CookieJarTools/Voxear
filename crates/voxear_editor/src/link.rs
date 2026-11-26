@@ -602,7 +602,7 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "voxels.cut",
-        about: "Cuts every endless Voxel Volume it reaches, or `obj`'s alone, as a script's Voxels.Cut and Voxels.Slice do: a ball round `at`, a blade's slice through `at` square to `across`, or the voxel at each of `points`. The grass, cover and crops of the columns it reaches fade away and stay cut until they grow back over the volume's `regrow` seconds; logs and leaves in it are cut out, and what of a tree is no longer joined to the ground by logs comes loose: while the game plays it falls as a body, which rests as the volume's `felled` says; in the editor it is taken away. The ground is not cut. Saved with the volume's other changes. One step to undo.",
+        about: "Cuts every endless Voxel Volume it reaches, or `obj`'s alone, as a script's Voxels.Cut and Voxels.Slice do: a ball round `at`, a blade's slice through `at` square to `across`, or the voxel at each of `points`. The grass, cover and crops of the columns it reaches are cut where it meets them, the stubble under that left, and grow back over the volume's `regrow` seconds; logs and leaves in it are cut out, and what of a tree is no longer joined to the ground by logs comes loose: while the game plays it falls as a body, which rests as the volume's `felled` says; in the editor it is taken away. The ground is not cut. Saved with the volume's other changes. One step to undo.",
         args: &[
             maybe("at", ArgKind::Vector, "The ball's or slice's middle, in metres, in the world."),
             maybe("radius", ArgKind::Number, "How far it reaches from `at`, in metres."),

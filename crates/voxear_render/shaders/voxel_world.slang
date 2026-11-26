@@ -273,8 +273,8 @@ int felledCut(WorldMake* make, int2 foot)
     return -1;
 }
 
-// How much of the blades of voxel column (x, z) of the finest ring's voxels is left where they were cut, from 0 to
-// 255: 255 for all, where none was cut.
+// How many voxels of the blades of voxel column (x, z) of the finest ring's voxels are left over its ground where they
+// were cut: 255 where none was cut.
 uint cutLeft(WorldMake* make, int x, int z)
 {
     if (make->cutsAt == NO_TABLE)
@@ -1394,14 +1394,19 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
         stem = min((((r >> 4) & 1u) == 0u ? places & 255u : (places >> 8) & 255u) + 1u, 255u);
         head = min((places & 255u) + 1u, 255u);
     }
-    // Grass, cover and crops cut: as much of their blades as is left of them, and no flowers.
+    // Grass, cover and crops cut: what was under the cut stays, the tips over it gone, their heads and flowers with
+    // them. The cut is kept in the finest ring's voxels.
     int2 finest = int2(floor((float2(float(x), float(z)) + 0.5) * make->voxel / make->fine));
     uint left = cutLeft(make, finest.x, finest.y);
     if (left < 255u)
     {
-        blade = (blade * left + 127u) / 255u;
-        headLength = min(headLength, blade);
-        flowers = false;
+        uint kept = uint(floor(float(left) * make->fine / make->voxel));
+        if (kept < blade)
+        {
+            blade = kept;
+            headLength = 0u;
+            flowers = false;
+        }
     }
     make->columnGrounds[job * TOPS * TOPS + id.x] = biomeGround;
     make->columns[job * TOPS * TOPS + id.x] = min(blade, 255u) | (stem << 8) | (top << 16) | (bare ? 1u << 19 : 0u)

@@ -11,8 +11,9 @@ public static unsafe partial class Voxels
 
 	/// <summary>
 	/// Cuts everything in a ball of <paramref name="radius"/> metres round <paramref name="middle"/> in every endless
-	/// Voxel Volume it reaches: the grass, cover and crops of the columns it reaches fade away and stay cut until they
-	/// grow back, and the logs and leaves in it are cut out. Where that cuts through a tree's trunk or a branch, what is
+	/// Voxel Volume it reaches: the grass, cover and crops of the columns it reaches are cut where the ball first meets
+	/// them going up from the ground, the stubble under that left and clippings flying, and stay cut until they grow
+	/// back, and the logs and leaves in it are cut out. Where that cuts through a tree's trunk or a branch, what is
 	/// no longer joined to the ground by logs comes loose: it falls as a body of its own away from the cut, or is taken
 	/// away, as <paramref name="pieces"/> says, and at rest stays, is stamped back or goes as <paramref name="rest"/>
 	/// says, or the volume's Felled where it is left out. The ground is not cut. Kept with the volume and saved with the

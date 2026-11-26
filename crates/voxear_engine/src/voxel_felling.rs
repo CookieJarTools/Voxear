@@ -1,16 +1,18 @@
 //! Cutting endless Voxel Volumes while the game runs ([`cut`]): the grass,
-//! cover and crops of the columns a cut reaches fade away over a short
-//! time ([`FADE`]), then stay cut until they grow back over the volume's
-//! `regrow` seconds, or for good; and the trees whose logs it cuts through
-//! are felled, what comes loose of them a body of its own.
+//! cover and crops of the columns a cut reaches are cut where it meets
+//! them, what was under it staying, clippings flying up, and grow back over
+//! the volume's `regrow` seconds, or never; and the trees whose logs it
+//! cuts through are felled, what comes loose of them a body of its own.
 //!
 //! A felled piece ([`VoxelPieceBody`]) is an Obj with a Rigidbody, its
 //! collider boxes of its logs, and its voxels a Voxel Volume of their own
 //! on an Obj under it, which turns with it as it falls. It
 //! hangs where it was cut until the ground's collision round it has been
-//! made again without it, then tips the way it was cut and falls. Once it
-//! has lain still a moment it rests: it stays a body, which can be pushed,
-//! or is stamped back into the volume where it lies, as the volume's
+//! made again without it, then tips the way it was cut, hinged on its
+//! stump's edge, and lets go of the stump most of the way over, sliding off
+//! it to the ground. Once it has lain still a moment it rests, its leaves
+//! pressed against the ground: it stays a body, which can be pushed, or is
+//! stamped back into the volume where it lies, as the cut or the volume's
 //! `felled` says.
 
 use std::sync::Arc;
@@ -22,14 +24,21 @@ use voxear_scene::Transform;
 
 use crate::physics::{Acoustic, Collider, ColliderBoxes, PhysicsScene, Rigidbody};
 
-/// How long cut blades take to fade away, in seconds.
-pub const FADE: f32 = 0.6;
-/// How many steps they fade and grow back in: each makes their columns
-/// again.
-const FADE_STEPS: f32 = 8.0;
+/// How many steps cut grass grows back in: each makes its columns again.
 const GROW_STEPS: f32 = 16.0;
-/// The most boxes a piece's collider has.
+/// The most boxes a piece's collider has of its logs.
 const MOST_BOXES: usize = 192;
+/// How far over a piece tips on its stump before it lets go of it, in
+/// radians, and the longest it holds on, in seconds.
+const LET_GO: f32 = 1.15;
+/// How far over a piece is pushed before its weight carries it on, in
+/// radians.
+const WEDGED: f32 = 0.3;
+const LONGEST_HINGED: f32 = 6.0;
+/// How far over the ground a lying crown's leaves are pressed down, in
+/// metres, and to what share of that.
+const PRESSED: f32 = 0.7;
+const PRESSED_TO: f32 = 0.45;
 /// How heavy wood is, in kilograms a cubic metre.
 const WOOD: f32 = 650.0;
 /// How fast a piece tips over the way it was cut, in turns a second.
@@ -130,6 +139,10 @@ pub struct VoxelPieceBody {
     /// How long it has fallen, and lain still, in seconds.
     pub falling: f32,
     pub still: f32,
+    /// The stump's edge it tips over, in the world, and the way across it
+    /// turns about there; and the hinge holding it there while it tips.
+    pub hinge: (Vec3, Vec3),
+    pub joint: Option<voxear_physics::JointId>,
 }
 
 impl Component for VoxelPieceBody {}
@@ -177,6 +190,11 @@ pub fn cut(world: &mut World, cut: &VoxelCut, options: CutOptions, only: Option<
         done.reached += 1;
         done.columns += made.columns;
         done.voxels += made.voxels;
+        // Clippings fly up where grass was cut.
+        for at in &made.mown {
+            let effect = voxear_render::EffectRef::Builtin(voxear_render::Starter::Clippings);
+            crate::particles::play(world, effect, (corner + *at, Quat::IDENTITY), None, None);
+        }
         let middle_of_cut = match &local {
             VoxelCut::Points(points) => points.iter().fold(Vec3::ZERO, |sum, p| sum + *p) / points.len().max(1) as f32,
             VoxelCut::Ball { at, .. } | VoxelCut::Slice { at, .. } => *at,
@@ -205,6 +223,8 @@ fn spawn(
 ) -> Entity {
     let middle = piece.middle();
     let place = corner + piece.low.as_vec3() * piece.voxel + middle;
+    // Its logs as boxes: its leaves pass through branches and the ground, and are pressed against the ground where it
+    // comes to rest.
     let boxes: Vec<(Vec3, Vec3)> = piece.boxes(MOST_BOXES).into_iter().map(|(at, half)| (at - middle, half)).collect();
     let mass = (piece.logs() as f32 * piece.voxel.powi(3) * WOOD).max(1.0);
     // Away from the cut, across; straight down a trunk, a way of its own.
@@ -222,6 +242,8 @@ fn spawn(
     let rigidbody = Rigidbody { mass, kinematic: true, angular_drag: 0.3, ..Rigidbody::default() };
     let reach = boxes.iter().map(|(at, half)| at.length() + half.length()).fold(0.0, f32::max);
     let roughness = world.get::<VoxelVolume>(volume).map_or(0.8, |made| made.roughness);
+    let toward = toward.normalize();
+    let hinge = (corner + piece.low.as_vec3() * piece.voxel + stump_edge(&piece, toward), Vec3::Y.cross(toward));
     let piece = Arc::new(piece);
     let entity = world.spawn((Transform::from_position(place), voxear_scene::Name("Felled tree".into())));
     // Its voxels, as a volume of their own as large as its box, its corner the box's, turned with the body.
@@ -232,9 +254,11 @@ fn spawn(
         volume,
         piece,
         middle,
-        toward: toward.normalize(),
+        toward,
         rest: options.rest,
         look,
+        hinge,
+        joint: None,
         reach,
         fall: PieceFall::Waiting,
         falling: 0.0,
@@ -285,6 +309,7 @@ pub fn fall(world: &mut World, dt: f32) {
     }
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else { return };
     let mut stamp = Vec::new();
+    let mut crush = Vec::new();
     for (entity, mut body) in found {
         let Some(place) = world.get::<Transform>(entity).map(|t| (t.position, t.rotation)) else { continue };
         match body.fall {
@@ -300,15 +325,39 @@ pub fn fall(world: &mut World, dt: f32) {
                 }
             }
             PieceFall::Tipping => {
-                // Made again as a dynamic body: it leans over the way it was cut.
+                // Made again as a dynamic body: hinged on its stump's edge, it leans over the way it was cut.
                 if let Some(id) = physics.body(entity) {
-                    let axis = Vec3::Y.cross(body.toward).normalize_or_zero();
-                    physics.world_mut().set_velocity(id, body.toward * 0.2, axis * TIP * std::f32::consts::TAU);
+                    let (point, axis) = body.hinge;
+                    let hinge = voxear_physics::JointKind::Hinge { point, axis, limits: None };
+                    body.joint = physics.world_mut().add_joint(hinge, id, None);
+                    let turn = axis * TIP * std::f32::consts::TAU;
+                    physics.world_mut().set_active(id, true);
+                    physics.world_mut().set_velocity(id, turn.cross(place.0 - point), turn);
                     body.fall = PieceFall::Falling;
                 }
             }
             PieceFall::Falling => {
                 body.falling += dt;
+                // Most of the way over, it lets go of its stump and slides off it to the ground.
+                let tilt = (place.1 * Vec3::Y).angle_between(Vec3::Y);
+                // Over its first few degrees, until its weight is past the stump's edge, it is pushed on over, as a
+                // wedge driven into the cut does.
+                if let Some(id) = physics.body(entity).filter(|_| body.joint.is_some() && tilt < WEDGED) {
+                    let (point, axis) = body.hinge;
+                    let (_, angular) = physics.world().velocity(id);
+                    if angular.dot(axis) < TIP * std::f32::consts::TAU {
+                        // Turning about the stump's edge: its middle moves as the turn carries it, the edge stays.
+                        let turn = axis * TIP * std::f32::consts::TAU;
+                        physics.world_mut().set_active(id, true);
+                        physics.world_mut().set_velocity(id, turn.cross(place.0 - point), turn);
+                    }
+                }
+                // Or caught part way over, on its branches: it slips off its stump then too.
+                let turning = physics.body(entity).map_or(0.0, |id| physics.world().velocity(id).1.length());
+                let caught = tilt > WEDGED * 2.0 && turning < STILL_SPEED;
+                if body.joint.is_some() && (tilt > LET_GO || caught || body.falling > LONGEST_HINGED) {
+                    unhinge(&mut physics, &mut body);
+                }
                 let (linear, angular) =
                     physics.body(entity).map_or((Vec3::ZERO, Vec3::ZERO), |id| physics.world().velocity(id));
                 let asleep = physics.body(entity).is_some_and(|id| !physics.world().is_active(id));
@@ -318,7 +367,9 @@ pub fn fall(world: &mut World, dt: f32) {
                     0.0
                 };
                 if (body.still >= STILL_FOR && body.falling > 0.5) || body.falling > LONGEST_FALL {
+                    unhinge(&mut physics, &mut body);
                     body.fall = PieceFall::Resting;
+                    crush.push(entity);
                     let felled = world.get::<VoxelVolume>(body.volume).map(|volume| match volume.felled {
                         VoxelFelled::Body => PieceRest::Stay,
                         VoxelFelled::Stamped => PieceRest::Stamp,
@@ -337,6 +388,14 @@ pub fn fall(world: &mut World, dt: f32) {
         }
     }
     world.insert_resource(physics);
+    // Its leaves pressed against the ground where it lies, before anything else becomes of it.
+    for entity in crush {
+        crush_leaves(world, entity);
+    }
+    let stamp: Vec<_> = stamp
+        .into_iter()
+        .map(|(entity, body, place)| (entity, body.and_then(|_| world.get::<VoxelPieceBody>(entity).cloned()), place))
+        .collect();
     for (entity, body, (position, rotation)) in stamp {
         match body {
             Some(body) => {
@@ -381,9 +440,103 @@ pub fn piece(world: &World, entity: Entity) -> Option<FelledPiece> {
     Some(FelledPiece::of(Some(entity), place, &body.piece, body.fall == PieceFall::Resting))
 }
 
+/// Lets a piece go of its stump.
+fn unhinge(physics: &mut PhysicsScene, body: &mut VoxelPieceBody) {
+    if let Some(joint) = body.joint.take() {
+        physics.world_mut().remove_joint(joint);
+    }
+}
+
+/// Lets piece `entity` go of its stump, as it is taken away.
+fn unhinge_piece(world: &mut World, entity: Entity) {
+    let Some(mut body) = world.get::<VoxelPieceBody>(entity).cloned() else { return };
+    if let Some(mut physics) = world.remove_resource::<PhysicsScene>() {
+        unhinge(&mut physics, &mut body);
+        world.insert_resource(physics);
+    }
+    if let Some(kept) = world.get_mut::<VoxelPieceBody>(entity) {
+        *kept = body;
+    }
+}
+
+/// Where a piece tips over its stump, in metres from its box's least
+/// corner: the edge of its lowest logs the way it falls, at their foot.
+fn stump_edge(piece: &VoxelPiece, toward: Vec3) -> Vec3 {
+    let logs: Vec<Vec3> = piece
+        .voxels
+        .iter()
+        .filter(|(_, place)| piece.is_wood(*place))
+        .map(|(c, _)| Vec3::new(f32::from(c[0]), f32::from(c[1]), f32::from(c[2])) + 0.5)
+        .collect();
+    let lowest = logs.iter().map(|c| c.y).fold(f32::MAX, f32::min);
+    let foot: Vec<Vec3> = logs.into_iter().filter(|c| c.y <= lowest + 1.0).collect();
+    let middle = foot.iter().fold(Vec3::ZERO, |sum, c| sum + *c) / foot.len().max(1) as f32;
+    let reach = foot.iter().map(|c| (*c - middle).dot(toward)).fold(0.0, f32::max);
+    Vec3::new(middle.x, lowest - 0.5, middle.z) * piece.voxel + toward * (reach + 0.5) * piece.voxel
+}
+
+/// Presses the leaves of piece `entity` against the ground where it lies:
+/// those under the ground, and those a little over it, squashed down into
+/// a layer on it, its voxels made again. The ground is its volume's own, as
+/// made.
+fn crush_leaves(world: &mut World, entity: Entity) {
+    let Some(body) = world.get::<VoxelPieceBody>(entity).cloned() else { return };
+    let Some((position, rotation)) = world.get::<Transform>(entity).map(|t| (t.position, t.rotation)) else { return };
+    let Some(volume) = world.get::<VoxelVolume>(body.volume).cloned() else { return };
+    let corner = world.get::<voxear_scene::WorldTransform>(body.volume).map(|t| t.0.w_axis.truncate());
+    let Some(corner) = corner.or_else(|| world.get::<Transform>(body.volume).map(|t| t.position)) else { return };
+    let piece = &body.piece;
+    let v = piece.voxel;
+    let pose = Mat4::from_translation(position) * Mat4::from_quat(rotation) * Mat4::from_translation(-body.middle);
+    let back = pose.inverse();
+    let mut grounds: std::collections::HashMap<(i32, i32), f32> = std::collections::HashMap::new();
+    let mut ground_at = |p: Vec3| {
+        let key = ((p.x / (v * 4.0)).floor() as i32, (p.z / (v * 4.0)).floor() as i32);
+        *grounds.entry(key).or_insert_with(|| {
+            voxear_render::voxel_ground_at(&volume, p.x - corner.x, p.z - corner.z)
+                .map_or(f32::MIN, |(h, _)| corner.y + h)
+        })
+    };
+    let mut cells: std::collections::BTreeMap<[u16; 3], u8> = piece.voxels.iter().copied().collect();
+    let mut moved = 0;
+    for (c, place) in &piece.voxels {
+        if piece.is_wood(*place) {
+            continue;
+        }
+        let p = pose.transform_point3((Vec3::new(f32::from(c[0]), f32::from(c[1]), f32::from(c[2])) + 0.5) * v);
+        let ground = ground_at(p);
+        let over = p.y - ground;
+        if over >= PRESSED {
+            continue;
+        }
+        let pressed = ground + over.max(0.0) * PRESSED_TO + v * 0.5;
+        if (pressed - p.y).abs() < v * 0.5 {
+            continue;
+        }
+        let to = back.transform_point3(Vec3::new(p.x, pressed, p.z)) / v;
+        cells.remove(c);
+        moved += 1;
+        let inside = to.cmpge(Vec3::ZERO).all() && (0..3).all(|a| (to[a] as u32) < piece.size[a]);
+        if inside {
+            let cell = to.floor().to_array().map(|a| a as u16);
+            cells.entry(cell).or_insert(*place);
+        }
+    }
+    if moved == 0 {
+        return;
+    }
+    let pressed = VoxelPiece { voxels: cells.into_iter().collect(), ..(**piece).clone() };
+    let roughness = world.get::<VoxelVolume>(body.look).map_or(0.8, |look| look.roughness);
+    world.insert(body.look, piece_volume(&pressed, roughness));
+    if let Some(kept) = world.get_mut::<VoxelPieceBody>(entity) {
+        kept.piece = Arc::new(pressed);
+    }
+}
+
 /// Stamps felled piece `entity` into its volume where it lies now, whether
 /// at rest or not, and takes its Obj away: whether it was a piece.
 pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
+    unhinge_piece(world, entity);
     let Some(body) = world.get::<VoxelPieceBody>(entity).cloned() else { return false };
     let Some((position, rotation)) = world.get::<Transform>(entity).map(|t| (t.position, t.rotation)) else {
         return false;
@@ -396,6 +549,7 @@ pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
 
 /// Takes felled piece `entity` away: whether it was a piece.
 pub fn remove_piece(world: &mut World, entity: Entity) -> bool {
+    unhinge_piece(world, entity);
     let Some(look) = world.get::<VoxelPieceBody>(entity).map(|body| body.look) else { return false };
     world.despawn(look);
     world.despawn(entity);
@@ -419,44 +573,41 @@ fn stamp_back(world: &mut World, body: &VoxelPieceBody, position: Vec3, rotation
     }
 }
 
-/// How long since each endless volume's cut grass last faded and grew a
-/// step, in seconds.
+/// How long since each endless volume's cut grass last grew a step, in
+/// seconds.
 #[derive(Default)]
-struct CutClocks(std::collections::HashMap<Entity, (f32, f32)>);
+struct CutClocks(std::collections::HashMap<Entity, f32>);
 
-/// Moves the cut grass, cover and crops of every endless volume on by
-/// `dt` seconds: fading from where they were cut over [`FADE`] seconds,
-/// then growing back over the volume's `regrow` seconds, where it has any.
+/// How tall the tallest of `volume`'s grass and cover grows, in its voxels.
+fn tallest(volume: &VoxelVolume) -> f32 {
+    let grass = volume.ground.map_or(0.0, |ground| if ground.grass > 0.0 { ground.grass_height } else { 0.0 });
+    let tall = volume.cover.iter().map(|cover| cover.height).fold(grass, f32::max);
+    tall * volume.voxels_per_metre.clamp(1, voxear_render::MOST_VOXELS_A_METRE) as f32
+}
+
+/// Grows the cut grass, cover and crops of every endless volume back by
+/// `dt` seconds' worth, from the stubble a cut left to as tall as they grow
+/// over the volume's `regrow` seconds, where it has any.
 pub fn tend_cuts(world: &mut World, dt: f32) {
-    let moving: Vec<(Entity, f32)> = world
+    let growing: Vec<(Entity, f32, f32)> = world
         .query_ref::<(Entity, &VoxelVolume)>()
         .into_iter()
-        .filter(|(_, volume)| volume.endless && volume.changes.cuts_moving(volume.regrow > 0.0))
-        .map(|(entity, volume)| (entity, volume.regrow))
+        .filter(|(_, volume)| volume.endless && volume.regrow > 0.0 && volume.changes.any_cut())
+        .map(|(entity, volume)| (entity, volume.regrow, tallest(volume)))
         .collect();
     let mut clocks = world.remove_resource::<CutClocks>().unwrap_or_default();
-    clocks.0.retain(|entity, _| moving.iter().any(|(e, _)| e == entity));
-    for (entity, regrow) in moving {
+    clocks.0.retain(|entity, _| growing.iter().any(|(e, ..)| e == entity));
+    for (entity, regrow, tall) in growing {
         let clock = clocks.0.entry(entity).or_default();
-        clock.0 += dt;
-        clock.1 += dt;
-        let fade_every = FADE / FADE_STEPS;
-        let grow_every = regrow / GROW_STEPS;
-        let fade = if clock.0 >= fade_every { (255.0 / FADE_STEPS).ceil() as u8 } else { 0 };
-        let grow = if regrow > 0.0 && clock.1 >= grow_every { (255.0 / GROW_STEPS).ceil() as u8 } else { 0 };
-        if fade == 0 && grow == 0 {
+        *clock += dt;
+        if *clock < regrow / GROW_STEPS {
             continue;
         }
-        if fade > 0 {
-            clock.0 = 0.0;
-        }
-        if grow > 0 {
-            clock.1 = 0.0;
-        }
+        *clock = 0.0;
+        let grow = (tall / GROW_STEPS).ceil().clamp(1.0, 255.0) as u8;
         if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
             let mut changes = (*volume.changes).clone();
-            // Fading and growing are told apart by the column: a step of each moves only its own.
-            if changes.tend_cuts(fade, grow) {
+            if changes.tend_cuts(grow, tall.ceil().clamp(1.0, 255.0) as u8) {
                 volume.changes = Arc::new(changes);
             }
         }

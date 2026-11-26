@@ -1392,6 +1392,14 @@ Cutting for the RPG's world: grass, cover and crops a blade passes through, and 
   blacked out the wood round a small floating volume: that is now only an endless one's window. A piece waits until
   collision round it is made again without it (about a second, in the background), then tips about its stump; it
   rests after a second lying still. A stamped piece's volume lingers a second while the ground is made again.
+- **Falling like a tree.** Pushed over freely, a felled tree rocked back onto its stump and bounced. It is now
+  hinged to the world on its stump's edge the way it falls (a hinge joint, its middle's speed set to match the turn
+  so the hinge does not cancel the push), pushed over its first 0.3 rad as a wedge would, and let go of the stump at
+  1.15 rad or when caught on its branches. A cushion of leaf boxes jammed the crown into its neighbours' branches and
+  held it up: leaves now pass through, and are pressed into a layer against the ground where it rests.
+- **Grass cut, not faded.** A cut column keeps how many voxels of blade are under the cut; the tops pass keeps the
+  blades to that and drops heads and flowers. Clippings (a new built-in effect) are played at a place in each
+  brick's column cut.
 - **Measured** (development build, shared CPU): felling a 10 m oak takes 0.14 s on the CPU, most of it working out
   its blocks' pieces and leaves; first versions took 0.45 s, before the pieces were found on each block's own grid
   and trees' logs were looked for only near the cut trees.

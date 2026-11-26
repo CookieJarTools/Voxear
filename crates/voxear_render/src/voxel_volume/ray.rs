@@ -203,14 +203,13 @@ mod tests {
         let cover = raycast_meeting(&volume, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("the grass");
         assert!(cover.cover && !solid.cover);
         assert!((cover.point.y - (solid.point.y + 0.5)).abs() < 0.07, "{cover:?} over {solid:?}");
-        // Cut and faded, the grass there is met no more; half faded, half as high.
+        // Cut four voxels over the ground, the grass there is met at that; cut to the ground, it is met no more.
         let mut changes = crate::VoxelChanges::default();
-        changes.cut(48, 48);
-        changes.tend_cuts(128, 0);
+        changes.cut(48, 48, 4);
         let half = VoxelVolume { changes: Arc::new(changes.clone()), ..volume.clone() };
-        let met = raycast_meeting(&half, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("half");
+        let met = raycast_meeting(&half, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("stubble");
         assert!((met.point.y - (solid.point.y + 0.25)).abs() < 0.07, "{met:?}");
-        changes.tend_cuts(255, 0);
+        changes.cut(48, 48, 0);
         let cut = VoxelVolume { changes: Arc::new(changes), ..volume };
         let met = raycast_meeting(&cut, Vec3::ZERO, from, down, 100.0, VoxelRayMeets::Cover).expect("the ground");
         assert!(!met.cover && (met.point.y - solid.point.y).abs() < 1e-3, "{met:?}");

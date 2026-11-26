@@ -28,7 +28,7 @@
 //!
 //! Set to Cut, the ball sits on the grass, cover and crops under the
 //! pointer, and dragging cuts them, as `voxels.cut` and a script's
-//! `Voxels.Cut` do: the blades fade away, and logs in the ball are cut
+//! `Voxels.Cut` do: the blades are cut where the ball meets them, and logs in the ball are cut
 //! through, what comes loose of a tree falling while the game plays, or
 //! taken away in the editor.
 //!

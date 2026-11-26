@@ -1313,8 +1313,16 @@ fn a_room_under_a_roof_is_dark_but_for_its_door_and_its_lantern() {
     let height = 2.6;
     let middle = (7.6, 8.4);
     let corner = (6.6, 6.6);
+    // A white box of a model on the floor, its top half a metre up, by the south wall.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let white = MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let white = renderer.add_material(&white).unwrap();
+    let model = (8.8, 7.0);
     let mut shot = |has: House, name: &str| {
-        let pixels = render(&mut renderer, &printed_from_above(house(has), height), 12);
+        let mut scene = printed_from_above(house(has), height);
+        let placed = Transform::new(Vec3::new(model.0, 2.25, model.1), Quat::IDENTITY, Vec3::splat(0.5));
+        scene.spawn((MeshRenderer::new(cube, white), placed));
+        let pixels = render(&mut renderer, &scene, 12);
         keep_image(name, &pixels);
         pixels
     };
@@ -1325,6 +1333,9 @@ fn a_room_under_a_roof_is_dark_but_for_its_door_and_its_lantern() {
     let sum = |c: [i32; 3]| c.iter().sum::<i32>();
     let at = |pixels: &[u8], (x, z): (f32, f32)| sum(mean_around(pixels, height, (x, z), 4));
     let (open_middle, sealed_middle) = (at(&open, middle), at(&sealed, middle));
+    // The model under the roof is as dark as the voxels round it.
+    let (open_model, sealed_model) = (at(&open, model), at(&sealed, model));
+    assert!(sealed_model * 4 < open_model, "the model sealed under the roof: {sealed_model} against {open_model}");
     assert!(
         sealed_middle * 4 < open_middle,
         "sealed under the roof: {sealed_middle} against {open_middle} open to the sky"
@@ -1380,4 +1391,171 @@ fn a_window_of_glass_voxels_shows_what_is_behind_it() {
     let beside = |pixels: &[u8]| rgb_at(pixels, WIDTH / 2, HEIGHT / 2 + 100);
     let (a, b) = (beside(&glass), beside(&wall));
     assert!((0..3).all(|i| (a[i] - b[i]).abs() < 12), "the wall beside the window: {a:?} and {b:?}");
+}
+
+/// A room 15 m square and 5 m tall sealed in stone a metre thick, as the
+/// blocks test's sealed room is, seen from a corner towards where its lamp,
+/// a metre cube of voxels glowing as a block of light 15 in the colour a
+/// world of blocks' light has, stands on the floor; the room's inside from
+/// 24 to 39 m along X and Z.
+fn sealed_voxel_room(renderer: &mut Renderer, lamp: bool) -> Vec<u8> {
+    let stone = [128, 128, 132, 255];
+    let glow = [255, 183, 108, 255];
+    let mut settings = VoxelPrintSettings::default();
+    settings.materials = vec![VoxelPrintMaterial { colour: [255, 183, 108], glass: 0, light: 15 }];
+    let print = VoxelPrint::from_voxels([272, 112, 272], 16, Vec3::ZERO, vec![stone, glow], settings, |c| {
+        let [x, y, z] = c.map(|a| a as i32);
+        let inside = (16..256).contains(&x) && (16..96).contains(&y) && (16..256).contains(&z);
+        let lit = lamp && (176..192).contains(&x) && (16..32).contains(&y) && (176..192).contains(&z);
+        if lit {
+            2
+        } else if inside {
+            0
+        } else {
+            1
+        }
+    });
+    let mut world = World::new();
+    let ground = VoxelGround { height: 2.0, hills: 0.0, grass: 0.0, flowers: 0.0, ..VoxelGround::default() };
+    let edits = Arc::new(vec![VoxelEdit::printed(Arc::new(print), Vec3::new(23.0, 2.0, 23.0), Quat::IDENTITY)]);
+    let volume = VoxelVolume {
+        size: Vec3::new(16.0, 12.0, 16.0),
+        ground: Some(ground),
+        endless: true,
+        reach: 32.0,
+        edits,
+        ..VoxelVolume::default()
+    };
+    world.spawn((volume, Transform::default()));
+    let view = Quat::from_rotation_y(45f32.to_radians()) * Quat::from_rotation_x(0.25);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(25.5, 6.0, 25.5), view, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 4.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let mut post = PostProcess::neutral();
+    post.anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    world.insert_resource(post);
+    render(renderer, &world, 12)
+}
+
+#[test]
+fn a_sealed_room_of_voxels_is_dark_but_round_its_lamp_as_a_room_of_blocks_is() {
+    let Some(mut renderer) = renderer() else { return };
+    let dark = sealed_voxel_room(&mut renderer, false);
+    let lamp = sealed_voxel_room(&mut renderer, true);
+    keep_image("voxels sealed room.png", &dark);
+    keep_image("voxels sealed room lamp.png", &lamp);
+    let mean = |pixels: &[u8]| {
+        pixels.chunks(4).map(|p| f32::from(p[0]) + f32::from(p[1]) + f32::from(p[2])).sum::<f32>()
+            / (pixels.len() / 4 * 3) as f32
+    };
+    // As the blocks test asks of its room: no light gets in, the lamp lights it, warm.
+    let (unlit, lit) = (mean(&dark), mean(&lamp));
+    assert!(unlit < 3.0, "no light gets into it: {unlit:.2}");
+    assert!(lit > unlit + 15.0, "the lamp lights it: {lit:.1} against {unlit:.2}");
+    let warm = lamp.chunks(4).filter(|p| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) > 60);
+    let (red, blue) = warm.fold((0u64, 0u64), |(r, b), p| (r + u64::from(p[0]), b + u64::from(p[2])));
+    assert!(red > blue * 3 / 2, "the lamp's light is warm: red {red} against blue {blue}");
+}
+
+/// The frame's cost at 1920×1080 of a street of houses printed into Rolling
+/// Hills without its rivers, seen from 20 m up, with models
+/// standing among them: each pass and the whole frame the least of 60
+/// frames, with the post-processing off and with its usual ambient
+/// occlusion and contact shadows. Their windows' colours are a fifth solid,
+/// so they are glass where voxels can be see-through. Run by hand:
+/// `cargo test -p voxear_render --test voxels measure_a_street_of_houses -- --ignored --nocapture`,
+/// with `VOXEAR_TEST_OUTPUT` naming a folder for the pictures.
+#[test]
+#[ignore]
+fn measure_a_street_of_houses() {
+    let Ok(mut renderer) = Renderer::new_offscreen(1920, 1080, &RendererSettings::default()) else { return };
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let stone = [150, 146, 138, 255];
+    let glass = [196, 222, 230, 50];
+    let roof = [120, 60, 44, 255];
+    let print = VoxelPrint::from_voxels(
+        [80, 64, 96],
+        16,
+        Vec3::new(40.0, 0.0, 48.0),
+        vec![stone, glass, roof],
+        VoxelPrintSettings::default(),
+        |c| {
+            let [x, y, z] = c.map(|a| a as i32);
+            // A roof rising to a ridge along Z, a quarter of a metre thick, over walls with gables at its ends.
+            let ridge = 44 + (40 - (x - 40).abs()) / 2;
+            let roofing = y >= 44 && y <= ridge && y + 4 > ridge;
+            let wall = ((x < 4 || x >= 76) && y < 44) || ((z < 4 || z >= 92) && y <= ridge);
+            let window = (x < 4 || x >= 76) && (z % 32) >= 10 && (z % 32) < 22 && (16..34).contains(&y);
+            let door = z < 4 && (32..48).contains(&x) && y < 34;
+            if roofing {
+                3
+            } else if window {
+                2
+            } else if wall && !door {
+                1
+            } else {
+                0
+            }
+        },
+    );
+    let print = Arc::new(print);
+    for (name, post) in [("post off", PostProcess::neutral()), ("post on", PostProcess::default())] {
+        let mut scene = generated_view(hills.clone(), 8.0, 8.0, 20.0, 35.0);
+        let volume = scene.query::<&VoxelVolume>().into_iter().next().unwrap().clone();
+        let mut edits = Vec::new();
+        for (i, &(x, z)) in
+            [(1.0, 22.0), (15.0, 20.0), (2.0, 34.0), (16.0, 32.0), (0.0, 46.0), (14.0, 44.0)].iter().enumerate()
+        {
+            let Some(ground) = voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(x, 47.0, z), -Vec3::Y, 47.0)
+            else {
+                continue;
+            };
+            let turn = Quat::from_rotation_y(if i % 2 == 0 { 0.0 } else { std::f32::consts::PI });
+            edits.push(VoxelEdit::printed(print.clone(), ground.point - Vec3::Y * 0.5, turn));
+        }
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.reach = 64.0;
+            volume.edits = Arc::new(edits.clone());
+        }
+        let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+        scene.insert_resource(PostProcess { anti_aliasing, ..post });
+        // Models standing in the street: boxes a person's size.
+        let cube = renderer.primitive(Primitive::Cube).unwrap();
+        let cloth = MaterialDesc { base_color: [0.5, 0.35, 0.25, 1.0], roughness: 0.8, ..MaterialDesc::default() };
+        let cloth = renderer.add_material(&cloth).unwrap();
+        for k in 0..12 {
+            let (x, z) = (6.5 + (k % 3) as f32 * 1.5, 22.0 + (k / 3) as f32 * 6.0);
+            if let Some(ground) =
+                voxear_render::voxel_raycast(&volume, Vec3::ZERO, Vec3::new(x, 47.0, z), -Vec3::Y, 47.0)
+            {
+                let placed = Transform::new(ground.point + Vec3::Y * 0.9, Quat::IDENTITY, Vec3::new(0.5, 1.8, 0.3));
+                scene.spawn((MeshRenderer::new(cube, cloth), placed));
+            }
+        }
+        renderer.render(&scene, 0.0).unwrap();
+        assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(60)).unwrap());
+        let mut least: std::collections::BTreeMap<String, f32> = Default::default();
+        let mut frame = f32::MAX;
+        for i in 0..90 {
+            renderer.render(&scene, i as f32 / 60.0).unwrap();
+            if i >= 30 {
+                for (pass, ms) in renderer.timings() {
+                    let kept = least.entry(pass.clone()).or_insert(f32::MAX);
+                    *kept = kept.min(*ms);
+                }
+                frame = frame.min(renderer.gpu_frame_ms());
+            }
+        }
+        let voxels: Vec<_> = least.iter().filter(|(pass, _)| pass.contains("oxel")).collect();
+        let depth: f32 = least.iter().filter(|(pass, _)| pass.starts_with("Depth")).map(|(_, ms)| ms).sum();
+        eprintln!("{name}: frame {frame:.2} ms, depth passes {depth:.2} ms, {voxels:?}");
+        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let (w, h, pixels) = renderer.read_pixels().unwrap();
+            let file = std::fs::File::create(std::path::Path::new(&dir).join(format!("street, {name}.png"))).unwrap();
+            let mut encoder = png::Encoder::new(file, w, h);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+    }
 }

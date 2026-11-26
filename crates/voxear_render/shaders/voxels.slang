@@ -42,6 +42,8 @@ static const float VOXEL_GRASS_LEAN = 0.2;
 static const float VOXEL_SWAY_MOST = 2.0;
 // How far a voxel's shadow is traced towards the sun, in metres.
 static const float VOXEL_SHADOW_REACH = 64.0;
+// How brightly a voxel glowing at its brightest shines, times its colour.
+static const float VOXEL_GLOW_SHINE = 4.0;
 
 struct VoxelHit
 {
@@ -675,6 +677,16 @@ VoxelOut voxelOpaque(VoxelVertex input)
     float3 world = voxelOrigin(frame, pixel) + d * hit.metres;
     float3 normal = voxelNormal(hit, d);
     float3 albedo = voxelColour(volume, hit);
+    // A voxel that glows, as a lantern's flame does, shines with its own light.
+    float glows = 0.0;
+    if (hit.level == 0u && hit.brick >= 0)
+    {
+        uint* bits = volume.bricks + uint(hit.brick) * VOXEL_BRICK_WORDS;
+        if ((bits[19] & VOXEL_GLOWS) != 0u)
+        {
+            glows = float(voxelKind(voxelPaletteAt(volume, bits, hit.cell & 7)).y) / 15.0;
+        }
+    }
 
     Surface s;
     s.normal = normal;
@@ -745,6 +757,7 @@ VoxelOut voxelOpaque(VoxelVertex input)
     }
     color += ambient * s.diffuse * occlusion.diffuse;
     color += reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
+    color += albedo * glows * glows * VOXEL_GLOW_SHINE;
 
     if (atmosphere)
     {
@@ -996,7 +1009,7 @@ void voxelCellBits(VoxelVolumes* volumes, float3 middle, bool glows, out uint bi
         }
         uint* words = volume.bricks + uint(brick) * VOXEL_BRICK_WORDS;
         uint marks = words[19];
-        if ((marks & (VOXEL_GLOWS | VOXEL_SEE_THROUGH)) == 0u || (!glows && (marks & VOXEL_SEE_THROUGH) == 0u))
+        if ((marks & (VOXEL_GLOWS | VOXEL_SEE_THROUGH)) == 0u)
         {
             for (uint w = 0; w < 16; w++)
             {
@@ -1004,7 +1017,8 @@ void voxelCellBits(VoxelVolumes* volumes, float3 middle, bool glows, out uint bi
             }
             continue;
         }
-        // Glass lets light through, and a glowing voxel gives it: their voxels looked at one by one.
+        // Glass lets light through, and a glowing voxel gives it out and lets it through, as a block of light does:
+        // their voxels looked at one by one.
         uint at = words[18];
         for (uint w = 0; w < 16; w++)
         {
@@ -1018,7 +1032,7 @@ void voxelCellBits(VoxelVolumes* volumes, float3 middle, bool glows, out uint bi
                 at++;
                 uint packed = volume.palette[material];
                 uint2 kind = voxelKind(packed);
-                if (kind.x != 0u)
+                if (kind.x != 0u || kind.y != 0u)
                 {
                     kept &= ~(1u << bit);
                 }

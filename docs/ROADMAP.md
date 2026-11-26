@@ -4516,7 +4516,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stage 4 begun)
+## Small voxels (in progress: stages 1, 2 and 5 built, stage 3 mostly, stage 4 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4644,6 +4644,18 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
   turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
   stays whole. Next: changed bricks in region files, edits over the network, collision.
+- **Stage 5 built (2026-11-26): distance in rings.** An endless Voxel Volume's **Distance** (`distance` in the scene
+  and `field.set`) carries its ground on past its reach in rings, each an endless volume of its own with voxels
+  twice the size and twice the reach of the ring inside it (1/8, 1/4, 1/2 m, then 1 m as far as the distance), made
+  on the GPU by the same generator, grass, trees and edits. Each ring draws inside a square round the camera that
+  moves on with it, and the next walks from that square's edge, so nothing pops where they meet: a 10 cm move over a
+  sector's edge changes 5% more pixels than one within a sector, against 30% with edges a sector at a time. Each
+  voxel's shade goes by its place in the world, so a window moving no longer changes it. Trees in rings stand where
+  the finest ring has them, off the ring's coarse bricks, and far crowns stay loose cubes. A ring makes nothing the
+  ring inside it has made, and fewer columns a frame. Measured with 100 trees a hectare at reach 64 m, 1080p: 121 MB
+  and 4 ms for today's view, 499 MB and 12.3 ms to 1 km, 616 MB and 13 ms to 2 km; without trees 432 MB to 2 km. The lit pass
+  keeps a plain walk of its own, as carrying the rings' edges made it 0.5–1.3 ms slower for every volume. Next: far
+  rings kept on disk, the finest ring taller than 64 m.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

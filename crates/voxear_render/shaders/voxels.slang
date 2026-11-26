@@ -339,6 +339,55 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
     return false;
 }
 
+// How far a ring's walk from `o` along `d` (in its voxels) passes over before it starts, and how far it goes at most,
+// `far`, cut short: a ring draws only inside its outer box, a square round the camera, and passes over its hole, the
+// ring inside it's outer box. Where it starts on an edge, which axis the edge is across (0 for X, 2 for Z) and where it
+// is. A ray from the camera leaves the hole once and never comes back; a shadow ray going back over it meets the ring's
+// own ground there, which is the finer ring's. `far` is none where the walk has nothing to go through.
+float voxelRingSkip(float4 outer, float4 hole, float3 o, float3 d, inout float far, out int axis, out float edge)
+{
+    axis = 0;
+    edge = 0.0;
+    if (outer.z <= outer.x && hole.z <= hole.x)
+    {
+        return 0.0;
+    }
+    float2 inv = 1.0 / select(abs(d.xz) < 1e-7, select(d.xz < 0.0, -1e-7, 1e-7), d.xz);
+    float into = 0.0;
+    if (outer.z > outer.x)
+    {
+        float2 b0 = (outer.xy - o.xz) * inv;
+        float2 b1 = (outer.zw - o.xz) * inv;
+        float2 bn = min(b0, b1);
+        float2 bf = max(b0, b1);
+        far = min(far, min(bf.x, bf.y));
+        into = max(max(bn.x, bn.y), 0.0);
+        int across = bn.x > bn.y ? 0 : 1;
+        axis = across * 2;
+        edge = inv[across] > 0.0 ? outer[across] : outer[across + 2];
+    }
+    if (hole.z > hole.x)
+    {
+        float2 h0 = (hole.xy - o.xz) * inv;
+        float2 h1 = (hole.zw - o.xz) * inv;
+        float2 hn = min(h0, h1);
+        float2 hf = max(h0, h1);
+        float leave = min(hf.x, hf.y);
+        if (max(hn.x, hn.y) <= into && leave > into)
+        {
+            into = leave;
+            int across = hf.x < hf.y ? 0 : 1;
+            axis = across * 2;
+            edge = inv[across] > 0.0 ? hole[across + 2] : hole[across];
+        }
+    }
+    if (into >= far)
+    {
+        far = 0.0;
+    }
+    return into;
+}
+
 // The nearest voxel of any volume along the ray from `from` along `d` (in the world), starting `start` metres out
 // and going no further than `reach`. `foot0` and `footScale` are as voxelTrace's, in metres.
 bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, float reach, float foot0, float footScale, out VoxelHit nearest)
@@ -352,15 +401,86 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
         float3 o = (from + d * start - volume.corner) / volume.voxel;
         VoxelHit hit;
         float far = (nearest.metres - start) / volume.voxel;
+        // A ring's walk starts on the edge it passes over, so its first cell is the one past it. Worked out here, and
+        // again after a hit, so the walk carries nothing more than a volume's.
+        int axis;
+        float edge;
+        float skip = voxelRingSkip(volume.outer, volume.hole, o, d, far, axis, edge);
         if (far <= 0.0)
         {
             continue;
         }
-        bool met = voxelTrace(volume, o, d, far, (foot0 + start * footScale) / volume.voxel, footScale, hit);
+        if (skip > 0.0)
+        {
+            o += d * skip;
+            o[axis] = edge;
+        }
+        bool met = voxelTrace(volume, o, d, far - skip, (foot0 + (start + skip * volume.voxel) * footScale) / volume.voxel, footScale, hit);
         nearest.steps += hit.steps;
         if (met)
         {
-            hit.metres = start + hit.t * volume.voxel;
+            float4 outer = volumes->volumes[v].outer;
+            float4 hole = volumes->volumes[v].hole;
+            float voxel = volumes->volumes[v].voxel;
+            float3 again = (from + d * start - volumes->volumes[v].corner) / voxel;
+            float most = 1e30;
+            skip = voxelRingSkip(outer, hole, again, d, most, axis, edge);
+            // A voxel met first past an edge was cut by it: it is lit as its top, never as a side the edge made.
+            if (skip > 0.0 && hit.t <= 0.0 && d.y < 0.0)
+            {
+                hit.axis = 1;
+            }
+            hit.t += skip;
+            hit.metres = start + hit.t * voxel;
+            hit.volume = v;
+            hit.steps = nearest.steps;
+            nearest = hit;
+            found = true;
+        }
+    }
+    return found;
+}
+
+// The nearest voxel of any volume along the ray, as voxelsTrace, but walking every volume whole: rings' holes and outer
+// boxes are not passed over. For the lit pass, which carries much else and runs best with the plainest walk: its
+// fallback walk where no depth pass kept what a pixel met, and its shadow rays. A shadow ray from a voxel `nearVoxel`
+// metres across (none for others) walks an endless volume of another size from three of the larger of their voxels
+// out, and a ring whose hole it starts in from where it comes out of it: a ring's ground lies under the finer ring's
+// near its edges, up to a voxel of its own over or under it, which the ray has climbed clear of by then; nearer than
+// that, the ring met is the one walked.
+bool voxelsPlainTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, float reach, float foot0, float footScale, float nearVoxel, out VoxelHit nearest)
+{
+    nearest = (VoxelHit)0;
+    nearest.metres = reach;
+    bool found = false;
+    for (uint v = 0; v < volumes->count; v++)
+    {
+        VoxelVolume volume = volumes->volumes[v];
+        float begin = start;
+        if (volume.windowed != 0u && nearVoxel > 0.0 && volume.voxel != nearVoxel)
+        {
+            begin += 3.0 * max(volume.voxel, nearVoxel);
+            // A shadow ray starting in a ring's hole is walked in it from where it comes out: what is in the hole is
+            // drawn by the finer ring, which the ray is walked through too.
+            float2 at = (from.xz - volume.corner.xz) / volume.voxel;
+            if (all(at > volume.hole.xy) && all(at < volume.hole.zw))
+            {
+                float2 leave = (select(d.xz > 0.0, volume.hole.zw, volume.hole.xy) - at) / d.xz;
+                begin = max(begin, min(leave.x, leave.y) * volume.voxel);
+            }
+        }
+        float3 o = (from + d * begin - volume.corner) / volume.voxel;
+        VoxelHit hit;
+        float far = (nearest.metres - begin) / volume.voxel;
+        if (far <= 0.0)
+        {
+            continue;
+        }
+        bool met = voxelTrace(volume, o, d, far, (foot0 + begin * footScale) / volume.voxel, footScale, hit);
+        nearest.steps += hit.steps;
+        if (met)
+        {
+            hit.metres = begin + hit.t * volume.voxel;
             hit.volume = v;
             hit.steps = nearest.steps;
             nearest = hit;
@@ -406,8 +526,10 @@ float3 voxelColour(VoxelVolume volume, VoxelHit hit)
         packed = volume.palette[material];
     }
     float3 srgb = float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0;
-    // Each voxel a shade of its own, so a field of one colour still reads as small cubes.
-    uint3 c = uint3(hit.cell >> hit.level);
+    // Each voxel a shade of its own, so a field of one colour still reads as small cubes: by its place in the world, so
+    // an endless volume's window moving leaves it be, and a ring's voxel takes the shade of the finer ring's group of
+    // its size where it stands.
+    uint3 c = uint3((hit.cell + volume.windowSector * 64) >> hit.level);
     uint h = c.x * 0x8DA6B343u ^ c.y * 0xD8163841u ^ c.z * 0xCB1AB31Fu;
     h ^= h >> 16;
     h *= 0x7FEB352Du;
@@ -456,28 +578,43 @@ float voxelPixelAngle(Frame* frame, float2 pixel)
     return length(voxelRay(frame, pixel + float2(0.0, 1.0)) - voxelRay(frame, pixel));
 }
 
-// The ray from the camera through `pixel` to the nearest voxel, starting where the coarse pass says it may.
-bool voxelPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
+// Where the ray through `pixel` from the camera starts, as the coarse pass says it may, and how large a pixel is along
+// it: false where the coarse rays round it met nothing.
+bool voxelPixelStart(Frame* frame, float2 pixel, out float3 d, out float start, out float footScale)
 {
     VoxelVolumes* volumes = voxelVolumes();
     d = voxelRay(frame, pixel);
-    float footScale = voxelPixelAngle(frame, pixel) * volumes->lodScale;
-    float start = 0.0;
+    footScale = voxelPixelAngle(frame, pixel) * volumes->lodScale;
+    start = 0.0;
     if (volumes->coarseStep != 0)
     {
         uint2 c = min(uint2(pixel) / volumes->coarseStep, volumes->coarseSize - 2);
         uint w = volumes->coarseSize.x;
         float* t = volumes->coarse;
-        float nearest = min(min(t[c.y * w + c.x], t[c.y * w + c.x + 1]), min(t[(c.y + 1) * w + c.x], t[(c.y + 1) * w + c.x + 1]));
-        if (nearest >= 1e9)
-        {
-            hit = (VoxelHit)0;
-            return false;
-        }
-        // A brick and a half short, in the coarsest volume's bricks.
-        start = max(nearest - 12.0 * volumes->volumes[0].voxel, 0.0);
+        start = min(min(t[c.y * w + c.x], t[c.y * w + c.x + 1]), min(t[(c.y + 1) * w + c.x], t[(c.y + 1) * w + c.x + 1]));
     }
-    return voxelsTrace(volumes, voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, hit);
+    return start < 1e9;
+}
+
+// The ray from the camera through `pixel` to the nearest voxel, starting where the coarse pass says it may.
+bool voxelPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
+{
+    hit = (VoxelHit)0;
+    float start;
+    float footScale;
+    return voxelPixelStart(frame, pixel, d, start, footScale)
+        && voxelsTrace(voxelVolumes(), voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, hit);
+}
+
+// The same ray walked by the plain walk, as the lit pass walks it where no depth pass kept what a pixel met: the view
+// then has no rings (src/passes.rs).
+bool voxelPlainPixel(Frame* frame, float2 pixel, out float3 d, out VoxelHit hit)
+{
+    hit = (VoxelHit)0;
+    float start;
+    float footScale;
+    return voxelPixelStart(frame, pixel, d, start, footScale)
+        && voxelsPlainTrace(voxelVolumes(), voxelOrigin(frame, pixel), d, start, 1e9, 0.0, footScale, 0.0, hit);
 }
 
 // The coarse rays: each walks against whole bricks, as if each brick were solid, and keeps how far it went.
@@ -494,9 +631,11 @@ void voxelCoarse(uint3 id: SV_DispatchThreadID)
     float2 pixel = float2(id.xy * volumes->coarseStep);
     float3 d = voxelRay(frame, pixel);
     VoxelHit hit;
-    // A footprint of eight voxels or more stops each walk at the first brick with anything in it.
+    // A footprint of eight voxels or more stops each walk at the first brick with anything in it. Each pixel's ray starts
+    // a brick and a half short of it, in the bricks of the volume met, as a ring's bricks are larger.
     bool found = voxelsTrace(volumes, voxelOrigin(frame, pixel), d, 0.0, 1e9, 1e6, 0.0, hit);
-    volumes->coarse[id.y * volumes->coarseSize.x + id.x] = found ? hit.metres : 1e10;
+    float voxel = found ? volumes->volumes[hit.volume].voxel : 0.0;
+    volumes->coarse[id.y * volumes->coarseSize.x + id.x] = found ? max(hit.metres - 12.0 * voxel, 0.0) : 1e10;
 }
 
 struct VoxelVertex
@@ -586,7 +725,7 @@ VoxelOut voxelOpaque(VoxelVertex input)
         hit.metres = asfloat(seen.z);
         hit.brick = voxelBrickAt(volumes->volumes[hit.volume], hit.cell >> 3);
     }
-    else if (!voxelPixel(frame, pixel, d, hit))
+    else if (!voxelPlainPixel(frame, pixel, d, hit))
     {
         discard;
     }
@@ -611,7 +750,7 @@ VoxelOut voxelOpaque(VoxelVertex input)
         float3 from = world + normal * coarser * volume.voxel;
         float foot = hit.metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
         VoxelHit blocked;
-        if (voxelsTrace(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, blocked))
+        if (voxelsPlainTrace(volumes, from, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, volume.voxel, blocked))
         {
             shadow = 0.0;
         }

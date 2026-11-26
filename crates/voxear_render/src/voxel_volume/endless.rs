@@ -9,6 +9,14 @@
 //! window are made, the nearest first, [`MAX_JOBS`] a frame; until then the
 //! walk finds its slot's entry names another column and takes it as empty.
 //!
+//! Past its reach it is seen in rings ([`super::rings_of`]): each ring an
+//! endless volume of its own whose voxels are twice the size of the ring's
+//! inside it and whose reach is twice as far, made by the same passes from
+//! the same ground, grass, trees and edits. Each ring draws only inside its
+//! outer box, a square round the camera within what it has made, and the
+//! ring round it passes over that box (its hole) and makes no column wholly
+//! inside it, so where both are made only the finer is seen.
+//!
 //! Its ground is its own (rolling hills with grass and flowers), or a world
 //! generator's ([`VoxelGenerator`]): the generator's graph compiled to a
 //! program the GPU runs a voxel column at a time (`shaders/generator.slang`).
@@ -23,8 +31,8 @@ use voxear_rhi::{Bindless, Buffer, Gpu, MemoryLocation, vk};
 use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
-    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint,
-    VoxelTrees, VoxelVolume, print, trees,
+    GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint, VoxelTrees,
+    VoxelVolume, print, trees,
 };
 use crate::pipelines::Pipelines;
 
@@ -70,8 +78,10 @@ const BRICK_BYTES: u64 = 80;
 const SIDE: u64 = 72;
 const TOPS: u64 = 68;
 const COUNTERS: u64 = 4;
-/// The most trees placed round a column, and the numbers each takes.
-const MAX_TREES: u64 = 32;
+/// The most trees placed round a column, and the numbers each takes: a
+/// ring's column of one voxel a metre is 64 m a side, with a hundred and
+/// more of them in a wood.
+const MAX_TREES: u64 = 256;
 const TREE_WORDS: u64 = 8;
 /// The most edits that reach a column being made (`MOST_COLUMN_EDITS` in
 /// `shaders/voxel_world.slang`).
@@ -175,7 +185,8 @@ struct GpuWorldMake {
     tree_reach: f32,
     brick_pages: u32,
     edit_count: u32,
-    edit_pad: u32,
+    /// The finest ring's voxel, in metres: its own voxel for the finest.
+    fine: f32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -258,6 +269,16 @@ pub(crate) struct Endless {
     window_sector: [i32; 3],
     /// Its corner in the world, which its sectors count from.
     corner: Vec3,
+    /// The finest ring's voxels a metre: its own for the finest.
+    pub fine: u32,
+    /// The box of sector columns, least and past the most, it has made all
+    /// of, in its world's sectors. Its outer box: a square round the camera
+    /// within that, past which it draws nothing, and its hole: the ring
+    /// inside it's outer box, which it passes over; both in metres from its
+    /// corner along X and Z, least then most.
+    settled: Option<[i32; 4]>,
+    outer: Option<[f32; 4]>,
+    hole: Option<[f32; 4]>,
 }
 
 /// How many voxel metres a sector column is a side.
@@ -361,19 +382,42 @@ struct Room {
     material_pages: u32,
 }
 
+/// What a ring's column keeps on average, for rings of voxels 2, 4, 8 and
+/// 16 times the finest's: bricks and material bytes of its ground, and more
+/// of each for each tree to a hectare. Its trees keep no plants' bricks, as
+/// they stand off its bricks' grid, so a wood keeps more than the finest's.
+/// Measured over the windows of rings round a wood of 100 oaks and pines a
+/// hectare on rolling hills.
+const RING_AVERAGES: [(f64, f64, f64, f64); 4] = [
+    (150.0, 17_000.0, 3.0, 210.0),
+    (125.0, 13_000.0, 2.0, 190.0),
+    (125.0, 13_000.0, 1.4, 90.0),
+    (125.0, 13_000.0, 0.7, 45.0),
+];
+
 /// The shared room of a volume of `slots` columns, with a Volume or
 /// without and with `trees`, `grow` times what columns keep on average.
-fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64) -> Room {
+/// For a ring of voxels `coarser` times the finest's (1 for the finest),
+/// what it keeps on average as a ring, and only for the columns outside the
+/// ring inside it, which it never makes.
+fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64, coarser: u32) -> Room {
     let volume = program.is_some_and(|program| program.volume.is_some());
     let per_hectare: f64 = trees.iter().map(|kind| f64::from(kind.per_hectare.max(0.0))).sum();
-    let (bricks, materials) = match volume {
-        true => (AVERAGE_VOLUME_BRICKS, AVERAGE_VOLUME_MATERIALS),
-        false => (AVERAGE_BRICKS, AVERAGE_MATERIALS),
+    let ring = RING_AVERAGES.get((coarser.max(1).ilog2() as usize).wrapping_sub(1)).copied();
+    let (bricks, materials, tree_bricks, tree_materials) = match (volume, ring) {
+        (true, _) => (AVERAGE_VOLUME_BRICKS, AVERAGE_VOLUME_MATERIALS, AVERAGE_BRICKS_A_TREE, AVERAGE_MATERIALS_A_TREE),
+        (false, Some(ring)) => ring,
+        (false, None) if coarser > 1 => RING_AVERAGES[RING_AVERAGES.len() - 1],
+        (false, None) => (AVERAGE_BRICKS, AVERAGE_MATERIALS, AVERAGE_BRICKS_A_TREE, AVERAGE_MATERIALS_A_TREE),
     };
-    let bricks = bricks + per_hectare * AVERAGE_BRICKS_A_TREE;
+    let bricks = bricks + per_hectare * tree_bricks;
     // Half a page of each a column on top, the part of its last page it leaves.
-    let materials = materials + per_hectare * AVERAGE_MATERIALS_A_TREE + MATERIAL_PAGE as f64 / 2.0;
-    let columns = f64::from(slots) * ROOM_SPARE * grow;
+    let materials = materials + per_hectare * tree_materials + MATERIAL_PAGE as f64 / 2.0;
+    // A ring's window is about twice as wide as the one inside it, which it makes nothing wholly inside of, a column
+    // short of its edges.
+    let side = f64::from(slots).sqrt();
+    let inside = if coarser > 1 { ((side - 1.0) / 2.0 - 2.0).max(0.0).powi(2) } else { 0.0 };
+    let columns = (f64::from(slots) - inside) * ROOM_SPARE * grow;
     let jobs = MAX_JOBS as f64;
     let brick_pages = columns * (bricks / PAGE_BRICKS as f64 + 0.5) + jobs * SLOT_PAGES as f64;
     let material_pages = columns * materials / MATERIAL_PAGE as f64 + jobs * SLOT_MATERIAL_PAGES as f64;
@@ -387,7 +431,8 @@ fn palette_buffer(gpu: &Gpu, colours: &[[u8; 4]]) -> Result<Buffer> {
     let usage = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
-    let palette = gpu.create_buffer("voxel world palette", (words.len() as u64 * 4).max(16), usage, MemoryLocation::GpuOnly)?;
+    let palette =
+        gpu.create_buffer("voxel world palette", (words.len() as u64 * 4).max(16), usage, MemoryLocation::GpuOnly)?;
     gpu.upload_buffer(&palette, 0, bytemuck::cast_slice(&words))?;
     Ok(palette)
 }
@@ -461,13 +506,13 @@ fn program_buffers(
 
 impl Endless {
     /// The buffers of an endless volume, every slot holding no column yet.
-    pub fn new(gpu: &Gpu, volume: &VoxelVolume) -> Result<Self> {
-        Self::grown(gpu, volume, 1.0)
+    pub fn new(gpu: &Gpu, volume: &VoxelVolume, fine: u32) -> Result<Self> {
+        Self::grown(gpu, volume, 1.0, fine)
     }
 
     /// The buffers of an endless volume whose shared room is `grow` times
     /// what its columns keep on average.
-    pub fn grown(gpu: &Gpu, volume: &VoxelVolume, grow: f64) -> Result<Self> {
+    pub fn grown(gpu: &Gpu, volume: &VoxelVolume, grow: f64, fine: u32) -> Result<Self> {
         let (window, tall) = window_of(volume);
         let slots_in = u64::from(window * window);
         let rows = u64::from(tall * 8);
@@ -493,7 +538,8 @@ impl Endless {
         let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
-        let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees, window * window, grow);
+        let coarser = fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+        let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees, window * window, grow, coarser);
         // The trees' plants' bricks and materials first, in pages no column is given.
         let (model_bricks, model_materials) =
             made.as_ref().map_or((&[][..], &[][..]), |made| (&made.bricks[..], &made.materials[..]));
@@ -599,6 +645,10 @@ impl Endless {
             jobs: Vec::new(),
             window_sector: [0; 3],
             corner: Vec3::ZERO,
+            fine,
+            settled: None,
+            outer: None,
+            hole: None,
         };
         // No column is made yet, and no frame reads what the edits' buffers took the place of.
         for buffer in endless.set_edits(gpu, &volume.edits)? {
@@ -727,7 +777,8 @@ impl Endless {
             return Ok(None);
         }
         let program = gpu_program_of(volume);
-        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow) != self.room {
+        let coarser = self.fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow, coarser) != self.room {
             return Ok(None);
         }
         // Other plants make other voxels at the start of the room.
@@ -777,19 +828,34 @@ impl Endless {
 
     /// Moves the window round `camera`, the volume's corner at `corner`, and
     /// picks the columns to make this frame: those in the window that their
-    /// slots do not hold, the nearest first.
-    pub fn follow(&mut self, corner: Vec3, camera: Vec3) {
+    /// slots do not hold, the nearest first. For a ring, `inner` is the outer
+    /// box of the ring inside it (in metres from the corner along X and Z,
+    /// least then most), which it makes no column wholly inside of, short of
+    /// a column each way, and which the walk passes over. While `loading`,
+    /// a ring makes as many columns a frame as the finest does.
+    pub fn follow(&mut self, corner: Vec3, camera: Vec3, inner: Option<[f32; 4]>, loading: bool) {
         self.corner = corner;
         let metres = sector_metres(&self.from);
         let at = ((camera - corner) / metres).floor();
         let half = (self.window / 2) as i32;
         self.window_sector = [at.x as i32 - half, 0, at.z as i32 - half];
+        self.hole = inner;
+        // The columns wholly inside the inner box, a column short of its edges each way, are never seen.
+        let skipped = inner.map(|[x0, z0, x1, z1]| {
+            let first = |edge: f32| (edge / metres).ceil() as i32 + 1;
+            let past = |edge: f32| (edge / metres).floor() as i32 - 1;
+            [first(x0), first(z0), past(x1), past(z1)]
+        });
+        let inside = |column: [i32; 2]| {
+            skipped
+                .is_some_and(|[x0, z0, x1, z1]| column[0] >= x0 && column[0] < x1 && column[1] >= z0 && column[1] < z1)
+        };
         let w = self.window as i32;
         let mut wanted: Vec<(i32, [i32; 2])> = Vec::new();
         for dz in 0..w {
             for dx in 0..w {
                 let column = [self.window_sector[0] + dx, self.window_sector[2] + dz];
-                if self.made[self.slot_of(column) as usize] != Some(column) {
+                if self.made[self.slot_of(column) as usize] != Some(column) && !inside(column) {
                     let distance = (column[0] - at.x as i32).pow(2) + (column[1] - at.z as i32).pow(2);
                     wanted.push((distance, column));
                 }
@@ -802,11 +868,56 @@ impl Endless {
             (false, true) => MAX_TREE_JOBS,
             (false, false) => MAX_JOBS,
         };
+        // A ring's columns are as wide as its voxels, so they come into its window as much less often: as many fewer a
+        // frame keeps the frames that every ring makes columns on light.
+        let coarser = self.fine.max(1) / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+        let most = if loading { most } else { (most / coarser.max(1) as usize).max(2) };
+        let left = wanted.len().saturating_sub(most);
         for (_, column) in wanted.into_iter().take(most) {
             let slot = self.slot_of(column);
             self.made[slot as usize] = Some(column);
             self.jobs.push((column, slot));
         }
+        // Made all of once this frame's columns are: else what it had made all of that is still in the window.
+        let window =
+            [self.window_sector[0], self.window_sector[2], self.window_sector[0] + w, self.window_sector[2] + w];
+        self.settled = match (left, self.settled) {
+            (0, _) => Some(window),
+            (_, Some([x0, z0, x1, z1])) => {
+                let kept = [x0.max(window[0]), z0.max(window[1]), x1.min(window[2]), z1.min(window[3])];
+                (kept[0] < kept[2] && kept[1] < kept[3]).then_some(kept)
+            }
+            (_, None) => None,
+        };
+        // Its outer box goes with the camera, so where it meets the ring round it moves on smoothly rather than a
+        // sector at a time: a square as far each way as the window surely reaches, within what it has made all of, its
+        // edges on the grid of the ring round it's voxels.
+        let half = (self.window / 2) as f32 * metres;
+        let snap = 2.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
+        let from = camera - corner;
+        self.outer = self.settled.and_then(|made| {
+            let made = made.map(|edge| edge as f32 * metres);
+            let low = |a: f32, b: f32| (a.max(b) / snap).ceil() * snap;
+            let high = |a: f32, b: f32| (a.min(b) / snap).floor() * snap;
+            let outer = [
+                low(from.x - half, made[0]),
+                low(from.z - half, made[1]),
+                high(from.x + half, made[2]),
+                high(from.z + half, made[3]),
+            ];
+            (outer[0] < outer[2] && outer[1] < outer[3]).then_some(outer)
+        });
+    }
+
+    /// Takes away its outer box, so it draws all its window holds.
+    pub fn unbounded(&mut self) {
+        self.outer = None;
+    }
+
+    /// Its outer box, in metres from its corner along X and Z, least then
+    /// most: what the ring round it passes over.
+    pub fn outer(&self) -> Option<[f32; 4]> {
+        self.outer
     }
 
     fn slot_of(&self, column: [i32; 2]) -> u32 {
@@ -832,6 +943,13 @@ impl Endless {
         let metres = sector_metres(&self.from);
         let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
         let w = self.window as i32;
+        let at = Vec3::new(self.window_sector[0] as f32, 0.0, self.window_sector[2] as f32) * metres;
+        // The hole and the outer box in its own voxels from where it is drawn from.
+        let voxels = |box_: Option<[f32; 4]>| {
+            box_.map_or([0.0; 4], |[x0, z0, x1, z1]| {
+                [(x0 - at.x) / voxel, (z0 - at.z) / voxel, (x1 - at.x) / voxel, (z1 - at.z) / voxel]
+            })
+        };
         let record = GpuVoxelVolume {
             sectors: self.table.address,
             bricks: self.bricks.address,
@@ -845,8 +963,9 @@ impl Endless {
             windowed: 1,
             empty_sector: self.empty.address,
             pages: self.pages.address,
+            hole: voxels(self.hole),
+            outer: voxels(self.outer),
         };
-        let at = Vec3::new(self.window_sector[0] as f32, 0.0, self.window_sector[2] as f32) * metres;
         (record, self.corner + at)
     }
 
@@ -933,7 +1052,7 @@ impl Endless {
             job_edits: self.job_edits.address,
             prints: self.print_buffer.as_ref().map_or(0, |buffer| buffer.address),
             edit_count: self.edits.len() as u32,
-            edit_pad: 0,
+            fine: 1.0 / self.fine.clamp(1, MOST_VOXELS_A_METRE) as f32,
             brick_pages: self.room.brick_pages,
             jobs,
         };
@@ -1108,7 +1227,8 @@ fn prints_words(prints: &[(Arc<VoxelPrint>, Vec<u8>)]) -> Vec<u32> {
         let bricks = words.len() as u32;
         words.extend_from_slice(&print.bricks);
         let materials = words.len() as u32;
-        let bytes: Vec<u8> = print.materials.iter().map(|&m| places.get(usize::from(m)).copied().unwrap_or(0)).collect();
+        let bytes: Vec<u8> =
+            print.materials.iter().map(|&m| places.get(usize::from(m)).copied().unwrap_or(0)).collect();
         words.extend(bytes.chunks(4).map(|four| {
             let mut word = [0u8; 4];
             word[..four.len()].copy_from_slice(four);

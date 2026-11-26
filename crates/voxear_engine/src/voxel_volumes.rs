@@ -80,6 +80,10 @@ pub struct VoxelVolumeData {
     /// as `reach` metres each way.
     pub endless: bool,
     pub reach: f32,
+    /// How far an endless volume's ground is seen past its reach, in coarser
+    /// rings, in metres each way: none at or under its reach.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub distance: f32,
     /// The world generator an endless volume's ground is made by, a
     /// reference to a `.worldgen`: none for its own ground.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -209,6 +213,7 @@ impl Default for VoxelVolumeData {
             stamps: Vec::new(),
             endless: made.endless,
             reach: made.reach,
+            distance: made.distance,
             generator: None,
             generator_floor: None,
             generator_at: [0.0, 0.0],
@@ -216,6 +221,10 @@ impl Default for VoxelVolumeData {
             edits: Vec::new(),
         }
     }
+}
+
+fn is_nothing(value: &f32) -> bool {
+    *value == 0.0
 }
 
 /// A box model stamped into a volume, as a scene writes it: the model, its
@@ -278,6 +287,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         stamps,
         endless: data.endless,
         reach: data.reach,
+        distance: data.distance,
         generator,
         trees,
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),

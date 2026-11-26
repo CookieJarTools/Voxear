@@ -1098,18 +1098,21 @@ impl Renderer {
     /// all made in time.
     pub fn make_voxel_volumes(&mut self, world: &World, limit: std::time::Duration) -> Result<bool> {
         let started = std::time::Instant::now();
-        loop {
+        self.voxels.loading = true;
+        let made = loop {
             self.voxels.prepare(&self.gpu, &mut self.frames, world)?;
             // Endless volumes' columns round the camera made now, outside the frames.
             self.voxels.make_endless_now(&self.gpu, (&self.pipelines, &self.bindless))?;
             if !self.voxels.making() {
-                return Ok(true);
+                break true;
             }
             if started.elapsed() >= limit {
-                return Ok(false);
+                break false;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        };
+        self.voxels.loading = false;
+        Ok(made)
     }
 
     pub fn take_particle_hits(&mut self) -> Vec<ParticleHit> {

@@ -2165,6 +2165,12 @@ struct VoxelVolume
     uint* emptySector;
     // An endless volume's slots' pages of bricks in its shared room: each slot's sixty-four, sixty-four bricks a page.
     uint* pages;
+    // A ring's hole: the box the ring inside it draws, which the walk passes over, in its voxels from its corner along X
+    // and Z, least then most; none where the most is not past the least.
+    float4 hole;
+    // A ring's outer box, a square round the camera within what it has made, past which it draws nothing: the hole of
+    // the ring round it. In the same voxels; none where the most is not past the least.
+    float4 outer;
 };
 
 struct VoxelVolumes

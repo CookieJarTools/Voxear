@@ -178,9 +178,18 @@ struct WorldMake
     // How many pages of bricks the pool has: the free materials' pages are listed after theirs.
     uint brickPages;
     uint editCount;
-    uint editPad;
+    // The finest ring's voxel, in metres: `voxel` itself for the finest, larger for a ring round it
+    // (src/voxel_volume/endless.rs).
+    float fine;
     WorldJob jobs[MAX_JOBS];
 };
+
+// Whether the volume being made is a ring round a finer one, of larger voxels: its grass stands for the finer blades
+// round each of its columns, and its trees are not kept to its bricks' grid, which is too coarse for them.
+bool coarseRing(WorldMake* make)
+{
+    return make->fine > 0.0 && make->fine < make->voxel * 0.99;
+}
 
 struct WorldPush
 {
@@ -446,6 +455,11 @@ uint flowerAt(WorldMake* make, uint job, int3 p)
             int cz = home.y + dz;
             float patch = fbm(float(cx) * cell / 6.0, float(cz) * cell / 6.0, seed);
             float chance = make->flowers * (0.3 + 1.4 * max(patch - 0.4, 0.0));
+            // A ring's flowers are larger by its voxels: fewer of them, so they colour as much of the ground.
+            if (coarseRing(make))
+            {
+                chance *= (make->fine / make->voxel) * (make->fine / make->voxel);
+            }
             if (unit(hashOf(cx, 3, cz, seed)) > chance)
             {
                 continue;
@@ -626,7 +640,19 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
     uint seed = make->seed + 21;
     uint r = hashOf(x, 0, z, seed);
     uint blade = 0;
-    if (top == GROUND_GRASS && !bare && unit(r) < make->grass)
+    if (top == GROUND_GRASS && !bare && coarseRing(make))
+    {
+        // A ring's column stands for the finer ring's columns under it, as the walk's groups do there: grass where any
+        // of them has a blade, as tall as the tallest, in whole voxels of its own.
+        float under = (make->voxel / make->fine) * (make->voxel / make->fine);
+        float tallest = max(max(make->grassHeight, 0.0) / make->fine, 1.0);
+        if (unit(r) < make->grass)
+        {
+            float most = unit(hashOf(x, 1, z, seed));
+            blade = uint(round((1.0 + most * tallest) * make->fine / make->voxel));
+        }
+    }
+    else if (top == GROUND_GRASS && !bare && unit(r) < make->grass)
     {
         float tallest = max(max(make->grassHeight, 0.0) / make->voxel, 1.0);
         blade = 1 + uint(unit(hashOf(x, 1, z, seed)) * tallest);
@@ -639,7 +665,7 @@ void voxelWorldTops(uint3 id: SV_DispatchThreadID)
 // by hash, where the ground grows grass, each with its plant's box on the bricks' grid, so the plant's bricks are the
 // world's. A brick that is one tree's alone names its plant's brick; one that trees share, or a tree and the ground,
 // is worked out of them all.
-static const uint MAX_TREES = 32;
+static const uint MAX_TREES = 256;
 static const uint TREE_WORDS = 8;
 static const uint TREE_VARIANTS = 4;
 static const float TREE_CELL = 5.0;
@@ -816,9 +842,12 @@ void voxelWorldTrees(uint3 id: SV_DispatchThreadID)
         }
         int* tree = treeOf(make, job, t);
         // Its plant's box on the bricks' grid: the tree stands up to a brick less a voxel aside and lower, its foot in
-        // the ground.
+        // the ground. A ring's bricks are too coarse for that: its trees stand on the finest ring's bricks' grid, where
+        // the finest ring has them, as near as its own voxels go.
         int3 trunk = int3(foot.x - b / 2, h + 1, foot.y - b / 2);
-        int3 least = (trunk + int3(int(r[4]), int(r[5]), int(r[6]))) & ~7;
+        int3 least = trunk + int3(int(r[4]), int(r[5]), int(r[6]));
+        int grid = coarseRing(make) ? max(int(round(8.0 * make->fine / v)), 1) : 8;
+        least = int3(floor(float3(least) / float(grid))) * grid;
         tree[0] = least.x;
         tree[1] = least.y;
         tree[2] = least.z;
@@ -1237,7 +1266,7 @@ bool treesIn(WorldMake* make, uint packed)
     for (uint t = 0; t < treeCount(make, job); t++)
     {
         int* tree = treeOf(make, job, t);
-        if (treeReaches(make, tree, low, high) && treeBrick(make, tree, low) >= 0)
+        if (treeReaches(make, tree, low, high) && (coarseRing(make) || treeBrick(make, tree, low) >= 0))
         {
             return true;
         }
@@ -1298,7 +1327,8 @@ groupshared uint sharedSlot;
 groupshared uint sharedOffset;
 groupshared uint sharedCount;
 groupshared uint sharedKept;
-// The bricks of the trees' plants at the brick, and whether the ground has anything in it.
+// The bricks of the trees' plants at the brick, or in a ring the trees whose boxes reach it, and whether the ground has
+// anything in it.
 groupshared uint sharedTrees[MAX_TREES];
 groupshared uint sharedTreeCount;
 groupshared uint sharedOwn;
@@ -1403,7 +1433,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         int brick = -1;
         if (index < treeCount(make, job) && treeReaches(make, treeOf(make, job, index), low, low + 7))
         {
-            brick = treeBrick(make, treeOf(make, job, index), low);
+            brick = coarseRing(make) ? int(index) : treeBrick(make, treeOf(make, job, index), low);
         }
         if (brick >= 0)
         {
@@ -1594,7 +1624,8 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         }
     }
     // A brick one tree's alone is its plant's brick: the job's list names it.
-    if (sharedTreeCount == 1 && !edited)
+    bool loose = coarseRing(make);
+    if (sharedTreeCount == 1 && !edited && !loose)
     {
         if (m != 0)
         {
@@ -1602,7 +1633,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         }
         GroupMemoryBarrierWithGroupSync();
     }
-    if (sharedTreeCount == 1 && !edited && sharedOwn == 0)
+    if (sharedTreeCount == 1 && !edited && !loose && sharedOwn == 0)
     {
         if (index == 0)
         {
@@ -1617,11 +1648,20 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     int ground = volume ? min(surfaceOf(make, job, px, pz), tall - 1) : h;
     for (uint t = 0; t < sharedTreeCount && (m == 0 || y > ground) && lastEdit < 0; t++)
     {
-        uint filled = treeVoxel(make, int(sharedTrees[t]), l);
+        // In a ring, the plant's voxel where the tree stands, off its bricks' grid.
+        int plantBrick = int(sharedTrees[t]);
+        int3 within = l;
+        if (loose)
+        {
+            int* tree = treeOf(make, job, sharedTrees[t]);
+            plantBrick = treeBrick(make, tree, here);
+            within = (here - int3(tree[0], tree[1], tree[2])) & 7;
+        }
+        uint filled = plantBrick >= 0 ? treeVoxel(make, plantBrick, within) : 0u;
         if (filled != 0)
         {
             m = filled;
-            moves = ((make->bricks[sharedTrees[t] * BRICK_WORDS + 19] >> SWAY_SHIFT) & 3u) == SWAY_LEAVES ? SWAY_LEAVES : SWAY_STILL;
+            moves = ((make->bricks[uint(plantBrick) * BRICK_WORDS + 19] >> SWAY_SHIFT) & 3u) == SWAY_LEAVES ? SWAY_LEAVES : SWAY_STILL;
             InterlockedAdd(sharedTreeVoxels, 1u);
             break;
         }

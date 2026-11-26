@@ -20,6 +20,34 @@ With **Endless** on, the volume's own ground goes on without end. It is made on 
 
 A reach of 64 m at 16 voxels a metre keeps about 100 MB on the GPU. The ground round a camera standing still is made in under a second. Flying at 10 m/s, new columns 4 m a side are made on about one frame in eight, for about 0.8 ms of the GPU's time each.
 
+## Seen far off
+
+An endless volume's **Distance** carries its ground on past its reach, as far as a town across a valley or a coast seen from a ship: in metres each way, and 0 for none. Past the reach it is drawn in rings round the full detail:
+
+- Each ring's voxels are twice the size of the ring's inside it, and it reaches twice as far. At 16 voxels a metre and a reach of 64 m: voxels of 1/8 m to 128 m, 1/4 m to 256 m, 1/2 m to 512 m, then of a metre as far as the Distance.
+- Each ring is made on the GPU from the same ground or generator, grass, trees and changes as the volume itself, as it comes into view. Far crowns stay loose cubes in their own shades. Flowers are left out where they would be smaller than a pixel.
+- Where one ring meets the next is a square round the camera that moves on with it, so nothing pops as you go. At 1080p with a reach of 64 m, a ring's voxels are about a pixel across where it begins, as the full detail's are drawn two by two there.
+
+With 100 oaks and pines a hectare on rolling hills, at a reach of 64 m on an RTX 3070:
+
+| Distance | On the GPU | Made before the frames | A view across the land at 1080p |
+|---|---|---|---|
+| None | 121 MB | 1.9 s | 4 ms, sky past 64 m |
+| 1 km | 499 MB | 4.3 s | 12.3 ms |
+| 2 km | 616 MB | 7.1 s | 13 ms |
+
+Without trees, rings to 2 km take 432 MB against 94 MB. What a view costs goes with how much ground it shows: the land to the horizon costs what a view full of near ground does.
+
+`vox editor call field.set` sets it as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "distance", "value": 2048}`. In the scene:
+
+```toml
+[obj.voxel_volume]
+size = [16.0, 64.0, 16.0]
+endless = true
+reach = 64.0
+distance = 2048.0
+```
+
 ## Ground from a world generator
 
 An endless volume can take its ground from one of the project's [[Generator Graphs|world generators]]: pick it as its **Generator**. The generator's graph runs on the GPU, a voxel column at a time, and the volume shows that graph's land in small voxels, its hills, valleys and gullies to the voxel. The generator's ground at a place is the CPU's to within a millimetre or so.
@@ -180,7 +208,7 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)** and **Opaque (voxels)**
 
 - Its voxels cast no shadow onto meshes, blocks or terrain.
 - It isn't turned or scaled with its Obj.
-- It is drawn whole, however far away it is; an endless one ends at its reach.
+- One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk, and its full detail is at most 64 m tall at 16 voxels a metre: taller hills are cut flat near the camera and whole in the rings.
 - An endless one made by a generator has no rivers or water, and no Cave Network halls, yet.
 - An endless one's trees can't be felled, and every tree of a kind is one of four plants. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one, and only by balls and prints: not a voxel at a time, or over the network. A ray meets its ground, not its grass, flowers or trees, and bodies don't collide with it yet.

@@ -1465,6 +1465,13 @@ stages, each measured before the next.
   third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
   what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
   again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Joins as strong as their thinnest voxels.** A join between two bricks bears what the plane with the fewest
+    pairs of built voxels across it, within 5 voxels of their face, bears: its area for pull, push and shear, and its
+    section modulus, worked out from where those voxels lie (least about either way across), for bending; a pushed
+    join holds bending until the push leaves the section's kern (modulus over area). The same small stone on a beam's
+    end leaves the whole beam standing and breaks a beam notched three voxels into a brick (1,557 voxels fall), which
+    the faces alone saw as the same beam. Reading the sections took the blown corner's settling from about 190 to 280
+    ms (development build).
   - **Breaking where it is thinnest.** Each broken face's crack goes through the plane, up to 5 voxels either side
     of the face across both bricks, with the fewest pairs of built voxels across it in the face's square (nearest
     the face of equals): a notch three voxels into a brick of an overloaded beam breaks there, 1 of its 1,541 fallen

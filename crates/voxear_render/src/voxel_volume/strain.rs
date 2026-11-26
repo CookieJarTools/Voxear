@@ -142,6 +142,12 @@ struct Join {
     normal: D3,
     stuff: VoxelStuff,
     broken: bool,
+    /// What holds its two sides together where that is least, between the
+    /// middles of its bricks: the area of the built voxels across there, in
+    /// square metres, and how it bears bending, its section modulus, in
+    /// cubic metres.
+    section: f64,
+    modulus: f64,
 }
 
 /// The loads on a join: pull along it (pushed where less than none),
@@ -267,6 +273,8 @@ impl Graph {
                                     normal: [0.0; 3],
                                     stuff,
                                     broken: false,
+                                    section: 0.0,
+                                    modulus: 0.0,
                                 });
                                 joins.len() - 1
                             });
@@ -286,6 +294,19 @@ impl Graph {
             nodes.push(Node { brick: b, mass, middle, stuff, gone: mass <= 0.0 });
         }
         for join in &mut joins {
+            // A join's strength is that of the fewest voxels holding its bricks together, between their middles:
+            // where a wall or a beam is thinnest, not where the bricks meet. To what holds, its face's.
+            let face_area = f64::from(join.faces) * voxel * voxel;
+            (join.section, join.modulus) = (face_area, face_area.powf(1.5) / 6.0);
+            if join.b.is_some() {
+                let axis = usize::from(join.key.1 / 2);
+                let corner = join.key.0 * 8;
+                let face = corner[axis] + 8;
+                let (_, pairs, modulus) = weakest_section(grid, axis, face, corner);
+                if pairs > 0 {
+                    (join.section, join.modulus) = (f64::from(pairs) * voxel * voxel, modulus * voxel.powi(3));
+                }
+            }
             join.point = scale(join.point, 1.0 / f64::from(join.faces.max(1)));
             let n = length(join.normal);
             join.normal = if n > 1e-9 { scale(join.normal, 1.0 / n) } else { [0.0, 1.0, 0.0] };
@@ -359,7 +380,7 @@ impl Graph {
     /// the worse.
     fn over(&self, j: usize, load: JoinLoad, rest: JoinLoad) -> f64 {
         let join = &self.joins[j];
-        let area = f64::from(join.faces) * self.voxel * self.voxel;
+        let (area, modulus) = (join.section.max(1e-6), join.modulus.max(1e-9));
         let bears = bears(join.stuff);
         let (pull, was) = (f64::from(load.pull), f64::from(rest.pull));
         let axial = if pull > 0.0 {
@@ -369,11 +390,10 @@ impl Graph {
         };
         let size = |a: [f32; 3]| length(a.map(f64::from));
         // Pushed together, a join holds against sliding by friction, and against bending until what pushes it
-        // leaves the middle third of it, as a wall's stones do.
+        // leaves the middle of its section (its kern), as a wall's stones do.
         let pushed = (-pull).max(0.0);
         let shear = (size(load.shear) - size(rest.shear)) / (bears.shear * area + FRICTION * pushed);
-        let bend =
-            (size(load.moment) - size(rest.moment)) / (bears.bend * area.powf(1.5) / 6.0 + pushed * area.sqrt() / 6.0);
+        let bend = (size(load.moment) - size(rest.moment)) / (bears.bend * modulus + pushed * modulus / area);
         axial.max(shear).max(bend)
     }
 }
@@ -1070,14 +1090,21 @@ type Breaks = HashMap<(usize, i32, IVec3), f32>;
 /// face, with fewest pairs of built voxels across it within the face's
 /// square, the nearest the face of those.
 fn weakest(grid: &mut Grid, axis: usize, face: i32, corner: IVec3) -> f32 {
+    weakest_section(grid, axis, face, corner).0 as f32
+}
+
+/// The plane [`weakest`] finds, in voxels up the axis from the face; how
+/// many pairs of built voxels hold across it; and its section modulus in
+/// cubic voxels, the least about either way across it.
+fn weakest_section(grid: &mut Grid, axis: usize, face: i32, corner: IVec3) -> (i32, u32, f64) {
     let (a, b) = match axis {
         0 => (1, 2),
         1 => (0, 2),
         _ => (0, 1),
     };
-    let mut best = (u32::MAX, 0i32);
-    for k in (-SHIFT..=SHIFT).map(|k: i32| k) {
-        let mut bond = 0;
+    let mut best: (u32, i32, Vec<(i32, i32)>) = (u32::MAX, 0, Vec::new());
+    for k in -SHIFT..=SHIFT {
+        let mut held = Vec::new();
         for i in 0..8 {
             for j in 0..8 {
                 let mut c = corner;
@@ -1087,15 +1114,30 @@ fn weakest(grid: &mut Grid, axis: usize, face: i32, corner: IVec3) -> f32 {
                 let mut under = c;
                 under[axis] -= 1;
                 if grid.class(c) == BUILT && grid.class(under) == BUILT {
-                    bond += 1;
+                    held.push((i, j));
                 }
             }
         }
-        if bond < best.0 || (bond == best.0 && k.abs() < best.1.abs()) {
-            best = (bond, k);
+        // A plane nothing holds across is not between these two bricks: what joins them goes round it.
+        let bond = held.len() as u32;
+        if bond > 0 && (bond < best.0 || (bond == best.0 && k.abs() < best.1.abs())) {
+            best = (bond, k, held);
         }
     }
-    best.1 as f32
+    let (bond, k, held) = best;
+    if held.is_empty() {
+        return (0, 0, 0.0);
+    }
+    // Bending about each way across: the second moment of its voxels about their middle, over how far the
+    // furthest is.
+    let n = held.len() as f64;
+    let modulus = |pick: fn(&(i32, i32)) -> i32| {
+        let mean = held.iter().map(|p| f64::from(pick(p))).sum::<f64>() / n;
+        let second = held.iter().map(|p| (f64::from(pick(p)) - mean).powi(2) + 1.0 / 12.0).sum::<f64>();
+        let far = held.iter().map(|p| (f64::from(pick(p)) - mean).abs()).fold(0.0, f64::max) + 0.5;
+        second / far
+    };
+    (k, bond, modulus(|p| p.0).min(modulus(|p| p.1)))
 }
 
 /// How far the crack through the face of bricks square to axis `axis`, at
@@ -1510,6 +1552,64 @@ mod tests {
         eprintln!("the beam broke at x {from}, {} voxels of it fell, {before} of them before the notch", beam.len());
         assert!(from > 72 && before < 24, "broke at {from}, {before} before the notch");
         assert!(beam.iter().any(|c| c.x == 76) && beam.len() > 1000, "the beam past the notch fell");
+    }
+
+    /// A beam of planks two metres out of a wall, notched `notch` rows deep three voxels into a brick, a stone
+    /// `wide` voxels square and `tall` voxels laid on its end: how many joins broke and what fell.
+    fn loaded_beam(notch: i32, wide: i32, tall: i32) -> (usize, Vec<IVec3>) {
+        use crate::{VoxelKind, VoxelMaterial};
+        let mut volume = flat();
+        let edits = std::sync::Arc::make_mut(&mut volume.edits);
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(4.0, 1.0, 4.0),
+            Vec3::new(0.5, 4.0, 2.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Ashlar),
+        ));
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(5.25, 3.0, 4.25),
+            Vec3::new(2.0, 0.5, 0.5),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Planks),
+        ));
+        let mut changes = (*volume.changes).clone();
+        for y in 48..48 + notch {
+            for z in 64..72 {
+                changes.set(IVec3::new(75, y, z), None);
+            }
+        }
+        volume.changes = std::sync::Arc::new(changes);
+        let mut loaded = (*volume.changes).clone();
+        let stone = VoxelKind { material: VoxelMaterial::Ashlar, tint: None };
+        let mut placed = Vec::new();
+        for x in 100 - wide..100 {
+            for y in 56..56 + tall {
+                for z in 68 - wide / 2..68 + (wide + 1) / 2 {
+                    loaded.set(IVec3::new(x, y, z), Some(stone));
+                    placed.push(IVec3::new(x, y, z));
+                }
+            }
+        }
+        let after = VoxelVolume { changes: std::sync::Arc::new(loaded), ..volume.clone() };
+        let (mut a, mut b) = (Grid::new(&volume, None), Grid::new(&after, None));
+        let mut memory = VoxelStrainMemory::default();
+        let done = strain(VoxelStrain::Solved, &mut a, &mut b, &placed, &mut memory);
+        (done.broken, done.loose.iter().flat_map(|round| round.dig.iter().copied()).collect())
+    }
+
+    #[test]
+    fn which_join_breaks_is_where_the_voxels_holding_it_are_fewest() {
+        // A stone the whole beam bears, which the notched one does not: its join through the notch is held by a
+        // quarter of the voxels, and bears bending a sixteenth as well.
+        let (whole, fell) = loaded_beam(0, 4, 1);
+        eprintln!("whole: {whole} broken, {} fell", fell.len());
+        assert!(fell.is_empty(), "the whole beam bears it: {whole} broken");
+        let (notched, fell) = loaded_beam(6, 4, 1);
+        eprintln!("notched: {notched} broken, {} fell", fell.len());
+        let beam: Vec<&IVec3> = fell.iter().filter(|c| c.y < 56).collect();
+        assert!(notched > 0 && beam.len() > 1000, "the notched beam breaks: {notched} broken, {} fell", beam.len());
+        let from = beam.iter().map(|c| c.x).min().unwrap();
+        assert!(from > 72, "at its notch: {from}");
     }
 
     #[test]

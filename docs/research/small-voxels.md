@@ -1251,10 +1251,21 @@ Since, the same day:
 
 ![A lamp in a house and beside it, at night; the sun through clear and red glass; a pillar's shadow on the sea](../images/small-voxels/lamps-tint-sea.webp)
 
+- **The GI's rays see voxels.** Each probe ray walks the voxels after the triangles (`ddgiVoxelHit` in `ddgi.slang`,
+  the dry walk, its voxels coarser two by two from 2 % of the way out, as far as 256 m or the triangle it met). A
+  voxel met first is lit where it was hit by the sun with its shadow ray through triangles and voxels alike, the
+  lamps, the probes round it and its own glow (`ddgiShadeVoxel`). A ray starting inside voxels counts as a back face,
+  so the probes move out of walls as they do out of meshes. With the GI on, the light kept round the camera isn't
+  read: the probes light rooms instead. A room shut all round is black; sun through its door lights the ceiling in
+  the grass's green. Light bounced in at a door is much dimmer than the sky's light spread through it.
+  Measured on the street with the GI on: the rays' pass 0.32 → 2.45 ms, the frame 10.4 → 12.7 ms
+  (least of 60, two runs each); with the GI off, nothing changes. About a million rays a frame walk the voxels, as
+  dear a ray as the camera's own walk: starting a brick at a time, walking coarser sooner or less far saved
+  nothing worth having..
+
 Not done:
 
 - **Glass** tints only the sun, and only the nearest glass in a pixel is drawn.
-- **GI rays through voxels**, the rest of the stage. Worlds of blocks are lit without the probe GI, so it waits.
 - **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
   commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
   walk's, not the light's.

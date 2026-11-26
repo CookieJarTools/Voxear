@@ -2637,6 +2637,13 @@ static const float VOXEL_DARKEST_SKY = 0.012;
 bool voxelLitAround(float3 position, float3 normal, out float2 lit, out float4 glow)
 {
     float3 colour;
+    // With the GI on, its probes, which the voxels' rays reach, light what is round the voxels in its place.
+    if (push.frame->ddgi.enabled != 0u)
+    {
+        lit = float2(1.0, 0.0);
+        glow = 0.0;
+        return false;
+    }
     bool found = voxelLightAround(position, normal, lit, colour);
     glow = float4(colour * VOXEL_GLOW_BRIGHTNESS, VOXEL_DARKEST_SKY);
     return found;

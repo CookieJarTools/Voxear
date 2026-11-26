@@ -13,13 +13,19 @@
 //
 // Built twice: with the GPU's ray tracing, and with SOFTWARE_RAYS, walking
 // hierarchies of the scene's triangles in the compute shader
-// (trace_software.slang), for GPUs without it.
+// (trace_software.slang), for GPUs without it. Either way, the rays walk
+// the view's Voxel Volumes too (voxels.slang), and take the nearer.
 
 // The probes need no light under water, and compiling it here stops Slang with an internal error.
 #define NO_UNDERWATER_LIGHT
 #include "shading.slang"
 #include "ddgi_sample.slang"
 #include "ambient_occlusion.slang"
+#include "voxels.slang"
+
+// How far the GI's rays walk the voxels, and how much coarser they walk for each metre they go.
+static const float DDGI_VOXEL_REACH = 256.0;
+static const float DDGI_VOXEL_COARSENING = 0.02;
 
 #ifndef SOFTWARE_RAYS
 #define SOFTWARE_RAYS 0
@@ -196,10 +202,80 @@ int2 ddgiRayTexel(uint index, uint cascade, uint ray)
     return int2(ray + (index % 16u) * DDGI_RAYS, index / 16u + cascade * (DDGI_PROBE_COUNT / 16u));
 }
 
+// The nearest voxel of the view's Voxel Volumes along a ray, within `far`, passing water: walked two by two from the
+// start and coarser the further it goes, as the GI's rays gather light from all round and only an average of them is
+// kept. The voxels' own walk (voxelsTraceDry).
+bool ddgiVoxelHit(Frame* frame, float3 origin, float3 direction, float far, out VoxelHit hit)
+{
+    hit = (VoxelHit)0;
+    hit.glassT = -1.0;
+    VoxelVolumes* volumes = buffers()->voxelVolumes;
+    if (volumes == nullptr || volumes->count == 0)
+    {
+        return false;
+    }
+    float foot = 2.0 * volumes->volumes[volumes->count - 1].voxel;
+    VoxelHit wetHit;
+    float wet;
+    return voxelsTraceDry(volumes, origin, direction, 0.0, min(far, DDGI_VOXEL_REACH), foot, DDGI_VOXEL_COARSENING, 2, 0.0, hit, wet, wetHit);
+}
+
 bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
 {
-    return traceScene(frame, origin, direction, far, true).found;
+    VoxelHit voxel;
+    return traceScene(frame, origin, direction, far, true).found || ddgiVoxelHit(frame, origin, direction, far, voxel);
 }
+
+// The light a voxel the ray met at `position`, on its face `normal`, sends back along it: as a surface the ray met
+// does (ddgiShadeHit), lit by the sun past the scene and the voxels, the lamps, the light the probes held last frame
+// round it, and its own glow.
+float3 ddgiShadeVoxel(Frame* frame, VoxelVolume volume, VoxelHit hit, float3 position, float3 normal, float3 direction)
+{
+    float3 albedo = voxelColour(volume, hit);
+    float3 toSun = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float facing = dot(normal, toSun);
+    Surface s;
+    s.normal = normal;
+    s.view = -direction;
+    s.diffuse = albedo;
+    s.f0 = 0.0;
+    s.roughness = 1.0;
+    float3 lit = 0.0;
+    float3 off = position + normal * voxelLift(hit.level) * volume.voxel;
+    bool sunLit = frame->bake.source != GI_BOTH || frame->bake.sunMode == LIGHT_MODE_REALTIME;
+    if (sunLit && facing > 0.0 && !ddgiBlocked(frame, off, toSun, 1e4))
+    {
+        lit += albedo / PI * sunLight * facing;
+    }
+    uint firstLight = frame->bake.source == GI_BOTH ? frame->bake.bakeLights : 0;
+    for (uint i = firstLight; i < frame->lightCount; i++)
+    {
+        Light lamp = buffers()->lights[i];
+        if (distance(lamp.position, position) < lamp.range + 2.0 * max(lamp.size.x, lamp.size.y))
+        {
+            lit += shadeLocalLight(s, lamp, position, false);
+        }
+    }
+    float up = normal.y * 0.5 + 0.5;
+    float3 sky = atmosphere ? atmosphereAmbient(frame, up, sunLight) : gradientSkyLight(frame, up);
+    float3 around = frame->bake.source == GI_BOTH ? ddgiIrradiance(frame, position, normal, -direction, 0.0)
+        : ddgiIrradiance(frame, position, normal, -direction, sky);
+    // A voxel that glows gives its light, as it shines in the picture.
+    float glow = 0.0;
+    if (hit.level == 0u && hit.brick >= 0)
+    {
+        uint* bits = volume.bricks + uint(hit.brick) * VOXEL_BRICK_WORDS;
+        if ((bits[19] & VOXEL_GLOWS) != 0u)
+        {
+            glow = float(voxelPlaceKind(volume, voxelPlaceAt(volume, bits, hit.cell & 7)) >> 4) / 15.0;
+        }
+    }
+    return lit + albedo * around + albedo * glow * glow * VOXEL_GLOW_SHINE;
+}
+
+
 
 // What a ray met: the surface's normal, turned to face the ray, its colour
 // as diffuse light sees it, its shine, its glow, its lightmap UVs, and
@@ -408,7 +484,27 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     float3 direction = ddgiRayDirection(frame, thread.x);
     Hit hit = traceScene(frame, origin, direction, 1e4, false);
     float4 result;
-    if (!hit.found)
+    // The voxels, where one is nearer than what the scene's triangles met.
+    VoxelHit voxel;
+    bool metVoxel = ddgiVoxelHit(frame, origin, direction, hit.found ? hit.t : 1e4, voxel);
+    if (metVoxel)
+    {
+        VoxelVolume volume = buffers()->voxelVolumes->volumes[voxel.volume];
+        float t = max(voxel.metres, 1e-3);
+        // A ray starting in a voxel, the probe inside the ground or a wall: the back of a surface, as below.
+        if (voxel.axis < 0 && voxel.metres < volume.voxel)
+        {
+            result = float4(0.0, 0.0, 0.0, -t);
+        }
+        else
+        {
+            float3 position = origin + direction * voxel.metres;
+            float3 light = ddgiShadeVoxel(frame, volume, voxel, position, voxelNormal(volume, voxel, direction), direction);
+            light *= min(1.0, DDGI_RAY_MOST / max(max(max(light.r, light.g), light.b), 1e-6));
+            result = float4(light, t);
+        }
+    }
+    else if (!hit.found)
     {
         // Beside a bake, which holds the sky's light, the probes hold none of it.
         result = float4(frame->bake.source == GI_BOTH ? 0.0 : ddgiSky(frame, direction), 1e4);

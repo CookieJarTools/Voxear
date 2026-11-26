@@ -40,8 +40,8 @@ pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
 pub use voxear_terrain::generate::structures::AreaRules as VoxelAreaRules;
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintPicture, VoxelPrintSettings};
 pub use ray::{VoxelRayHit, raycast};
+pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
 pub use solid::{VoxelSolids, ground_at as voxel_ground_at};
-pub use rivers::GpuVoxelWater;
 pub use voxelize::{Picture as VoxelPicture, print_model as voxel_print_model};
 
 use crate::BoxModel;
@@ -89,6 +89,10 @@ pub struct VoxelVolume {
     /// printed into it, a later one over an earlier. Each column is made
     /// with those that reach it.
     pub edits: Arc<Vec<VoxelEdit>>,
+    /// Whether an endless volume with a generator has its generator's sea:
+    /// an Ocean at its sea level, filling the level, where the scene has no
+    /// Ocean of its own (see [`crate::ocean::seas`]).
+    pub sea: bool,
 }
 
 /// A change made to an endless Voxel Volume: a ball carved out of it, or
@@ -382,6 +386,7 @@ impl Default for VoxelVolume {
             cover: Vec::new(),
             areas: Arc::default(),
             edits: Arc::default(),
+            sea: true,
         }
     }
 }
@@ -426,6 +431,15 @@ impl PartialEq for VoxelStamp {
 }
 
 impl VoxelVolume {
+    /// How high its generator's sea stands in the world, its corner at
+    /// `corner`: none unless it is endless, has a generator and its Sea on,
+    /// nor where the sea is under its floor.
+    pub fn sea_height(&self, corner: Vec3) -> Option<f32> {
+        let generator = self.generator.as_ref().filter(|_| self.endless && self.sea)?;
+        let over_floor = generator.world.sea_level() - generator.floor;
+        (over_floor > 0.0).then_some(corner.y + over_floor)
+    }
+
     /// How many voxels it measures along each side.
     pub fn voxel_size(&self) -> [u32; 3] {
         let per = self.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
@@ -594,7 +608,7 @@ pub(crate) struct VoxelVolumes {
     /// each frame slot its buffer, which change it holds and how many squares.
     water_seen: Vec<(Entity, u64)>,
     water_version: u64,
-    water: Vec<(Option<Buffer>, u64, u32)>,
+    water: Vec<(Option<Buffer>, u64, u32, u32)>,
 }
 
 /// How many volumes are drawn, and their bricks and bytes on the GPU.
@@ -750,7 +764,7 @@ impl VoxelVolumes {
             counts.bytes += resident.bytes;
         }
         counts.bytes += self.endless.values().map(endless::Endless::bytes).sum::<u64>();
-        counts.water_squares = self.endless.values().map(|made| made.water().0.count() as u32).sum();
+        counts.water_squares = self.endless.values().map(|made| made.water().0.0.count() as u32).sum();
         counts.columns_made = self.endless.values().map(endless::Endless::making_now).sum();
         counts
     }
@@ -761,9 +775,10 @@ impl VoxelVolumes {
     }
 
     /// The water over endless volumes' rivers and lakes for frame slot
-    /// `slot`, as every view draws it: its buffer's address and how many
-    /// squares it holds, written again where it changed.
-    pub fn water(&mut self, gpu: &Gpu, slot: usize) -> Result<(u64, u32)> {
+    /// `slot`, as every view draws it: its buffer's address, how many
+    /// squares it holds and then how many of waterfalls, written again where
+    /// it changed.
+    pub fn water(&mut self, gpu: &Gpu, slot: usize) -> Result<(u64, u32, u32)> {
         let mut seen: Vec<(Entity, u64)> =
             self.endless.iter().map(|(entity, made)| (*entity, made.water().1)).collect();
         seen.sort_unstable_by_key(|(entity, _)| entity.to_bits());
@@ -772,13 +787,16 @@ impl VoxelVolumes {
             self.water_version += 1;
         }
         if self.water.len() <= slot {
-            self.water.resize_with(slot + 1, || (None, 0, 0));
+            self.water.resize_with(slot + 1, || (None, 0, 0, 0));
         }
         let version = self.water_version;
         if self.water[slot].1 != version {
-            let squares: Vec<GpuVoxelWater> = self.endless.values().flat_map(|made| made.water().0.copied()).collect();
+            let mut squares: Vec<GpuVoxelWater> =
+                self.endless.values().flat_map(|made| made.water().0.0.copied()).collect();
+            let still = squares.len() as u32;
+            squares.extend(self.endless.values().flat_map(|made| made.water().0.1.copied()));
             let bytes = (squares.len() * size_of::<GpuVoxelWater>()).max(16) as u64;
-            let (buffer, _, _) = &mut self.water[slot];
+            let (buffer, _, _, _) = &mut self.water[slot];
             if buffer.as_ref().is_none_or(|buffer| buffer.size < bytes) {
                 let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
                 let name = format!("voxel water {slot}");
@@ -792,10 +810,10 @@ impl VoxelVolumes {
             if let Some(buffer) = buffer.as_ref().filter(|_| !squares.is_empty()) {
                 buffer.write(0, &squares);
             }
-            self.water[slot] = (self.water[slot].0.take(), version, squares.len() as u32);
+            self.water[slot] = (self.water[slot].0.take(), version, still, squares.len() as u32 - still);
         }
-        let (buffer, _, count) = &self.water[slot];
-        Ok((buffer.as_ref().map_or(0, |buffer| buffer.address), *count))
+        let (buffer, _, still, falls) = &self.water[slot];
+        Ok((buffer.as_ref().map_or(0, |buffer| buffer.address), *still, *falls))
     }
 }
 
@@ -850,7 +868,7 @@ impl VoxelVolumes {
         for (_, made) in self.endless.drain() {
             made.destroy(gpu);
         }
-        for (buffer, _, _) in self.water.drain(..) {
+        for (buffer, _, _, _) in self.water.drain(..) {
             buffer.into_iter().for_each(|buffer| gpu.destroy_buffer(buffer));
         }
     }

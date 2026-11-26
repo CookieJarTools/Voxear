@@ -2186,17 +2186,19 @@ struct VoxelVolumes
 };
 
 // A square of water over an endless Voxel Volume's rivers and lakes (src/voxel_volume/rivers.rs): its least corner
-// along x and z and how wide it is; whether it is a waterfall's face (bit 0) and the sides of it, a still top, that a
-// fall lands beside (bits 1 to 4: +x, -x, +z, -z); how high its corners are, (0, 0), (1, 0), (0, 1) and (1, 1); and
-// which way and how fast it flows, in metres a second.
+// along x and z and how wide it is; which of its corners, (0, 0), (1, 0), (0, 1) and (1, 1), have water, a bit each;
+// how high its corners are; which way and how fast it flows, in metres a second; and how churned each corner is below
+// a waterfall, a byte each. A square a waterfall pours over has in place of its heights the height of the fall's top,
+// how far it falls and how fast it leaves the lip, and how far along the fall each corner is, a byte each.
 struct VoxelWater
 {
     float2 corner;
     float size;
-    uint fall;
+    uint wet;
     float4 heights;
     float2 flow;
-    float2 pad;
+    uint churn;
+    uint along;
 };
 
 struct Buffers

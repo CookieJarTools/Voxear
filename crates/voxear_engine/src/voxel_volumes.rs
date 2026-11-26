@@ -15,7 +15,10 @@
 //! `.worldgen` in the project, `generator_floor` how high the generator's
 //! ground is at the volume's floor (left out, a little under its ground at
 //! the volume's corner), and `generator_at` where the volume's corner lies
-//! in the generator's world. Its trees are kinds of `.voxplant`, each as
+//! in the generator's world. Its generator's sea fills the level at the
+//! generator's sea level, as an Ocean would, unless it has `sea = false` or
+//! the level has an Ocean of its own (an Ocean on the volume's Obj stands
+//! at that level too). Its trees are kinds of `.voxplant`, each as
 //! many to a hectare as it says, scattered where its ground grows grass:
 //!
 //! [[obj.voxel_volume.trees]]
@@ -129,6 +132,14 @@ pub struct VoxelVolumeData {
     /// What was changed in an endless volume, in the order it was changed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<VoxelEditData>,
+    /// Whether an endless volume with a generator has its generator's sea,
+    /// where the level has no Ocean of its own: on unless written off.
+    #[serde(skip_serializing_if = "is_on")]
+    pub sea: bool,
+}
+
+fn is_on(on: &bool) -> bool {
+    *on
 }
 
 /// A change to an endless volume as a scene writes it: a ball, its middle
@@ -318,6 +329,7 @@ impl Default for VoxelVolumeData {
             cover: Vec::new(),
             mobs: Vec::new(),
             edits: Vec::new(),
+            sea: made.sea,
         }
     }
 }
@@ -387,12 +399,23 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         cover: data.cover.iter().map(VoxelCoverData::made).collect(),
         areas: Arc::default(),
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
+        sea: data.sea,
     }
 }
 
-/// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Print` and `Voxels.Raycast` in scripts.
+/// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Print`, `Voxels.Raycast`, `Voxels.WaterAt` and
+/// `Voxels.Sea` in scripts.
 pub(crate) fn register() {
     voxear_scripting::set_voxel_edits(from_script);
+    voxear_scripting::set_voxel_water(
+        |world, at| water_at(world, Vec3::from(at), None).map(|(e, water)| (e, water.height, water.current.to_array())),
+        |world, on| {
+            if on >= 0 {
+                set_sea(world, on == 1, None);
+            }
+            sea_level(world)
+        },
+    );
     voxear_scripting::set_voxel_raycast(|world, origin, direction, reach| {
         raycast(world, Vec3::from(origin), Vec3::from(direction), reach, None)
             .map(|(entity, hit)| (entity, hit.point.to_array(), hit.normal.to_array(), hit.distance))
@@ -419,6 +442,58 @@ pub fn raycast(
             voxear_render::voxel_raycast(volume, corner, origin, direction, reach).map(|hit| (entity, hit))
         })
         .min_by(|a, b| a.1.distance.total_cmp(&b.1.distance))
+}
+
+/// The water of the rivers and lakes of the endless Voxel Volumes at `at`
+/// in the world, or of `only`'s alone: the volume, how high the water's
+/// surface stands and how its current runs (see
+/// `voxear_render::voxel_water_at`); the highest where two have water
+/// there. Not the sea, which stands at its generator's sea level as an
+/// Ocean (`voxear_render::ocean::seas`).
+pub fn water_at(world: &World, at: Vec3, only: Option<Entity>) -> Option<(Entity, voxear_render::VoxelWaterPoint)> {
+    world
+        .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .filter(|(entity, volume, ..)| volume.endless && only.is_none_or(|only| only == *entity))
+        .filter_map(|(entity, volume, local, placed)| {
+            let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            voxear_render::voxel_water_at(volume, corner, at).map(|water| (entity, water))
+        })
+        .max_by(|a, b| a.1.height.total_cmp(&b.1.height))
+}
+
+/// Turns the generator's sea of every endless Voxel Volume with one on or
+/// off, or `only`'s alone, in how its scene writes it too: how many it
+/// reached.
+pub fn set_sea(world: &mut World, on: bool, only: Option<Entity>) -> usize {
+    let reached: Vec<Entity> = world
+        .query_ref::<(Entity, &VoxelVolume)>()
+        .into_iter()
+        .filter(|(entity, volume)| volume.endless && volume.generator.is_some() && only.is_none_or(|o| o == *entity))
+        .map(|(entity, _)| entity)
+        .collect();
+    for &entity in &reached {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            volume.sea = on;
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.sea = on;
+        }
+    }
+    reached.len()
+}
+
+/// How high the sea of the first endless Voxel Volume with its generator's
+/// sea on stands in the world, if one has.
+pub fn sea_level(world: &World) -> Option<f32> {
+    world
+        .query_ref::<(&VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .find_map(|(volume, local, placed)| {
+            volume.sea_height(placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+        })
 }
 
 /// A script's carve (`fill` -1) or fill with the ground numbered as

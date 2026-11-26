@@ -418,6 +418,91 @@ fn generated_view(world: Arc<WorldGen>, x: f32, z: f32, height: f32, pitch: f32)
 }
 
 #[test]
+fn the_water_of_an_endless_volumes_rivers_is_found_where_it_is_drawn_with_its_current() {
+    let rivered = Arc::new(starter("Rolling Hills"));
+    let ([x, z], water, bed) = river_in(&rivered, 0.8);
+    let scene = generated_view(rivered.clone(), x, z, 8.0, 90.0);
+    let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    // The volume's floor is 24 m under the river's bed.
+    let (top, bottom) = (24.0 + water - bed, 24.0);
+    let at = |y: f32| voxear_render::voxel_water_at(&volume, Vec3::ZERO, Vec3::new(x, y, z));
+    let found = at(bottom + 0.1).expect("the river's water");
+    assert!((found.height - top).abs() < 0.15, "its surface at {:.2}, not {top:.2}", found.height);
+    // Its current runs as the generator's does there, worked out from the points its water is drawn from.
+    let [cx, cz] = rivered.current(x, z).expect("its current");
+    let current = Vec3::new(cx, 0.0, cz);
+    eprintln!("river at {x} {z}: surface {:.2} of {top:.2}, current {} of {current}", found.height, found.current);
+    if current.length() > 0.5 {
+        assert!(found.current.normalize().dot(current.normalize()) > 0.8, "{} along {current}", found.current);
+    }
+    assert!((found.current.length() - current.length()).abs() < 0.6, "{} as fast as {current}", found.current);
+    // Between the points, read smoothly from them, as near the generator's own water.
+    let (bx, bz) = (x + 0.23, z + 0.31);
+    let (own, _) = rivered.water(&[bx], &[bz]).unwrap();
+    let between = voxear_render::voxel_water_at(&volume, Vec3::ZERO, Vec3::new(bx, bottom + 0.1, bz)).unwrap();
+    assert!((between.height - (24.0 + own[0] - bed)).abs() < 0.1, "{} between the points", between.height);
+    // Over it the same surface; deep under its bed, none; nor on a hill far from water, nor under the floor.
+    assert_eq!(at(top + 20.0).map(|water| water.height), Some(found.height));
+    assert!(at(bottom - 3.0).is_none(), "no water 3 m under the bed");
+    assert!(voxear_render::voxel_water_at(&volume, Vec3::ZERO, Vec3::new(x, -1.0, z)).is_none());
+    let hill = (0..4000)
+        .map(|i| [(i % 64) as f32 * 9.0 - 300.0, (i / 64) as f32 * 9.0 - 300.0])
+        .max_by(|a, b| rivered.height_at(a[0], a[1]).total_cmp(&rivered.height_at(b[0], b[1])))
+        .unwrap();
+    let up = Vec3::new(hill[0], 24.0 + rivered.height_at(hill[0], hill[1]) - bed + 1.0, hill[1]);
+    assert!(voxear_render::voxel_water_at(&volume, Vec3::ZERO, up).is_none(), "no water on the hilltop at {hill:?}");
+    // Without rivers, none.
+    let mut bare = volume.clone();
+    bare.generator.as_mut().unwrap().world = Arc::new(rivered.without_rivers());
+    assert!(voxear_render::voxel_water_at(&bare, Vec3::ZERO, Vec3::new(x, bottom + 0.1, z)).is_none());
+}
+
+#[test]
+fn an_endless_volume_has_its_generators_sea_where_the_level_has_no_ocean() {
+    let Some(mut renderer) = renderer() else { return };
+    let islands = Arc::new(starter("Archipelago"));
+    let sea = islands.sea_level();
+    // A shore with the sea 3 m deep 24 m off towards +x, seen from 3 m over the sea, looking out across it.
+    let coast = (0..160_000)
+        .map(|i| [(i % 400) as f32 * 4.0 - 800.0, (i / 400) as f32 * 4.0 - 800.0])
+        .find(|&[x, z]| (islands.height_at(x, z) - sea).abs() < 0.5 && islands.height_at(x + 24.0, z) < sea - 3.0)
+        .expect("a shore");
+    let from = [coast[0] - 6.0, coast[1]];
+    let mut scene =
+        generated_view(islands.clone(), from[0], from[1], sea - islands.height_at(from[0], from[1]) + 3.0, 12.0);
+    let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+    camera.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
+    let (volume, floor) = {
+        let (entity, volume) = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap();
+        (entity, volume.generator.as_ref().unwrap().floor)
+    };
+    let seas = voxear_render::ocean::seas(&scene);
+    assert_eq!(seas.len(), 1, "the volume's sea");
+    assert_eq!((seas[0].entity, seas[0].position.y), (volume, sea - floor));
+    let with_sea = render(&mut renderer, &scene, 3);
+    keep_image("generated sea.png", &with_sea);
+    scene.get_mut::<VoxelVolume>(volume).unwrap().sea = false;
+    assert!(voxear_render::ocean::seas(&scene).is_empty());
+    let without = render(&mut renderer, &scene, 3);
+    keep_image("generated sea turned off.png", &without);
+    // Out across the water, under the horizon: the sea's water where there was its floor.
+    let (w, h) = (WIDTH as usize, HEIGHT as usize);
+    let (mut changed, mut bluer, mut all) = (0, 0, 0);
+    for y in h * 55 / 100..h * 70 / 100 {
+        for x in w / 4..w * 3 / 4 {
+            let at = (y * w + x) * 4;
+            let (a, b) = (&with_sea[at..at + 3], &without[at..at + 3]);
+            all += 1;
+            changed += usize::from(a.iter().zip(b).map(|(a, b)| a.abs_diff(*b) as u32).sum::<u32>() > 24);
+            bluer += usize::from(i32::from(a[2]) - i32::from(a[0]) > i32::from(b[2]) - i32::from(b[0]));
+        }
+    }
+    eprintln!("out to sea: {changed} of {all} pixels changed, {bluer} bluer");
+    assert!(changed * 2 > all, "the sea shows: {changed} of {all} pixels changed");
+    assert!(bluer * 2 > all, "the sea's water is bluer than its floor: {bluer} of {all}");
+}
+
+#[test]
 fn an_endless_volume_made_by_a_starter_generator_shows_its_ground() {
     let Some(mut renderer) = renderer() else { return };
     let hills = Arc::new(starter("Rolling Hills"));
@@ -713,12 +798,7 @@ fn measure_rivers_and_a_coast() {
                     sea - islands.height_at(coast[0] - 6.0, coast[1]) + 3.0,
                     12.0,
                 );
-                let floor =
-                    scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
-                scene.spawn((
-                    voxear_render::Ocean::default(),
-                    Transform::from_position(Vec3::new(0.0, sea - floor, 0.0)),
-                ));
+                // Its sea is the generator's, at its sea level.
                 let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
                 camera.rotation =
                     Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(12f32.to_radians());
@@ -733,6 +813,21 @@ fn measure_rivers_and_a_coast() {
                 let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
                 let turn = if down > 0.0 { -std::f32::consts::FRAC_PI_2 } else { std::f32::consts::FRAC_PI_2 };
                 camera.rotation = Quat::from_rotation_y(turn) * Quat::from_rotation_x(-8f32.to_radians());
+                scene
+            }
+            "falls-side" => {
+                // From 12 m off to its side and downstream, 4 m over its pool, looking at its middle.
+                let (fx, fz, top, foot, down) = fall;
+                let (x, z) = (fx + down * 9.0, fz + 9.0);
+                let mut scene = generated_view(alpine.clone(), x, z, 0.0, 0.0);
+                let floor =
+                    scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
+                let eye = Vec3::new(x, foot + 4.0 - floor, z);
+                let to = Vec3::new(fx, (top + foot) * 0.5 - floor, fz) - eye;
+                let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+                camera.position = eye;
+                camera.rotation =
+                    Quat::from_rotation_y(to.x.atan2(to.z)) * Quat::from_rotation_x((-to.y).atan2(to.x.hypot(to.z)));
                 scene
             }
             // From 6 m over the river's water, looking 35° down.

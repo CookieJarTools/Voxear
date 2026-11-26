@@ -48,7 +48,7 @@ pub use changes::{CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelF
 pub use fell::{VoxelCut, VoxelCutDone, VoxelPiece, cut as voxel_cut, stamp as voxel_stamp, tree_trunks as voxel_tree_trunks};
 pub use collapse::{
     CRUMBS as VOXEL_CRUMBS, VoxelAnchor, VoxelBlast, VoxelBlastDone, VoxelLoosened, VoxelSettled, VoxelStuff,
-    blast as voxel_blast, loosen as voxel_loosen, settle as voxel_settle,
+    blast as voxel_blast, blast_dig as voxel_blast_dig, dug_between as voxel_dug_between, loosen as voxel_loosen, settle as voxel_settle,
 };
 pub use strain::{JoinLoad as VoxelJoinLoad, VoxelRound, VoxelStrain, VoxelStrainDone, VoxelStrainMemory};
 pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
@@ -136,7 +136,14 @@ pub struct VoxelVolume {
     /// How an endless volume finds where what is built gives way under its
     /// own weight.
     pub strain: VoxelStrain,
+    /// The most pieces of what was built falling at once in an endless
+    /// volume: past that the smallest falls to dust.
+    pub most_pieces: u32,
 }
+
+/// How many pieces of what was built fall at once in an endless volume
+/// unless it says.
+pub const MOST_PIECES: u32 = 24;
 
 /// What a tree felled in an endless Voxel Volume becomes once it has
 /// fallen and come to rest: a body of its own, which can be pushed and
@@ -450,6 +457,7 @@ impl Default for VoxelVolume {
             anchor: VoxelAnchor::Earth,
             built: VoxelStuff::Stone,
             strain: VoxelStrain::Solved,
+            most_pieces: MOST_PIECES,
         }
     }
 }

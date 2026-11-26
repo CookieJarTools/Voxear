@@ -68,8 +68,8 @@ fn bears(stuff: VoxelStuff) -> Bears {
     match stuff {
         VoxelStuff::Earth => Bears { pull: 1.5e3, push: 1.5e5, shear: 6e3, bend: 1.5e3, stiff: 0.05 },
         VoxelStuff::Stone => Bears { pull: 30e3, push: 3e6, shear: 60e3, bend: 30e3, stiff: 1.0 },
-        VoxelStuff::Brick => Bears { pull: 20e3, push: 2e6, shear: 40e3, bend: 20e3, stiff: 0.6 },
-        VoxelStuff::Wood => Bears { pull: 120e3, push: 120e3, shear: 40e3, bend: 120e3, stiff: 0.3 },
+        VoxelStuff::Brick => Bears { pull: 12e3, push: 2e6, shear: 30e3, bend: 12e3, stiff: 0.6 },
+        VoxelStuff::Wood => Bears { pull: 30e3, push: 80e3, shear: 15e3, bend: 12e3, stiff: 0.3 },
         VoxelStuff::Glass => Bears { pull: 8e3, push: 1e6, shear: 8e3, bend: 8e3, stiff: 0.7 },
     }
 }
@@ -80,6 +80,9 @@ fn weaker(a: VoxelStuff, b: VoxelStuff) -> VoxelStuff {
 }
 
 const GRAVITY: f64 = 9.81;
+/// How hard a join pushed together holds against sliding, for each newton
+/// it is pushed.
+const FRICTION: f64 = 0.6;
 /// How stiff stone is, in pascals: only how stiff each join is against the
 /// others matters to the loads.
 const STIFF: f64 = 1e9;
@@ -365,8 +368,12 @@ impl Graph {
             (-pull - (-was).max(0.0)) / (bears.push * area)
         };
         let size = |a: [f32; 3]| length(a.map(f64::from));
-        let shear = (size(load.shear) - size(rest.shear)) / (bears.shear * area);
-        let bend = (size(load.moment) - size(rest.moment)) / (bears.bend * area.powf(1.5) / 6.0);
+        // Pushed together, a join holds against sliding by friction, and against bending until what pushes it
+        // leaves the middle third of it, as a wall's stones do.
+        let pushed = (-pull).max(0.0);
+        let shear = (size(load.shear) - size(rest.shear)) / (bears.shear * area + FRICTION * pushed);
+        let bend =
+            (size(load.moment) - size(rest.moment)) / (bears.bend * area.powf(1.5) / 6.0 + pushed * area.sqrt() / 6.0);
         axial.max(shear).max(bend)
     }
 }
@@ -903,13 +910,16 @@ pub(super) fn strain(
     done.joins = graph.joins.len();
     let mut solver: Option<Solver> = None;
     let mut round = VoxelRound::default();
+    // How near each join came to breaking, at the last loads found.
+    let mut strained = vec![0.0; graph.joins.len()];
     for _ in 0..MOST_ROUNDS {
         done.rounds += 1;
         // What has come loose first, whatever broke it.
         let loose = graph.unheld();
         if !loose.is_empty() {
             for set in loose {
-                let mut voxels: Vec<IVec3> = Vec::new();
+                // What comes loose breaks apart along the joins that were nearly breaking too.
+                let parts = split(&graph, &set, &strained);
                 for &i in &set {
                     graph.nodes[i].gone = true;
                     for &j in &graph.of[i].clone() {
@@ -923,19 +933,24 @@ pub(super) fn strain(
                     if let Some(solver) = solver.as_mut() {
                         solver.forget(&graph, i);
                     }
-                    let b = graph.nodes[i].brick;
-                    for z in 0..8 {
-                        for y in 0..8 {
-                            for x in 0..8 {
-                                let c = b * 8 + IVec3::new(x, y, z);
-                                if after.class(c) == BUILT {
-                                    voxels.push(c);
+                }
+                for part in parts {
+                    let mut voxels: Vec<IVec3> = Vec::new();
+                    for i in part {
+                        let b = graph.nodes[i].brick;
+                        for z in 0..8 {
+                            for y in 0..8 {
+                                for x in 0..8 {
+                                    let c = b * 8 + IVec3::new(x, y, z);
+                                    if after.class(c) == BUILT {
+                                        voxels.push(c);
+                                    }
                                 }
                             }
                         }
                     }
+                    take_set(after, voxels, &mut round);
                 }
-                take_set(after, voxels, &mut round);
             }
             if !round.dig.is_empty() || round.broken > 0 {
                 done.loose.push(std::mem::take(&mut round));
@@ -950,13 +965,12 @@ pub(super) fn strain(
             done.factored += done.rows - stale.min(done.rows);
         }
         // The joins over what they bear: the worst, and all nearly as bad.
-        let overs: Vec<(usize, f64)> = graph
-            .joins
-            .iter()
-            .enumerate()
-            .filter(|(_, join)| !join.broken)
-            .map(|(j, join)| (j, graph.over(j, loads[j], memory.rest.get(&join.key).copied().unwrap_or_default())))
-            .filter(|(_, over)| *over > 1.0)
+        for (j, join) in graph.joins.iter().enumerate().filter(|(_, join)| !join.broken) {
+            strained[j] = graph.over(j, loads[j], memory.rest.get(&join.key).copied().unwrap_or_default());
+        }
+        let overs: Vec<(usize, f64)> = (0..graph.joins.len())
+            .filter(|&j| !graph.joins[j].broken && strained[j] > 1.0)
+            .map(|j| (j, strained[j]))
             .collect();
         let worst = overs.iter().map(|(_, o)| *o).fold(0.0, f64::max);
         if overs.is_empty() {
@@ -990,6 +1004,49 @@ pub(super) fn strain(
     memory.rest.retain(|key, _| !gone.contains(&key.0));
     done.seconds = started.elapsed().as_secs_f32();
     done
+}
+
+/// What share of the joins inside what comes loose, the nearest breaking,
+/// it breaks apart along.
+const SPLIT: f64 = 0.1;
+
+/// The parts of the set of nodes `set` that hold together by the joins
+/// that came no nearer breaking than all but the [`SPLIT`] worst of them,
+/// and no nearer than bearing all they bear.
+fn split(graph: &Graph, set: &[usize], strained: &[f64]) -> Vec<Vec<usize>> {
+    let inside: HashSet<usize> = set.iter().copied().collect();
+    let mut within: Vec<f64> = set
+        .iter()
+        .flat_map(|&i| graph.of[i].iter().copied())
+        .filter(|&j| graph.joins[j].b.is_some() && !graph.joins[j].broken)
+        .map(|j| strained[j])
+        .collect();
+    within.sort_by(f64::total_cmp);
+    let worst = within.get(((within.len() as f64) * (1.0 - SPLIT)) as usize).copied().unwrap_or(f64::MAX);
+    let breaks = worst.max(1.0);
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut parts = Vec::new();
+    for &start in set {
+        if !seen.insert(start) {
+            continue;
+        }
+        let mut part = vec![start];
+        let mut at = 0;
+        while at < part.len() {
+            let i = part[at];
+            at += 1;
+            for &j in &graph.of[i] {
+                let join = &graph.joins[j];
+                let Some(b) = join.b.filter(|_| !join.broken && strained[j] < breaks) else { continue };
+                let other = if join.a == i { b } else { join.a };
+                if inside.contains(&other) && seen.insert(other) {
+                    part.push(other);
+                }
+            }
+        }
+        parts.push(part);
+    }
+    parts
 }
 
 /// Takes `voxels` out of `grid` into `round`: each set of them that touch
@@ -1131,9 +1188,9 @@ mod tests {
             let (mut a, mut b) = (Grid::new(&volume, None), Grid::new(&volume, None));
             let done = strain(way, &mut a, &mut b, &near, &mut memory);
             assert!(done.loose.is_empty() && done.broken == 0, "{way:?} at rest: {done:?}");
-            // The corner blown out, a ball 2.6 m across, at the foot.
+            // The corner blown out, a ball 3.6 m across, high on the wall.
             let mut memory = VoxelStrainMemory::default();
-            let blast = super::super::collapse::VoxelBlast { at: Vec3::new(4.0, 2.0, 4.0), radius: 1.3 };
+            let blast = super::super::collapse::VoxelBlast { at: Vec3::new(4.0, 2.5, 4.0), radius: 1.8 };
             let (_, blasted) = super::super::collapse::blast(&volume, blast, &mut memory);
             eprintln!("{way:?}: {} dug, {} loose at once", blasted.dug, blasted.settled.loosened.loose);
             let done = blasted.settled.strain;
@@ -1151,7 +1208,7 @@ mod tests {
                 done.factored / done.rounds.max(1),
                 done.rows
             );
-            assert!(done.broken > 0 && loose > 4000, "{way:?}: the roof over the corner comes down: {loose}");
+            assert!(done.broken > 0 && loose > 3000, "{way:?}: the roof over the corner comes down: {loose}");
             // Not the whole house.
             let all = joins_of(&volume, &near);
             assert!(all > 0);

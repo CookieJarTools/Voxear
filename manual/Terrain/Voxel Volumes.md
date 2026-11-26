@@ -474,6 +474,73 @@ felled = "stamped"
 regrow = 600.0
 ```
 
+### What was built comes loose and gives way
+
+Everything built in an endless volume holds up only as long as something holds it: every voxel an edit filled, a print printed or a game placed. The ground as it is made holds what touches it, and so does earth filled or placed untinted (dirt, grass, rock, sand, snow, gravel), so a bank raised holds as the hill does. Pavings, prints and anything tinted are built. A built voxel is held where it touches what holds face to face, or touches built voxels that are held. The volume's **Anchor** says what holds:
+
+- **Earth**: the ground, and earth filled or placed. As it comes.
+- **Ground**: the ground alone. A bank raised on it is built and can come loose too.
+- **Everything**: whatever is solid. Nothing ever comes loose, as before.
+
+A blast blows out what was built in a ball, and leaves the ground:
+
+```csharp
+// A shell lands: the wall it hits is blown out, and the house round it sags and falls in.
+var done = Voxels.Blast(landed, 1.2f);
+if (done.Dug > 0) Audio.Play(rubble, landed);
+
+// What it cuts off is taken away, not dropped.
+Voxels.Blast(landed, 0.6f, pieces: VoxelPieces.Remove);
+```
+
+What it digs out is gone at once, dust flying where it was, and `VoxelBlastDone` says how many volumes it reached and how many voxels it dug out. Digging (`Voxels.Dig`) and carving (`Voxels.Carve`, and the shapes with no ground) do the same after them, without the dust. Then the volume works out what that left, on a thread of its own, for a moment:
+
+**Cut off.** Only what touched the voxels dug out can have come loose, so the check starts there. It goes over half-metre bricks first, the bricks whose built voxels touch across their faces, to find which of them touch what holds and how far each is from one, then over voxels, the way the bricks say is nearest. Whatever finds nothing that holds comes loose: a balcony cut from its house, a wall over a breach cut at both ends, a bridge's span once both piers are blown through. It is taken out of the volume and falls as a piece, an Obj named Fallen piece, made as a felled tree's is: a Rigidbody as heavy as what it is made of, collider boxes of its voxels, and its voxels a Voxel Volume of their own that turns with it. What a blast cut off is thrown away from it, 3 m/s unless `throw:` says. A wall over a breach that still holds at its ends stays up, as long as it bears its weight.
+
+**Under its own weight.** Then what is built round the change is taken as a graph of its half-metre bricks: each as heavy as its voxels and made of what most of them are, joined to its neighbours where their voxels touch, as strongly as the faces that touch are many, and to what holds it where it touches that. The loads on every join under gravity are found, and each is split into pull or push along the join, shear across it and bending about it. A join breaks where any of them has grown over what it bore at rest by more than the weaker of its two bricks bears: whatever stands at rest stands, and a join that bears less than it did, as a wall whose roof has fallen, is none the worse. What a break leaves joined to nothing comes loose, the loads are found again, and so on, round after round, a fifth of a second apart, until nothing more gives way. A house with its corner blown out stands a moment, then its roof over the corner sags in and the walls hung from it come down after.
+
+What each brick is made of:
+
+| Made of | Heavy | Bears |
+|---|---|---|
+| Stone (ashlar, cobbles, flagstones) | 2400 kg/m³ | pushed hard, pulled and bent little |
+| Brick | 1900 kg/m³ | as stone, a little less |
+| Wood (planks) | 600 kg/m³ | pulled and bent as well as pushed |
+| Earth (filled with a ground when Anchor is Ground) | 1600 kg/m³ | little of anything |
+| Glass (a print's see-through colours) | 2500 kg/m³ | little but pushed |
+
+A print's voxels and pieces stamped back are made of what the volume's **Built Of** says, stone unless set. Its **Strain** says how the loads are found:
+
+- **Solved**: the joins are taken as stiff springs between bricks that move and turn, and solved at once (a direct sparse solve; after a break only the part of it from the first brick the break touches is worked out again). True to arches, and to a load shared between two walls. As it comes.
+- **Paths**: each brick's weight goes down the cheapest way to what holds, shared among the joins that way. Hundreds of times faster, but a load it moves to a new way breaks more than it would: the same blown-out corner brings a whole house down.
+- **Off**: only what is cut off comes loose.
+
+On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a millisecond; a blown corner, every round and the voxels with them, about a fifth of a second, while the game goes on. At most 4,000 bricks round a change are looked at; what is built past them is taken as holding.
+
+**Falling and resting.** A piece that hits the volume hard digs out what it hits, as a small blast does, and what that cuts off falls too; pieces that hit each other chip where they meet, dust flying. A piece of fewer than 320 voxels is dust, no body, and so is the smallest falling once more fall at once than the volume's **Most Pieces** (24 unless set; a view draws 64 volumes). Once a piece has lain still for a second it is stamped back into the volume where it lies, voxels placed in its own colours, built again: rubble on the floor that can be blown out in turn. `Voxels.Piece`, `Voxels.StampPiece` and `Voxels.RemovePiece` work on a fallen piece's Obj as on a felled tree's.
+
+What comes loose is dug out a voxel at a time, so it costs as much as digging it would, and is saved in the region files with the other changes. What each join bore at rest is kept while the level runs, not saved: a house left cracked but standing is whole again when the level is loaded.
+
+In the editor nothing falls: a blast takes what comes loose away, and digging and carving there let nothing loose. While the game plays it falls as in the game. `vox editor call` does the same; `wait` settles before it answers, every round at once, and lists the pieces:
+
+```
+vox editor call voxels.blast '{ "at": [4.0, 2.0, 4.0], "radius": 1.3 }'
+vox editor call voxels.blast '{ "at": [4.0, 2.0, 4.0], "radius": 1.3, "throw": 0, "wait": true }'
+vox editor call voxels.settled
+vox editor call field.set '{ "obj": 7, "component": "voxel_volume", "field": "strain", "value": "Paths" }'
+```
+
+The scene writes the volume's settings where they aren't as they come:
+
+```toml
+[obj.voxel_volume]
+endless = true
+anchor = "ground"
+strain = "paths"
+built = "wood"
+most_pieces = 12
+```
+
 ### Saved in region files
 
 The voxels set one at a time are kept brick by brick, and saved with the scene in region files beside it, a folder for each volume (`<scene>.voxels/<Obj id>/`) and a file for each region of 64 m a side at 16 voxels a metre: each brick its place, a bit for each of its voxels and a byte for each voxel set, packed with zstd. A tunnel of 320 voxels dug across two regions takes under 2 KB. The scene names the folder and its regions, so it loads them as it loads; a save writes only the regions that changed and takes away those no voxel is set in any more:
@@ -557,4 +624,5 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
 - Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
-- Edits, voxels set one at a time, cut grass and felled trees aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.
+- What gives way under its own weight is found by bricks of half a metre, so a wall breaks along their edges. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
+- Edits, voxels set one at a time, cut grass, felled trees and fallen pieces aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.

@@ -615,6 +615,26 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ reached, columns, voxels, pieces }",
     },
     CallInfo {
+        name: "voxels.blast",
+        about: "Blows out what was built in a ball round `at` in every endless Voxel Volume it reaches, or `obj`'s alone, as a script's Voxels.Blast does: every voxel an edit filled, a print printed or a game placed is dug out, and the ground is left. What that cuts off from what holds it comes loose, thrown away from the blast, and what is left overloaded gives way after, a round at a time, as the volume's `strain` finds it. While the game plays the pieces fall as bodies and are stamped back where they rest; in the editor they are taken away. With `wait` the volume settles before the answer, which then lists the pieces. Saved with the volume's other changes. One step to undo.",
+        args: &[
+            arg("at", ArgKind::Vector, "The blast's middle, in metres, in the world."),
+            arg("radius", ArgKind::Number, "How far it reaches, in metres."),
+            maybe("throw", ArgKind::Number, "How fast what it cuts off is thrown away from it, in metres a second: 3 unless given."),
+            maybe("wait", ArgKind::Toggle, "Settle before answering, every round at once: true in the editor."),
+            maybe("obj", ArgKind::Obj, "The Voxel Volume."),
+        ],
+        changes: true,
+        returns: "{ reached, dug, pieces, broken, rounds }",
+    },
+    CallInfo {
+        name: "voxels.settled",
+        about: "Whether every endless Voxel Volume has settled after its last blast, dig or carve: nothing still being worked out and no round still to give way; and how many pieces of what was built are falling.",
+        args: &[],
+        changes: false,
+        returns: "{ settled, falling }",
+    },
+    CallInfo {
         name: "voxels.restore",
         about: "Lets the voxels at points of the world go back to what their volume's ground and edits make, undoing digging and placing there, as a script's Voxels.Restore does. One step to undo.",
         args: &[

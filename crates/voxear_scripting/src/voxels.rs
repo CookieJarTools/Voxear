@@ -390,6 +390,35 @@ pub(crate) unsafe extern "C" fn voxel_cut(
     reached
 }
 
+/// What answers `Voxels.Blast`: what was built in a ball round `at`, of
+/// `radius` metres, dug out of every endless Voxel Volume it reaches, what
+/// that leaves cut off or overloaded falling (`pieces` 0) or taken away (1),
+/// what it cuts off thrown away from it at `throw` metres a second. Gives
+/// how many volumes it reached and how many voxels it dug out.
+pub type VoxelBlasts = fn(&mut World, [f32; 3], f32, i32, f32) -> [i32; 2];
+
+static BLASTS: OnceLock<VoxelBlasts> = OnceLock::new();
+
+/// Sets what answers `Voxels.Blast`; the first set is kept.
+pub fn set_voxel_blasts(blasts: VoxelBlasts) {
+    let _ = BLASTS.set(blasts);
+}
+
+/// `Voxels.Blast`: writes how many volumes it reached and voxels it dug
+/// into `done`; gives the volumes, or -1 while scripts are not running.
+pub(crate) unsafe extern "C" fn voxel_blast(at: *const [f32; 3], radius: f32, pieces: i32, throw: f32, done: *mut [i32; 2]) -> i32 {
+    let Some(blasts) = BLASTS.get() else { return -1 };
+    if at.is_null() || done.is_null() {
+        return -1;
+    }
+    let at = unsafe { *at };
+    let Some(made) = with_world(|world| Some(blasts(world, at, radius.max(0.0), pieces, throw.max(0.0)))) else {
+        return -1;
+    };
+    unsafe { *done = made };
+    made[0]
+}
+
 /// What answers `Voxels.Piece`, `Voxels.Stamp` and `Voxels.Remove`: what
 /// felled piece an Obj is, and with `act` 1 it stamped back where it lies, 2
 /// taken away; none for an Obj that is not one.

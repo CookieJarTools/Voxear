@@ -189,6 +189,38 @@ pub struct VoxelVolumeData {
     /// never unless written.
     #[serde(skip_serializing_if = "is_nothing")]
     pub regrow: f32,
+    /// What holds up what is built in an endless volume, so that what is
+    /// cut off from it comes loose: earth and the ground unless written.
+    #[serde(skip_serializing_if = "is_earth_anchor")]
+    pub anchor: voxear_render::VoxelAnchor,
+    /// How an endless volume finds where what is built gives way under its
+    /// own weight: solved unless written.
+    #[serde(skip_serializing_if = "is_solved")]
+    pub strain: voxear_render::VoxelStrain,
+    /// What an endless volume's printed voxels are made of: stone unless
+    /// written.
+    #[serde(skip_serializing_if = "is_stone")]
+    pub built: voxear_render::VoxelStuff,
+    /// The most pieces of what was built falling at once in an endless
+    /// volume: past that the smallest falls to dust.
+    #[serde(skip_serializing_if = "is_most_pieces")]
+    pub most_pieces: u32,
+}
+
+fn is_earth_anchor(anchor: &voxear_render::VoxelAnchor) -> bool {
+    *anchor == voxear_render::VoxelAnchor::Earth
+}
+
+fn is_solved(strain: &voxear_render::VoxelStrain) -> bool {
+    *strain == voxear_render::VoxelStrain::Solved
+}
+
+fn is_stone(stuff: &voxear_render::VoxelStuff) -> bool {
+    *stuff == voxear_render::VoxelStuff::Stone
+}
+
+fn is_most_pieces(most: &u32) -> bool {
+    *most == voxear_render::MOST_PIECES
 }
 
 fn is_body(felled: &VoxelFelled) -> bool {
@@ -522,6 +554,10 @@ impl Default for VoxelVolumeData {
             water: made.water,
             felled: made.felled,
             regrow: made.regrow,
+            anchor: made.anchor,
+            strain: made.strain,
+            built: made.built,
+            most_pieces: made.most_pieces,
         }
     }
 }
@@ -604,6 +640,10 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         water: data.water,
         felled: data.felled,
         regrow: data.regrow.max(0.0),
+        anchor: data.anchor,
+        strain: data.strain,
+        built: data.built,
+        most_pieces: data.most_pieces,
     }
 }
 
@@ -758,7 +798,19 @@ fn generator_of(
 /// Sets what answers `Voxels.Carve`, `Voxels.Fill`, `Voxels.Box` and the other shapes, `Voxels.Dig` and
 /// `Voxels.Place`, `Voxels.Print`, `Voxels.Raycast`, `Voxels.WaterAt` and `Voxels.Sea` in scripts.
 pub(crate) fn register() {
-    voxear_scripting::set_voxel_edits(from_script);
+    voxear_scripting::set_voxel_edits(|world, at, radius, fill| {
+        let reach = Vec3::splat(radius.max(0.0));
+        let at = Vec3::from(at);
+        let carve = fill == -1;
+        settling(world, carve, at - reach, at + reach, |world| from_script(world, at.to_array(), radius, fill))
+    });
+    voxear_scripting::set_voxel_blasts(|world, at, radius, pieces, throw| {
+        use crate::voxel_collapse::{BlastOptions, blast};
+        use crate::voxel_felling::CutPieces;
+        let pieces = if pieces == 1 { CutPieces::Gone } else { CutPieces::Fall };
+        let done = blast(world, Vec3::from(at), radius, BlastOptions { pieces, throw, ..BlastOptions::default() }, None);
+        [done.reached, done.dug].map(|n| n.min(i32::MAX as usize) as i32)
+    });
     voxear_scripting::set_voxel_water(
         |world, at| water_at(world, Vec3::from(at), None).map(|(e, water)| (e, water.height, water.current.to_array())),
         |world, on| {
@@ -768,7 +820,11 @@ pub(crate) fn register() {
             sea_level(world)
         },
     );
-    voxear_scripting::set_voxel_shapes(shape_from_script);
+    voxear_scripting::set_voxel_shapes(|world, request| {
+        let carve = request.fill == -1;
+        let (low, high) = request_reach(request);
+        settling(world, carve, low, high, |world| shape_from_script(world, request))
+    });
     voxear_scripting::set_voxel_sets(|world, points, to, tint| {
         let points: Vec<Vec3> = points.iter().map(|p| Vec3::from(*p)).collect();
         match to {
@@ -779,7 +835,8 @@ pub(crate) fn register() {
             to => match material_from_script(to) {
                 Some(material) => {
                     let kind = material.map(|material| VoxelKind { material, tint });
-                    set_voxels(world, &points, kind, None) as i32
+                    let (low, high) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(l, h), p| (l.min(*p), h.max(*p)));
+                    settling(world, kind.is_none(), low, high, |world| set_voxels(world, &points, kind, None) as i32)
                 }
                 None => -1,
             },
@@ -833,6 +890,43 @@ pub(crate) fn register() {
         };
         Some(script_piece(&piece))
     });
+}
+
+/// Does `change` to the world, and where it dug or carved out (`digs`) what
+/// was built in the box from `low` to `high` in the world, settles each
+/// endless volume it changed: what it cut off comes loose.
+fn settling<R>(world: &mut World, digs: bool, low: Vec3, high: Vec3, change: impl FnOnce(&mut World) -> R) -> R {
+    if !digs {
+        return change(world);
+    }
+    let before: Vec<(Entity, VoxelVolume)> = world
+        .query_ref::<(Entity, &VoxelVolume)>()
+        .into_iter()
+        .filter(|(_, volume)| volume.endless && volume.anchor != voxear_render::VoxelAnchor::Everything)
+        .map(|(entity, volume)| (entity, volume.clone()))
+        .collect();
+    let made = change(world);
+    for (entity, was) in before {
+        let changed = world.get::<VoxelVolume>(entity).is_some_and(|now| *now != was);
+        if changed {
+            crate::voxel_collapse::settle_after(world, entity, was, low, high, crate::voxel_felling::CutPieces::Fall);
+        }
+    }
+    made
+}
+
+/// The box a script's shaped edit reaches, in the world: a little past it.
+fn request_reach(request: &voxear_scripting::VoxelShapeRequest) -> (Vec3, Vec3) {
+    let at = Vec3::from(request.at);
+    let size = Vec3::from(request.size);
+    let far = size.length().max(request.radius) + 0.5;
+    let mut low = at - Vec3::splat(far);
+    let mut high = at + Vec3::splat(far);
+    for p in &request.points {
+        low = low.min(Vec3::new(p[0], request.low.min(at.y) - far, p[1]));
+        high = high.max(Vec3::new(p[0], request.high.max(at.y) + far, p[1]));
+    }
+    (low, high)
 }
 
 /// A felled piece as scripts read it.

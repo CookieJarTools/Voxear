@@ -367,6 +367,8 @@ pub struct VoxelLoosened {
     pub bricks: usize,
     pub voxels: usize,
     pub loose: usize,
+    /// The voxels that came loose, dug out.
+    pub dig: Vec<IVec3>,
 }
 
 /// The bricks of built voxels joined to brick `start` across faces, as far
@@ -526,6 +528,7 @@ pub(super) fn take_out(grid: &mut Grid, loose: Vec<Vec<IVec3>>, changes: &mut Vo
         for c in &found {
             changes.set(*c, None);
         }
+        done.dig.extend(found.iter().copied());
         if found.len() < CRUMBS {
             let mut bricks: Vec<IVec3> = found.iter().map(|c| c.div_euclid(IVec3::splat(B))).collect();
             bricks.sort_by_key(|b| b.to_array());
@@ -621,54 +624,80 @@ pub fn settle(
     (changes, done)
 }
 
-/// Digs out what was built of `volume` in `blast`, and settles what is
-/// left ([`settle`]): gives the volume's changes after it, and what it
-/// did. The ground, and what holds as the ground does, is left.
+/// The voxels of the box from `low` to `high` (in voxels from the volume's
+/// corner) solid in `before` and open in `after`: what a carve, a dig or a
+/// cut took out.
+pub fn dug_between(before: &VoxelVolume, after: &VoxelVolume, low: IVec3, high: IVec3) -> Vec<IVec3> {
+    let block = before.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+    let woods = trees::woods(&before.trees, block);
+    let (mut was, mut now) = (Grid::new(before, woods.as_deref()), Grid::new(after, woods.as_deref()));
+    let mut dug = Vec::new();
+    for z in low.z..=high.z {
+        for y in low.y.max(1)..=high.y {
+            for x in low.x..=high.x {
+                let c = IVec3::new(x, y, z);
+                if was.class(c) != AIR && now.class(c) == AIR {
+                    dug.push(c);
+                }
+            }
+        }
+    }
+    dug
+}
+
+/// Digs out what was built of `volume` in `blast` and nothing else: the
+/// changes after it, the voxels it dug out, and a place in metres for each
+/// brick of them, for the dust they make. The ground, and what holds as the
+/// ground does, is left.
+pub fn blast_dig(volume: &VoxelVolume, blast: VoxelBlast) -> (VoxelChanges, Vec<IVec3>, Vec<Vec3>) {
+    let mut changes = (*volume.changes).clone();
+    if !volume.endless || blast.radius <= 0.0 {
+        return (changes, Vec::new(), Vec::new());
+    }
+    let block = volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+    let woods = trees::woods(&volume.trees, block);
+    let mut grid = Grid::new(volume, woods.as_deref());
+    let voxel = grid.voxel;
+    let (low, high) = (
+        ((blast.at - blast.radius) / voxel).floor().as_ivec3(),
+        ((blast.at + blast.radius) / voxel).floor().as_ivec3(),
+    );
+    let mut dug = Vec::new();
+    for z in low.z..=high.z {
+        for y in low.y.max(1)..=high.y {
+            for x in low.x..=high.x {
+                let c = IVec3::new(x, y, z);
+                if ((c.as_vec3() + 0.5) * voxel).distance(blast.at) <= blast.radius && grid.class(c) == BUILT {
+                    dug.push(c);
+                }
+            }
+        }
+    }
+    for c in &dug {
+        changes.set(*c, None);
+    }
+    let mut bricks: Vec<IVec3> = dug.iter().map(|c| c.div_euclid(IVec3::splat(B))).collect();
+    bricks.sort_by_key(|b| b.to_array());
+    bricks.dedup();
+    let dust = bricks.into_iter().map(|b| (b * B).as_vec3() * voxel + voxel * B as f32 * 0.5).collect();
+    (changes, dug, dust)
+}
+
+/// Digs out what was built of `volume` in `blast` ([`blast_dig`]), and
+/// settles what is left ([`settle`]): gives the volume's changes after it,
+/// and what it did.
 pub fn blast(
     volume: &VoxelVolume,
     blast: VoxelBlast,
     memory: &mut VoxelStrainMemory,
 ) -> (VoxelChanges, VoxelBlastDone) {
     let mut done = VoxelBlastDone::default();
-    if !volume.endless || blast.radius <= 0.0 {
-        return ((*volume.changes).clone(), done);
-    }
-    let block = volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
-    let woods = trees::woods(&volume.trees, block);
-    let mut changes = (*volume.changes).clone();
-    // What it digs, worked out on the volume as it was.
-    let dug: Vec<IVec3> = {
-        let mut grid = Grid::new(volume, woods.as_deref());
-        let voxel = grid.voxel;
-        let (low, high) = (
-            ((blast.at - blast.radius) / voxel).floor().as_ivec3(),
-            ((blast.at + blast.radius) / voxel).floor().as_ivec3(),
-        );
-        let mut dug = Vec::new();
-        for z in low.z..=high.z {
-            for y in low.y.max(1)..=high.y {
-                for x in low.x..=high.x {
-                    let c = IVec3::new(x, y, z);
-                    if ((c.as_vec3() + 0.5) * voxel).distance(blast.at) <= blast.radius && grid.class(c) == BUILT {
-                        dug.push(c);
-                    }
-                }
-            }
-        }
-        dug
-    };
+    let (changes, dug, dust) = blast_dig(volume, blast);
     if dug.is_empty() {
         return (changes, done);
     }
-    for c in &dug {
-        changes.set(*c, None);
-    }
-    let voxel = 1.0 / block as f32;
-    let mut bricks: Vec<IVec3> = dug.iter().map(|c| c.div_euclid(IVec3::splat(B))).collect();
-    bricks.sort_by_key(|b| b.to_array());
-    bricks.dedup();
-    done.dust = bricks.into_iter().map(|b| (b * B).as_vec3() * voxel + voxel * B as f32 * 0.5).collect();
     done.dug = dug.len();
+    done.dust = dust;
     let after = VoxelVolume { changes: Arc::new(changes), ..volume.clone() };
     let (changes, settled) = settle(volume, &after, &dug, memory);
     done.settled = settled;

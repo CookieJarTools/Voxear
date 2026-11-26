@@ -1,6 +1,7 @@
 namespace Voxear;
 
-/// <summary>What becomes of the pieces of trees a cut takes loose, at once.</summary>
+/// <summary>What becomes of the pieces of trees a cut takes loose, and of what was built a blast takes loose, at
+/// once.</summary>
 public enum VoxelPieces
 {
 	/// <summary>They tip over and fall as bodies of their own, and rest as <see cref="VoxelPieceRest"/> says. As it

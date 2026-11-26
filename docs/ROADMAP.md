@@ -4516,7 +4516,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1 and 2 built, stage 3 mostly, stages 4 and 7 begun)
+## Small voxels (in progress: stages 1, 2 and 5 built, stage 3 mostly, stages 4 and 7 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4675,7 +4675,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   deep the water is, its steps lit as its top, ripples drifting over it. Its waterfalls are voxels thrown over their
   lips, falling as thrown water falls, whiter the faster they go, splashing off a churned pool. A whole frame costs
   less than with smooth water: 8.6 ms over a river against 10.5. A first try that walked through the water to the bed
-  cost 4.4 ms more and striped sloping rivers.
+  cost 4.4 ms more and striped sloping rivers. Voxels is the look a volume comes with; Smooth is the other.
 - **Stage 7 begun (2026-11-26): collision.** Characters and bodies stand on an endless volume's ground, its prints and
   its fills, bump into its trees' logs, walk through leaves and grass, and fall into what is carved under them. The
   CPU places the trees as the GPU does (`voxel_volume/solid.rs`), so `Voxels.Raycast` meets logs and leaves too. A
@@ -4716,6 +4716,19 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   each brick keeping the bank most of its voxels are in. A print's colours in each tint, and a tinted fill's, go
   together into one bank, so sixty kinds of building of thirty colours each keep every colour; a print takes up to
   128.
+- **Stage 5 built (2026-11-26): distance in rings.** An endless Voxel Volume's **Distance** (`distance` in the scene
+  and `field.set`) carries its ground on past its reach in rings, each an endless volume of its own with voxels
+  twice the size and twice the reach of the ring inside it (1/8, 1/4, 1/2 m, then 1 m as far as the distance), made
+  on the GPU by the same generator, grass, trees and edits. Each ring draws inside a square round the camera that
+  moves on with it, and the next walks from that square's edge, so nothing pops where they meet: a 10 cm move over a
+  sector's edge changes 5% more pixels than one within a sector, against 30% with edges a sector at a time. Each
+  voxel's shade goes by its place in the world, so a window moving no longer changes it. Trees in rings stand where
+  the finest ring has them, off the ring's coarse bricks, and far crowns stay loose cubes. A ring makes nothing the
+  ring inside it has made, and fewer columns a frame; rivers' beds are cut in every ring, and water of voxels fills
+  them. Measured with 100 trees a hectare at reach 64 m, 1080p: 122 MB and 4.7 ms for today's view, 500 MB and 12.7
+  ms to 1 km, 618 MB and 12.9 ms to 2 km; without trees 433 MB to 2 km. The lit pass keeps a plain walk of its own,
+  as carrying the rings' edges made it 0.5–1.3 ms slower for every volume. Next: far rings kept on disk, the finest
+  ring taller than 64 m.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

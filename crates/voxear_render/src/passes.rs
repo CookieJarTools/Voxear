@@ -619,7 +619,8 @@ pub fn record(
         || contact_shadows.is_some()
         || reflections.is_some()
         || through
-        || frame.surface.is_some();
+        || frame.surface.is_some()
+        || frame.voxels.as_ref().is_some_and(|voxels| voxels.ringed);
     if let Some(atmosphere) = frame.atmosphere.filter(|_| frame.own_sky) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }

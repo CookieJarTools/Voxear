@@ -287,11 +287,14 @@ fn an_endless_volumes_ground_is_cut_by_its_generators_rivers_with_their_water_ov
     let Some(mut renderer) = renderer() else { return };
     let rivered = Arc::new(starter("Rolling Hills"));
     let ([x, z], water, bed) = river_in(&rivered, 0.8);
-    // Straight down from 8 m over the river's water, the volume's floor 24 m under its bed.
-    let scene = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    // Straight down from 8 m over the river's water, the volume's floor 24 m under its bed, its water smooth.
+    let mut scene = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
     let mut bare = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
     for volume in bare.query::<&mut VoxelVolume>() {
         volume.generator.as_mut().unwrap().world = Arc::new(rivered.without_rivers());
+    }
+    for volume in scene.query::<&mut VoxelVolume>().into_iter().chain(bare.query::<&mut VoxelVolume>()) {
+        volume.water = voxear_render::VoxelWaterLook::Smooth;
     }
     let volume = |scene: &World| scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
     let camera = scene.query_ref::<(&Camera, &Transform)>().into_iter().next().unwrap().1.position;
@@ -796,11 +799,15 @@ fn an_endless_volumes_rivers_drawn_as_voxels_of_water_show_its_water_and_not_its
     let rivered = Arc::new(starter("Rolling Hills"));
     let ([x, z], water, bed) = river_in(&rivered, 0.8);
     // Straight down from 8 m over the river's water, as smooth water and as voxels of water.
-    let smooth = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
-    let mut voxels = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
-    for volume in voxels.query::<&mut VoxelVolume>() {
-        volume.water = voxear_render::VoxelWaterLook::Voxels;
+    let mut smooth = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    for volume in smooth.query::<&mut VoxelVolume>() {
+        volume.water = voxear_render::VoxelWaterLook::Smooth;
     }
+    let voxels = generated_view(rivered.clone(), x, z, water - bed + 8.0, 90.0);
+    assert_eq!(
+        voxels.query_ref::<&VoxelVolume>().into_iter().next().unwrap().water,
+        voxear_render::VoxelWaterLook::Voxels
+    );
     let drawn_smooth = render(&mut renderer, &smooth, 3);
     let made = renderer.stats().voxels.bytes;
     let drawn = render(&mut renderer, &voxels, 3);
@@ -1038,9 +1045,9 @@ fn measure_rivers_and_a_coast() {
             if case == "trees" {
                 volume.trees = oaks_and_pines();
             }
-            // `RIVER_WATER=voxels` draws the rivers' water as voxels.
-            if std::env::var("RIVER_WATER").is_ok_and(|look| look == "voxels") {
-                volume.water = voxear_render::VoxelWaterLook::Voxels;
+            // `RIVER_WATER=smooth` draws the rivers' water smooth.
+            if std::env::var("RIVER_WATER").is_ok_and(|look| look == "smooth") {
+                volume.water = voxear_render::VoxelWaterLook::Smooth;
             }
         }
         let started = std::time::Instant::now();
@@ -1320,8 +1327,9 @@ fn an_endless_volume_prints_a_voxel_print_turned_where_it_is_placed_and_a_carve_
     scene.query::<&mut VoxelVolume>().into_iter().next().unwrap().edits = Arc::new(vec![crate_at, pit]);
     let carved = render(&mut renderer, &scene, 3);
     keep_image("print carved from above.png", &carved);
+    // Its inside lies in the pit's shadow, a dark red: red well over green and blue, as no dirt or grass is.
     let [r, g, b] = around(&carved, 8.0, 8.0);
-    assert!(r > g + 40 && r > b + 40, "inside the crate: {r} {g} {b}");
+    assert!(r > 20 && r > 3 * g.max(b), "inside the crate: {r} {g} {b}");
 }
 
 #[test]
@@ -1701,6 +1709,21 @@ fn an_endless_volume_shows_its_generators_overhangs_and_caves() {
     keep_image("generated inside a cave.png", &pixels);
 }
 
+/// Rolling Hills with oaks and pines seen from over a hillside across the
+/// land, looking down at `pitch` degrees: full detail as far as `reach`,
+/// then coarser rings as far as `distance`.
+fn far_view(reach: f32, distance: f32, pitch: f32) -> World {
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = with_trees(generated_view(hills, 8.0, 8.0, 40.0, pitch));
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.trees.iter_mut().for_each(|kind| kind.per_hectare *= 0.3);
+        volume.reach = reach;
+        volume.distance = distance;
+        volume.size.y = 64.0;
+    }
+    scene
+}
+
 /// What `renderer` holds on the GPU over the box of voxels from `low`,
 /// `size` a side, for `scene`'s endless volume, against what the CPU finds
 /// (`VoxelSolids`): every voxel the GPU keeps is solid on the CPU with open
@@ -1783,6 +1806,176 @@ fn bare_hills_view() -> World {
         volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
     }
     scene
+}
+
+/// The mean colour of each 8×8 block of pixels: the tones a picture shows,
+/// without the voxels' own grain.
+fn tones(pixels: &[u8]) -> Vec<[i32; 3]> {
+    let mut out = Vec::new();
+    for by in 0..HEIGHT / 8 {
+        for bx in 0..WIDTH / 8 {
+            let mut sum = [0; 3];
+            for y in by * 8..by * 8 + 8 {
+                for x in bx * 8..bx * 8 + 8 {
+                    let c = rgb_at(pixels, x, y);
+                    (0..3).for_each(|i| sum[i] += c[i]);
+                }
+            }
+            out.push(sum.map(|s| s / 64));
+        }
+    }
+    out
+}
+
+#[test]
+fn an_endless_volume_is_seen_past_its_reach_in_coarser_rings() {
+    let Some(mut renderer) = renderer() else { return };
+    // Full detail to 24 m alone, then with rings to 400 m, then full detail to 192 m with the same rings past it.
+    let started = std::time::Instant::now();
+    let near = render(&mut renderer, &far_view(24.0, 0.0, 12.0), 3);
+    let near_bytes = renderer.stats().voxels.bytes;
+    eprintln!("without rings: {:.1} s", started.elapsed().as_secs_f32());
+    let ringed = render(&mut renderer, &far_view(24.0, 400.0, 12.0), 3);
+    let ringed_bytes = renderer.stats().voxels.bytes;
+    eprintln!("with rings: {:.1} s", started.elapsed().as_secs_f32());
+    let detailed = render(&mut renderer, &far_view(192.0, 400.0, 12.0), 3);
+    eprintln!("in full detail: {:.1} s", started.elapsed().as_secs_f32());
+    keep_image("far without rings.png", &near);
+    keep_image("far in rings.png", &ringed);
+    keep_image("far in full detail.png", &detailed);
+    eprintln!("{} MB without rings, {} MB with", near_bytes / 1_000_000, ringed_bytes / 1_000_000);
+    // Ground, grass and leaves are green; the sky and the haze grey.
+    let green = |pixels: &[u8]| {
+        (HEIGHT / 3..HEIGHT)
+            .step_by(4)
+            .flat_map(|y| (0..WIDTH).step_by(4).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let [r, g, b] = rgb_at(pixels, x, y);
+                g > r + 4 && g > b + 4
+            })
+            .count()
+    };
+    let (seen, ringed_seen, all) = (green(&near), green(&ringed), (HEIGHT * 2 / 3 / 4 * WIDTH / 4) as usize);
+    eprintln!("ground in the lower two thirds: {seen} of {all} without rings, {ringed_seen} with");
+    assert!(seen * 3 < all, "past 24 m there is nothing without rings: {seen} of {all}");
+    assert!(ringed_seen * 2 > all && ringed_seen > seen * 10, "the rings carry the ground on: {ringed_seen} of {all}");
+    // Where the rings stand in for full detail, within 192 m, its tones are near full detail's, and no line shows where
+    // they meet: blocks of 8×8 pixels compared where full detail has ground.
+    let reference = render(&mut renderer, &far_view(192.0, 0.0, 12.0), 3);
+    keep_image("far in full detail alone.png", &reference);
+    let (a, b, c) = (tones(&ringed), tones(&detailed), tones(&reference));
+    let ground: Vec<usize> = (0..c.len()).filter(|&i| c[i][1] > c[i][2] + 4).collect();
+    let differences: Vec<i32> =
+        ground.iter().map(|&i| (0..3).map(|k| (a[i][k] - b[i][k]).abs()).max().unwrap()).collect();
+    let mean = differences.iter().sum::<i32>() as f32 / differences.len() as f32;
+    let far = differences.iter().filter(|&&d| d > 40).count();
+    let average = |t: &[[i32; 3]]| {
+        ground
+            .iter()
+            .fold([0; 3], |s, &i| [s[0] + t[i][0], s[1] + t[i][1], s[2] + t[i][2]])
+            .map(|v| v / ground.len() as i32)
+    };
+    eprintln!(
+        "tones against full detail over {} blocks of ground: mean {mean:.2}, {far} differ by over 40; average {:?} against {:?}",
+        ground.len(),
+        average(&a),
+        average(&b)
+    );
+    assert!(mean < 20.0 && far * 10 < ground.len(), "the rings' tones are full detail's");
+    assert!((0..3).all(|k| (average(&a)[k] - average(&b)[k]).abs() < 8), "and as bright and as green on average");
+    // Moving the camera a tenth of a metre over the edge of a sector moves the full-detail window and the rings by a
+    // sector: what changes then, against the same move within a sector, is what pops where the rings meet.
+    let moved = |from: f32, renderer: &mut Renderer| {
+        let mut scene = far_view(24.0, 400.0, 12.0);
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        camera.position.z = from - 0.05;
+        let before = render(renderer, &scene, 3);
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        camera.position.z = from + 0.05;
+        let after = render(renderer, &scene, 3);
+        let changed = (0..HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|&(x, y)| (0..3).any(|i| (rgb_at(&before, x, y)[i] - rgb_at(&after, x, y)[i]).abs() > 24))
+            .count();
+        (changed, before, after)
+    };
+    let (within, still_before, still_after) = moved(8.2, &mut renderer);
+    keep_image("rings before within a sector.png", &still_before);
+    keep_image("rings after within a sector.png", &still_after);
+    let (over, before, after) = moved(8.0, &mut renderer);
+    keep_image("rings before a sector.png", &before);
+    keep_image("rings past a sector.png", &after);
+    eprintln!("pixels changed moving 10 cm: {within} within a sector, {over} over the edge of one");
+    assert!(over * 4 < within * 5, "nothing pops where the rings meet: {over} pixels change against {within}");
+}
+
+/// Rolling Hills with a hundred oaks and pines a hectare at 1920×1080,
+/// full detail to 64 m, seen from over a hillside across the land: today's
+/// view, and the same with rings to a kilometre and to two; then without
+/// the trees. What it keeps,
+/// how long its window takes to make, the least of 60 frames, and what
+/// making columns costs flying over it.
+#[test]
+#[ignore]
+fn measure_an_endless_volume_seen_far_in_rings() {
+    let Ok(mut renderer) = Renderer::new_offscreen(1920, 1080, &RendererSettings::default()) else { return };
+    let cases = [(0.0, true), (1024.0, true), (2048.0, true), (0.0, false), (2048.0, false)];
+    for (distance, trees) in cases {
+        let mut scene = far_view(64.0, distance, 6.0);
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.trees = if trees { oaks_and_pines() } else { Vec::new() };
+        }
+        let started = std::time::Instant::now();
+        renderer.render(&scene, 0.0).unwrap();
+        assert!(renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(120)).unwrap());
+        let window = started.elapsed().as_secs_f32();
+        let mut least: std::collections::BTreeMap<String, f32> = Default::default();
+        let mut frame = f32::MAX;
+        for i in 0..90 {
+            renderer.render(&scene, i as f32 / 60.0).unwrap();
+            if i >= 30 {
+                for (pass, ms) in renderer.timings() {
+                    if pass.contains("oxel") {
+                        let kept = least.entry(pass.clone()).or_insert(f32::MAX);
+                        *kept = kept.min(*ms);
+                    }
+                }
+                frame = frame.min(renderer.gpu_frame_ms());
+            }
+        }
+        let name = format!("seen to {distance} m{}", if trees { "" } else { " without trees" });
+        eprintln!("{name}: window made in {window:.2} s, {} MB", renderer.stats().voxels.bytes / 1_000_000);
+        eprintln!("{name}: still view, least of 60: frame {frame:.2} ms, {least:?}");
+        let pixels = renderer.read_pixels().expect("pixels").2;
+        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
+            let mut encoder = png::Encoder::new(file, 1920, 1080);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+        // Flying along x at 10 m/s for nine seconds: every making pass of a frame, the rings' included.
+        let mut making = Vec::new();
+        for i in 0..540 {
+            let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+            camera.position.x += 10.0 / 60.0;
+            renderer.render(&scene, 2.0 + i as f32 / 60.0).unwrap();
+            let ms: f32 =
+                renderer.timings().iter().filter(|(pass, _)| pass == "Voxel world making").map(|(_, ms)| ms).sum();
+            if ms > 0.0 {
+                making.push(ms);
+            }
+        }
+        making.sort_by(f32::total_cmp);
+        if !making.is_empty() {
+            eprintln!(
+                "{name}: flying, making on {} of 540 frames: median {:.2} ms, least {:.2}, most {:.2}",
+                making.len(),
+                making[making.len() / 2],
+                making[0],
+                making[making.len() - 1]
+            );
+        }
+    }
 }
 
 #[test]

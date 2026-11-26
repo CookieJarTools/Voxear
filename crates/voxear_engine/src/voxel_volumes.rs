@@ -136,6 +136,10 @@ pub struct VoxelVolumeData {
     /// as `reach` metres each way.
     pub endless: bool,
     pub reach: f32,
+    /// How far an endless volume's ground is seen past its reach, in coarser
+    /// rings, in metres each way: none at or under its reach.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub distance: f32,
     /// The world generator an endless volume's ground is made by, a
     /// reference to a `.worldgen`, or to a generated world of blocks for
     /// the ground its chunks are made of: none for its own ground.
@@ -171,9 +175,9 @@ pub struct VoxelVolumeData {
     /// where the level has no Ocean of its own: on unless written off.
     #[serde(skip_serializing_if = "is_on")]
     pub sea: bool,
-    /// How an endless volume's rivers and lakes are drawn: smooth, or as
-    /// voxels of water (`water = "voxels"`).
-    #[serde(skip_serializing_if = "is_smooth")]
+    /// How an endless volume's rivers and lakes are drawn: as voxels of
+    /// water, or smooth (`water = "smooth"`).
+    #[serde(skip_serializing_if = "is_voxels")]
     pub water: VoxelWaterLook,
 }
 
@@ -181,8 +185,8 @@ fn is_on(on: &bool) -> bool {
     *on
 }
 
-fn is_smooth(look: &VoxelWaterLook) -> bool {
-    *look == VoxelWaterLook::Smooth
+fn is_voxels(look: &VoxelWaterLook) -> bool {
+    *look == VoxelWaterLook::Voxels
 }
 
 /// A change to an endless volume as a scene writes it, in metres from the
@@ -490,6 +494,7 @@ impl Default for VoxelVolumeData {
             stamps: Vec::new(),
             endless: made.endless,
             reach: made.reach,
+            distance: made.distance,
             generator: None,
             generator_floor: None,
             generator_at: [0.0, 0.0],
@@ -503,6 +508,10 @@ impl Default for VoxelVolumeData {
             water: made.water,
         }
     }
+}
+
+fn is_nothing(value: &f32) -> bool {
+    *value == 0.0
 }
 
 /// A box model stamped into a volume, as a scene writes it: the model, its
@@ -568,6 +577,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         stamps,
         endless: data.endless,
         reach: data.reach,
+        distance: data.distance,
         generator,
         trees,
         cover: data.cover.iter().map(VoxelCoverData::made).collect(),

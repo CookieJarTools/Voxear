@@ -2173,6 +2173,12 @@ struct VoxelVolume
     // there are from shallow to deep (src/voxel_volume/rivers.rs).
     uint water;
     uint shades;
+    // A ring's hole: the box the ring inside it draws, which the walk passes over, in its voxels from its corner along X
+    // and Z, least then most; none where the most is not past the least.
+    float4 hole;
+    // A ring's outer box, a square round the camera within what it has made, past which it draws nothing: the hole of
+    // the ring round it. In the same voxels; none where the most is not past the least.
+    float4 outer;
 };
 
 struct VoxelVolumes

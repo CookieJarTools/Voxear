@@ -2165,6 +2165,10 @@ struct VoxelVolume
     uint* emptySector;
     // An endless volume's slots' pages of bricks in its shared room: each slot's sixty-four, sixty-four bricks a page.
     uint* pages;
+    // Where its palette's two colours of water start, and one, and its colour of falling water, and one: none where it
+    // has no voxels of water (src/voxel_volume/rivers.rs).
+    uint water;
+    uint falling;
 };
 
 struct VoxelVolumes

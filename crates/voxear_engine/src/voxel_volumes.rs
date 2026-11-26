@@ -294,6 +294,8 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         trees,
         edits: Arc::new(data.edits.iter().filter_map(|edit| edit.made(content)).collect()),
         sea: data.sea,
+        // Water of voxels is tried in the renderer alone so far: not saved or set from the editor yet.
+        water: voxear_render::VoxelWaterLook::Smooth,
     }
 }
 

@@ -71,6 +71,8 @@ static const uint TREE_BRICK = 0x80000000u;
 static const uint NAMES_A_BRICK = BRICK_WORDS;
 // A brick of leaves, marked over its average colour (VOXEL_LEAFY in voxels.slang).
 static const uint LEAFY = 1u << 24;
+// A brick mostly of water, marked over that (VOXEL_WATERY in voxels.slang).
+static const uint WATERY = 1u << 27;
 // What moves a brick in the wind, two bits over that mark (VOXEL_SWAY_SHIFT in voxels.slang); and a voxel that keeps
 // still.
 static const uint SWAY_SHIFT = 25u;
@@ -183,7 +185,8 @@ struct WorldMake
     uint editCount;
     uint editPad;
     uint riverWindow;
-    uint riverPad;
+    // Whether the rivers' and lakes' water is made of voxels (src/voxel_volume/rivers.rs).
+    uint waterVoxels;
     WorldJob jobs[MAX_JOBS];
 };
 
@@ -267,10 +270,10 @@ static const uint GROUND_GRAVEL = 4;
 // A generator's rivers (src/voxel_volume/rivers.rs): each column's points RIVER_STEP voxels apart, from one step back
 // of its corner, RIVER_GRID a side; a column's entry holds where it is, whether the rivers change anything there, then
 // how much they raise the ground at each point (cut it down where less than nothing), then how high their water
-// stands there, in metres of the generator's world.
+// stands there, in metres of the generator's world, then how many metres of a waterfall pour down there.
 static const int RIVER_GRID = 11;
 static const int RIVER_STEP = 8;
-static const uint RIVER_WORDS = 4 + 2 * 11 * 11;
+static const uint RIVER_WORDS = 4 + 3 * 11 * 11;
 static const float NO_RIVER_WATER = -1.0e6;
 
 // The point a voxel column `x` of a column lies after along an axis, and how far on to the next, as the CPU reads it.
@@ -419,6 +422,86 @@ Generated runColumn(WorldMake* make, int x, int z, uint* carried)
 int voxelsUp(WorldMake* make, float height)
 {
     return int(floor((height - make->floor) / make->voxel));
+}
+
+// The rivers' water over voxel column (x, z) of the world: in x, how high it stands, in metres of the generator's
+// world, read between the four points round it where they all have water and else the highest of them, or
+// NO_RIVER_WATER where none has; in y, how many metres of a waterfall pour down there, read between them.
+float2 riverWaterAt(WorldMake* make, int x, int z)
+{
+    uint w = make->riverWindow;
+    if (w == 0)
+    {
+        return float2(NO_RIVER_WATER, 0.0);
+    }
+    int2 c = int2(x >> 6, z >> 6);
+    uint2 slot = uint2(uint(c.x + int(w) * 65536), uint(c.y + int(w) * 65536)) % w;
+    uint* entry = make->rivers + (slot.y * w + slot.x) * RIVER_WORDS;
+    if (int(entry[0]) != c.x || int(entry[1]) != c.y || entry[2] == 0)
+    {
+        return float2(NO_RIVER_WATER, 0.0);
+    }
+    float fx;
+    float fz;
+    int i = riverBetween(x - c.x * 64, fx);
+    int j = riverBetween(z - c.y * 64, fz);
+    uint at = uint(j * RIVER_GRID + i);
+    float* water = (float*)(entry + 4) + RIVER_GRID * RIVER_GRID;
+    float* falls = water + RIVER_GRID * RIVER_GRID;
+    float4 four = float4(water[at], water[at + 1], water[at + RIVER_GRID], water[at + RIVER_GRID + 1]);
+    float highest = max(max(four.x, four.y), max(four.z, four.w));
+    float top = highest;
+    if (min(min(four.x, four.y), min(four.z, four.w)) > NO_RIVER_WATER * 0.5)
+    {
+        top = lerp(lerp(four.x, four.y, fx), lerp(four.z, four.w, fx), fz);
+    }
+    float fell = lerp(lerp(falls[at], falls[at + 1], fx), lerp(falls[at + RIVER_GRID], falls[at + RIVER_GRID + 1], fx), fz);
+    return float2(top, fell);
+}
+
+// The voxel the top of the rivers' water over voxel column (x, z) is in, counted up from the floor; -1 for none.
+int waterTopAt(WorldMake* make, int x, int z)
+{
+    float top = riverWaterAt(make, x, z).x;
+    return top > NO_RIVER_WATER * 0.5 ? voxelsUp(make, top) : -1;
+}
+
+// What is water at voxel `p` of the world, where it is open (src/voxel_volume/rivers.rs): a layer at the top of the
+// rivers' and lakes' water, as deep as its top is over the lowest beside it, so its steps show no gap; and over a
+// waterfall, falling water from its top down. As materials: WATER_VOXEL or one more, FALLING_VOXEL, or 0 for none.
+static const uint WATER_VOXEL = 23;
+static const uint FALLING_VOXEL = 25;
+// How many metres of a waterfall pour down over a column for it to be falling water.
+static const float FALLING = 0.25;
+
+uint waterVoxel(WorldMake* make, int3 p)
+{
+    float2 river = riverWaterAt(make, p.x, p.z);
+    if (river.x <= NO_RIVER_WATER * 0.5)
+    {
+        return 0;
+    }
+    int top = voxelsUp(make, river.x);
+    if (p.y > top)
+    {
+        return 0;
+    }
+    if (river.y > FALLING)
+    {
+        return FALLING_VOXEL;
+    }
+    int lowest = top;
+    for (uint k = 0; k < 4; k++)
+    {
+        int2 o = k == 0 ? int2(1, 0) : (k == 1 ? int2(-1, 0) : (k == 2 ? int2(0, 1) : int2(0, -1)));
+        int beside = waterTopAt(make, p.x + o.x, p.z + o.y);
+        lowest = beside >= 0 ? min(lowest, beside) : lowest;
+    }
+    if (p.y < lowest)
+    {
+        return 0;
+    }
+    return WATER_VOXEL + (unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 71)) < 0.6 ? 0u : 1u);
 }
 
 // What the ground is where it is `h` voxels high and its height changes by `across` voxels over four, as warm, wet
@@ -1153,6 +1236,14 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
             int blade = int(columnOf(make, job, cx, cz) & 255u);
             lowest = min(lowest, lowOf(make, job, cx, cz));
             highest = max(highest, heightOf(make, job, cx, cz) + blade);
+            // Water of voxels reaches up to its top, and its bricks are kept whatever the coarse pass finds.
+            if (make->waterVoxels != 0)
+            {
+                int2 world = make->jobs[job].column * 64 + int2(cx, cz);
+                int top = waterTopAt(make, world.x, world.y);
+                highest = max(highest, top);
+                highGrowth = max(highGrowth, top);
+            }
             if (volume)
             {
                 int surface = surfaceOf(make, job, cx, cz);
@@ -1348,6 +1439,8 @@ groupshared uint sharedGroups[2];
 // groups are loosely filled as its voxels are (VOXEL_LEAFY in voxels.slang).
 groupshared uint sharedGroupCounts[64];
 groupshared uint sharedTreeVoxels;
+// How many of a brick's voxels are water.
+groupshared uint sharedWater;
 // Which of SWAY_STILL, SWAY_GRASS and SWAY_LEAVES its voxels are, a bit each.
 groupshared uint sharedSway;
 // The edits that reach the brick and its border, in the order they were made.
@@ -1441,6 +1534,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedTreeCount = 0;
         sharedOwn = 0;
         sharedTreeVoxels = 0;
+        sharedWater = 0;
         sharedSway = 0;
         sharedEditCount = 0;
     }
@@ -1656,6 +1750,19 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
             m = fill == 0u ? 0u : (m != 0 && moves == SWAY_STILL ? fillVoxel(make, fill, !solidNear(l, int3(0, 1, 0)), here) : m);
         }
     }
+    // Water of voxels where nothing else is (waterVoxel), keeping still: the ground under it is solid where its column's
+    // height says, or where the Volume or the edits leave it so.
+    if (make->waterVoxels != 0 && m == 0)
+    {
+        bool open = (volume || edited) ? !solidNear(l, int3(0, 0, 0)) : y > h;
+        uint water = open ? waterVoxel(make, here) : 0u;
+        if (water != 0)
+        {
+            m = water;
+            moves = SWAY_STILL;
+            InterlockedAdd(sharedWater, 1u);
+        }
+    }
     // A brick one tree's alone is its plant's brick: the job's list names it.
     if (sharedTreeCount == 1 && !edited)
     {
@@ -1785,7 +1892,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         // A brick with any ground or wood stays still in the wind; else its leaves sway, or its grass leans.
         uint sway = (sharedSway & (1u << SWAY_STILL)) != 0 ? 0u : ((sharedSway & (1u << SWAY_LEAVES)) != 0 ? SWAY_LEAVES : SWAY_GRASS);
         record[19] = avg.x | (avg.y << 8) | (avg.z << 16) | (sharedTreeVoxels * 2u >= sharedCount && sharedCount > 0 ? LEAFY : 0u)
-            | (sway << SWAY_SHIFT);
+            | (sway << SWAY_SHIFT) | (sharedWater * 2u >= sharedCount && sharedCount > 0 ? WATERY : 0u);
     }
     else if (index == 20)
     {

@@ -738,6 +738,10 @@ fn measure_rivers_and_a_coast() {
             if case == "trees" {
                 volume.trees = oaks_and_pines();
             }
+            // `RIVER_WATER=voxels` draws the rivers' water as voxels.
+            if std::env::var("RIVER_WATER").is_ok_and(|look| look == "voxels") {
+                volume.water = voxear_render::VoxelWaterLook::Voxels;
+            }
         }
         let started = std::time::Instant::now();
         renderer.render(&scene, 0.0).unwrap();

@@ -327,8 +327,9 @@ impl RiverLayer {
 
 /// How many words a column's entry in the table the GPU reads takes
 /// (`RIVER_WORDS` in `shaders/voxel_world.slang`): where it is, whether the
-/// rivers change anything there, a word spare, then its cuts and its water.
-const ENTRY_WORDS: usize = 4 + 2 * GRID_POINTS;
+/// rivers change anything there, a word spare, then its cuts, its water and
+/// its falls.
+const ENTRY_WORDS: usize = 4 + 3 * GRID_POINTS;
 
 /// A volume's rivers as its columns are made with them: its layer, and the
 /// table of points the GPU reads, a slot for each column of a window round
@@ -396,7 +397,7 @@ impl LaidRivers {
                 Some(grid) if free => {
                     let mut words = Vec::with_capacity(ENTRY_WORDS);
                     words.extend([column[0] as u32, column[1] as u32, u32::from(grid.laid), 0]);
-                    words.extend(grid.cut.iter().chain(&grid.water).map(|v| v.to_bits()));
+                    words.extend(grid.cut.iter().chain(&grid.water).chain(&grid.falls).map(|v| v.to_bits()));
                     self.table.write((slot * ENTRY_WORDS * 4) as u64, &words);
                     self.written[slot] = Some(column);
                     self.seen[slot] = self.frame;

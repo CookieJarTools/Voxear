@@ -83,6 +83,33 @@ pub struct VoxelVolume {
     /// an Ocean at its sea level, filling the level, where the scene has no
     /// Ocean of its own (see [`crate::ocean::seas`]).
     pub sea: bool,
+    /// How an endless volume's rivers and lakes are drawn: as smooth water
+    /// over its voxels, or as voxels of water themselves.
+    pub water: VoxelWaterLook,
+}
+
+/// How an endless Voxel Volume's rivers and lakes are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoxelWaterLook {
+    /// A smooth surface over the voxels, rippling and flowing, its
+    /// waterfalls curving down from their lips.
+    #[default]
+    Smooth,
+    /// Voxels of water, as small as the ground's: a layer at the water's
+    /// top, and its waterfalls blocks of falling water.
+    Voxels,
+}
+
+impl VoxelWaterLook {
+    pub const ALL: [Self; 2] = [Self::Smooth, Self::Voxels];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Smooth => "Smooth",
+            Self::Voxels => "Voxels",
+        }
+    }
 }
 
 /// A change made to an endless Voxel Volume: a ball carved out of it, or
@@ -277,6 +304,7 @@ impl Default for VoxelVolume {
             trees: Vec::new(),
             edits: Arc::default(),
             sea: true,
+            water: VoxelWaterLook::Smooth,
         }
     }
 }
@@ -295,6 +323,7 @@ impl PartialEq for VoxelVolume {
             && self.generator == other.generator
             && self.trees == other.trees
             && (Arc::ptr_eq(&self.edits, &other.edits) || self.edits == other.edits)
+            && self.water == other.water
     }
 }
 
@@ -436,6 +465,10 @@ pub(crate) struct GpuVoxelVolume {
     windowed: u32,
     empty_sector: u64,
     pages: u64,
+    /// The first of the palette's colours of water and one, and of falling
+    /// water and one: none for a volume of no water voxels.
+    water: u32,
+    falling: u32,
 }
 
 /// A view's volumes (`VoxelVolumes` in shaders/common.slang).
@@ -832,6 +865,8 @@ fn upload(gpu: &Gpu, volume: &VoxelVolume, packed: &Packed, palette: &[[u8; 4]])
         windowed: 0,
         empty_sector: 0,
         pages: 0,
+        water: 0,
+        falling: 0,
     };
     Ok(Resident { buffer, record, bytes: total as u64, bricks: packed.brick_count() })
 }
@@ -843,8 +878,8 @@ mod tests {
 
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
-        assert_eq!(size_of::<GpuVoxelVolume>(), 96);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 96 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolume>(), 104);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 48 + 104 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]

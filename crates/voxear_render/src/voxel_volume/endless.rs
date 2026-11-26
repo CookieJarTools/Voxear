@@ -24,7 +24,7 @@ use voxear_terrain::generate::{GpuProgram, GpuVolume, WorldGen};
 
 use super::{
     GROUND_COLORS, GpuVoxelVolume, MOST_VOXELS_A_METRE, VoxelEdit, VoxelGenerator, VoxelGround, VoxelPrint, VoxelTrees,
-    VoxelVolume, print,
+    VoxelVolume, VoxelWaterLook, print,
     rivers::{self, ColumnWater, GpuVoxelWater, LaidRivers},
     trees,
 };
@@ -93,8 +93,9 @@ const MOST_COLOURS: usize = 256;
 
 /// The colours of the ground a generator makes, as sRGB, in the palette
 /// after the volume's own ground's: rock in three shades, sand, snow and
-/// gravel in two.
-pub(crate) const GENERATED_COLORS: [[u8; 4]; 9] = [
+/// gravel in two; then its rivers' water as voxels in two, and falling
+/// water.
+pub(crate) const GENERATED_COLORS: [[u8; 4]; 12] = [
     [118, 117, 112, 255], // 13 rock
     [132, 130, 125, 255],
     [100, 99, 96, 255],
@@ -104,7 +105,15 @@ pub(crate) const GENERATED_COLORS: [[u8; 4]; 9] = [
     [218, 226, 236, 255],
     [128, 120, 108, 255], // 20 gravel
     [104, 98, 90, 255],
+    [40, 104, 100, 255], // 22 water
+    [52, 116, 112, 255],
+    [226, 238, 240, 255], // 24 falling water
 ];
+
+/// Where the water's colours are in the palette (`WATER_VOXEL` and
+/// `FALLING_VOXEL` in `shaders/voxel_world.slang`, as materials, one more).
+const WATER_COLOUR: u32 = 22;
+const FALLING_COLOUR: u32 = 24;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -180,7 +189,7 @@ struct GpuWorldMake {
     edit_count: u32,
     edit_pad: u32,
     river_window: u32,
-    river_pad: u32,
+    water_voxels: u32,
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -286,6 +295,7 @@ pub(crate) fn same_ground(a: &VoxelVolume, b: &VoxelVolume) -> bool {
         && a.ground == b.ground
         && a.generator == b.generator
         && a.trees == b.trees
+        && a.water == b.water
 }
 
 /// The program `generator` runs on the GPU, if its graph can run there:
@@ -876,6 +886,8 @@ impl Endless {
     /// it is made.
     fn lay_water(&mut self, column: [i32; 2], slot: u32) {
         let quads = match &self.rivers {
+            // Water of voxels is the columns' own.
+            Some(_) if self.from.water == VoxelWaterLook::Voxels => ColumnWater::default(),
             Some(rivers) => {
                 let grid = rivers.layer.grid(column);
                 let voxel = 1.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
@@ -951,6 +963,8 @@ impl Endless {
             windowed: 1,
             empty_sector: self.empty.address,
             pages: self.pages.address,
+            water: if self.from.water == VoxelWaterLook::Voxels { WATER_COLOUR + 1 } else { 0 },
+            falling: if self.from.water == VoxelWaterLook::Voxels { FALLING_COLOUR + 1 } else { 0 },
         };
         let at = Vec3::new(self.window_sector[0] as f32, 0.0, self.window_sector[2] as f32) * metres;
         (record, self.corner + at)
@@ -1040,7 +1054,7 @@ impl Endless {
             prints: self.print_buffer.as_ref().map_or(0, |buffer| buffer.address),
             rivers: self.rivers.as_ref().map_or(0, |rivers| rivers.table.address),
             river_window: self.rivers.as_ref().map_or(0, |rivers| rivers.window),
-            river_pad: 0,
+            water_voxels: u32::from(self.from.water == VoxelWaterLook::Voxels),
             edit_count: self.edits.len() as u32,
             edit_pad: 0,
             brick_pages: self.room.brick_pages,

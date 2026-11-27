@@ -394,8 +394,9 @@ fn shot(renderer: &mut Renderer, name: &str) {
     encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
 }
 
-/// Picks an option of a dropdown, as the pointer would.
+/// Picks an option of a dropdown, as the pointer would, scrolled to it first.
 fn choose(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, dropdown: NodeId, option: usize) {
+    scroll_to(editor, renderer, dropdown);
     click(&mut editor.ui, dropdown);
     frame(editor, renderer);
     let mut options = Vec::new();

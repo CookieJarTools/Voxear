@@ -413,7 +413,7 @@ fn a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_sna
 }
 
 #[test]
-fn a_slab_blown_off_its_posts_hangs_from_a_rope_and_swings_and_falls_once_cut() {
+fn a_slab_blown_off_its_posts_hangs_from_a_rope_sways_a_little_and_falls_once_cut() {
     use voxear_engine::voxel_ropes::{RopeHolds, cut, hang};
     let (_dir, mut game) = game();
     let world = &mut game.engine.world;
@@ -422,7 +422,7 @@ fn a_slab_blown_off_its_posts_hangs_from_a_rope_and_swings_and_falls_once_cut() 
         shape_edit(world, &boxed([x, 1.0, z], [0.5, 1.5, 0.5], Some(VoxelMaterial::Ashlar)), None);
     }
     shape_edit(world, &boxed([8.0, 2.5, 8.0], [2.0, 0.25, 2.0], Some(VoxelMaterial::Planks)), None);
-    let rope = hang(&mut game.engine.world, Vec3::new(8.5, 5.75, 8.0), Vec3::new(8.03, 2.6, 8.03), 0.0, 0.0);
+    let rope = hang(&mut game.engine.world, Vec3::new(8.0, 5.75, 8.0), Vec3::new(8.03, 2.6, 8.03), 0.0, 0.0);
     play_watching(&mut game, 1.0, |_| {});
     // Its posts blown out, thrown a little: it hangs, and swings under where it is tied.
     for (x, z) in [(7.25, 7.25), (8.75, 7.25), (7.25, 8.75), (8.75, 8.75)] {
@@ -434,20 +434,36 @@ fn a_slab_blown_off_its_posts_hangs_from_a_rope_and_swings_and_falls_once_cut() 
             None,
         );
     }
-    let (mut hanging, mut swung, mut lowest) = (0, 0.0f32, f32::MAX);
-    play_watching(&mut game, 6.0, |game| {
+    let (mut hanging, mut swung, mut lowest, mut late) = (0, 0.0f32, f32::MAX, 0.0f32);
+    let mut last: Option<Vec3> = None;
+    let mut step = 0;
+    play_watching(&mut game, 10.0, |game| {
         let world = &game.engine.world;
+        step += 1;
         if let Some(piece) = world.get::<RopeHolds>(rope).and_then(|holds| holds.piece) {
             if let Some(t) = world.get::<voxear_scene::Transform>(piece) {
                 hanging += 1;
-                swung = swung.max((t.position.x - 8.5).abs().max((t.position.z - 8.0).abs()));
+                swung = swung.max((t.position.x - 8.0).abs().max((t.position.z - 8.0).abs()));
                 lowest = lowest.min(t.position.y);
+                // How far it moves in its last second.
+                if step == 540 {
+                    last = Some(t.position);
+                }
+                if step == 600
+                    && let Some(was) = last
+                {
+                    late = t.position.distance(was);
+                }
             }
         }
     });
-    eprintln!("hung for {hanging} steps, swung {swung:.2} m across, its middle as low as {lowest:.2} m");
+    eprintln!(
+        "hung for {hanging} steps, swayed {swung:.2} m across, its middle as low as {lowest:.2} m, moving {late:.3} m in its last second"
+    );
     assert!(hanging > 100, "the slab hangs from the rope");
-    assert!(swung > 0.1, "and swings: {swung}");
+    // It sways a little, under where it is tied, and settles: a heavy thing hanging, not a light one on a string.
+    assert!(swung > 0.02 && swung < 0.8, "it sways a little: {swung}");
+    assert!(late < 0.05, "and settles: {late} m in its last second");
     assert!(lowest > 1.3, "under the rope, over the ground: {lowest}");
     // Cut: it falls and rests on the ground, stamped back.
     assert!(cut(&mut game.engine.world, rope));

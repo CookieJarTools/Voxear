@@ -8,7 +8,8 @@
 //! a cage blown from its wall, a platform whose posts are blown out. The
 //! piece is a body of its own, as any piece is (`voxel_collapse`), hung
 //! by a Distance joint holding that point of it within the rope's length
-//! of where the rope is tied: it swings. It stays a body while it hangs.
+//! of where the rope is tied, let go into it rather than thrown, and heavy
+//! in the air: it sways a little and settles. It stays a body while it hangs.
 //! A rope snaps when what hangs from it pulls harder than its strength, its
 //! weight and its swing together, when a blast reaches it, or when the game
 //! cuts it ([`cut`]); its piece then falls, and rests as pieces do. Each
@@ -180,14 +181,24 @@ pub(crate) fn catch(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: 
             ..Joint::default()
         };
         world.insert(obj, joint);
+        // Let go into the rope, not thrown, and heavy in the air: it sways a little and settles, as a building
+        // hanging would, not as a light thing on a string.
         if let Some(body) = world.get_mut::<VoxelPieceBody>(obj) {
-            body.rest = Some(PieceRest::Stay);
+            (body.rest, body.push) = (Some(PieceRest::Stay), crate::voxel_felling::PiecePush::Drop);
+        }
+        if let Some(rigidbody) = world.get_mut::<crate::physics::Rigidbody>(obj) {
+            (rigidbody.drag, rigidbody.angular_drag) = (HANGING_DRAG, HANGING_TURN_DRAG);
         }
         let kept = RopeHolds { piece: Some(obj), point: point - place, tied: true, ..holds };
         world.insert(rope_obj, kept);
         return;
     }
 }
+
+/// How hard the air holds back a piece hanging from a rope, moving and
+/// turning: enough that it sways a little and settles.
+const HANGING_DRAG: f32 = 2.0;
+const HANGING_TURN_DRAG: f32 = 6.0;
 
 /// How thick a rope is drawn, in voxels.
 const THICK: u32 = 2;

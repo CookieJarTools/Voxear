@@ -1537,11 +1537,13 @@ stages, each measured before the next.
   settles the volume round that point, so what only the rope holds hangs at once; a piece that comes loose with the
   point in it gets a Distance joint holding that point (a new `hold` on Distance joints, a `Rope` joint in the
   physics shim from a point of the body, not its centre) within the rope's length of where it is tied, and stays a
-  body. It snaps when its piece's weight and swing (m(g + v²/L)) pull harder than its strength, when a blast reaches
+  body, let go into the rope rather than thrown and damped (drag 2, angular drag 6): it sways 0.07 to 0.33 m and is
+  still within ten seconds (first tried at drag 1.2, it swung 0.5 m and still moved 3 m/s seconds later). It snaps
+  when its piece's weight and swing (m(g + v²/L)) pull harder than its strength, when a blast reaches
   the line, or by `Voxels.CutRope`. Drawn as a 2-voxel line of voxels, remade as its length changes.
 - Tests: render `a_timber_floor_whose_post_is_blown_out_stays_hinged_to_its_wall_and_stone_snaps`; engine
   `a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_snaps`,
-  `a_slab_blown_off_its_posts_hangs_from_a_rope_and_swings_and_falls_once_cut` (it swings 0.6 m across),
+  `a_slab_blown_off_its_posts_hangs_from_a_rope_sways_a_little_and_falls_once_cut`,
   `what_was_built_held_by_nothing_but_a_rope_hangs_once_tied`; editor
   `a_tool_ties_a_rope_to_what_was_built_which_the_inspector_sets_and_the_scene_saves`.
 - Not built: how a hinged piece's snap would go over the network (its tear as an event, like a rope's cut).

@@ -614,7 +614,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
             plan_mesh(world, &agent, &mut state, mesh, *offset, dimension, &portals, layer, at, delta, &mut budget);
         } else if voxel_ground.contains(&dimension) {
             // On an endless Voxel Volume's ground: by the ways found over it (see `voxel_ways`).
-            plan_voxels(world, &agent, &mut state, (at, dimension), (height, radius), delta);
+            plan_voxels(world, &agent, &mut state, (at, dimension, layer), (height, radius), delta);
         } else {
             state.wanted = Vec3::ZERO;
         }
@@ -1028,7 +1028,7 @@ fn plan_voxels(
     world: &World,
     agent: &NavAgent,
     state: &mut NavAgentState,
-    (at, dimension): (Vec3, DimensionId),
+    (at, dimension, layer): (Vec3, DimensionId, u8),
     (height, radius): (f32, f32),
     delta: f32,
 ) {
@@ -1042,15 +1042,28 @@ fn plan_voxels(
     state.search_in -= delta;
     if asked_before != Some(destination) || state.search_in <= 0.0 || state.corners.is_empty() {
         state.search_in = SEARCH_EVERY;
-        let found = crate::voxel_ways::finder(world).way(world, dimension, at, destination, height, radius);
-        let (corners, status) = match found {
+        let walker = crate::voxel_ways::VoxelWalker {
+            height,
+            radius,
+            swims: agent.swims,
+            jumps: agent.jumps,
+            climbs: agent.climbs,
+            layer,
+            agent_type: agent.agent_type,
+        };
+        let found = crate::voxel_ways::finder(world).way(world, dimension, at, destination, &walker);
+        let (corners, status, jumps, links) = match found {
             Some(way) if way.corners.len() >= 2 => {
-                (way.corners, if way.complete { PathStatus::Complete } else { PathStatus::Partial })
+                let status = if way.complete { PathStatus::Complete } else { PathStatus::Partial };
+                let count = way.corners.len();
+                let jumps = if way.jumps.len() == count { way.jumps } else { vec![false; count] };
+                let links = if way.links.len() == count { way.links } else { vec![None; count] };
+                (way.corners, status, jumps, links)
             }
-            _ => (vec![at, at], PathStatus::None),
+            _ => (vec![at, at], PathStatus::None, vec![false; 2], vec![None; 2]),
         };
         state.cost = corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
-        (state.jumps, state.doors, state.links) = (vec![false; corners.len()], Vec::new(), vec![None; corners.len()]);
+        (state.jumps, state.doors, state.links) = (jumps, Vec::new(), links);
         (state.corners, state.next, state.status) = (corners, 1, status);
     }
     let steering = Steering {
@@ -1585,7 +1598,13 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
     if on_voxels {
         crate::voxel_nav::ensure(world);
     }
-    let way = on_voxels.then(|| crate::voxel_ways::finder(world).way(world, current, from, to, height, NavAgent::default().radius));
+    // As the blocks' way for scripts: something that swims and jumps.
+    let walker = crate::voxel_ways::VoxelWalker {
+        swims: true,
+        jumps: true,
+        ..crate::voxel_ways::VoxelWalker::of_size(height, NavAgent::default().radius)
+    };
+    let way = on_voxels.then(|| crate::voxel_ways::finder(world).way(world, current, from, to, &walker));
     match way.flatten() {
         Some(way) => {
             let length = way.corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();

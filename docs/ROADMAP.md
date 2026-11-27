@@ -4224,7 +4224,9 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     gathered into quarter-metre cells, solid where collision finds anything within a quarter of a metre, walked as
     a world of blocks one cell wide; cells made in columns 8 m a side round each agent and along each way asked for,
     on threads of their own, again where the volume changes. A column takes 75 ms on a volume's own hills and
-    0.28 s on a generator's rolling hills; a 25 m way 0.3 ms. Tests: ways round a wall and round its other end once that is shut, round a pit, a mob walking round a
+    0.28 s on a generator's rolling hills; a 25 m way 0.3 ms. Swimming, Nav Links, areas, obstacles and caves as on
+    blocks (tests: through an L of tunnel underground, over a ladder across a wall, out to sea from an island's shore).
+    Tests: ways round a wall and round its other end once that is shut, round a pit, a mob walking round a
     wall on a generator's hills.
 - Crowds: hundreds of characters near and thousands in the world, in stages (the research, measured limits and
   the plan: `docs/research/crowds.md`):
@@ -4832,8 +4834,10 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   cells a quarter of a metre a side, solid where collision finds anything within a quarter of a metre, and walked
   by the navigation of worlds of blocks: places, regions, ways pulled tight. Cells are made on threads of their own
   in columns 8 m a side round each agent and along each way asked for, made again where the volume changes, and let
-  go where nothing walks. `Navigation.FindPath` and `vox editor call navigation.path` find them too. Not yet: deep
-  water swum, Nav Links, caves under a column's lowest ground, the Navigation gizmo.
+  go where nothing walks. `Navigation.FindPath` and `vox editor call navigation.path` find them too. Agents that swim
+  cross deep water, Nav Links and Portals within the dimension are taken by the layers they let along, Nav Areas,
+  Obstacles and agent types' costs count, and cells are made as deep as each agent stands and where it goes, so ways
+  run through caves. Not yet: the Navigation gizmo, agents as wide as they are.
 - **Shared over the network (2026-11-27).** What a game changes in an endless volume reaches every player, the
   same to the voxel for drawing, collision, rays and ways (`voxel_sync`, `net/voxels.rs`).
   - The server's volume counts: a client's `Voxels` calls are requests the server checks and makes.

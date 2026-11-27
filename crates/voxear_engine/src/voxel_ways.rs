@@ -12,26 +12,59 @@ use voxear_ecs::World;
 use voxear_scene::DimensionId;
 
 /// A way found: its corners from where it starts, and whether it reaches
-/// where it was asked to go or only as near as it can.
-#[derive(Clone, Debug, PartialEq)]
+/// where it was asked to go or only as near as it can; and, where it has
+/// them, for each corner whether it is jumped to from the one before, and
+/// the kind of Nav Link it is reached by (see `voxear_nav::Link::kind`).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct VoxelWay {
     pub corners: Vec<Vec3>,
     pub complete: bool,
+    pub jumps: Vec<bool>,
+    pub links: Vec<Option<u8>>,
+}
+
+impl VoxelWay {
+    /// A way straight from corner to corner, with no jumps or links.
+    pub fn straight(corners: Vec<Vec3>, complete: bool) -> Self {
+        Self { corners, complete, ..Self::default() }
+    }
+}
+
+/// What walks a way: how tall it is and how wide round its middle, in
+/// metres; whether it swims across water too deep to stand in, jumps gaps
+/// and climbs; its layer, which says which Nav Links it takes; and its
+/// agent type, which says what each kind of ground costs it and how high
+/// it steps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxelWalker {
+    pub height: f32,
+    pub radius: f32,
+    pub swims: bool,
+    pub jumps: bool,
+    pub climbs: bool,
+    pub layer: u8,
+    pub agent_type: u8,
+}
+
+impl VoxelWalker {
+    /// Something `height` tall and `radius` round that only walks.
+    pub fn of_size(height: f32, radius: f32) -> Self {
+        Self { height, radius, swims: false, jumps: false, climbs: false, layer: 0, agent_type: 0 }
+    }
 }
 
 /// What finds ways over voxel ground.
 pub trait VoxelWays: Send + Sync {
     /// A way over the ground of dimension `dimension` from `from` to `to`,
-    /// both in the world, for an agent `height` metres tall and `radius`
-    /// round: none where there is no way, not even part of one.
+    /// both in the world, for `walker`: none where there is no way, not
+    /// even part of one.
     fn way(
         &self,
         world: &World,
         dimension: DimensionId,
         from: Vec3,
         to: Vec3,
-        height: f32,
-        radius: f32,
+        walker: &VoxelWalker,
     ) -> Option<VoxelWay>;
 }
 
@@ -39,8 +72,8 @@ pub trait VoxelWays: Send + Sync {
 pub struct Straight;
 
 impl VoxelWays for Straight {
-    fn way(&self, _: &World, _: DimensionId, from: Vec3, to: Vec3, _: f32, _: f32) -> Option<VoxelWay> {
-        Some(VoxelWay { corners: vec![from, to], complete: true })
+    fn way(&self, _: &World, _: DimensionId, from: Vec3, to: Vec3, _: &VoxelWalker) -> Option<VoxelWay> {
+        Some(VoxelWay::straight(vec![from, to], true))
     }
 }
 

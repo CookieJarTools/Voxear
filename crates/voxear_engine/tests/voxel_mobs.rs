@@ -166,12 +166,11 @@ impl voxear_engine::voxel_ways::VoxelWays for ByCorner {
         _: voxear_scene::DimensionId,
         from: Vec3,
         to: Vec3,
-        _: f32,
-        _: f32,
+        _: &voxear_engine::voxel_ways::VoxelWalker,
     ) -> Option<voxear_engine::voxel_ways::VoxelWay> {
         self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let corner = Vec3::new(from.x, to.y, to.z);
-        Some(voxear_engine::voxel_ways::VoxelWay { corners: vec![from, corner, to], complete: true })
+        Some(voxear_engine::voxel_ways::VoxelWay::straight(vec![from, corner, to], true))
     }
 }
 

@@ -322,6 +322,10 @@ pub enum JointKind {
     /// point in the world, held to the second body, or as far as it is
     /// now.
     Distance { point: Vec3, range: Option<(f32, f32)> },
+    /// The first body's point `on`, in the world as it is now, stays within
+    /// a range of distances of the point `to`, held to the second body or
+    /// to the world: a rope from one to the other.
+    Rope { on: Vec3, to: Vec3, range: Option<(f32, f32)> },
 }
 
 /// The largest number of bodies a world holds by default.
@@ -732,6 +736,8 @@ impl PhysicsWorld {
             JointKind::Point(point) => (1, point, Vec3::Y, (0.0, 0.0)),
             JointKind::Hinge { point, axis, limits } => (2, point, axis, limits.unwrap_or((0.0, 0.0))),
             JointKind::Distance { point, range } => (3, point, Vec3::Y, range.unwrap_or((-1.0, 0.0))),
+            // The point on the first body goes where an axis would.
+            JointKind::Rope { on, to, range } => (4, to, on, range.unwrap_or((-1.0, 0.0))),
         };
         let (point, axis) = (point.to_array(), axis.to_array());
         let b = b.map_or(u32::MAX, |b| b.0);

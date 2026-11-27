@@ -8,6 +8,7 @@
 //! anchor = [-0.5, 0.0, 0.0]
 //! axis = [0.0, 1.0, 0.0]
 //! limits = [0.0, 90.0]   # degrees for a hinge, metres for a distance
+//! hold = [0.0, 0.5, 0.0]  # a distance joint's point of its Obj, a rope tied there; left out, its centre
 //! ```
 
 use anyhow::Result;
@@ -33,6 +34,10 @@ pub struct JointData {
     pub axis: [f32; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<[f32; 2]>,
+    /// The point of its Obj a Distance joint holds, from its origin: a rope
+    /// tied there. Left out, its centre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<[f32; 3]>,
 }
 
 impl JointData {
@@ -46,13 +51,14 @@ impl JointData {
             anchor: joint.anchor,
             axis: joint.axis,
             limits: joint.limits,
+            hold: joint.hold,
         }
     }
 
     /// The component, its connected Obj found by `lookup`.
     pub fn bind(&self, lookup: &dyn Fn(&ObjPath) -> Option<Entity>) -> Joint {
         let connected = self.connected.as_ref().and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path));
-        Joint { kind: self.kind, connected, anchor: self.anchor, axis: self.axis, limits: self.limits }
+        Joint { kind: self.kind, connected, anchor: self.anchor, axis: self.axis, limits: self.limits, hold: self.hold }
     }
 
     /// The Obj it is connected to, when it names one.

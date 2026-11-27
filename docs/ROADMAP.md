@@ -4212,6 +4212,12 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
     and not a cliff, round its holes and what stands on it; a kilometre of terrain baked, and kept small; an old
     `.nav` read; agents round a wall and up a terrain hill, by both ways of moving; a vine and a ladder climbed up
     a cliff and down, and not by what does not climb; an agent climbing a vine by both ways of moving.
+  - [x] **Ways over endless Voxel Volumes** (`voxear_engine::voxel_nav`, through `voxel_ways`): a volume's voxels
+    gathered into quarter-metre cells, solid where collision finds anything within a quarter of a metre, walked as
+    a world of blocks one cell wide; cells made in columns 8 m a side round each agent and along each way asked for,
+    on threads of their own, again where the volume changes. A column takes 75 ms on a volume's own hills and
+    0.28 s on a generator's rolling hills; a 25 m way 0.3 ms. Tests: ways round a wall and round its other end once that is shut, round a pit, a mob walking round a
+    wall on a generator's hills.
 - Crowds: hundreds of characters near and thousands in the world, in stages (the research, measured limits and
   the plan: `docs/research/crowds.md`):
   - [x] **Box characters posed by their bones where they are drawn.** A skinned mesh whose every vertex is bound
@@ -4380,6 +4386,8 @@ placed can be moved or deleted and the ground comes back. The plan, with answers
 - [x] Players in different dimensions at once: ground made round every player on the server, Objs sent by
   dimension, crossings decided and checked by the server, a dimension's edits sent as a player comes into it and
   the level's as they join (see Dimensions under M8).
+- [x] Endless Voxel Volumes shared: players' changes made by the server, edits, deltas and falling pieces sent to
+  every player, and everything to a player joining late (see Small voxels).
 - [ ] Multi-instance play mode.
 
 ## M11 — Modding and platform services
@@ -4516,7 +4524,7 @@ Done:
   stepped too, and one-pixel outlines from depth and normals. Packs' options may now be colours (`kind = "color"`).
     (5); models' programs; reflections still see the engine's sky; pictures of a pack's own (noise, a grade's table).
 
-## Small voxels (in progress: stages 1, 2 and 5 built, stage 3 mostly, stages 4, 6 and 7 begun)
+## Small voxels (in progress: stages 1, 2, 4 and 5 built, stage 3 mostly, stages 6 and 7 begun)
 
 Worlds whose voxels are a few centimetres across: grass, flowers, crowns, ground and buildings of small cubes to the
 horizon, editable a voxel at a time. Research, measurements and the plan:
@@ -4643,7 +4651,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   `voxel_prints.make` with `"background": true`); no grass, flowers or trees grow where a print stands, by a
   footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
   turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
-  stays whole. Next: changed bricks in region files, edits over the network.
+  stays whole. Changed voxels are saved in region files and shared over the network, both below.
 - **A world of blocks' ground on the GPU (2026-11-26).** An endless volume's **Generator** can be a generated world
   of blocks: its ground generator as its chunks are made by it, its biomes' land and painted Land, Height and Biome
   maps included, the maps beside the program (9 MB for the Realm's 51 km). Peaks, Plateaus (its canyons and ramps),
@@ -4689,7 +4697,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   do, and spawns mobs from prefabs on its ground round the player. Block Mobs walk a volume's ground straight to
   where they are sent and wander it. Inspector rows, `vox editor call field.set`, and the scene's `cover`, `mobs`,
   `within` and `never_within`. The CPU keeps trees to the areas as the GPU does. Making a column costs what it did.
-  Not yet: ways found round obstacles on voxel ground, painted areas, harvesting.
+  Not yet: painted areas, harvesting.
 
 - **Edits for building (2026-11-26).** Endless volumes' edits are typed shapes, kept in order: balls; boxes turned
   any way (a slab is one half a metre tall); banks, boxes whose top slopes; areas, outlines of points across the
@@ -4789,7 +4797,26 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Pieces that hit hard dig what they hit, small ones and those past Most Pieces are dust, and each is stamped back
     where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
   - Cracks wander through the voxels round the bricks' faces, so broken edges are ragged.
-  - Designed, not built: a collapse over the network, 2 to 4 KB of piece snapshots for a house's corner.
+  - Timber bends before it snaps: floors hang hinged from their walls until too much hangs. Voxel Ropes hold what
+    was built, which hangs and swings once nothing else holds it, and snap when pulled too hard or cut.
+- **Ways over voxel ground (2026-11-26).** Nav Agents and Block Mobs on an endless Voxel Volume find their way round
+  walls, trunks and pits, up banks and through shallow water, with nothing baked. The voxels are gathered into
+  cells a quarter of a metre a side, solid where collision finds anything within a quarter of a metre, and walked
+  by the navigation of worlds of blocks: places, regions, ways pulled tight. Cells are made on threads of their own
+  in columns 8 m a side round each agent and along each way asked for, made again where the volume changes, and let
+  go where nothing walks. `Navigation.FindPath` and `vox editor call navigation.path` find them too. Not yet: deep
+  water swum, Nav Links, caves under a column's lowest ground, the Navigation gizmo.
+- **Shared over the network (2026-11-27).** What a game changes in an endless volume reaches every player, the
+  same to the voxel for drawing, collision, rays and ways (`voxel_sync`, `net/voxels.rs`).
+  - The server's volume counts: a client's `Voxels` calls are requests the server checks and makes.
+  - Each frame it sends the edits added, words for what every machine works out alike (a cut, a blast's dig, grass
+    growing back, a stamp, leaves pressed), new pieces, and a delta of the voxels against what players have.
+  - Falling pieces' poses go twenty times a second, each snapshot against the last one that player acknowledged;
+    rests are stamped at the pose sent.
+  - A player joining late gets the edits since the scene and the region files that differ, nearest first.
+  - Measured: a voxel 17–19 bytes, a box 47, a print 65, a felled tree 134 bytes and 2.4 KB of snapshots, a
+    house's corner blown in 2.4 KB and about 1.8 KB of snapshots.
+  - Not yet: a client showing its own dig before the server's answer, volumes in other dimensions.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

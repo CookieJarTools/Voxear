@@ -1475,6 +1475,19 @@ stages, each measured before the next.
   third): without that, walls whose roof fell broke at their feet and the whole house came loose standing up. Then
   what is joined to nothing comes loose, split along the tenth of its joins nearest breaking, and the loads are found
   again, round after round, the worst joins (all over half the worst) breaking each round.
+  - **Loads shared as the voxels hold.** A node is each part of a brick whose built voxels touch, not the brick, so
+    two walls through the same bricks bear apart; a join is between two parts, its springs as stiff as its weakest
+    section (its area along and across, its second moment, worked out from where its voxels lie, for bending and
+    turning) and its load passing through that section's middle. A stone slab on three timber posts: notching the
+    middle post to a quarter of its section moves 6.7% of what it bears onto the outer two. At-rest loads are kept
+    by brick, way and the part's first voxel, and found by the face where a dig moved that voxel.
+  - **Joins as strong as their thinnest voxels.** A join between two bricks bears what the plane with the fewest
+    pairs of built voxels across it, within 5 voxels of their face, bears: its area for pull, push and shear, and its
+    section modulus, worked out from where those voxels lie (least about either way across), for bending; a pushed
+    join holds bending until the push leaves the section's kern (modulus over area). The same small stone on a beam's
+    end leaves the whole beam standing and breaks a beam notched three voxels into a brick (1,557 voxels fall), which
+    the faces alone saw as the same beam. Reading the sections took the blown corner's settling from about 190 to 280
+    ms (development build).
   - **Breaking where it is thinnest.** Each broken face's crack goes through the plane, up to 5 voxels either side
     of the face across both bricks, with the fewest pairs of built voxels across it in the face's square (nearest
     the face of equals): a notch three voxels into a brick of an overloaded beam breaks there, 1 of its 1,541 fallen
@@ -1507,6 +1520,34 @@ stages, each measured before the next.
   `a_house_blown_in_is_drawn_as_the_cpu_finds_it_after_what_came_loose_was_dug_out`: a house on hills blown in and
   every round dug, 0 of 33,536 surface voxels differ (the hills' own known one-voxel differences aside).
 
+### Bending before snapping, and ropes (2026-11-27)
+
+- **Hinged timber.** A part of timber (the only stuff that bends) that comes loose through joins broken by bending,
+  bending the worst of pull, shear and bending, stays hinged to what it broke from (`VoxelHinge`: where, and what the
+  bent joins hold: 2e5 Pa over their section modulus turning, 1.2e4 Pa over their area hanging). In the engine the
+  piece gets a hinge Joint about the line square to the way its weight hangs; while its weight and all hinged beyond
+  it turns it harder than the hinge holds, the joint is remade each step a little looser (30 degrees a second, either
+  way, gravity choosing), else held within 0.3 degrees; it tears off past 55 degrees or when more hangs from it than
+  it bears. A piece hinged on one that comes loose later, or before, is hinged onto it, never in a loop; one hinged
+  on a piece stamped back is hinged to where it lies. It rests only once nothing beyond it has bent for a second.
+  Measured (engine test, five runs): a 1.5 m floor hangs bent 3 to 6 degrees; a 6 m floor breaks in five hinged
+  pieces and tears off every run. Without counting what hangs beyond a hinge, the 6 m floor folded and held in half
+  the runs; with pieces hinged only one way, its hinges at the wall were stamped while the rest hung from them.
+- **Ropes.** A Voxel Rope component (`voxel_ropes.rs`), tied at its Obj, holding the point `hangs` below. Tying one
+  settles the volume round that point, so what only the rope holds hangs at once; a piece that comes loose with the
+  point in it gets a Distance joint holding that point (a new `hold` on Distance joints, a `Rope` joint in the
+  physics shim from a point of the body, not its centre) within the rope's length of where it is tied, and stays a
+  body, let go into the rope rather than thrown and damped (drag 2, angular drag 6): it sways 0.07 to 0.33 m and is
+  still within ten seconds (first tried at drag 1.2, it swung 0.5 m and still moved 3 m/s seconds later). It snaps
+  when its piece's weight and swing (m(g + v²/L)) pull harder than its strength, when a blast reaches
+  the line, or by `Voxels.CutRope`. Drawn as a 2-voxel line of voxels, remade as its length changes.
+- Tests: render `a_timber_floor_whose_post_is_blown_out_stays_hinged_to_its_wall_and_stone_snaps`; engine
+  `a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_snaps`,
+  `a_slab_blown_off_its_posts_hangs_from_a_rope_sways_a_little_and_falls_once_cut`,
+  `what_was_built_held_by_nothing_but_a_rope_hangs_once_tied`; editor
+  `a_tool_ties_a_rope_to_what_was_built_which_the_inspector_sets_and_the_scene_saves`.
+- Not built: how a hinged piece's snap would go over the network (its tear as an event, like a rope's cut).
+
 ### A collapse over the network: a design
 
 What a collapse needs to send is small, because nearly all of it is worked out the same way on every machine; only
@@ -1538,3 +1579,110 @@ the bodies' falls are not, as the physics library isn't bit-for-bit alike across
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in
   the shared notes of the sessions that did this research (`small-voxels.md` and its folder).
+
+## Stage 7 on: ways over voxel ground (2026-11-26)
+
+Nav Agents and Block Mobs on an endless volume walked straight to where they were sent, through the `voxel_ways`
+seam left for this. `voxear_engine::voxel_nav` now fills it.
+
+- **Cells, walked as blocks.** The navigation of worlds of blocks (`voxear_nav`) already makes places chunk by chunk,
+  regions over them, a coarse search and tight corners, kept up on threads as chunks change; a `Walker` is made for
+  any size of block. So the voxels are gathered into cells about a quarter of a metre a side (4 voxels at 16/m),
+  each a block of a `BlockMap` of the navigation's own: solid where collision's `fill` finds any voxel in it or
+  within a quarter of a metre beside it, water where the sea or a river's water (`voxel_water_at`, read a metre
+  apart) stands over an open cell. Leaves, grass and cover are walked through, as collision has them.
+- **One cell wide.** A walker wider than a block stands only where every column under it is within half a block of
+  the corner's (`blocks::fits`); on ground of small voxels sloping at all, cells step a quarter of a metre every few
+  columns, and a three-cell walker could not leave the cell it stood on. So every agent is walked as one cell wide
+  and what is solid is made wider instead: a doorway a metre wide stays two cells open, a way keeps its middle
+  about 40 cm from walls and trunks, and the rim of a drop is walked up to a quarter of a metre past its edge.
+- **Made round what walks.** Columns of chunks 8 m a side, from a chunk under the column's lowest ground up to the
+  first chunk over its highest with nothing solid, within 24 m of each agent and along each way asked for (96 m
+  ahead), nearest first, three at once on threads of their own. A change to the volume (`changed_from` boxes)
+  makes the columns it reaches again; columns 48 m past every agent and unwanted for 30 s are let go.
+- **Measured** (release, 4 columns each, other sessions' builds running):
+
+  | Ground | A column | 49 columns round a new agent | A 25 m way |
+  |---|---|---|---|
+  | The volume's own hills | 75 ms (2 chunks) | 1.2 s | 0.17 ms |
+  | Rolling Hills | 0.23–0.43 s (2–3 chunks) | 4.1 s | 0.3 ms |
+
+  River water read for every column of cells took a Rolling Hills column to 0.85 s; read a metre apart, 0.28 s. A
+  chunk's fill is 45 ms on Rolling Hills and 650 ms in Alpine with overhangs and caves, so mountains are slower.
+- **Tests.** Engine lib `voxel_nav::tests`: a way round a wall, then round its other end once that is walled off
+  (the change made again); round a pit too deep to climb out of. `tests/voxel_mobs.rs`: a Block Mob on Rolling
+  Hills sent past a wall walks round an end and gets there. `Navigation.FindPath` and `navigation.path` go through
+  it too.
+- **Not yet.** Deep water swum, Nav Links, caves under a column's lowest ground, more than about 100 m of buildings
+  over it, the Navigation gizmo's squares, and agents as wide as they are.
+
+## Stages 4 and 7 over the network: built (2026-11-27)
+
+The two designs above (edits over the network, a collapse over the network) are built in
+`voxear_engine::voxel_sync` and `net/voxels.rs`, with what they measure from the engine test
+`tests/net_voxels.rs` (a dedicated server and two or three players' machines in one process, through a network in
+memory with a little loss and delay).
+
+- **The server's volume is everyone's.** A client's `Voxels.Dig`, `Place`, `Restore`, `Carve`, `Fill`, the shapes,
+  `Print`, `Cut`, `Slice` and `Blast` become a request (`VoxelAsk`, in the level's own coordinates), which the
+  server checks (the usual limits, or a game's own `set_ask_check`) and makes as its own scripts' are. Nothing is
+  shown on the client until the server's answer: prediction of digs is left for later.
+- **What goes, each frame something changed.** The server keeps, per volume, what players have: how many of its
+  edits were sent and its changes as players have them (an `Arc`, cheap to keep). It sends, in order on the reliable
+  channel: the edits added (`VoxelEditData` in a few numbers, floats as their bits, a print by GUID); hints; new
+  pieces; and last a delta of its changes against players' (`VoxelChanges::delta_from`: per brick that differs, the
+  voxels that differ, listed by place up to 30 or as 512 bits, each a code into a table of the kinds it uses; cut
+  columns and felled trees whole; zstd over 160 bytes). The delta is assignment, not a change, so whatever came
+  before it, every client ends with the server's changes. Kinds go by what they are, not by code, as each machine
+  numbers its kinds in the order it met them.
+- **Hints are words in place of voxels.** A cut (grass and trees felled), a blast's dig, cut grass growing a step,
+  a piece stamped back, a felled piece's leaves pressed on the ground. The first design worked each hint out again
+  on the server's copy of what players have, so the delta after it carried only the difference; that cost a second
+  felling (0.12–0.35 s) on the server. Built instead: the place that changes the volume notes its changes before and
+  after (`hint_change`), and the hint goes only if players' copy *is* the before (the same `Arc`) and the volume had
+  as many edits as players will; then players' copy becomes the after. A client running the same function on the
+  same volume gets the same result, as the shapes are whole numbers and felling, stamping and the blast's dig are
+  worked out the same on any machine of the same build. Otherwise the hint is dropped and the delta carries it.
+- **Pieces.** Each is named by a number of the session. Pieces a hinted cut made are named by their place among
+  the pieces the cut makes, so a felled tree's voxels are never sent: sent as voxels they were 150 KB a tree,
+  twice (once cut, once pressed), because hashed leaves don't pack. What was built comes loose by the server's
+  settle alone (the strain baselines are in memory, never saved or sent, so a late joiner's settle would differ),
+  so those pieces go with their voxels: a bit a voxel of the piece's box and a colour byte each, zstd, 200–440
+  bytes for the house's pieces, and the client digs them out of its volume as the server did. Leaves are pressed at
+  the quantised pose (`voxel_felling::pressed`, now worked out in the volume's own coordinates), so every machine
+  presses the same; a chipped piece's voxels go again.
+- **Poses.** Twenty times a second each client is sent a snapshot of the pieces' poses, tagged; it goes against the
+  newest snapshot that client acknowledged (`Delivery::Acked`): a piece unchanged is left out, one moved goes as
+  millimetres moved (zigzag varints) and its turn where it turned (three smallest parts, 11 bits each, and which
+  was left out: 35 bits), a piece new to it whole, and the pieces gone from the base listed. The client keeps the
+  last 64 snapshots to read the next against, and shows each piece about five ticks behind the newest, between
+  samples. A piece's rest is the server's: it stamps at the pose quantised to a millimetre and 11-bit turn, and
+  sends that pose in the stamp hint.
+- **Joining.** As a player joins (once they have an Obj, or after 60 ticks) the server gathers, from what players
+  have, each volume's name (scene GUID and Obj path), the edits added since its scene (`VoxelVolumeLoaded` keeps what
+  each scene made: its edits' count and its changes), and the region files of each region that differs from the
+  scene's own, nearest the player first, in parts of at most 40 KB before packing; then the pieces still falling.
+  It goes within half the connection's budget, and news after it waits behind it in the same queue. The client takes
+  its volume back to the scene's first, so whatever it did before joining is gone.
+
+| Measured (bytes to each player) | |
+|---|---|
+| A turned box of bricks, tinted (the server's) | 47 |
+| 512 voxels dug in a half-metre cube (a player's request) | 38 |
+| One voxel placed / dug | 19 / 17 |
+| 256 voxels restored | 36 |
+| A print, fitted, by GUID | 65 |
+| Grass cut in a 3 m ball (a cut hint) | 20 |
+| A tree felled, fallen and stamped (cut hint, piece by place, pressed, stamp, delta) | 134, and 4.9 KB of snapshots for two players over 7.5 s |
+| A house's corner blown in (blast hint, 6 built pieces with their voxels, rounds' digs, stamps) | 2.4 KB, and 3.5–4.9 KB of snapshots for two players |
+| A late joiner, after a street, a cellar, a tower and cut grass | 987, against 803 in the region files |
+
+The requests themselves: a point is three floats, packed with zstd past 128 bytes; the dig test's seven requests (768 points among them) came to 655 bytes, 9.3 KB before packing.
+
+- **Agreement**, checked after each change on every machine: the edit lists equal, the changes' delta empty both
+  ways, collision's solids over a 20 × 6 × 20 m box voxel for voxel, 1,152 rays, and a Nav Agent's way round a
+  wall corner for corner. The GPU draws from the same edits and changes; its agreement with the CPU is the GPU
+  tests' (`tests/voxels.rs`).
+- **Not yet.** A client showing its own dig before the server's answer. Volumes in other dimensions. Pieces chipping
+  and digging out what they hit are the server's alone and reach clients as its digs. A C# check of requests (the
+  check is Rust only).

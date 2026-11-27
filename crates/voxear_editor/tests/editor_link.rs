@@ -984,6 +984,40 @@ fn a_tool_blasts_a_bridges_pier_and_its_span_is_taken_away_one_step_to_undo() {
 }
 
 #[test]
+fn a_tool_ties_a_rope_to_what_was_built_which_the_inspector_sets_and_the_scene_saves() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Voxels", "position": [0, 0, 0] }));
+    let volume = made["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": volume, "component": "voxel_volume" }));
+    let endless = json!({ "obj": volume, "component": "voxel_volume", "field": "endless", "value": true });
+    done(&mut editor, &mut renderer, "field.set", endless);
+    // A cage built in the air, a rope tied over it.
+    let cage = json!({ "at": [4.0, 6.0, 4.0], "size": [1.0, 1.0, 1.0], "material": "planks" });
+    done(&mut editor, &mut renderer, "voxels.box", cage);
+    let tied = done(&mut editor, &mut renderer, "voxels.rope", json!({ "tied": [4.0, 9.0, 4.0], "holds": [4.0, 6.9, 4.0] }));
+    let rope = tied["obj"].clone();
+    assert!((tied["length"].as_f64().unwrap() - 2.1).abs() < 0.01, "{tied}");
+    // Its strength set as the Inspector sets it.
+    let strong = json!({ "obj": rope, "component": "voxel_rope", "field": "strength", "value": 25000.0 });
+    assert_eq!(done(&mut editor, &mut renderer, "field.set", strong)["changed"], true);
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": rope }));
+    assert!(shown.to_string().contains("voxel_rope"), "{shown}");
+    let saved = done(&mut editor, &mut renderer, "save", json!({}));
+    let path = saved["saved"].as_array().unwrap().iter().filter_map(|p| p.as_str()).find(|p| !p.ends_with(".vxr")).unwrap().to_string();
+    let scene = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    assert!(scene.contains("[obj.voxel_rope]") && scene.contains("strength = 25000.0"), "saved:\n{scene}");
+    assert_eq!(done(&mut editor, &mut renderer, "voxels.cut_rope", json!({ "obj": rope }))["cut"], true);
+    let refused = ask(&mut editor, &mut renderer, "voxels.cut_rope", json!({ "obj": volume })).unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::WrongValue, "{refused}");
+    // The setting, then the rope, taken back a step each.
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    let entity = link::resolve_obj(&editor.game, &rope);
+    assert!(entity.is_err() || editor.game.engine.world.get::<voxear_engine::voxel_ropes::VoxelRope>(entity.unwrap()).is_none(), "the rope is gone");
+}
+
+#[test]
 fn a_tool_makes_a_voxel_print_of_a_model_and_prints_it_into_an_endless_volume_one_step_to_undo() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

@@ -1035,4 +1035,38 @@ mod tests {
         let kept = after.placed.lock().unwrap().len();
         assert!(kept > 0 && kept < placed, "{kept} of {placed} kept");
     }
+
+    /// How long a navigation chunk's voxels take to fill: 8 m a side at 16 voxels a metre.
+    #[test]
+    #[ignore = "a measure, not a check"]
+    fn measure_filling_a_navigation_chunk() {
+        let rolling = starters().into_iter().find(|starter| starter.name == "Rolling Hills").expect("Rolling Hills");
+        let rolling = Arc::new(rolling.world(7, 1.0));
+        let alpine = Arc::new(caved_alpine());
+        let with = |world: Arc<WorldGen>| {
+            let floor = world.height_at(40.0, 40.0) - 20.0;
+            VoxelVolume {
+                size: Vec3::new(16.0, 48.0, 16.0),
+                generator: Some(VoxelGenerator { world, floor, at: [0.0, 0.0], biomes: None }),
+                ..hills()
+            }
+        };
+        for (name, volume) in [("own hills", hills()), ("rolling hills", with(rolling)), ("caved alpine", with(alpine))] {
+            let solids = VoxelSolids::of(&volume).unwrap();
+            let mut solid = vec![false; 128 * 128 * 128];
+            let low = [40 * 16, 0, 40 * 16];
+            let started = std::time::Instant::now();
+            let heights = solids.heights([low[0], low[2]], [128, 128]);
+            let heights_took = started.elapsed();
+            let (least, most) = (heights.iter().min().unwrap(), heights.iter().max().unwrap());
+            let low = [low[0], least - 32, low[2]];
+            let started = std::time::Instant::now();
+            solids.fill(low, [128, 128, 128], &mut solid);
+            let fill_took = started.elapsed();
+            let started = std::time::Instant::now();
+            solids.fill(low, [128, 128, 128], &mut solid);
+            let again = started.elapsed();
+            println!("{name}: heights {heights_took:?}, fill {fill_took:?}, again {again:?}, ground {least}..{most}");
+        }
+    }
 }

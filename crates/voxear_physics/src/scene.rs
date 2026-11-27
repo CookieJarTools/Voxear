@@ -590,6 +590,8 @@ impl JointType {
 /// Distance joint's Obj hangs from; a hinge turns about `axis`, in the
 /// Obj's space. Limits, when given, are a hinge's least and greatest angle
 /// in degrees, or a Distance joint's least and greatest length in metres.
+/// A Distance joint holds its Obj's centre, or the point `hold` from its
+/// origin where given: a rope tied there.
 /// Changing it remakes the joint where its Objs are now.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Joint {
@@ -598,11 +600,12 @@ pub struct Joint {
     pub anchor: [f32; 3],
     pub axis: [f32; 3],
     pub limits: Option<[f32; 2]>,
+    pub hold: Option<[f32; 3]>,
 }
 
 impl Default for Joint {
     fn default() -> Self {
-        Self { kind: JointType::Fixed, connected: None, anchor: [0.0; 3], axis: [0.0, 1.0, 0.0], limits: None }
+        Self { kind: JointType::Fixed, connected: None, anchor: [0.0; 3], axis: [0.0, 1.0, 0.0], limits: None, hold: None }
     }
 }
 
@@ -1636,7 +1639,10 @@ impl PhysicsScene {
                     let limits = limits.map(|(least, most)| (-most.to_radians(), -least.to_radians()));
                     JointKind::Hinge { point, axis, limits }
                 }
-                JointType::Distance => JointKind::Distance { point, range: limits },
+                JointType::Distance => match joint.hold {
+                    Some(hold) => JointKind::Rope { on: placed.transform_point3(Vec3::from(hold)), to: point, range: limits },
+                    None => JointKind::Distance { point, range: limits },
+                },
             };
             if let Some(made) = self.world.add_joint(kind, body, other) {
                 self.joints.insert(entity, (made, key));

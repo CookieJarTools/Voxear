@@ -112,6 +112,13 @@ pub enum Message {
     /// moves somewhere, or stopping it: where to, in a dimension by its
     /// number on this connection, and whether it stands where it is.
     NavGo { id: NetId, to: Option<(voxear_core::math::Vec3, u16)>, stopped: bool },
+    /// To a client: news of the server's endless Voxel Volumes, as
+    /// `voxel_sync` writes it.
+    Voxels(Vec<u8>),
+    /// To the server: a player's request of the volumes (`voxel_sync::VoxelAsk`).
+    VoxelAsk(Vec<u8>),
+    /// To a client: where the pieces falling are (see `voxels`).
+    VoxelPoses(Vec<u8>),
 }
 
 /// What a dimension a server names to a client is, for the client to find
@@ -162,6 +169,11 @@ const EDITS_DONE: u32 = 18;
 const READY: u32 = 19;
 const NAV_GO: u32 = 20;
 const CROWD_RECORDS: u32 = 21;
+const VOXELS: u32 = 22;
+const VOXEL_ASK: u32 = 23;
+const VOXEL_POSES: u32 = 24;
+/// The most bytes a message of the volumes takes.
+pub const MOST_VOXEL_BYTES: usize = 1 << 20;
 /// The most bytes one message of a dimension's edits takes.
 pub const MOST_EDIT_BYTES: usize = 65536;
 /// The most bytes a message of storms takes.
@@ -197,6 +209,16 @@ impl Message {
             }
             Message::Storms(bytes) => {
                 w.write_bits(STORMS, KIND_BITS);
+                w.write_varint(bytes.len() as u64);
+                w.write_bytes(bytes);
+            }
+            Message::Voxels(bytes) | Message::VoxelAsk(bytes) | Message::VoxelPoses(bytes) => {
+                let kind = match self {
+                    Message::Voxels(_) => VOXELS,
+                    Message::VoxelAsk(_) => VOXEL_ASK,
+                    _ => VOXEL_POSES,
+                };
+                w.write_bits(kind, KIND_BITS);
                 w.write_varint(bytes.len() as u64);
                 w.write_bytes(bytes);
             }
@@ -352,7 +374,8 @@ impl Message {
     /// machine whose world's middle is `origin` from the level's.
     pub fn decode(bytes: &[u8], world_origin: I64Vec3) -> Option<Message> {
         let mut r = BitReader::new(bytes);
-        Some(match r.read_bits(KIND_BITS)? {
+        let kind = r.read_bits(KIND_BITS)?;
+        Some(match kind {
             WELCOME => Message::Welcome {
                 player: PlayerId(r.read_bits(16)? as u16),
                 tick: r.read_varint()?,
@@ -377,6 +400,19 @@ impl Message {
                 let mut text = vec![0u8; length];
                 r.read_bytes(&mut text)?;
                 Message::Level(String::from_utf8(text).ok()?)
+            }
+            VOXELS | VOXEL_ASK | VOXEL_POSES => {
+                let length = r.read_varint()? as usize;
+                if length > MOST_VOXEL_BYTES {
+                    return None;
+                }
+                let mut bytes = vec![0u8; length];
+                r.read_bytes(&mut bytes)?;
+                match kind {
+                    VOXELS => Message::Voxels(bytes),
+                    VOXEL_ASK => Message::VoxelAsk(bytes),
+                    _ => Message::VoxelPoses(bytes),
+                }
             }
             STORMS => {
                 let length = r.read_varint()? as usize;

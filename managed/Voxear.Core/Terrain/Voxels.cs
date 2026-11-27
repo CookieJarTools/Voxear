@@ -23,6 +23,12 @@ namespace Voxear;
 /// </code>
 /// A later change goes over an earlier one: a ball carved into rock just filled, or into a print, takes a bite out of
 /// it.
+/// <para>
+/// In a networked game the server's volumes are every player's. On a player's machine each change asks the server,
+/// which makes it if it accepts it and sends what came of it to everyone a moment later; until then nothing changes
+/// there, and what a change gives back is only what was asked (how many volumes it reaches, how many points). A script
+/// that builds on every machine should build on the server alone (<c>Net.IsServer</c>).
+/// </para>
 /// </summary>
 public static unsafe partial class Voxels
 {

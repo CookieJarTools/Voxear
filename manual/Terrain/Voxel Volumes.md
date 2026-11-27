@@ -248,7 +248,7 @@ An endless volume can spawn mobs on its ground round the player while the game p
 - **Near** and **Far**: they spawn no nearer the player than Near and no further than Far, in metres, on ground no steeper than 45°. Once the player is a fifth again further than Far from one, it is taken away, and another comes nearer.
 - **Within** and **Not Within**: Area Tags, as for trees: sheep set Within a Pasture tag spawn only in the pastures.
 
-The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume walks straight to where it's sent and wanders about where it was spawned, picking places it can stand. It doesn't yet find a way round what is in its way: one that can't get somewhere within 12 seconds gives up and picks somewhere else. A navigation of voxel ground can be put in the engine through `voxear_engine::voxel_ways`: every agent on a volume walks the ways it finds.
+The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume wanders about where it was spawned, picking places it can stand, and finds its way there round what is in its way, as a [[Nav Agents|Nav Agent]] does (see [Navigation](#navigation)). One that can't get somewhere within 12 seconds gives up and picks somewhere else.
 
 ```toml
 [[obj.voxel_volume.mobs]]
@@ -514,7 +514,7 @@ What it digs out is gone at once, dust flying where it was, and `VoxelBlastDone`
 
 **Cut off.** Only what touched the voxels dug out can have come loose, so the check starts there. It goes over half-metre bricks first, the bricks whose built voxels touch across their faces, to find which of them touch what holds and how far each is from one, then over voxels, the way the bricks say is nearest. Whatever finds nothing that holds comes loose: a balcony cut from its house, a wall over a breach cut at both ends, a bridge's span once both piers are blown through. It is taken out of the volume and falls as a piece, an Obj named Fallen piece, made as a felled tree's is: a Rigidbody as heavy as what it is made of, collider boxes of its voxels, and its voxels a Voxel Volume of their own that turns with it. What a blast cut off is thrown away from it, 3 m/s unless `throw:` says. A wall over a breach that still holds at its ends stays up, as long as it bears its weight.
 
-**Under its own weight.** Then what is built round the change, as it was and as it is now (so weight added since bears on it too), is taken as a graph of its half-metre bricks: each as heavy as its voxels and made of what most of them are, joined to its neighbours where their voxels touch, as strongly as the faces that touch are many, and to what holds it where it touches that. The loads on every join under gravity are found, and each is split into pull or push along the join, shear across it and bending about it. A join breaks where any of them has grown over what it bore at rest by more than the weaker of its two bricks bears: whatever stands at rest stands, and a join that bears less than it did, as a wall whose roof has fallen, is none the worse. What a break leaves joined to nothing comes loose, cracked away from what stands through the voxels, not along the bricks: each break goes through where the least holds the two sides together, up to five voxels either side of the bricks' faces (a notch, the narrow pier beside a window), and wanders a couple of voxels about there, so a broken wall's edge is ragged. The loads are then found again, and so on, round after round, a fifth of a second apart, until nothing more gives way. A house with its corner blown out stands a moment, then its roof over the corner sags in and the walls hung from it come down after.
+**Under its own weight.** Then what is built round the change, as it was and as it is now (so weight added since bears on it too), is taken as a graph of its half-metre bricks, each part of a brick whose voxels touch a node of its own (two walls through the same bricks that don't touch bear apart): each as heavy as its voxels and made of what most of them are, joined to its neighbours where their voxels touch, as stiffly and as strongly as the fewest voxels holding the two together anywhere between their middles, the load passing through the middle of those: a wall is as strong as it is at its thinnest, a notch or the narrow pier beside a window, wherever in the brick that is, and to what holds it where it touches that. The loads on every join under gravity are found, and each is split into pull or push along the join, shear across it and bending about it. A join breaks where any of them has grown over what it bore at rest by more than the weaker of its two bricks bears: whatever stands at rest stands, and a join that bears less than it did, as a wall whose roof has fallen, is none the worse. What a break leaves joined to nothing comes loose, cracked away from what stands through the voxels, not along the bricks: each break goes through where the least holds the two sides together, up to five voxels either side of the bricks' faces (a notch, the narrow pier beside a window), and wanders a couple of voxels about there, so a broken wall's edge is ragged. The loads are then found again, and so on, round after round, a fifth of a second apart, until nothing more gives way. A house with its corner blown out stands a moment, then its roof over the corner sags in and the walls hung from it come down after.
 
 What each brick is made of:
 
@@ -535,6 +535,31 @@ A print's voxels and pieces stamped back are made of what the volume's **Built O
 On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a millisecond; a blown corner, every round and the voxels with them, about a seventh of a second, while the game goes on. A join pushed together holds better against sliding and bending, as a wall's stones do under their own weight, so a wall standing on the ground stands when its roof is gone. At most 4,000 bricks round a change are looked at; what is built past them is taken as holding.
 
 **Falling and resting.** A piece that hits the volume hard digs out what it hits, as a small blast does, and what that cuts off falls too; pieces that hit each other chip where they meet, dust flying. A piece of fewer than 320 voxels is dust, no body, and so is the smallest falling once more fall at once than the volume's **Most Pieces** (24 unless set; a view draws 64 volumes). Once a piece has lain still for a second it is stamped back into the volume where it lies, voxels placed in its own colours, built again: rubble on the floor that can be blown out in turn. `Voxels.Piece`, `Voxels.StampPiece` and `Voxels.RemovePiece` work on a fallen piece's Obj as on a felled tree's.
+
+**Bending before it snaps.** Timber bends before it breaks; stone, brick, earth and glass snap. A part of planks that gives way by bending stays hinged where it broke, as a floor whose post is blown out hangs from its wall: while its weight, with all hinged beyond it, turns it about the hinge harder than the bent join holds, it bends further, 30 degrees a second; once it holds, it hangs there bent, and in a moment it rests and is stamped back as it lies. It tears off and falls once it has bent 55 degrees, or once more hangs from it than the bent join bears: a short balcony hangs on, a long floor, or one with a post's stone still on its end, bends and then snaps. A floor broken in several places hangs piece from piece, each bearing all beyond it.
+
+**Ropes.** A Voxel Rope, on an Obj where it is tied, holds the point of what was built its **Hangs** reaches below it. What is built round that point and held up by nothing else hangs from the rope as soon as it is tied, and whatever comes loose later with that point in it hangs from it too: a platform whose posts are blown out drops into the rope under its gantry, sways a little and settles, leaning about the point it is held by. What a rope catches is let go into it, not thrown, and is heavy in the air (Drag 2, Angular Drag 6), so a building hanging moves as a heavy thing does, not as a light one on a string. The rope is its **Length** long (as far as to the point it holds where 0) and snaps when what hangs pulls harder than its **Strength** in newtons, its weight and its swing together (never where 0), when a blast reaches it, or when the game cuts it. What hung from a cut rope falls, and rests as pieces do; while it hangs it stays a body. A piece hangs from one rope. The rope is drawn as a line of voxels from where it is tied to the point it holds.
+
+```csharp
+// A cage hung from the overhang: blow the overhang's foot and the cage swings out over the drop.
+var rope = Voxels.Hang(overhang + Vector3.UnitY * 0.2f, cage.Top, strength: 30000f);
+// ...a bolt through the rope:
+if (rope is { } tied) Voxels.CutRope(tied);
+```
+
+```
+vox editor call voxels.rope '{ "tied": [32, 9, 32], "holds": [32.03, 3.65, 32.03], "strength": 25000 }'
+vox editor call voxels.cut_rope '{ "obj": "<guid>:3" }'
+```
+
+```toml
+[obj.voxel_rope]
+hangs = [0.0, -5.35, 0.0]
+length = 6.0
+strength = 25000.0
+```
+
+A Distance joint can hold a point of its Obj as well as its centre (`hold` in `[obj.joint]`), which is what a Voxel Rope uses.
 
 What comes loose is dug out a voxel at a time, so it costs as much as digging it would, and is saved in the region files with the other changes. What each join bore at rest is kept while the level runs, not saved: a house left cracked but standing is whole again when the level is loaded.
 
@@ -601,6 +626,53 @@ A character walking at 6 m/s over a generator's hills, through a wood of 100 tre
 
 Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Voxels.Raycast` meets the whole ground.
 
+## Navigation
+
+[[Nav Agents]] and [[Block Mobs]] find their way over an endless volume's ground as over a world of blocks: round walls, trees' trunks and pits, up banks and steps, and over shallow water, wading it. Nothing needs adding or baking. What they walk through and bump into is what collision finds: leaves, grass, flowers and cover are walked through.
+
+- **Cells.** The volume's voxels are gathered into cells about a quarter of a metre a side (four voxels at 16 a metre), a cell solid where any voxel in it is, and the places to stand are worked out from the cells as they are from a world's blocks. An agent steps up 45 cm and drops 2 m at most, and its way keeps its middle about 40 cm from walls and trunks, so a doorway a metre wide is walked through and a gap of half a metre is not.
+- **Made round what walks.** Cells are made in the background in columns 8 m a side, only round each Nav Agent and Block Mob, 24 m each way, and along each way asked for, 96 m ahead, the nearest first. A way asked for further than its cells reach goes as far as they do and is found on from there as it is walked. One asked for where there are no cells yet goes straight there until they are made. Columns far from everything that walks are let go after 30 seconds.
+- **Water.** An open cell under the sea's level, or under a river's or a lake's water, is water: waded where it is shallow, and kept out of where it is too deep to stand in.
+- **Changes.** Carving, filling, digging, felling and what gives way make the cells again where they reach, within a few frames, and an agent's way is found again round them.
+
+A column of cells takes about 75 ms to make over a volume's own hills, a quarter of a second over a generator's rolling hills, and more in mountains with overhangs and caves: the cells round an agent just come into the world take one to four seconds, and until then it walks straight towards where it was sent. A way 25 m long is found in under a millisecond. [[Finding Ways from Scripts|`Navigation.FindPath`]] and `vox editor call navigation.path` find ways over the volume too.
+
+## Over the network
+
+In a networked game (see [[Playing over the Network]]) every machine makes the scene's own volume from the same files, and the server's is the one that counts: what a game changes as it plays goes from the server to every player, and ends the same on every machine to the voxel, for what is drawn, for collision, for rays and for the ways Nav Agents find. Nothing needs adding.
+
+- **The server changes it.** A carve, a fill, a shape, a print, a voxel dug, placed or restored, a cut, a blast: made by the server's own scripts, they are made at once and sent. Made by a script on a player's machine, they are a request to the server, which checks it and makes it as its own; until it does, nothing changes on the player's machine. What `Voxels` gives back there is only what was asked: how many volumes it reaches, how many points. A script that builds on every machine should build on the server alone:
+
+```csharp
+// The server raises the fort; every player's machine is sent it.
+if (Net.IsServer) Voxels.Print(Fort, hill, fit: true);
+// Any player's pick: a request, which the server makes and sends to everyone.
+if (Input.Pressed(dig) && Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f))
+{
+    Voxels.Dig(hit.Point - hit.Normal * 0.01f);
+}
+```
+
+- **What is sent.** Each frame something changed, the server sends every player on a reliable channel the edits it added, each in a few numbers (a print by its GUID), and then a delta of the voxels set one at a time against what players were last sent: each half-metre brick that differs, voxel by voxel, and each column of cut grass and felled tree that differs. Every machine makes an edit's voxels itself, the same to the voxel, as every shape is worked out in whole numbers. What the server works out alone, as what gives way after a blast, goes as the voxels it dug.
+- **Worked out on each machine.** Where a player's machine can work something out from the volume it has, the server sends a word of it in place of its voxels: a cut through grass and trees, a blast's crater, cut grass growing back a step, a piece stamped back where it came to rest, at its pose to a millimetre (the server stamps it at the same pose). It sends the word only where players' volume is just as the server's was when the change was made, so they work out the same; otherwise the delta carries what it did. Whatever happens, the delta after it makes every machine's volume the server's.
+- **Pieces falling.** A felled tree's pieces and what comes loose of a building fall as bodies on the server. Each goes to players once, by a number: a tree's as the place among what the cut made, as every machine cuts the same tree the same way; what was built with its voxels, packed, a few hundred bytes each. Its pose goes twenty times a second in a snapshot of every piece that moved since the last snapshot that player said they had: how far it moved, in millimetres, and its turn in 35 bits where it turned. A player's machine shows each a moment behind, moving smoothly between snapshots, as it does shared Objs; others bump into it there. A tree's leaves are pressed against the ground where it rests on every machine, from its pose; a piece chipped on the server has its voxels sent again.
+- **Joining late.** A player who joins after the game has changed the volume is sent, within half of their connection, the edits added since the scene loaded, then the region files of each region whose voxels differ from the scene's own, those nearest the player first (their first Obj, or the volume's corner if they have none after a second), then the pieces still falling; then what changes from there on. Their machine first takes the volume back to as its scene made it.
+
+| Change | Sent to each player |
+| --- | --- |
+| A turned box of bricks, tinted | 47 bytes |
+| A voxel dug, or placed | 17 to 19 bytes |
+| 512 voxels dug in a half-metre cube | 38 bytes |
+| 256 of them restored | 36 bytes |
+| A print, fitted to the ground | 65 bytes |
+| Grass cut 3 m across | 20 bytes |
+| A tree felled, falling and stamped back where it rests | 134 bytes, and about 2.4 KB of snapshots |
+| A house's corner blown in, six pieces falling and stamped back | 2.4 KB, and about 1.8 KB of snapshots |
+
+A player joining after a street was paved, a cellar dug, a tower built a voxel at a time and grass cut was sent 987 bytes: the region files of those changes hold 803.
+
+The server checks what players ask of the volumes: within 24 m for a ball's radius or a box's side, 4,096 points at once, 256 points of an outline. A game with rules of its own (only within reach of the player, only where they own the land) sets its own check in Rust with `voxel_sync::set_ask_check`, which is asked of every request with the player who made it.
+
 ## How it is drawn
 
 A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog.
@@ -644,7 +716,8 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - It isn't scaled with its Obj. One of a set size turns with its Obj, about its corner; an endless one doesn't turn. A view draws up to 64 volumes, a felled piece one each.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
-- Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
+- Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
-- What gives way under its own weight is found by bricks of half a metre: which joins break is the bricks', though each breaks through the thinnest voxels near it. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
-- Edits, voxels set one at a time, cut grass, felled trees and fallen pieces aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.
+- Ways over a volume's ground aren't shown in the Scene view's Navigation gizmo, and aren't found through caves under the ground's lowest point in a column nor more than about 100 m up from it. An agent swims no deep water there and takes no Nav Links. Its way is found for something about 80 cm wide, so a wider one may brush walls and trunks, or stick in a gap narrower than it is; its way may run up to a quarter of a metre past the rim of a drop.
+- What gives way under its own weight is found by parts of half-metre bricks: a load is shared as stiffly as each join's thinnest voxels hold, but within a part of a brick it is one body. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
+- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's machine shows its own dig only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug. Voxel Ropes aren't shared yet: a rope hung or cut on a player's machine is that machine's own, though what hangs from the server's ropes falls and swings on every machine as its pieces do.

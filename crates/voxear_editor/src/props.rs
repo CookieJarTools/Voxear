@@ -116,6 +116,8 @@ pub enum Part {
     /// without a lightmap.
     LightProbeGroup,
     WindZone,
+    /// A rope tied at the Obj, holding up what was built in an endless Voxel Volume.
+    VoxelRope,
     ParticleSystem,
     /// A Force Field: what moves the particles round its Obj.
     ForceField,
@@ -237,6 +239,7 @@ impl Part {
             Part::Lightmap => "lightmap".into(),
             Part::LightProbeGroup => "light_probe_group".into(),
             Part::WindZone => "wind_zone".into(),
+            Part::VoxelRope => "voxel_rope".into(),
             Part::ParticleSystem => "particles".into(),
             Part::ForceField => "force_field".into(),
             Part::Smoke => "smoke".into(),
@@ -336,6 +339,7 @@ impl Part {
             Part::Lightmap => "Lightmap",
             Part::LightProbeGroup => "Light Probe Group",
             Part::WindZone => "Wind Zone",
+            Part::VoxelRope => "Voxel Rope",
             Part::ParticleSystem => "Particle System",
             Part::ForceField => "Force Field",
             Part::Smoke => "Smoke",
@@ -451,6 +455,7 @@ impl Part {
             Part::Lightmap => "light",
             Part::LightProbeGroup => "globe",
             Part::WindZone => "move",
+            Part::VoxelRope => "link",
             Part::ParticleSystem => "particles",
             Part::ForceField => "move",
             Part::Smoke => "particles",
@@ -544,6 +549,12 @@ pub enum Prop {
     VolumeBlend,
     VolumeWeight,
     VolumePriority,
+    /// From a Voxel Rope's Obj to the point of what was built it holds, in metres.
+    VoxelRopeHangs,
+    /// How long a Voxel Rope is: 0 for as far as to the point it holds.
+    VoxelRopeLength,
+    /// How hard a Voxel Rope may be pulled before it snaps, in newtons: 0 for never.
+    VoxelRopeStrength,
     WindStrength,
     WindGusts,
     WindGustSize,
@@ -1232,6 +1243,7 @@ impl Prop {
             | Prop::ProbeResolution
             | Prop::ProbeCaptureOffset => Part::ReflectionProbe,
             Prop::ReverbSize | Prop::ReverbSpacing => Part::ReverbProbe,
+            Prop::VoxelRopeHangs | Prop::VoxelRopeLength | Prop::VoxelRopeStrength => Part::VoxelRope,
             Prop::WindStrength
             | Prop::WindGusts
             | Prop::WindGustSize
@@ -1683,6 +1695,9 @@ impl Prop {
             Prop::ReverbSpacing => "spacing",
             Prop::ProbeResolution => "resolution",
             Prop::ProbeCaptureOffset => "capture_offset",
+            Prop::VoxelRopeHangs => "hangs",
+            Prop::VoxelRopeLength => "length",
+            Prop::VoxelRopeStrength => "strength",
             Prop::WindStrength => "strength",
             Prop::WindGusts => "gusts",
             Prop::WindGustSize => "gust_size",
@@ -2154,6 +2169,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
+    if world.has::<voxear_engine::voxel_ropes::VoxelRope>(entity) {
+        parts.push(Part::VoxelRope);
+    }
     if world.has::<ParticleSystem>(entity) {
         parts.push(Part::ParticleSystem);
     }
@@ -2421,6 +2439,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             ]);
             props
         }
+        Part::VoxelRope => vec![Prop::VoxelRopeHangs, Prop::VoxelRopeLength, Prop::VoxelRopeStrength],
         Part::WindZone => {
             // A Global one's gusts for the plants; a Sphere's or a Box's size over the sea.
             match world.get::<WindZone>(entity).map_or(WindShape::Global, |wind| wind.shape) {
@@ -3033,6 +3052,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::ReverbSpacing => "Spacing",
         Prop::ProbeResolution => "Resolution",
         Prop::ProbeCaptureOffset => "Capture Offset",
+        Prop::VoxelRopeHangs => "Hangs",
+        Prop::VoxelRopeLength => "Length",
+        Prop::VoxelRopeStrength => "Strength",
         Prop::WindStrength => "Strength",
         Prop::WindGusts => "Gusts",
         Prop::WindGustSize => "Gust size",
@@ -3624,6 +3646,9 @@ pub fn add(
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
+        Part::VoxelRope => {
+            world.insert(entity, voxear_engine::voxel_ropes::VoxelRope::default());
+        }
         Part::ParticleSystem => {
             world.insert(entity, ParticleSystem::default());
         }
@@ -3793,6 +3818,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         }
         Part::LightProbeGroup => drop(world.remove::<voxear_render::LightProbeGroup>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
+        Part::VoxelRope => drop(world.remove::<voxear_engine::voxel_ropes::VoxelRope>(entity)),
         Part::Smoke => {
             world.remove::<voxear_render::Smoke>(entity);
             world.remove::<voxear_render::SmokeFill>(entity);
@@ -4196,6 +4222,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ProbeCaptureOffset => probe_value(world.get::<ReflectionProbe>(entity)?, prop)?,
         Prop::ReverbSize => Value::Vector(world.get::<ReverbProbe>(entity)?.size.to_vec()),
         Prop::ReverbSpacing => Value::Number(world.get::<ReverbProbe>(entity)?.spacing),
+        Prop::VoxelRopeHangs => Value::Vector(world.get::<voxear_engine::voxel_ropes::VoxelRope>(entity)?.hangs.to_vec()),
+        Prop::VoxelRopeLength => Value::Number(world.get::<voxear_engine::voxel_ropes::VoxelRope>(entity)?.length),
+        Prop::VoxelRopeStrength => Value::Number(world.get::<voxear_engine::voxel_ropes::VoxelRope>(entity)?.strength),
         Prop::WindStrength => Value::Number(world.get::<WindZone>(entity)?.strength),
         Prop::WindGusts => Value::Number(world.get::<WindZone>(entity)?.gusts),
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
@@ -6014,6 +6043,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::VolumeWeight, Value::Number(n)) => {
             with(world, entity, |volume: &mut PostVolume| volume.weight = n.clamp(0.0, 1.0))
+        }
+        (Prop::VoxelRopeHangs, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |rope: &mut voxear_engine::voxel_ropes::VoxelRope| rope.hangs = [v[0], v[1], v[2]].map(|m| m.clamp(-1000.0, 1000.0)))
+        }
+        (Prop::VoxelRopeLength, Value::Number(n)) => {
+            with(world, entity, |rope: &mut voxear_engine::voxel_ropes::VoxelRope| rope.length = n.clamp(0.0, 1000.0))
+        }
+        (Prop::VoxelRopeStrength, Value::Number(n)) => {
+            with(world, entity, |rope: &mut voxear_engine::voxel_ropes::VoxelRope| rope.strength = n.clamp(0.0, 1.0e9))
         }
         (Prop::WindStrength, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.strength = n.max(0.0)),
         (Prop::WindGusts, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gusts = n.max(0.0)),

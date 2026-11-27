@@ -53,6 +53,11 @@ pub fn set(world: &mut World, ways: Arc<dyn VoxelWays>) {
     world.insert_resource(Finder(ways));
 }
 
+/// Whether something was set to find ways over voxel ground.
+pub fn is_set(world: &World) -> bool {
+    world.resource::<Finder>().is_some()
+}
+
 /// What finds ways over voxel ground: the one set, or [`Straight`].
 pub fn finder(world: &World) -> Arc<dyn VoxelWays> {
     world.resource::<Finder>().map_or_else(|| Arc::new(Straight) as Arc<dyn VoxelWays>, |finder| finder.0.clone())

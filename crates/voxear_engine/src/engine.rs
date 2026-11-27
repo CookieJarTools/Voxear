@@ -741,6 +741,8 @@ impl Engine {
             // What was hidden last frame shows, unless hidden again as the pose stage and the attachments pose it.
             // Places to walk kept up with this frame's blocks, for the next tick's agents.
             crate::navigation::update(&mut self.world);
+            // And ways over endless Voxel Volumes' ground, round what walks there.
+            crate::voxel_nav::update(&mut self.world);
             crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);
             crate::animation::match_motion(&mut self.world, self.time.delta);

@@ -596,12 +596,20 @@ const RING_AVERAGES: [(f64, f64, f64, f64); 4] = [
 /// For a ring of voxels `coarser` times the finest's (1 for the finest),
 /// what it keeps on average as a ring, and only for the columns outside the
 /// ring inside it, which it never makes.
-fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64, coarser: u32) -> Room {
+fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64, coarser: u32, layers: u32) -> Room {
     let volume = program.is_some_and(|program| program.volume.is_some());
     let per_hectare: f64 = trees.iter().map(|kind| f64::from(kind.per_hectare.max(0.0))).sum();
     let ring = RING_AVERAGES.get((coarser.max(1).ilog2() as usize).wrapping_sub(1)).copied();
+    // A Volume's averages were measured in volumes 48 m tall: a column keeping a deeper band keeps its caves that much
+    // deeper, three times as much at the full band, as the Realm's columns grew their room to.
+    let deep = (f64::from(layers) / 8.0).max(1.0);
     let (bricks, materials, tree_bricks, tree_materials) = match (volume, ring) {
-        (true, _) => (AVERAGE_VOLUME_BRICKS, AVERAGE_VOLUME_MATERIALS, AVERAGE_BRICKS_A_TREE, AVERAGE_MATERIALS_A_TREE),
+        (true, _) => (
+            AVERAGE_VOLUME_BRICKS * deep,
+            AVERAGE_VOLUME_MATERIALS * deep,
+            AVERAGE_BRICKS_A_TREE,
+            AVERAGE_MATERIALS_A_TREE,
+        ),
         (false, Some(ring)) => ring,
         (false, None) if coarser > 1 => RING_AVERAGES[RING_AVERAGES.len() - 1],
         (false, None) => (AVERAGE_BRICKS, AVERAGE_MATERIALS, AVERAGE_BRICKS_A_TREE, AVERAGE_MATERIALS_A_TREE),
@@ -960,7 +968,14 @@ impl Endless {
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
         let coarser = fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
-        let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees, window * window, grow, coarser);
+        let room = room_of(
+            program.as_ref().map(|(_, program)| program),
+            &volume.trees,
+            window * window,
+            grow,
+            coarser,
+            layers_of(tall),
+        );
         // The trees' plants' bricks and materials first, in pages no column is given.
         let (model_bricks, model_materials) =
             made.as_ref().map_or((&[][..], &[][..]), |made| (&made.bricks[..], &made.materials[..]));
@@ -1423,7 +1438,8 @@ impl Endless {
         }
         let program = gpu_program_of(volume);
         let coarser = self.fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
-        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow, coarser) != self.room {
+        let layers = layers_of(self.tall);
+        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow, coarser, layers) != self.room {
             return Ok(None);
         }
         // Other plants make other voxels at the start of the room.

@@ -2279,6 +2279,12 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
     // A column keeps the band of sectors under its highest (voxelWorldSectors): what is further down is never kept, so
     // never made. A Volume reaching down without end in a volume hundreds of metres tall asks about no more than that.
     lowest = max(lowest, highest - int(make->layers) * 64);
+    // A ring is seen from afar, where nothing under its ground is: its Volume is made two bricks under its surface at
+    // most, its caves' mouths and the feet of what stands on it, not the caves deep in its rock.
+    if (volume && coarseRing(make))
+    {
+        lowest = max(lowest, lowSurface - 16);
+    }
     for (int row = max(lowest >> 3, 0); row <= min(highest >> 3, rows - 1); row++)
     {
         uint at;
@@ -2455,10 +2461,12 @@ uint volumeVoxel(WorldMake* make, uint job, uint column, int h, int3 l, int3 p)
     int2 local = int2(p.x, p.z) - make->jobs[job].column * 64;
     uint top = groundTop(make, job, local.x, local.y, column);
     int under = surfaceOf(make, job, local.x, local.y) - p.y;
-    // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not.
+    // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not: the column's biome's
+    // bare rock where it has a biome, its rock layers where it has those, as a spire's sides are in a world of blocks.
     if (under > 8 || under < -2)
     {
-        return groundVoxel(make, GROUND_ROCK, under, p);
+        uint rock = top >= GROUND_BIOMES ? top - ((top - GROUND_BIOMES) & 3u) + BIOME_BARE : GROUND_ROCK;
+        return groundVoxel(make, rock, under, p);
     }
     return groundVoxel(make, top, open ? 0 : max(under, 1), p);
 }

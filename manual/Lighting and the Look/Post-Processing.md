@@ -69,6 +69,12 @@ Five are after the places of Hogwarts Legacy:
 | `highland_summer` | Bright, rich and painterly: a clear sky, saturated colour and soft distance |
 | `enchanted_night` | A violet moonlit sky full of stars, with a dreamy glow round every light |
 
+One is a world that is wrong:
+
+| Look | What it gives |
+| --- | --- |
+| `abyss` | A sky of thick orange-brown smoke lit from behind by fire at the horizon, deep shadow overhead, a low warm sun hidden in it, haze that swallows the distance, and a picture that fringes, grains, breathes and wavers. See [[An Abyss]] |
+
 A look sets how the sun looks, not where it is: turn the level's sun to suit, low for the dusty looks and high for the bright ones. The night looks make the sun a faint moon.
 
 Every look but `candlelit_castle` has clouds to suit it: a few high ones for `sand_buried_city`, fair-weather clouds for `storybook` and `highland_summer`, a heavy ceiling for `electrical_storm` (see [[The Sky]]). For a clear sky under a look, set the clouds' `cover` to 0 in the lighting settings' `[sky.clouds]`, or on the Lighting page's Clouds tab.
@@ -94,7 +100,7 @@ Every post-processing setting is on the **Lighting** page, which the sun on the 
 | Bloom | Bloom, its intensity, scatter and tint |
 | Fog | Fog, its density, height, colour and glow, and light shafts |
 | Shading | Bounced light, ambient occlusion with its tint and quality, contact shadows, reflections and shimmer reduction |
-| Lens | Depth of field and motion blur |
+| Lens | Depth of field, motion blur, grain, and the view's breathing and waver |
 | Quality | Anti-aliasing, render scale, sharpening, and TAA's history and jitter |
 
 A setting that does nothing as the others stand is hidden until it would: occlusion's while there is none, TAA's while anti-aliasing is FXAA or off.
@@ -126,7 +132,7 @@ Only what the change sets differently is laid over the level, so `Post.Change` c
 
 | Member | What it does |
 | --- | --- |
-| `Post.Current` | Every setting as a frame is drawn with it now, but for post volumes: a `PostSettings` with a section each, `AmbientOcclusion`, `ContactShadows`, `GlobalIllumination`, `Reflections`, `AntiAliasing`, `Bloom`, `Exposure`, `Tonemap`, `Grading`, `Vignette`, `Fog`, `DepthOfField` and `MotionBlur`, and `ChromaticAberration` |
+| `Post.Current` | Every setting as a frame is drawn with it now, but for post volumes: a `PostSettings` with a section each, `AmbientOcclusion`, `ContactShadows`, `GlobalIllumination`, `Reflections`, `AntiAliasing`, `Bloom`, `Exposure`, `Tonemap`, `Grading`, `Vignette`, `Fog`, `DepthOfField` and `MotionBlur`, `ChromaticAberration`, `Grain` and `Warp` |
 | `Post.Change(change)` | Changes settings over the level's |
 | `Post.Set(settings)` | Sets every setting as given |
 | `Post.UsePreset(preset)` | Starts afresh from a preset or a look |
@@ -231,6 +237,24 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 **Movement**, `[post.motion_blur]`: `enabled = false`, and `intensity = 0.5` for how strong it is.
 
 **Colour fringes**: `chromatic_aberration = 0` sits directly in `[post]`, not in a table of its own. Small values, such as 0.15, split colours slightly at the edges of the screen, as a cheap lens does.
+
+**Grain**, `[post.grain]`, off unless you turn it up
+
+| Setting | What it does |
+| --- | --- |
+| `intensity = 0` | Fine noise over the picture, new each frame, strongest in the shadows and mid-tones, as on film. 0.1 is a hint, 0.4 a grainy film |
+| `size = 1.5` | How large each speck is, in pixels, from 1 to 4 |
+| `colour = 0.3` | How coloured the specks are: 0 grey, 1 each colour its own |
+
+**Warp**, `[post.warp]`, off unless you turn it up
+
+| Setting | What it does |
+| --- | --- |
+| `breathing = 0` | How much the picture slowly swells and sinks about its middle, as a share of its size, in an uneven breath that never settles into a beat. 0.01 is felt more than seen |
+| `waver = 0` | How far the picture wavers, as though seen through heat, more towards its edges, as a share of its height. 0.003 is a faint shimmer |
+| `speed = 0.12` | Breaths a second; it wavers four times as fast |
+
+Both cost next to nothing. On the Lighting page they are on the **Lens** tab.
 
 A name Voxear does not know, such as a misspelt setting, is an error, and the Console says which.
 

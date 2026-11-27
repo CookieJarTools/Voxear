@@ -145,6 +145,36 @@ generator_floor = 40.0
 generator_at = [1200.0, -300.0]
 ```
 
+## Floating rocks
+
+With **Floating Rocks** on, an endless volume hangs jagged rocks in the air over its ground, as far as it is seen: islands of flat faces and sharp edges drawn out underneath into ragged tails, ash on their tops and seams that glow, most small and a few huge. Each drifts to and fro and turns slowly, its own way, the small ones further and faster. [[An Abyss]] is built round them.
+
+- **Rock Spacing** and **Rocks How Often**: how far apart the places a rock may hang are, in metres, and how many of them have one.
+- **Rock Size** and **Rock Height**: how far across, and how high over the ground under it, from least to most.
+- **Rock Drift** and **Rock Turn**: how far the largest drift, in metres, and how fast they turn, in degrees a second.
+- **Rock Embers**: how much of a rock is cracked with glowing seams.
+- **Most Rocks**: the most drawn at once, up to 40, those that look largest first.
+- **Rock Seed**: another seed hangs them in other places.
+
+Which places have a rock, and each rock's shape, come from a hash of its place, so the same settings hang the same rocks every time and on every machine. Each rock is a volume of a set size of its own, a shell of its voxels three deep, made on a thread as it comes among those that matter most round the camera and let go once it is not. It is drawn turned and moved as its drift has it at the game's time. A rock 60 m across at 8 voxels a metre is about 25,000 bricks, made in about a second.
+
+```toml
+[obj.voxel_volume.rocks]
+spacing = 90.0
+how_often = 0.5
+size = [3.0, 70.0]
+height = [15.0, 120.0]
+drift = 3.0
+turn = 0.6
+embers = 0.3
+```
+
+`vox editor call field.set` sets them as the Inspector does: `{"obj": "Ground", "component": "voxel_volume", "field": "rocks", "value": true}`, then `rock_size`, `rock_height`, `rock_spacing`, `rock_how_often`, `rock_drift`, `rock_turn`, `rock_embers`, `most_rocks` and `rock_seed`. Rocks do not collide yet.
+
+## In another dimension
+
+A volume is drawn only in views of the [[Dimensions|dimension]] it is in. An endless one in another dimension than the camera's is made round where the nearest [[Portals|Portal]] into it would take the camera, so its far side is there to see before anyone goes through; once the camera is in its dimension, it is made round the camera. Collision and navigation keep to each dimension as they do for worlds of blocks.
+
 ## Its own ground
 
 With **Ground** on, the volume has rolling ground of its own voxels, grass on it and flowers here and there:

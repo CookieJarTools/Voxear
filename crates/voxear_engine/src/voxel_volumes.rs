@@ -209,6 +209,10 @@ pub struct VoxelVolumeData {
     /// grass: `[obj.voxel_volume.felling]`, left out as it comes.
     #[serde(skip_serializing_if = "is_usual_felling")]
     pub felling: VoxelFelling,
+    /// The rocks that hang in the air over an endless volume's ground:
+    /// `[obj.voxel_volume.rocks]`, none unless written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rocks: Option<voxear_render::VoxelRocks>,
 }
 
 fn is_earth_anchor(anchor: &voxear_render::VoxelAnchor) -> bool {
@@ -567,6 +571,7 @@ impl Default for VoxelVolumeData {
             built: made.built,
             most_pieces: made.most_pieces,
             felling: made.felling,
+            rocks: made.rocks,
         }
     }
 }
@@ -654,6 +659,7 @@ pub fn made(content: &mut Content, data: &VoxelVolumeData) -> VoxelVolume {
         built: data.built,
         most_pieces: data.most_pieces,
         felling: data.felling.kept(),
+        rocks: data.rocks.filter(|_| data.endless),
     }
 }
 

@@ -41,6 +41,10 @@ pub struct PostProcess {
     pub motion_blur: MotionBlur,
     /// Splits colours towards the screen edges, like a cheap lens. 0 is off.
     pub chromatic_aberration: f32,
+    /// Fine noise over the picture, as on film or a camera in the dark.
+    pub grain: Grain,
+    /// The view slowly breathing and wavering, as through heat or unease.
+    pub warp: Warp,
     /// The scene drawn at a few pixels to the screen's many and enlarged
     /// with hard edges, as pixel art is (see `pixels`).
     pub pixels: Pixels,
@@ -467,6 +471,48 @@ pub struct Vignette {
     pub roundness: f32,
 }
 
+/// Film grain: fine noise over the finished picture, new each frame,
+/// strongest in the shadows and mid-tones, where film shows it, and least in
+/// the highlights.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Grain {
+    /// How strong it is, from 0 (off) to 1: 0.1 is a hint, 0.4 a grainy film.
+    pub intensity: f32,
+    /// Advanced: how large each speck is, in pixels, from 1 to 4.
+    pub size: f32,
+    /// Advanced: how much the specks are coloured, from 0 (grey) to 1.
+    pub colour: f32,
+}
+
+impl Default for Grain {
+    fn default() -> Self {
+        Self { intensity: 0.0, size: 1.5, colour: 0.3 }
+    }
+}
+
+/// The view breathing and wavering: the picture swells and sinks a little
+/// about its middle, slowly, and wavers as though seen through heat, more
+/// towards its edges. Something is not right.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Warp {
+    /// How much the picture swells and sinks, as a share of its size: 0 for
+    /// none, 0.01 for a breath that is felt more than seen.
+    pub breathing: f32,
+    /// How far it wavers, as a share of the picture's height: 0 for none,
+    /// 0.003 for a faint shimmer.
+    pub waver: f32,
+    /// Advanced: breaths a second; the waver drifts four times as fast.
+    pub speed: f32,
+}
+
+impl Default for Warp {
+    fn default() -> Self {
+        Self { breathing: 0.0, waver: 0.0, speed: 0.12 }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Fog {
@@ -647,6 +693,8 @@ impl PostProcess {
             depth_of_field: DepthOfField::default(),
             motion_blur: MotionBlur::default(),
             chromatic_aberration: 0.0,
+            grain: Grain::default(),
+            warp: Warp::default(),
             pixels: Pixels::default(),
         }
     }
@@ -837,7 +885,13 @@ impl PostProcess {
             // The renderer sets them for the output the view draws into.
             display_peak: 1.0,
             display_image: 0,
-            _look_pad: 0,
+            grain: self.grain.intensity.clamp(0.0, 1.0),
+            grain_size: self.grain.size.clamp(1.0, 4.0),
+            grain_colour: self.grain.colour.clamp(0.0, 1.0),
+            warp_breathing: self.warp.breathing.clamp(0.0, 0.1),
+            warp_waver: self.warp.waver.clamp(0.0, 0.05),
+            warp_speed: self.warp.speed.clamp(0.0, 4.0),
+            _warp_pad: [0.0; 3],
             look_values: [[0.0; 4]; crate::looks::LOOK_VALUES],
         }
     }

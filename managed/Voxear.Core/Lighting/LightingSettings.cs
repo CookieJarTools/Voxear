@@ -63,6 +63,9 @@ public readonly struct LightingSettings : IEquatable<LightingSettings>, IAsset<L
 	/// <summary>The built-in Enchanted Night lighting: a violet moonlit sky full of stars.</summary>
 	public static readonly LightingSettings EnchantedNight = new("builtin:enchanted_night");
 
+	/// <summary>The built-in Abyss lighting: a sky of smoke lit by fire past the horizon, and a view that is not right.</summary>
+	public static readonly LightingSettings Abyss = new("builtin:abyss");
+
 	private readonly string? reference;
 
 	private LightingSettings(string reference)

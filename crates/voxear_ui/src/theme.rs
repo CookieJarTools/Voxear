@@ -18,7 +18,7 @@ const SOURCE: &str = "Theme";
 /// The surfaces and lines: where each one's lightness lies from the panel
 /// (0) towards the text (1) at the default contrast, and how much it is
 /// tinted by the base's colour and the accent's, as parts of their chroma.
-const SURFACES: [(&str, f32, f32, f32); 9] = [
+const SURFACES: [(&str, f32, f32, f32); 10] = [
     ("panel", 0.0, 0.4, 0.015),
     ("overlay", 0.019, 0.4, 0.045),
     ("field", 0.049, 0.4, 0.055),
@@ -27,6 +27,7 @@ const SURFACES: [(&str, f32, f32, f32); 9] = [
     ("line-2", 0.127, 0.4, 0.055),
     ("field-line", 0.127, 0.4, 0.055),
     ("selected", 0.127, 0.4, 0.08),
+    ("button-hover", 0.16, 0.4, 0.08),
     ("seg-on", 0.191, 0.4, 0.08),
 ];
 

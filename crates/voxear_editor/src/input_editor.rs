@@ -20,6 +20,10 @@
 //!   over: Enter or a click elsewhere keeps what is typed, and Escape the
 //!   name it was given.
 //!
+//! An action's row has an arrow that folds its bindings away and opens them
+//! again, and a thin line runs down beside the rows inside each action and
+//! composite, to show what is in what.
+//!
 //! Each row shows an icon (an action's own, or a binding's device), a
 //! binding's control by its name with its device after it, and a mark
 //! where a control conflicts with another action's that can be on at once.
@@ -45,6 +49,12 @@ use crate::{
 };
 
 const ROW: f32 = 22.0;
+/// How far each level in indents, how many levels have a line down them,
+/// and where the first line is: under an action's icon, past the row's
+/// padding, the fold arrow and the gap after it.
+const INDENT: f32 = 16.0;
+const GUIDES: usize = 3;
+const GUIDE_LEFT: f32 = 6.0 + 14.0 + 8.0 + 6.0;
 const KINDS: [&str; 3] = ["Button", "Value", "Vector 2"];
 const INTERACTIONS: [&str; 3] = ["Press", "Hold", "Tap"];
 /// What the plus over the actions adds.
@@ -121,6 +131,8 @@ pub struct ActionsEditor {
     /// The place of the row renamed in place, which shows a field for it.
     renaming_row: Rc<Cell<Option<usize>>>,
     renaming: Option<Renaming>,
+    /// The actions whose bindings are folded away, by map and action.
+    folded: std::collections::HashSet<(usize, usize)>,
     /// The plus on an action's row whose menu is open, and the action.
     row_add: Option<(NodeId, usize)>,
     controls: Properties,
@@ -194,6 +206,13 @@ impl ActionsEditor {
                 make: |ui: &mut Ui, row: NodeId| {
                     ui.add_class(row, "entities-row");
                     ui.add_class(row, "input-row");
+                    for level in 0..GUIDES {
+                        let guide = ui.panel(row, Style::default());
+                        ui.add_class(guide, "input-row-guide");
+                        ui.set_inline_property(guide, "left", &format!("{}px", GUIDE_LEFT + level as f32 * INDENT));
+                    }
+                    let fold = ui.icon_button(row, "");
+                    ui.add_class(fold, "input-row-fold");
                     let icon = ui.icon(row, "play");
                     ui.add_class(icon, "input-row-icon");
                     let label = ui.add_label(row, "");
@@ -213,6 +232,9 @@ impl ActionsEditor {
                     let Some(shown) = texts.borrow().get(index).cloned() else { return };
                     let parts = ui.children(row);
                     let part = |class: &str| parts.iter().copied().find(|&p| ui.has_class(p, class));
+                    let fold = part("input-row-fold");
+                    let guides: Vec<NodeId> =
+                        parts.iter().copied().filter(|&p| ui.has_class(p, "input-row-guide")).collect();
                     let (Some(icon), Some(label), Some(rename), Some(detail), Some(conflict), Some(add)) = (
                         part("input-row-icon"),
                         part("entities-row-name"),
@@ -224,7 +246,21 @@ impl ActionsEditor {
                         return;
                     };
                     ui.set_icon(icon, shown.icon);
-                    ui.set_inline_style(icon, &format!("margin-left: {}px", shown.depth * 16));
+                    ui.set_inline_style(icon, &format!("margin-left: {}px", shown.depth as f32 * INDENT));
+                    for (level, guide) in guides.into_iter().enumerate() {
+                        ui.set_visible(guide, level < shown.depth);
+                    }
+                    if let Some(fold) = fold {
+                        let arrow = match (shown.folds, shown.folded) {
+                            (false, _) => "",
+                            (true, true) => "chevron-right",
+                            (true, false) => "chevron-down",
+                        };
+                        if let Some(&chevron) = ui.children(fold).first() {
+                            ui.set_icon(chevron, arrow);
+                        }
+                        ui.set_enabled(fold, shown.folds);
+                    }
                     ui.set_text(label, &shown.text);
                     ui.set_text(detail, &shown.detail);
                     ui.set_visible(conflict, shown.conflict);
@@ -265,6 +301,7 @@ impl ActionsEditor {
             renaming_row,
             renaming: None,
             row_add: None,
+            folded: std::collections::HashSet::new(),
             controls: Properties::default(),
             file: ActionsFile::default(),
             read: None,
@@ -309,6 +346,7 @@ impl ActionsEditor {
         }
         let before = self.file.clone();
         self.listen(ui, input);
+        self.take_folds(ui);
         // Picks first, so that a row a button adds is the one picked after.
         self.take_picks(ui);
         self.take_buttons(ui, input);
@@ -430,7 +468,7 @@ impl ActionsEditor {
     /// Opens the menu of what can be added to an action, under the plus on
     /// its row that was clicked: a binding, a 2D vector or a 1D axis.
     fn open_row_add(&mut self, ui: &mut Ui) {
-        let rows = self.file.maps.get(self.map).map(input_edit::rows).unwrap_or_default();
+        let rows = self.listed_rows();
         let bound = self.bound_rows.borrow().clone();
         for (row, index) in bound {
             let Some(add) = ui.children(row).into_iter().find(|&part| ui.has_class(part, "input-row-add")) else {
@@ -451,7 +489,7 @@ impl ActionsEditor {
     fn take_rename(&mut self, ui: &mut Ui) {
         let Some(renaming) = &self.renaming else { return };
         let action = renaming.action;
-        let rows = self.file.maps.get(self.map).map(input_edit::rows).unwrap_or_default();
+        let rows = self.listed_rows();
         let Some(at) = rows.iter().position(|row| *row == Row::Action(action)) else {
             return self.end_rename(ui);
         };
@@ -523,7 +561,7 @@ impl ActionsEditor {
             self.show(ui);
         }
         if ui.selection_changed(self.rows) {
-            let rows = self.file.maps.get(self.map).map(input_edit::rows).unwrap_or_default();
+            let rows = self.listed_rows();
             self.row = ui.selection(self.rows).first().and_then(|&at| rows.get(at).copied());
             self.show_properties(ui);
         }
@@ -633,6 +671,35 @@ impl ActionsEditor {
     }
 
     /// Shows the maps, the picked map's rows and the picked row's properties.
+    /// The rows listed: each action, and its bindings unless it is folded.
+    fn listed_rows(&self) -> Vec<Row> {
+        let rows = self.file.maps.get(self.map).map(input_edit::rows).unwrap_or_default();
+        rows.into_iter()
+            .filter(|row| matches!(row, Row::Action(_)) || !self.folded.contains(&(self.map, row.action())))
+            .collect()
+    }
+
+    /// Folds an action's bindings away, or opens them, when its arrow was clicked.
+    fn take_folds(&mut self, ui: &mut Ui) {
+        let rows = self.listed_rows();
+        let clicked = self.bound_rows.borrow().iter().find_map(|&(row, index)| {
+            let fold = ui.children(row).into_iter().find(|&p| ui.has_class(p, "input-row-fold"))?;
+            match rows.get(index) {
+                Some(Row::Action(action)) if ui.clicked(fold) => Some(*action),
+                _ => None,
+            }
+        });
+        let Some(action) = clicked else { return };
+        if !self.folded.remove(&(self.map, action)) {
+            self.folded.insert((self.map, action));
+            // A binding picked inside goes to its action, as it is hidden.
+            if self.row.is_some_and(|row| row.action() == action) {
+                self.row = Some(Row::Action(action));
+            }
+        }
+        self.show(ui);
+    }
+
     fn show(&mut self, ui: &mut Ui) {
         *self.shown_maps.borrow_mut() = self.file.maps.iter().map(|m| m.name.clone()).collect();
         ui.set_list_count(self.maps, self.file.maps.len());
@@ -642,13 +709,19 @@ impl ActionsEditor {
             let _ = ui.selection_changed(self.maps);
         }
         let map = self.file.maps.get(self.map);
-        let rows = map.map(input_edit::rows).unwrap_or_default();
+        let every = map.map(input_edit::rows).unwrap_or_default();
         let conflicts = input_edit::conflicts(&self.file, self.map);
+        let (folded, at) = (&self.folded, self.map);
         let shown = |(row, conflict): (&Row, &bool)| {
             let shown = map.map(|m| input_edit::shown(m, *row)).unwrap_or_default();
-            Shown { conflict: *conflict, ..shown }
+            let folds =
+                matches!(row, Row::Action(action) if map.is_some_and(|m| !m.actions[*action].bindings.is_empty()));
+            let folded = folded.contains(&(at, row.action()));
+            Shown { conflict: *conflict, folds, folded, ..shown }
         };
-        *self.shown_rows.borrow_mut() = rows.iter().zip(&conflicts).map(shown).collect();
+        let listed = |(row, _): &(&Row, &bool)| matches!(row, Row::Action(_)) || !folded.contains(&(at, row.action()));
+        *self.shown_rows.borrow_mut() = every.iter().zip(&conflicts).filter(listed).map(shown).collect();
+        let rows = self.listed_rows();
         ui.set_list_count(self.rows, rows.len());
         ui.refresh_list(self.rows);
         let picked: Vec<usize> = self.row.and_then(|row| rows.iter().position(|r| *r == row)).into_iter().collect();

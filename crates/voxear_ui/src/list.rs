@@ -6,7 +6,8 @@
 //! matches `:selected` when selected, for sheets to style.
 //!
 //! A tree view is a list of the items that are open. Each row holds a
-//! spacer that indents it by depth (`tree-indent`), a chevron icon that
+//! spacer that indents it by depth (`tree-indent`), with a thin line down
+//! it under each item above it (`tree-guide`), to show what is inside what, a chevron icon that
 //! opens and closes it (`tree-arrow`, with `expanded` when open), and then
 //! what `make` builds (in `tree-content`). The editor's Hierarchy and
 //! Project views are tree views.
@@ -798,10 +799,18 @@ impl ListState {
         layout.size.height = Dimension::length(self.item_height);
         ui.set_style(row, style);
         if let (Source::Tree(tree), Some(indent)) = (&self.source, indent) {
+            let depth = tree.open[index].1;
             let mut style = Style::default();
-            style.layout.size.width = Dimension::length(tree.open[index].1 as f32 * INDENT);
+            style.layout.size.width = Dimension::length(depth as f32 * INDENT);
+            style.layout.size.height = Dimension::percent(1.0);
             style.layout.flex_shrink = 0.0;
             ui.set_style(NodeId(indent), style);
+            // The arrow sits a gap after the indent, so each line does too, to come under its item's arrow.
+            let gap = ui.style(row).map_or(0.0, |style| {
+                let raw = style.layout.gap.width.into_raw();
+                if raw.tag() == taffy::CompactLength::LENGTH_TAG { raw.value() } else { 0.0 }
+            });
+            set_guides(ui, NodeId(indent), depth, gap);
         }
         ui.set_state(row, States::SELECTED, self.selection.binary_search(&index).is_ok());
         match &mut self.source {
@@ -822,5 +831,32 @@ impl ListState {
             }
             Source::Empty => {}
         }
+    }
+}
+
+/// One thin line down a tree row's indent for each level above it, each
+/// under the chevron of the item it is inside, which is `gap` after its
+/// own indent.
+fn set_guides(ui: &mut Ui, indent: NodeId, depth: u32, gap: f32) {
+    let mut guides = ui.children(indent);
+    while guides.len() > depth as usize {
+        ui.remove(guides.pop().expect("there are more guides than levels"));
+    }
+    for (level, &guide) in guides.iter().enumerate() {
+        ui.set_inline_property(guide, "left", &format!("{}px", level as f32 * INDENT + INDENT / 2.0 + gap));
+    }
+    while guides.len() < depth as usize {
+        let mut style = Style { pickable: false, ..Style::default() };
+        style.layout.position = Position::Absolute;
+        style.layout.size.width = Dimension::length(1.0);
+        style.layout.inset = Rect {
+            left: LengthPercentageAuto::length(guides.len() as f32 * INDENT + INDENT / 2.0 + gap),
+            right: LengthPercentageAuto::auto(),
+            top: LengthPercentageAuto::length(0.0),
+            bottom: LengthPercentageAuto::length(0.0),
+        };
+        let guide = ui.panel(indent, style);
+        ui.add_class(guide, "tree-guide");
+        guides.push(guide);
     }
 }

@@ -316,11 +316,9 @@ pub struct Inspector {
     /// rather than following the selection.
     lock: Option<NodeId>,
     locked: bool,
-    /// Its `⋯` button, whose menu switches it between Normal and Debug, and
-    /// whether it is in Debug mode, showing what is really there (see
-    /// `debug_inspector`), with the rows it shows and the asset's path it
-    /// shows them of, when it shows an asset's.
-    mode_button: Option<NodeId>,
+    /// Whether it is in Debug mode, picked from its window's menu, showing
+    /// what is really there (see `debug_inspector`), with the rows it shows
+    /// and the asset's path it shows them of, when it shows an asset's.
     debug: bool,
     debug_view: Option<crate::debug_inspector::DebugView>,
     debug_asset: Option<String>,
@@ -468,7 +466,6 @@ impl Inspector {
             root,
             lock: None,
             locked: false,
-            mode_button: None,
             debug: false,
             debug_view: None,
             debug_asset: None,
@@ -586,29 +583,6 @@ impl Inspector {
     /// The row a search showed last, while it is marked.
     pub fn found_row(&self) -> Option<NodeId> {
         self.flash.marked()
-    }
-
-    /// The `⋯` button whose menu switches it between Normal and Debug.
-    pub fn set_mode_button(&mut self, button: NodeId) {
-        self.mode_button = Some(button);
-    }
-
-    /// Opens its mode menu when its `⋯` button was clicked, and takes what
-    /// was picked from it. Returns whether it switched.
-    pub fn update_mode(&mut self, ui: &mut Ui) -> bool {
-        let Some(button) = self.mode_button else { return false };
-        if ui.clicked(button) {
-            let [x, y, _, h] = ui.rect(button);
-            let items = [MenuItem::new("Normal").checked(!self.debug), MenuItem::new("Debug").checked(self.debug)];
-            ui.open_menu(button, (x, y + h), &items);
-        }
-        match ui.menu_choice(button) {
-            Some(picked) if (picked == 1) != self.debug => {
-                self.set_debug(picked == 1);
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Switches it into Debug mode, or back to Normal, to be shown again.

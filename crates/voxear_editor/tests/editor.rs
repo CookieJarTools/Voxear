@@ -1583,7 +1583,7 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.settings().snap, 0.5);
 
-    // The palette flips a toggle, and remembers that it ran it.
+    // The palette takes you to a toggle, in Preferences, marked, and remembers that it ran it.
     let field = editor.ui.find(root, "command").unwrap();
     editor.ui.focus(field);
     editor.ui.text_input("show stats");
@@ -1591,8 +1591,9 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     assert_eq!(palette_results(&editor.ui).first().map(String::as_str), Some("Show stats"));
     editor.palette_key(voxear_editor::PaletteKey::Enter);
     frame(&mut editor, &mut renderer);
-    let stats = editor.ui.find(root, "scene-stats").expect("the stats chip");
-    assert!(!editor.settings().show_stats && !editor.ui.is_visible(stats), "the stats chip goes");
+    frame(&mut editor, &mut renderer);
+    assert!(editor.settings().show_stats, "left as it was, to change where it is");
+    assert_eq!(found_setting(&editor.ui).as_deref(), Some("Show stats"), "shown and marked");
 
     // A number opens Preferences at it, to type.
     editor.ui.focus(field);
@@ -1614,12 +1615,45 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     // Opened again, all of it is as it was left, and the palette leads with what ran last.
     let mut editor = open(&mut renderer);
     let settings = editor.settings();
-    assert!((settings.snap, settings.show_stats, settings.fly_speed) == (0.5, false, 12.0), "{settings:?}");
+    assert!((settings.snap, settings.show_stats, settings.fly_speed) == (0.5, true, 12.0), "{settings:?}");
     let field = editor.ui.find(editor.ui.root(), "command").unwrap();
     editor.ui.focus(field);
     frame(&mut editor, &mut renderer);
     let results = palette_results(&editor.ui);
     assert_eq!(results[..2], ["Fly speed".to_string(), "Show stats".to_string()], "most recent first: {results:?}");
+}
+
+/// The setting a search marked, by its label, while it shows on screen inside its window's scrolled view.
+fn found_setting(ui: &Ui) -> Option<String> {
+    let mut found = Vec::new();
+    with_class(ui, ui.root(), "found", &mut found);
+    let row = found.into_iter().find(|&row| shown(ui, row))?;
+    // On screen: inside what scrolls it, not scrolled past.
+    let view = std::iter::successors(ui.parent(row), |&n| ui.parent(n)).find(|&n| ui.has_class(n, "settings-scroll"));
+    let [_, y, _, h] = ui.rect(row);
+    if let Some(view) = view {
+        let [_, top, _, height] = ui.rect(view);
+        assert!(y >= top - 0.5 && y + h <= top + height + 0.5, "the marked row is scrolled into view");
+    }
+    texts_in(ui, row).into_iter().next()
+}
+
+#[test]
+fn every_palette_result_takes_you_to_the_thing() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    // A Project Setting in an Advanced foldout, as the Lighting share is.
+    editor.ui.focus(field);
+    editor.ui.text_input("lighting share");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(palette_results(&editor.ui).first().map(String::as_str), Some("Lighting share"));
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let settings = editor.ui.find(editor.ui.root(), "project-settings-panel").unwrap();
+    assert!(shown(&editor.ui, settings), "Project Settings open");
+    assert_eq!(found_setting(&editor.ui).as_deref(), Some("Lighting share"));
 }
 
 #[test]
@@ -1812,7 +1846,7 @@ fn pinged_names(ui: &Ui) -> Vec<String> {
     let mut lit = Vec::new();
     with_class(ui, ui.root(), "pinged", &mut lit);
     let name = |node: NodeId| {
-        let part = ui.children(node).into_iter().find(|&c| ui.has_class(c, "row-name") || ui.has_class(c, "tile-name"));
+        let part = first_with(ui, node, "row-name").or_else(|| first_with(ui, node, "tile-name"));
         part.map(|part| ui.text(part))
     };
     lit.into_iter().filter(|&node| ui.is_visible(node)).filter_map(name).collect()
@@ -2028,6 +2062,34 @@ fn dock_tab(ui: &Ui, title: &str) -> Option<NodeId> {
     // A tab with an icon has its title in a label beside it.
     let says = |tab: NodeId| ui.text(tab) == title || ui.children(tab).iter().any(|&part| ui.text(part) == title);
     tabs.into_iter().find(|&tab| ui.is_visible(tab) && says(tab))
+}
+
+#[test]
+fn the_game_view_goes_full_screen_and_draws_gizmos_from_its_title_bar() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "game");
+    frame(&mut editor, &mut renderer);
+    let maximize = editor.ui.find(editor.ui.root(), "game-maximize").expect("a full screen button");
+    let gizmos = editor.ui.find(editor.ui.root(), "game-gizmos").expect("a Gizmos button");
+    assert!(shown(&editor.ui, maximize) && shown(&editor.ui, gizmos));
+    assert!(!editor.settings().game_gizmos, "off to start with");
+    click(&mut editor.ui, gizmos);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.settings().game_gizmos && editor.ui.is_checked(gizmos));
+    let handles = editor.ui.find(editor.ui.root(), "game-handles").unwrap();
+    assert!(!editor.ui.shapes(handles).is_empty(), "Hello's camera and light drawn in the Game view");
+    click(&mut editor.ui, maximize);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let open: Vec<String> = editor.ui.dock_panels(dock).into_iter().filter(|(.., o)| *o).map(|(id, ..)| id).collect();
+    assert_eq!(open, ["game"], "the Game view has the dock alone");
+    assert!(editor.ui.is_checked(maximize));
+    click(&mut editor.ui, maximize);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.dock_panels(dock).iter().filter(|(.., o)| *o).count() > 1, "the layout back");
 }
 
 #[test]
@@ -4302,6 +4364,41 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     let texts: Vec<Vec<String>> = rows.iter().map(|&row| texts_in(&editor.ui, row)).collect();
     assert!(texts.contains(&vec!["Space".to_string(), "Keyboard".to_string()]), "{texts:?}");
     assert!(rows.iter().any(|&row| editor.ui.has_class(row, "odd")));
+    // A line runs down beside a binding, under its action's icon.
+    let space =
+        rows.iter().copied().find(|&row| texts_in(&editor.ui, row).first().is_some_and(|t| t == "Space")).unwrap();
+    let mut guides = Vec::new();
+    with_class(&editor.ui, space, "input-row-guide", &mut guides);
+    assert_eq!(guides.iter().filter(|&&g| editor.ui.is_visible(g)).count(), 1, "one level in");
+    // An action's arrow folds its bindings away, and opens them again.
+    let listed = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "input-row", &mut rows);
+        rows.into_iter()
+            .filter(|&r| shown(&editor.ui, r))
+            .filter_map(|r| texts_in(&editor.ui, r).into_iter().next())
+            .collect::<Vec<_>>()
+    };
+    let jump =
+        rows.iter().copied().find(|&row| texts_in(&editor.ui, row).first().is_some_and(|t| t == "Jump")).unwrap();
+    let fold = first_with(&editor.ui, jump, "input-row-fold").expect("an action has a fold arrow");
+    click(&mut editor.ui, fold);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let folded = listed(&editor);
+    assert!(folded.contains(&"Jump".to_string()) && !folded.contains(&"Space".to_string()), "{folded:?}");
+    let jump = {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "input-row", &mut rows);
+        rows.into_iter()
+            .find(|&r| shown(&editor.ui, r) && texts_in(&editor.ui, r).first().is_some_and(|t| t == "Jump"))
+            .unwrap()
+    };
+    let fold = first_with(&editor.ui, jump, "input-row-fold").unwrap();
+    click(&mut editor.ui, fold);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(listed(&editor).contains(&"Space".to_string()), "open again");
     // The key maps are its Layout.
     editor.ui.set_segment(view, 1);
     for _ in 0..3 {

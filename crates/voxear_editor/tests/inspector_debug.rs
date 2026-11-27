@@ -101,6 +101,48 @@ fn click_text(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, class
     frame(editor, renderer);
 }
 
+/// The tab bar's `⋯` buttons in the Inspector's title bar, which must be one: the window's menu.
+fn inspector_options(ui: &Ui) -> NodeId {
+    let mut tabs = Vec::new();
+    with_class(ui, ui.root(), "tab", &mut tabs);
+    let says = |tab: NodeId| ui.text(tab) == "Inspector" || ui.children(tab).iter().any(|&p| ui.text(p) == "Inspector");
+    let tab = tabs.into_iter().find(|&tab| ui.is_visible(tab) && says(tab)).expect("the Inspector has a tab");
+    let bar = ui.parent(tab).unwrap();
+    let area = ui.parent(bar).unwrap();
+    // The dock's options button is an icon button too.
+    let mut buttons = Vec::new();
+    with_class(ui, area, "icon-button", &mut buttons);
+    // In the title bar's strip, not a component's header further down.
+    let [_, top, _, height] = ui.rect(bar);
+    let in_bar = |b: NodeId| {
+        let [_, y, _, h] = ui.rect(b);
+        y >= top - 1.0 && y + h <= top + height + 1.0
+    };
+    let mores: Vec<NodeId> = buttons
+        .into_iter()
+        .filter(|&b| ui.is_visible(b) && in_bar(b))
+        .filter(|&b| ui.children(b).iter().any(|&icon| ui.icon_name(icon) == Some("more")))
+        .collect();
+    assert_eq!(mores.len(), 1, "one ⋯ button in the Inspector's title bar");
+    mores[0]
+}
+
+/// The open menu's rows in order, a line as `—`.
+fn menu_rows(ui: &Ui) -> Vec<String> {
+    let mut popups = Vec::new();
+    with_class(ui, ui.root(), "menu-popup", &mut popups);
+    let popup = *popups.last().expect("a menu is open");
+    ui.children(popup)
+        .into_iter()
+        .map(|row| match ui.has_class(row, "menu-separator") {
+            true => "—".to_string(),
+            false => {
+                ui.children(row).iter().map(|&p| ui.text(p)).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ")
+            }
+        })
+        .collect()
+}
+
 const TOWER: &str = r#"using System;
 using Voxear;
 
@@ -149,13 +191,17 @@ fn debug_mode_shows_what_is_really_there_private_fields_engine_state_and_live_st
     editor.select(Some(spinner));
     frame(&mut editor, &mut renderer);
 
-    // Switched from the Inspector's ⋯ menu.
-    let button = editor.inspector_mode_button().expect("the Inspector has a ⋯ button");
+    // Switched from the Inspector's window menu, its one ⋯ button, where its own options come first above a line.
+    let button = inspector_options(&editor.ui);
     let [x, y, w, h] = editor.ui.rect(button);
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
     editor.ui.pointer_button(true);
     editor.ui.pointer_button(false);
     frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "inspector-menu.png");
+    let menu = menu_rows(&editor.ui);
+    assert_eq!(menu[..4], ["Normal", "Debug", "—", "Maximize"], "{menu:?}");
     click_text(&mut editor, &mut renderer, "menu-item", "Debug");
     assert!(editor.inspector_is_debug(0), "the first Inspector is in Debug mode");
     let read = |e: &mut voxear_editor::Editor| {

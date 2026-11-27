@@ -166,6 +166,10 @@ const ROW_PREVIEW: f32 = 16.0;
 /// smallest and largest a tile's picture is past it, in logical pixels.
 const ROWS_BELOW: f32 = 0.05;
 const TILE_PICTURES: (f32, f32) = (36.0, 128.0);
+/// How long a hovered tile's long name waits at each end, in seconds, and
+/// how fast it scrolls between them, in pixels a second.
+const NAME_WAIT: f32 = 0.6;
+const NAME_SPEED: f32 = 40.0;
 
 /// How big a tile's picture is at the size slider's `value`, or `None` for
 /// rows.
@@ -232,6 +236,8 @@ struct Contents {
     pinged: Option<Entry>,
     /// Each tile made, with the place in `listing` it shows, for clicks.
     tiles: Vec<(NodeId, Option<usize>)>,
+    /// The name scrolling along under the pointer, too long for its tile, and when the pointer came.
+    scrolling: Option<(NodeId, f32)>,
     /// Previews drawn so far, by path, shown in place of icons.
     previews: HashMap<String, ImageRef>,
     /// Each model's or prefab's parts, by its path, once known.
@@ -553,7 +559,10 @@ impl ListItems for TileRows {
             ui.set_inline_style(thumb, &format!("width: {picture}px; height: {picture}px"));
             let icon_size = (picture * 0.6).round();
             ui.set_inline_style(icon, &format!("width: {icon_size}px; height: {icon_size}px"));
-            let name = ui.add_label(tile, "");
+            // The name in a box that cuts it at the right, to scroll along it while the tile is hovered.
+            let clip = ui.panel(tile, Style::row());
+            ui.add_class(clip, "tile-name-clip");
+            let name = ui.add_label(clip, "");
             ui.add_class(name, "tile-name");
             let arrow = ui.icon_button(tile, "chevron-right");
             ui.add_class(arrow, "part-arrow");
@@ -576,7 +585,8 @@ impl ListItems for TileRows {
             let Some(entry) = entry else { continue };
             let parts = ui.children(tile);
             contents.show_thumb(ui, parts[0], entry);
-            ui.set_text(parts[1], contents.name(entry));
+            let name = ui.children(parts[1])[0];
+            ui.set_text(name, contents.name(entry));
             ui.set_checked(tile, contents.is_selected(entry));
             ui.set_class(tile, "pinged", contents.pinged == Some(entry));
             ui.set_class(tile, "part", matches!(entry, Entry::Part(..)));
@@ -675,6 +685,37 @@ impl ProjectView {
         self.modules = modules;
     }
 
+    /// Scrolls the name of the tile under the pointer along, when it is
+    /// too long to show whole: it waits a moment, runs to its end, waits,
+    /// and runs back. The name before goes back to its start.
+    fn scroll_hovered_name(&mut self, ui: &mut Ui) {
+        let hovered = self.contents.borrow().tiles.iter().map(|&(tile, _)| tile).find(|&tile| ui.is_hovered(tile));
+        let name =
+            hovered.and_then(|tile| ui.children(tile).get(1).and_then(|&clip| ui.children(clip).first().copied()));
+        let scrolling = self.contents.borrow().scrolling;
+        if scrolling.map(|(was, _)| was) != name {
+            if let Some((was, _)) = scrolling {
+                ui.set_inline_property(was, "margin-left", "");
+            }
+            self.contents.borrow_mut().scrolling = name.map(|name| (name, ui.time()));
+        }
+        let Some((name, since)) = self.contents.borrow().scrolling else { return };
+        let Some(clip) = ui.parent(name) else { return };
+        let over = ui.rect(name)[2] - ui.rect(clip)[2];
+        if over <= 0.5 {
+            return;
+        }
+        let (wait, run) = (NAME_WAIT, over / NAME_SPEED);
+        let at = (ui.time() - since) % (2.0 * (wait + run));
+        let along = match at {
+            at if at < wait => 0.0,
+            at if at < wait + run => (at - wait) / run,
+            at if at < 2.0 * wait + run => 1.0,
+            at => 1.0 - (at - 2.0 * wait - run) / run,
+        };
+        ui.set_inline_property(name, "margin-left", &format!("{:.1}px", -over * along));
+    }
+
     pub fn update(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
         let mut events = Vec::new();
         if ui.clicked(self.lock) {
@@ -691,6 +732,7 @@ impl ProjectView {
             events.push(ProjectEvent::Selected(self.contents.borrow().item(Entry::Folder(folder as usize))));
         }
         self.fit(ui);
+        self.scroll_hovered_name(ui);
         let columns = self.contents.borrow().columns;
         let arrow = self.arrow_clicked(ui);
         if let Some(file) = arrow {
@@ -1461,6 +1503,7 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         also: Vec::new(),
         pinged: None,
         tiles: Vec::new(),
+        scrolling: None,
         previews: HashMap::new(),
         parts: HashMap::new(),
         opened: HashSet::new(),

@@ -79,6 +79,9 @@ pub struct Shown {
     pub unset: bool,
     /// An action's own row, which has a plus to add a binding to it.
     pub action: bool,
+    /// An action's row with bindings, which folds them away; and whether they are folded.
+    pub folds: bool,
+    pub folded: bool,
 }
 
 /// How a row shows: an action with its icon, a binding's control by the
@@ -124,7 +127,15 @@ fn control_row(path: &str, part: Option<&str>) -> Shown {
         Some(part) => format!("{}: {name}", capital(part)),
         None => name,
     };
-    Shown { icon: device_icon(path), text, detail: device, depth, conflict: false, unset: path.is_empty(), action: false }
+    Shown {
+        icon: device_icon(path),
+        text,
+        detail: device,
+        depth,
+        conflict: false,
+        unset: path.is_empty(),
+        ..Shown::default()
+    }
 }
 
 /// What people call a control, and its device: "Left Shift" and

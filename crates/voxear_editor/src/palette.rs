@@ -97,8 +97,8 @@ pub enum PaletteAction {
     Reveal(String),
     /// Open a VoxDocs page, by its reference.
     OpenDoc(String),
-    /// A setting, by its key: a toggle flips, a choice moves to the next,
-    /// and a number opens the Settings panel to type it.
+    /// A setting, by its key: opens Project Settings or Preferences at it,
+    /// scrolled to and marked, a number's field focused to type in.
     Setting(&'static str),
     /// A setting found by what it does, anywhere the editor has one, by
     /// the key `setting_search` finds it again by: opened where it is.

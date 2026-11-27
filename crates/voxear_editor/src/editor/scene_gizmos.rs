@@ -164,7 +164,8 @@ impl Editor {
 
     /// The gizmos drawn, and what they gave back, or `None` with nothing to draw.
     fn ask_scene_gizmos(&mut self) -> Option<anyhow::Result<GizmoAnswer>> {
-        if !self.all_scene_views().any(|view| view.show_gizmos) {
+        let game = self.memory.settings.game_gizmos && self.shown(self.nodes.game_viewport);
+        if !game && !self.all_scene_views().any(|view| view.show_gizmos) {
             return None;
         }
         let (selected, hovered) = (self.selected(), self.hovered_obj);

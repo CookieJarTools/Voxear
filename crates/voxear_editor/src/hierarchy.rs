@@ -175,6 +175,11 @@ impl TreeItems for Items {
         let parts = ui.children(row);
         ui.set_class(row, "scene-header", shown.header);
         ui.set_icon(parts[0], shown.icon);
+        // Each kind of row's icon in a colour of its own (see `.kind-*` in Editor.vss).
+        let kind = KIND_CLASSES.iter().find(|(icon, _)| *icon == shown.icon).map(|(_, class)| *class);
+        for (_, class) in KIND_CLASSES {
+            ui.set_class(parts[0], class, kind == Some(class));
+        }
         ui.set_text(parts[1], &shown.name);
         for part in [parts[0], parts[1]] {
             ui.set_class(part, "prefab-root", shown.prefab == Some(true));
@@ -591,6 +596,20 @@ fn destination(shown: &Snapshot, target: u64, place: DropPlace) -> Option<Destin
         DropPlace::After => Destination::After(entity),
     })
 }
+
+/// The icons whose rows colour them, and the class that does.
+const KIND_CLASSES: [(&str, &str); 10] = [
+    ("scene", "kind-scene"),
+    ("globe", "kind-scene"),
+    ("map-dungeon", "kind-scene"),
+    ("obj", "kind-obj"),
+    ("camera", "kind-camera"),
+    ("light", "kind-light"),
+    ("cube", "kind-mesh"),
+    ("box", "kind-mesh"),
+    ("audio", "kind-audio"),
+    ("lod", "kind-lod"),
+];
 
 /// The icon for an Obj with a camera, a light, a mesh, a whole model, an
 /// Audio Source or a LOD Group, the first it has in that order, or else the

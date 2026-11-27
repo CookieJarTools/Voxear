@@ -552,6 +552,11 @@ impl Ui {
         }
     }
 
+    /// The icon an icon element shows, if any.
+    pub fn icon_name(&self, node: NodeId) -> Option<&'static str> {
+        self.element(node).and_then(|element| element.icon)
+    }
+
     /// An image, empty until [`set_image`](Self::set_image) gives it one,
     /// filling its box unless sheets size it. Its corners round with
     /// `border-radius`, and the pointer passes through it to what it is in.

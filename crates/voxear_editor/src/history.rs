@@ -55,6 +55,7 @@ pub struct ObjState {
     pub rigidbody: Option<Box<Rigidbody>>,
     pub character: Option<Box<CharacterController>>,
     pub wind_zone: Option<Box<WindZone>>,
+    pub voxel_rope: Option<Box<voxear_engine::voxel_ropes::VoxelRope>>,
     pub particles: Option<Box<ParticleSystem>>,
     pub force_field: Option<ForceField>,
     pub smoke: Option<Box<voxear_render::Smoke>>,
@@ -194,6 +195,7 @@ impl ObjState {
             rigidbody: world.get::<Rigidbody>(entity).copied().map(Box::new),
             character: world.get::<CharacterController>(entity).copied().map(Box::new),
             wind_zone: world.get::<WindZone>(entity).copied().map(Box::new),
+            voxel_rope: world.get::<voxear_engine::voxel_ropes::VoxelRope>(entity).copied().map(Box::new),
             particles: world.get::<ParticleSystem>(entity).copied().map(Box::new),
             force_field: world.get::<ForceField>(entity).copied(),
             smoke: world.get::<voxear_render::Smoke>(entity).copied().map(Box::new),
@@ -321,6 +323,7 @@ impl ObjState {
         put(world, entity, self.rigidbody.as_deref().copied());
         put(world, entity, self.character.as_deref().copied());
         put(world, entity, self.wind_zone.as_deref().copied());
+        put(world, entity, self.voxel_rope.as_deref().copied());
         put(world, entity, self.particles.as_deref().copied());
         put(world, entity, self.force_field);
         put(world, entity, self.smoke.as_deref().copied());

@@ -310,6 +310,8 @@ impl Editor {
             "voxels.dig" | "voxels.place" | "voxels.restore" => self.voxels_set(call, args),
             "voxels.cut" => self.voxels_cut(args),
             "voxels.blast" => self.voxels_blast(args),
+            "voxels.rope" => self.voxels_rope(args, renderer),
+            "voxels.cut_rope" => self.voxels_cut_rope(args),
             "voxels.settled" => self.voxels_settled(),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
@@ -2634,6 +2636,36 @@ impl Editor {
             })
             .collect();
         done(json!({ "reached": reached, "dug": dug, "pieces": pieces, "broken": broken, "rounds": rounds }))
+    }
+
+    fn voxels_rope(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        let tied = Vec3::from_array(opt_vector(args, "tied")?.ok_or_else(|| bad("`tied` is missing"))?);
+        let holds = Vec3::from_array(opt_vector(args, "holds")?.ok_or_else(|| bad("`holds` is missing"))?);
+        let number = |name: &str| args.get(name).and_then(Json::as_f64).map_or(0.0, |n| n as f32).max(0.0);
+        let rope = voxear_engine::voxel_ropes::VoxelRope {
+            hangs: (holds - tied).to_array(),
+            length: number("length"),
+            strength: number("strength"),
+        };
+        let empty = NEW_OBJS.iter().position(|(label, ..)| label.eq_ignore_ascii_case("Empty"));
+        let empty = empty.ok_or_else(|| refuse(ErrorKind::WrongValue, "no Empty kind of New Object"))?;
+        let scene = self.scene_for_new_objs();
+        let made = objs::create(&mut self.game, Some(renderer), empty, None, scene, tied).map_err(failed)?;
+        let world = &mut self.game.engine.world;
+        world.insert(made, Name(opt_text(args, "name").unwrap_or("Rope").to_string()));
+        world.insert(made, rope);
+        self.record(Edit::Exists { root: made, taken: None });
+        self.shown_again();
+        done(json!({ "obj": obj_ref(&self.game, made), "length": rope.long() }))
+    }
+
+    fn voxels_cut_rope(&mut self, args: &Json) -> Called {
+        let obj = link::resolve_obj(&self.game, need(args, "obj")?)?;
+        if self.game.engine.world.get::<voxear_engine::voxel_ropes::VoxelRope>(obj).is_none() {
+            return Err(refuse(ErrorKind::WrongValue, "the Obj has no Voxel Rope"));
+        }
+        let cut = voxear_engine::voxel_ropes::cut(&mut self.game.engine.world, obj);
+        done(json!({ "cut": cut }))
     }
 
     fn voxels_settled(&mut self) -> Called {

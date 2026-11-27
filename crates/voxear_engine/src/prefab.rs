@@ -431,6 +431,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
+    root.voxel_rope = instance.voxel_rope.or(root.voxel_rope);
     root.particles = instance.particles.or(root.particles);
     root.force_field = instance.force_field.or(root.force_field);
     root.smoke = instance.smoke.or(root.smoke);
@@ -558,6 +559,7 @@ pub struct TemplateObj {
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
+    pub voxel_rope: Option<crate::voxel_ropes::VoxelRope>,
     pub particles: Option<ParticleSystem>,
     pub force_field: Option<ForceField>,
     pub smoke: Option<voxear_render::Smoke>,
@@ -785,6 +787,9 @@ impl Template {
             }
             if let Some(wind) = obj.wind_zone {
                 world.insert(entity, wind);
+            }
+            if let Some(rope) = obj.voxel_rope {
+                world.insert(entity, rope);
             }
             if let Some(particles) = obj.particles {
                 world.insert(entity, particles);
@@ -1538,6 +1543,7 @@ pub(crate) fn resolve_obj(
         rigidbody: data.rigidbody,
         character: data.character,
         wind_zone: data.wind_zone,
+        voxel_rope: data.voxel_rope,
         particles: data.particles,
         force_field: data.force_field,
         smoke: data.smoke,

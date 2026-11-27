@@ -77,6 +77,7 @@ pub mod voxel_mobs;
 pub mod voxel_nav;
 pub mod voxel_collapse;
 pub mod voxel_felling;
+pub mod voxel_ropes;
 pub mod voxel_volumes;
 pub mod voxel_ways;
 pub mod tick_smoothing;

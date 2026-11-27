@@ -53,7 +53,7 @@ pub use collapse::{
     CRUMBS as VOXEL_CRUMBS, VoxelAnchor, VoxelBlast, VoxelBlastDone, VoxelLoosened, VoxelSettled, VoxelStuff,
     blast as voxel_blast, blast_dig as voxel_blast_dig, dug_between as voxel_dug_between, loosen as voxel_loosen, settle as voxel_settle,
 };
-pub use strain::{JoinLoad as VoxelJoinLoad, VoxelRound, VoxelStrain, VoxelStrainDone, VoxelStrainMemory};
+pub use strain::{JoinLoad as VoxelJoinLoad, VoxelHinge, VoxelRound, VoxelStrain, VoxelStrainDone, VoxelStrainMemory};
 pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};

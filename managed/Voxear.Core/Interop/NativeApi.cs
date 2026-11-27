@@ -238,4 +238,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, float*, int> VoxelFelling;
 	public delegate* unmanaged[Cdecl]<Vector3*, Vector3*, float, int, float*, ulong*, int> VoxelRaycastMeeting;
 	public delegate* unmanaged[Cdecl]<Vector3*, float, int, float, int*, int> VoxelBlast;
+	public delegate* unmanaged[Cdecl]<int, float*, ulong, ulong> VoxelRope;
 }

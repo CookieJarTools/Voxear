@@ -4797,6 +4797,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Pieces that hit hard dig what they hit, small ones and those past Most Pieces are dust, and each is stamped back
     where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
   - Cracks wander through the voxels round the bricks' faces, so broken edges are ragged.
+  - Timber bends before it snaps: floors hang hinged from their walls until too much hangs. Voxel Ropes hold what
+    was built, which hangs and swings once nothing else holds it, and snap when pulled too hard or cut.
 - **Ways over voxel ground (2026-11-26).** Nav Agents and Block Mobs on an endless Voxel Volume find their way round
   walls, trunks and pits, up banks and through shallow water, with nothing baked. The voxels are gathered into
   cells a quarter of a metre a side, solid where collision finds anything within a quarter of a metre, and walked

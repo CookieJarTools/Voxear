@@ -456,6 +456,10 @@ pub fn fall(world: &mut World, dt: f32) {
                     0.0
                 };
                 let rest_after = world.get::<VoxelVolume>(body.volume).map_or(1.0, |volume| volume.felling.rest_after);
+                // A hinged piece rests only once it, and all hinged beyond it, has stopped bending.
+                if world.get::<crate::voxel_collapse::PieceHinge>(entity).is_some_and(|hinge| !hinge.settled) {
+                    body.still = 0.0;
+                }
                 if (body.still >= rest_after && body.falling > 0.5) || body.falling > LONGEST_FALL {
                     body.fall = PieceFall::Resting;
                     crush.push(entity);

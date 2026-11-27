@@ -184,6 +184,37 @@ pub struct VoxelRound {
     pub crumbs: Vec<Vec3>,
     /// How many joins broke.
     pub broken: usize,
+    /// The pieces that stay hinged to what they broke from, bent, not
+    /// snapped.
+    pub hinges: Vec<VoxelHinge>,
+}
+
+/// A piece of what was built that broke from what stands by bending, of
+/// what bends (timber): it stays hinged there, bending further while its weight about the hinge is more than
+/// it `holds`, and snaps once it has bent too far. Which of a round's
+/// pieces it is, and the hinge's middle, in metres from the volume's
+/// corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxelHinge {
+    pub piece: usize,
+    pub point: Vec3,
+    /// How much its weight may turn it about the hinge, in newton metres,
+    /// and how much weight may hang from it, in newtons.
+    pub holds: f32,
+    pub bears: f32,
+}
+
+/// What a join of timber broken by bending still holds bent, splintered and
+/// nailed, in pascals over its section modulus: much more than what broke
+/// it, as its fibres bend before they tear.
+const HELD_BENT: f64 = 2.0e5;
+/// What such a join holds hanging, in pascals over its section's area.
+const HELD_HANGING: f64 = 1.2e4;
+
+/// Whether `stuff` bends before it breaks, as timber does, where stone,
+/// brick, earth and glass snap.
+fn bends(stuff: VoxelStuff) -> bool {
+    stuff == VoxelStuff::Wood
 }
 
 /// What finding the loads did: how many bricks and joins, how many rounds
@@ -458,6 +489,12 @@ impl Graph {
     /// bears less than it did, as a wall whose roof has fallen, is none
     /// the worse.
     fn over(&self, j: usize, load: JoinLoad, rest: JoinLoad) -> f64 {
+        let [axial, shear, bend] = self.over_each(j, load, rest);
+        axial.max(shear).max(bend)
+    }
+
+    /// As [`over`](Self::over), each of pull or push, shear and bending.
+    fn over_each(&self, j: usize, load: JoinLoad, rest: JoinLoad) -> [f64; 3] {
         let join = &self.joins[j];
         let (area, modulus) = (join.section.max(1e-6), join.modulus.max(1e-9));
         let bears = bears(join.stuff);
@@ -473,7 +510,7 @@ impl Graph {
         let pushed = (-pull).max(0.0);
         let shear = (size(load.shear) - size(rest.shear)) / (bears.shear * area + FRICTION * pushed);
         let bend = (size(load.moment) - size(rest.moment)) / (bears.bend * modulus + pushed * modulus / area);
-        axial.max(shear).max(bend)
+        [axial, shear, bend]
     }
 }
 
@@ -1023,8 +1060,10 @@ pub(super) fn strain(
     let mut solver: Option<Solver> = None;
     let mut round = VoxelRound::default();
     let mut breaks = Breaks::new();
-    // How near each join came to breaking, at the last loads found.
+    // How near each join came to breaking, at the last loads found; which broke last, and which of those by bending.
     let mut strained = vec![0.0; graph.joins.len()];
+    let mut broke_last = vec![false; graph.joins.len()];
+    let mut bent = vec![false; graph.joins.len()];
     for _ in 0..MOST_ROUNDS {
         done.rounds += 1;
         // What has come loose first, whatever broke it.
@@ -1051,8 +1090,34 @@ pub(super) fn strain(
                 // either side of their bricks' faces.
                 let members: HashSet<usize> = set.iter().copied().collect();
                 for part in parts {
+                    // What of timber broke from what stands by bending, not by much, stays hinged there.
+                    let inside: HashSet<usize> = part.iter().copied().collect();
+                    let hinged: Vec<usize> = part
+                        .iter()
+                        .flat_map(|&i| graph.of[i].iter().copied())
+                        .filter(|&j| {
+                            let join = &graph.joins[j];
+                            let other = if inside.contains(&join.a) { join.b } else { Some(join.a) };
+                            let stands = other.is_none_or(|k| !members.contains(&k) && !graph.nodes[k].gone);
+                            stands && broke_last[j] && bent[j] && bends(join.stuff)
+                        })
+                        .collect();
                     let voxels = cracked(after, &graph, &members, &part, &mut breaks);
+                    let first = round.pieces.len();
                     take_set(after, voxels, &mut round);
+                    let made = (first..round.pieces.len()).max_by_key(|&k| round.pieces[k].voxels.len());
+                    if let (Some(piece), false) = (made, hinged.is_empty()) {
+                        let mut point = [0.0; 3];
+                        let (mut holds, mut bears) = (0.0, 0.0);
+                        for &j in &hinged {
+                            point = add(point, graph.joins[j].point);
+                            holds += HELD_BENT * graph.joins[j].modulus;
+                            bears += HELD_HANGING * graph.joins[j].section;
+                        }
+                        let point = scale(point, 1.0 / hinged.len() as f64);
+                        let point = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
+                        round.hinges.push(VoxelHinge { piece, point, holds: holds as f32, bears: bears as f32 });
+                    }
                 }
             }
             // What cracks left in the bricks come loose, this round or before, held to nothing that stands, goes too.
@@ -1085,10 +1150,14 @@ pub(super) fn strain(
         if overs.is_empty() {
             break;
         }
+        broke_last.fill(false);
         for (j, over) in overs {
             if over < worst * 0.5 {
                 continue;
             }
+            let [axial, shear, bend] = graph.over_each(j, loads[j], rest_of(&graph.joins[j].key));
+            bent[j] = bend >= axial && bend >= shear;
+            broke_last[j] = true;
             graph.joins[j].broken = true;
             memory.cracked.insert(graph.joins[j].key);
             if let Some(solver) = solver.as_mut() {
@@ -1847,6 +1916,59 @@ mod tests {
             whole[1]
         );
         assert!(notched[0] + notched[2] > whole[0] + whole[2], "and its neighbours more");
+    }
+
+    /// A floor `long` metres out from a wall to a post, of `floor`, the post blown out: what came loose and how.
+    fn floor_on_a_post(long: f32, floor: crate::VoxelMaterial) -> VoxelStrainDone {
+        use crate::VoxelMaterial;
+        let mut volume = flat();
+        let edits = std::sync::Arc::make_mut(&mut volume.edits);
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(4.0, 1.0, 4.0),
+            Vec3::new(0.5, 3.5, 3.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Ashlar),
+        ));
+        let far = 4.25 + long;
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(far - 0.25, 1.0, 4.0),
+            Vec3::new(0.5, 2.5, 0.5),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Ashlar),
+        ));
+        edits.push(VoxelEdit::boxed(
+            Vec3::new(4.25 + long * 0.5, 3.5, 4.0),
+            Vec3::new(long, 0.25, 2.0),
+            Quat::IDENTITY,
+            Some(floor),
+        ));
+        let mut memory = VoxelStrainMemory::default();
+        let blast = super::super::collapse::VoxelBlast { at: Vec3::new(far - 0.25, 2.0, 4.0), radius: 0.7 };
+        let (_, done) = super::super::collapse::blast(&volume, blast, &mut memory);
+        done.settled.strain
+    }
+
+    #[test]
+    fn a_timber_floor_whose_post_is_blown_out_stays_hinged_to_its_wall_and_stone_snaps() {
+        let done = floor_on_a_post(1.5, crate::VoxelMaterial::Planks);
+        let hinges: Vec<&VoxelHinge> = done.loose.iter().flat_map(|round| round.hinges.iter()).collect();
+        assert_eq!(hinges.len(), 1, "{hinges:?}");
+        let hinge = hinges[0];
+        // At the wall's face, the floor's middle across, and holding a few kilonewton metres bent; the floor beside
+        // the wall hinged, the end the post held falling with what is left of the post.
+        assert!((hinge.point.x - 4.5).abs() < 0.3 && (hinge.point.z - 4.0).abs() < 0.1, "{hinge:?}");
+        assert!(hinge.holds > 1000.0 && hinge.holds < 50_000.0 && hinge.bears > 1000.0, "{hinge:?}");
+        let round = done.loose.iter().find(|round| !round.hinges.is_empty()).unwrap();
+        let sizes: Vec<(usize, IVec3)> = round.pieces.iter().map(|p| (p.voxels.len(), p.low)).collect();
+        let piece = &round.pieces[hinge.piece];
+        assert!(
+            piece.voxels.len() > 800 && piece.low.x < 72,
+            "the floor by the wall is the hinged piece: {} of {sizes:?}",
+            hinge.piece
+        );
+        // Stone snaps clean.
+        let done = floor_on_a_post(1.5, crate::VoxelMaterial::Flagstones);
+        assert!(done.loose.iter().all(|round| round.hinges.is_empty()) && !done.loose.is_empty());
     }
 
     #[test]

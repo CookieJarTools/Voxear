@@ -437,6 +437,10 @@ pub struct ObjData {
     /// A Wind Zone, blowing along the Obj's +Z over the whole level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_zone: Option<WindZone>,
+    /// A rope tied at the Obj, holding up what was built in an endless
+    /// Voxel Volume (see [`crate::voxel_ropes`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voxel_rope: Option<crate::voxel_ropes::VoxelRope>,
     /// A Particle System, sending out particles from the Obj.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub particles: Option<ParticleSystem>,
@@ -663,6 +667,7 @@ impl ObjData {
             layer: None,
             collider: None,
             wind_zone: None,
+            voxel_rope: None,
             particles: None,
             force_field: None,
             smoke: None,
@@ -2574,6 +2579,9 @@ fn capture_instance(
     if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
         instance.wind_zone = root.wind_zone;
     }
+    if root.voxel_rope.is_some() && root.voxel_rope != prefab_root.voxel_rope {
+        instance.voxel_rope = root.voxel_rope;
+    }
     if root.particles.is_some() && root.particles != prefab_root.particles {
         instance.particles = root.particles;
     }
@@ -2888,6 +2896,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
+    }
+    if let Some(rope) = actual.voxel_rope.filter(|r| Some(*r) != expected.voxel_rope) {
+        put("voxel_rope", whole(&rope, &crate::voxel_ropes::VoxelRope::default())?);
     }
     if let Some(particles) = actual.particles.filter(|p| Some(*p) != expected.particles) {
         put("particles", whole(&particles, &ParticleSystem::default())?);
@@ -3294,6 +3305,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
+    obj.voxel_rope = world.get::<crate::voxel_ropes::VoxelRope>(entity).copied();
     obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.force_field = world.get::<ForceField>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();

@@ -536,6 +536,31 @@ On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a mill
 
 **Falling and resting.** A piece that hits the volume hard digs out what it hits, as a small blast does, and what that cuts off falls too; pieces that hit each other chip where they meet, dust flying. A piece of fewer than 320 voxels is dust, no body, and so is the smallest falling once more fall at once than the volume's **Most Pieces** (24 unless set; a view draws 64 volumes). Once a piece has lain still for a second it is stamped back into the volume where it lies, voxels placed in its own colours, built again: rubble on the floor that can be blown out in turn. `Voxels.Piece`, `Voxels.StampPiece` and `Voxels.RemovePiece` work on a fallen piece's Obj as on a felled tree's.
 
+**Bending before it snaps.** Timber bends before it breaks; stone, brick, earth and glass snap. A part of planks that gives way by bending stays hinged where it broke, as a floor whose post is blown out hangs from its wall: while its weight, with all hinged beyond it, turns it about the hinge harder than the bent join holds, it bends further, 30 degrees a second; once it holds, it hangs there bent, and in a moment it rests and is stamped back as it lies. It tears off and falls once it has bent 55 degrees, or once more hangs from it than the bent join bears: a short balcony hangs on, a long floor, or one with a post's stone still on its end, bends and then snaps. A floor broken in several places hangs piece from piece, each bearing all beyond it.
+
+**Ropes.** A Voxel Rope, on an Obj where it is tied, holds the point of what was built its **Hangs** reaches below it. What is built round that point and held up by nothing else hangs from the rope as soon as it is tied, and whatever comes loose later with that point in it hangs from it too: a platform whose posts are blown out drops into the rope under its gantry, sways a little and settles, leaning about the point it is held by. What a rope catches is let go into it, not thrown, and is heavy in the air (Drag 2, Angular Drag 6), so a building hanging moves as a heavy thing does, not as a light one on a string. The rope is its **Length** long (as far as to the point it holds where 0) and snaps when what hangs pulls harder than its **Strength** in newtons, its weight and its swing together (never where 0), when a blast reaches it, or when the game cuts it. What hung from a cut rope falls, and rests as pieces do; while it hangs it stays a body. A piece hangs from one rope. The rope is drawn as a line of voxels from where it is tied to the point it holds.
+
+```csharp
+// A cage hung from the overhang: blow the overhang's foot and the cage swings out over the drop.
+var rope = Voxels.Hang(overhang + Vector3.UnitY * 0.2f, cage.Top, strength: 30000f);
+// ...a bolt through the rope:
+if (rope is { } tied) Voxels.CutRope(tied);
+```
+
+```
+vox editor call voxels.rope '{ "tied": [32, 9, 32], "holds": [32.03, 3.65, 32.03], "strength": 25000 }'
+vox editor call voxels.cut_rope '{ "obj": "<guid>:3" }'
+```
+
+```toml
+[obj.voxel_rope]
+hangs = [0.0, -5.35, 0.0]
+length = 6.0
+strength = 25000.0
+```
+
+A Distance joint can hold a point of its Obj as well as its centre (`hold` in `[obj.joint]`), which is what a Voxel Rope uses.
+
 What comes loose is dug out a voxel at a time, so it costs as much as digging it would, and is saved in the region files with the other changes. What each join bore at rest is kept while the level runs, not saved: a house left cracked but standing is whole again when the level is loaded.
 
 In the editor nothing falls: a blast takes what comes loose away, and digging and carving there let nothing loose. While the game plays it falls as in the game. `vox editor call` does the same; `wait` settles before it answers, every round at once, and lists the pieces:
@@ -695,4 +720,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
 - Ways over a volume's ground aren't shown in the Scene view's Navigation gizmo, and aren't found through caves under the ground's lowest point in a column nor more than about 100 m up from it. An agent swims no deep water there and takes no Nav Links. Its way is found for something about 80 cm wide, so a wider one may brush walls and trunks, or stick in a gap narrower than it is; its way may run up to a quarter of a metre past the rim of a drop.
 - What gives way under its own weight is found by parts of half-metre bricks: a load is shared as stiffly as each join's thinnest voxels hold, but within a part of a brick it is one body. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
-- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's machine shows its own dig only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug.
+- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's machine shows its own dig only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug. Voxel Ropes aren't shared yet: a rope hung or cut on a player's machine is that machine's own, though what hangs from the server's ropes falls and swings on every machine as its pieces do.

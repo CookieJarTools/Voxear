@@ -45,12 +45,15 @@ static const float VOXEL_SHADOW_REACH = 64.0;
 // Light through foliage, as it is scattered on through leaves and grass: how much of it a voxel of foliage lets on,
 // and how many such voxels a walk passes before it takes the light as gone.
 static const float VOXEL_FOLIAGE_PASSES = 0.6;
-static const uint VOXEL_FOLIAGE_MOST = 10;
-// Grass and flowers take it near the camera only, all of it to the first distance and none past the second: far off,
-// coarser rings hold grass in bricks with the ground, as nothing to tell it by, and a meadow keeps one tone throughout.
-// Leaves take it at any distance.
-static const float VOXEL_GRASS_THROUGH_NEAR = 16.0;
-static const float VOXEL_GRASS_THROUGH_FAR = 40.0;
+static const float VOXEL_FOLIAGE_MOST = 10.0;
+// Foliage takes it near the camera only, all of it to the first distance and none past the second, grass and flowers
+// nearer than leaves: far off, coarser rings hold grass in bricks with the ground, as nothing to tell it by, and
+// their leaves, voxels as large as a few of full detail's together, fill a crown more densely than its loose leaves;
+// so a meadow and a wood keep one tone out to the rings and over their edges.
+static const float VOXEL_GRASS_THROUGH_NEAR = 12.0;
+static const float VOXEL_GRASS_THROUGH_FAR = 24.0;
+static const float VOXEL_LEAVES_THROUGH_NEAR = 32.0;
+static const float VOXEL_LEAVES_THROUGH_FAR = 64.0;
 
 // A walk's footprint, in voxels, that takes every brick as solid, glass and all: the coarse rays'.
 static const float VOXEL_BRICKS_SOLID = 1e6;
@@ -79,7 +82,7 @@ struct VoxelHit
     uint glassVolume;
     uint glassColour;
     // How many voxels of foliage a walk through foliage passed (voxelTrace's `throughFoliage`).
-    uint foliage;
+    float foliage;
     // Where a walk started inside glass left it, as `t` is, and in metres from voxelsTrace (-1 where it didn't).
     float glassOut;
 };
@@ -409,7 +412,7 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
             {
                 if (leafy && voxelBit(bits, uint(l.x + 8 * (l.y + 8 * l.z))))
                 {
-                    hit.foliage++;
+                    hit.foliage += 1.0;
                     if (hit.foliage > VOXEL_FOLIAGE_MOST)
                     {
                         hit.level = 0;
@@ -601,7 +604,7 @@ bool voxelsPlainTrace(VoxelVolumes* volumes, float3 from, float3 d, float start,
     nearest = (VoxelHit)0;
     nearest.metres = reach;
     bool found = false;
-    uint foliage = 0;
+    float foliage = 0.0;
     // The nearest see-through voxel passed through, of any volume.
     VoxelHit glass = (VoxelHit)0;
     glass.glassT = -1.0;
@@ -769,7 +772,7 @@ bool voxelsTraceDry(VoxelVolumes* volumes, float3 from, float3 d, float start, f
     wet = 0.0;
     water = (VoxelHit)0;
     water.metres = -1.0;
-    uint foliage = 0;
+    float foliage = 0.0;
     for (uint k = 0; k <= most; k++)
     {
         bool met = voxelsPlainTrace(volumes, from, d, start, reach, foot0, footScale, nearVoxel, nearest, throughFoliage);
@@ -1683,14 +1686,14 @@ float4 voxelShadowFragment(VoxelVertex input) : SV_Target
     // Foliage the depth pass met here takes the sun through the foliage between, on every side, as light scattered on
     // through leaves and grass: red holds how much of it gets there, VOXEL_FOLIAGE_PASSES for each voxel passed.
     uint foliage = near > 0.0 ? voxelFoliageSeen(frame, volumes, pixel) : 0u;
-    if (foliage == 2u || (foliage == 1u && metres < VOXEL_GRASS_THROUGH_FAR))
+    if ((foliage == 2u && metres < VOXEL_LEAVES_THROUGH_FAR) || (foliage == 1u && metres < VOXEL_GRASS_THROUGH_FAR))
     {
         VoxelHit walked;
         VoxelHit wetHit;
         float wetThrough;
         float foot = metres * voxelPixelAngle(frame, pixel) * volumes->lodScale;
         bool met = voxelsTraceDry(volumes, world + normal * lift, -frame->sunDirection, 0.0, VOXEL_SHADOW_REACH, foot, 0.0, 3, near, walked, wetThrough, wetHit, true);
-        float through = met ? 0.0 : pow(VOXEL_FOLIAGE_PASSES, float(walked.foliage));
+        float through = met ? 0.0 : pow(VOXEL_FOLIAGE_PASSES, walked.foliage);
         return float4(through, met ? 1.0 : voxelGlassTint(walked));
     }
     if (dot(normal, -frame->sunDirection) <= 0.0)
@@ -1746,7 +1749,7 @@ float3 voxelFoliageScatter(Frame* frame, VoxelVolume volume, VoxelHit hit, float
         return 0.0;
     }
     float near = voxelLeafBrick(volume.bricks + uint(hit.brick) * VOXEL_BRICK_WORDS)
-        ? 1.0
+        ? 1.0 - smoothstep(VOXEL_LEAVES_THROUGH_NEAR, VOXEL_LEAVES_THROUGH_FAR, hit.metres)
         : 1.0 - smoothstep(VOXEL_GRASS_THROUGH_NEAR, VOXEL_GRASS_THROUGH_FAR, hit.metres);
     if (near <= 0.0)
     {

@@ -238,7 +238,32 @@ pub struct GpuVolume {
     /// is hollowed apart from a column's own: a foot and a top, by their
     /// place among the carried numbers.
     pub spans: Vec<[u32; 2]>,
+    /// The program that makes the carried numbers that change slowly from
+    /// column to column (masks, such as where the ground is steep), run at
+    /// every fourth voxel column each way and read between those, as a world
+    /// of blocks reads them (`Volume::carried_grid`): none where there are
+    /// none. A carried number it makes is `BETWEEN_ROW` and its place among
+    /// what it makes in [`GpuVolume::carried`].
+    pub spread: Option<GpuSpread>,
 }
+
+/// The program that makes a Volume's carried numbers read between columns
+/// four apart (see [`GpuVolume::spread`]): its words and the slot of each
+/// number it makes. It shares what its steps read beside their own numbers
+/// with its generator's program, whose words the GPU reads after its own:
+/// its words, then the program's words, then the program's data, so a
+/// painted map is in memory once.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuSpread {
+    pub words: Vec<u32>,
+    pub steps: u32,
+    pub slots: Vec<u32>,
+}
+
+/// Marks a carried number of [`GpuVolume::carried`] made by its spread
+/// program and read between columns, its place among those in the bits
+/// under it.
+pub const BETWEEN_ROW: u32 = 0x8000_0000;
 
 /// The steps of `program` for the GPU, its rows counted from `start`, each
 /// thing it is given made as `given` says: none where it cannot be, which
@@ -455,6 +480,7 @@ impl WorldGen {
         // Its Volume, unless it is the height made solid with nothing taken out: its columns' steps after the rest,
         // given the height made first, and its cells' in a program of their own.
         let mut volume = None;
+        let mut spread_steps = None;
         if let Some(voxels) = compiled.volume.as_ref().filter(|voxels| !voxels.plain || voxels.caved) {
             let mut missing = Vec::new();
             let start = steps.len() as u32;
@@ -464,7 +490,39 @@ impl WorldGen {
                 Given::Ground => Some((GpuStep::new(GpuOp::Copy).whole(0), vec![height])),
                 _ => None,
             };
-            let columns = lower(&voxels.columns, start, given, &mut missing);
+            // The rows carried up that are made at every column: those read between columns are made apart.
+            let columns = lower(&voxels.exact, start, given, &mut missing);
+            let spread = match voxels.between.contains(&true) {
+                false => None,
+                true => {
+                    // The height's steps first, as the spread program is run at places of its own.
+                    let mut spread = lower(
+                        &compiled.height,
+                        0,
+                        |which| match which {
+                            Given::X => Some((GpuStep::new(GpuOp::X), Vec::new())),
+                            Given::Z => Some((GpuStep::new(GpuOp::Z), Vec::new())),
+                            _ => None,
+                        },
+                        &mut missing,
+                    );
+                    let own = compiled.height.outputs[0];
+                    let from = spread.len() as u32;
+                    spread.extend(lower(
+                        &voxels.spread,
+                        from,
+                        |which| match which {
+                            Given::X => Some((GpuStep::new(GpuOp::X), Vec::new())),
+                            Given::Z => Some((GpuStep::new(GpuOp::Z), Vec::new())),
+                            Given::Ground => Some((GpuStep::new(GpuOp::Copy).whole(0), vec![own])),
+                            _ => None,
+                        },
+                        &mut missing,
+                    ));
+                    let made: Vec<u32> = voxels.spread.outputs.iter().map(|&output| output + from).collect();
+                    Some((spread, made))
+                }
+            };
             let given = |which: Given| match which {
                 Given::X => Some((GpuStep::new(GpuOp::X), Vec::new())),
                 Given::Y => Some((GpuStep::new(GpuOp::Y), Vec::new())),
@@ -482,13 +540,15 @@ impl WorldGen {
             if missing.is_empty()
                 && let Ok((words, slot_of, slots, cells_left_out)) = made
             {
-                let carried: Vec<u32> = voxels.columns.outputs.iter().map(|&output| output + start).collect();
+                let carried: Vec<u32> = voxels.exact.outputs.iter().map(|&output| output + start).collect();
                 kept.extend(&carried);
                 steps.extend(columns);
+                spread_steps = spread;
                 left_out.extend(cells_left_out);
                 let spans = voxels.spans.iter().map(|([foot, top], _)| [*foot as u32, *top as u32]).collect();
                 volume = Some((
                     carried,
+                    voxels.between.clone(),
                     GpuVolume {
                         words,
                         steps: cells.len() as u32,
@@ -498,6 +558,7 @@ impl WorldGen {
                         reach: voxels.reach,
                         depth: voxels.depth,
                         spans,
+                        spread: None,
                     },
                 ));
             } else {
@@ -516,8 +577,48 @@ impl WorldGen {
             }
         }
         let slot = |row: u32| slot_of[row as usize];
-        let volume =
-            volume.map(|(carried, volume)| GpuVolume { carried: carried.into_iter().map(slot).collect(), ..volume });
+        // The rows read between columns, in a program of their own run at every fourth column, what they read of
+        // what the nodes find in the same table as the rest's.
+        let mut spread = None;
+        if let Some((steps, made)) = spread_steps {
+            // What it reads is placed after the program's words and data, which follow its own words: what the program
+            // reads already is read where it is.
+            let before = words.len() + data.words.len();
+            let starts = data.starts.iter().map(|&(key, start)| (key, start + words.len() as u32)).collect();
+            let mut spread_data = Data { words: vec![0; before], starts, finds: data.finds.clone() };
+            match encode(&steps, &made, &mut spread_data) {
+                Ok((spread_words, slot_of, _, spread_left_out)) => {
+                    data.finds = spread_data.finds;
+                    data.words.extend_from_slice(&spread_data.words[before..]);
+                    for what in spread_left_out {
+                        if !left_out.contains(&what) {
+                            left_out.push(what);
+                        }
+                    }
+                    let slots = made.iter().map(|&row| slot_of[row as usize]).collect();
+                    spread = Some(GpuSpread { words: spread_words, steps: steps.len() as u32, slots });
+                }
+                Err(error) => {
+                    left_out.push(format!("overhangs and caves ({error})"));
+                    volume = None;
+                }
+            }
+        }
+        let volume = volume.map(|(carried, between, volume)| {
+            // Each carried row by its place among the rows made at every column, or among those read between.
+            let (mut exact, mut spread_at) = (carried.into_iter(), 0);
+            let carried = between
+                .iter()
+                .map(|&between| match between {
+                    true => {
+                        spread_at += 1;
+                        BETWEEN_ROW | (spread_at - 1)
+                    }
+                    false => exact.next().map_or(0, slot),
+                })
+                .collect();
+            GpuVolume { carried, spread, ..volume }
+        });
         Ok(GpuProgram {
             words,
             data: data.words,

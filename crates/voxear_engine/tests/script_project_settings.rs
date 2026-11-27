@@ -25,10 +25,14 @@ public sealed class Options : SystemBase
 		{
 			var time = ProjectSettings.Time;
 			Log.Info($"read: {time.FixedStep} {time.MaxFixedSteps} {ProjectSettings.FloatingOrigin.Mode} {ProjectSettings.Network.TickRate} {ProjectSettings.Quality.Particles > 0}");
-			ProjectSettings.ChangePortals(portals => portals.ViewDistance = 40f);
+			ProjectSettings.ChangePortals(portals =>
+			{
+				portals.ViewDistance = 40f;
+				portals.Light = PortalLighting.Picture;
+			});
 			ProjectSettings.ChangeWaterTrails(trails => trails.Quality = WaterTrailQuality.Off);
 			ProjectSettings.ChangeNavigationCosts(costs => costs.Road = 0.25f);
-			Log.Info($"changed: {ProjectSettings.Portals.ViewDistance} {ProjectSettings.WaterTrails.Quality} {ProjectSettings.NavigationCosts.Road}");
+			Log.Info($"changed: {ProjectSettings.Portals.ViewDistance} {ProjectSettings.Portals.Light} {ProjectSettings.WaterTrails.Quality} {ProjectSettings.NavigationCosts.Road}");
 		}
 		if (frame == 3)
 		{
@@ -94,9 +98,10 @@ fn a_script_reads_the_project_settings_and_changes_those_a_running_game_can() {
     let report = |start: &str| lines.iter().filter(|line| line.starts_with(start)).cloned().collect::<Vec<_>>();
     let step = game.project.file.time.fixed_step;
     assert_eq!(report("read: "), [format!("read: {step} 5 Off 60 True")], "{lines:#?}");
-    assert_eq!(report("changed: "), ["changed: 40 Off 0.25"], "{lines:#?}");
+    assert_eq!(report("changed: "), ["changed: 40 Picture Off 0.25"], "{lines:#?}");
     let world = &game.engine.world;
-    assert_eq!(world.resource::<voxear_render::portals::PortalQuality>().map(|q| q.view_distance), Some(40.0));
+    let portals = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap();
+    assert_eq!((portals.view_distance, portals.light), (40.0, voxear_render::PortalLight::Picture));
     assert_eq!(
         world.resource::<voxear_render::WaterTrails>().map(|t| t.quality),
         Some(voxear_render::TrailQuality::Off)

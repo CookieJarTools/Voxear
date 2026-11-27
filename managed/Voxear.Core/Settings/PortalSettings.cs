@@ -29,6 +29,9 @@ public sealed class PortalSettings
 	/// <summary>How near a Portal into a dimension loaded for it the dimension is loaded, in metres.</summary>
 	public float DimensionDistance = 24f;
 
+	/// <summary>How open Portals' far sides light what stands in front of them: Picture for a fast GPU, Off for a slow one.</summary>
+	public PortalLighting Light = PortalLighting.Average;
+
 	internal static PortalSettings Read(JsonObject from)
 	{
 		var settings = new PortalSettings();
@@ -40,6 +43,12 @@ public sealed class PortalSettings
 		settings.DrawDistance = SettingsJson.Read(from, "draw_distance", settings.DrawDistance);
 		settings.ViewDistance = SettingsJson.Read(from, "view_distance", settings.ViewDistance);
 		settings.DimensionDistance = SettingsJson.Read(from, "dimension_distance", settings.DimensionDistance);
+		settings.Light = from["light"]?.GetValue<string>() switch
+		{
+			"off" => PortalLighting.Off,
+			"picture" => PortalLighting.Picture,
+			_ => PortalLighting.Average,
+		};
 		return settings;
 	}
 
@@ -55,6 +64,12 @@ public sealed class PortalSettings
 			["draw_distance"] = DrawDistance,
 			["view_distance"] = ViewDistance,
 			["dimension_distance"] = DimensionDistance,
+			["light"] = Light switch
+			{
+				PortalLighting.Off => "off",
+				PortalLighting.Picture => "picture",
+				_ => "average",
+			},
 		};
 	}
 }

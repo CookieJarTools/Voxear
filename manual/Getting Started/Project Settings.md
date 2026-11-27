@@ -29,7 +29,7 @@ Rest the pointer on a setting's name to see what it does, what more or less of i
 | Physics | Gravity, and the Layer Collision Matrix: which layers' Objs collide |
 | Physics 2D | Gravity for 2D physics (see [[2D Physics]]) |
 | Player | The game's name, the level it opens on, and a button that opens the Build window, where each build profile sets its window, version and defines |
-| Quality | What making block worlds may spend, as a preset or number by number (see [[Block Worlds]]), and the most particles |
+| Quality | What making block worlds may spend, as a preset or number by number (see [[Block Worlds]]), the most particles, and how [[Portals]] light what is in front of them: Off, Average or Picture |
 | Scripts | The game's C# project, and a button that opens it in your code editor |
 | Tags and Layers | The project's 32 layers |
 | Time | The fixed step, the longest a frame may count as, the time scale, and the most fixed steps a frame |

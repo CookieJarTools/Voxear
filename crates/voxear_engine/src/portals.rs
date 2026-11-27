@@ -841,6 +841,11 @@ const CREATE: i32 = 33;
 const CREATED: i32 = 34;
 // The project's view distance, for each Portal without its own, whichever Obj asks.
 const DEFAULT_VIEW_DISTANCE: i32 = 35;
+// How brightly a Portal's far side lights what stands in front of it.
+const LIGHT: i32 = 11;
+// How Portals' far sides light, for the whole game, whichever Obj asks: 0 not at all, 1 in their average colour, 2 in
+// what they show.
+const LIGHTING: i32 = 36;
 // How much of a Portal's far side shows through its mist, 0 to 1.
 const SHOWN: i32 = 10;
 
@@ -916,6 +921,16 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             return Some([0.0; 4]);
         }
         (CREATED, None) => return Some(obj_value(world.resource::<PortalAsked>().and_then(|asked| asked.made))),
+        (LIGHTING, None) => {
+            let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+            return number(PortalLighting::from(quality.light) as u8 as f32);
+        }
+        (LIGHTING, Some([kind, ..])) => {
+            let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+            let light = PortalLighting::of_number(kind).into();
+            world.insert_resource(voxear_render::portals::PortalQuality { light, ..quality });
+            return Some([0.0; 4]);
+        }
         (DEFAULT_VIEW_DISTANCE, None) => {
             let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
             return number(quality.view_distance);
@@ -964,6 +979,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (MIST, None) => Some([portal.mist.x, portal.mist.y, portal.mist.z, 1.0]),
         // None, the project's, as NaN.
         (VIEW_DISTANCE, None) => number(portal.view_distance.unwrap_or(f32::NAN)),
+        (LIGHT, None) => number(portal.light),
         (TO, Some(value)) => {
             portal.to = value_obj(value).filter(|to| *to != entity);
             Some([0.0; 4])
@@ -988,6 +1004,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             portal.view_distance = distance.is_finite().then(|| distance.max(0.0));
             Some([0.0; 4])
         }
+        (LIGHT, Some([light, ..])) => {
+            portal.light = if light.is_finite() { light.clamp(0.0, MOST_LIGHT) } else { 1.0 };
+            Some([0.0; 4])
+        }
         _ => None,
     }
 }
@@ -1003,6 +1023,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
 /// passes = [0, 4]           # the layers whose Objs go through; left out, all
 /// mist = [0.35, 0.55, 1.0]  # linear
 /// view_distance = 96.0      # how far off its far side still shows; left out, the project's
+/// light = 0.5               # how brightly its far side lights what is in front of it; left out, 1
 /// ```
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1022,6 +1043,8 @@ pub struct PortalData {
     pub mist: [f32; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_distance: Option<f32>,
+    #[serde(default = "full_light", skip_serializing_if = "is_full_light")]
+    pub light: f32,
 }
 
 impl PortalData {
@@ -1038,6 +1061,7 @@ impl PortalData {
             passes: (portal.passes != u32::MAX).then_some(layers),
             mist: portal.mist.to_array(),
             view_distance: portal.view_distance,
+            light: portal.light,
         }
     }
 
@@ -1052,6 +1076,7 @@ impl PortalData {
             passes,
             mist: self.mist.into(),
             view_distance: self.view_distance,
+            light: self.light.clamp(0.0, MOST_LIGHT),
         }
     }
 
@@ -1080,6 +1105,7 @@ impl PortalData {
         if let Some(distance) = self.view_distance {
             table.insert("view_distance".into(), toml::Value::try_from(distance)?);
         }
+        table.insert("light".into(), toml::Value::try_from(self.light)?);
         Ok(toml::Value::Table(table))
     }
 }
@@ -1120,6 +1146,70 @@ fn yes() -> bool {
 
 fn is_yes(value: &bool) -> bool {
     *value
+}
+
+/// The brightest a Portal's light may be set, times what its far side shows.
+pub const MOST_LIGHT: f32 = 8.0;
+
+fn full_light() -> f32 {
+    1.0
+}
+
+fn is_full_light(light: &f32) -> bool {
+    *light == 1.0
+}
+
+/// How Portals' far sides light what stands in front of them, as a project
+/// sets it (`[portals] light`) and a game or the editor picks it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortalLighting {
+    /// Not at all.
+    Off,
+    /// In one colour, the average of what each far side shows.
+    #[default]
+    Average,
+    /// In what each far side shows, each part of the opening its own colour.
+    Picture,
+}
+
+impl PortalLighting {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Average, Self::Picture];
+
+    /// The setting by its number, as scripts send it: the default for one
+    /// out of range.
+    pub fn of_number(number: f32) -> Self {
+        Self::ALL.get(number as usize).copied().filter(|_| number >= 0.0).unwrap_or_default()
+    }
+
+    /// Its name as the Inspector and `voxear.toml` show it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Average => "Average",
+            Self::Picture => "Picture",
+        }
+    }
+}
+
+impl From<PortalLighting> for voxear_render::portals::PortalLight {
+    fn from(lighting: PortalLighting) -> Self {
+        match lighting {
+            PortalLighting::Off => Self::Off,
+            PortalLighting::Average => Self::Average,
+            PortalLighting::Picture => Self::Picture,
+        }
+    }
+}
+
+impl From<voxear_render::portals::PortalLight> for PortalLighting {
+    fn from(light: voxear_render::portals::PortalLight) -> Self {
+        match light {
+            voxear_render::portals::PortalLight::Off => Self::Off,
+            voxear_render::portals::PortalLight::Average => Self::Average,
+            voxear_render::portals::PortalLight::Picture => Self::Picture,
+        }
+    }
 }
 
 fn default_mist() -> [f32; 3] {

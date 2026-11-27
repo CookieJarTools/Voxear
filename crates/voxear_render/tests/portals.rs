@@ -8,7 +8,7 @@ use voxear_ecs::{Entity, World};
 use voxear_render::{
     AntiAliasing, AntiAliasingMode, Camera, Light, MaterialDesc, MeshRenderer, Portal, PortalPose, PostProcess,
     Primitive, Renderer, RendererSettings,
-    portals::{Carry, PortalQuality},
+    portals::{Carry, PortalLight, PortalQuality},
 };
 use voxear_scene::Transform;
 
@@ -143,8 +143,9 @@ fn places(renderer: &mut Renderer, turn: f32) -> Places {
     post.reflections.enabled = false;
     post.global_illumination.enabled = false;
     world.insert_resource(post);
-    // Shadows on the far side from any distance, as a camera standing there has them.
-    world.insert_resource(PortalQuality { shadow_distance: 1000.0, ..PortalQuality::default() });
+    // Shadows on the far side from any distance, as a camera standing there has them; and no light through the
+    // openings, which the tests of light turn on.
+    world.insert_resource(PortalQuality { shadow_distance: 1000.0, light: PortalLight::Off, ..PortalQuality::default() });
     Places { world, near, far, onward, last, camera }
 }
 
@@ -153,6 +154,25 @@ fn frames(renderer: &mut Renderer, world: &World, count: u32) -> Vec<u8> {
         renderer.render(world, 1.0 + frame as f32 / 60.0).expect("frame renders");
     }
     renderer.read_pixels().expect("pixels").2
+}
+
+/// As [`frames`], then on until the sun's shadow pages are all drawn, as
+/// they are a few frames after the view first sees a place: so two pictures
+/// differ by what changed between them, not by how far their shadows had
+/// come. Pages are asked for a frame or two after they are wanted, so they
+/// are drawn once none has been for eight frames running.
+fn settled(renderer: &mut Renderer, world: &World, count: u32) -> Vec<u8> {
+    let mut pixels = frames(renderer, world, count);
+    let mut quiet = 0;
+    for frame in 0..120 {
+        quiet = if renderer.stats().virtual_shadow_drawn == 0 { quiet + 1 } else { 0 };
+        if quiet >= 8 {
+            break;
+        }
+        renderer.render(world, 2.0 + frame as f32 / 60.0).expect("frame renders");
+        pixels = renderer.read_pixels().expect("pixels").2;
+    }
+    pixels
 }
 
 /// Turned to look from `eye` at `target`.
@@ -208,7 +228,7 @@ fn an_opening_shows_the_far_place_as_a_camera_standing_there_sees_it() {
         }
         let turned = looking(eye, Vec3::new(0.0, 1.5, 6.0));
         *places.world.get_mut::<Transform>(places.camera).unwrap() = Transform::new(eye, turned, Vec3::ONE);
-        let through = frames(&mut renderer, &places.world, 3);
+        let through = settled(&mut renderer, &places.world, 3);
         keep_image(&format!("portal {shot} through.png"), &through);
         let rect = opening(&places.world, places.camera, places.near, 0);
         assert!((rect[2] - rect[0]) * (rect[3] - rect[1]) > 3000, "the opening shows large enough to judge: {rect:?}");
@@ -230,7 +250,7 @@ fn an_opening_shows_the_far_place_as_a_camera_standing_there_sees_it() {
         }
         *places.world.get_mut::<Transform>(places.camera).unwrap() =
             Transform::new(carry.point(eye), carry.turn(turned), Vec3::ONE);
-        let there = frames(&mut renderer, &places.world, 3);
+        let there = settled(&mut renderer, &places.world, 3);
         keep_image(&format!("portal {shot} there.png"), &there);
 
         // Every pixel well inside the opening is the far place's, as near as soft shadows' grain allows.
@@ -263,10 +283,10 @@ fn only_the_opening_changes_and_what_stands_in_front_of_it_stays() {
         MeshRenderer::new(cube, white),
         Transform::new(Vec3::new(-0.45, 1.0, 4.0), Quat::IDENTITY, Vec3::new(0.5, 2.0, 0.5)),
     ));
-    let open = frames(&mut renderer, &places.world, 3);
+    let open = settled(&mut renderer, &places.world, 3);
     keep_image("portal open.png", &open);
     places.world.get_mut::<Portal>(places.near).unwrap().open = false;
-    let closed = frames(&mut renderer, &places.world, 3);
+    let closed = settled(&mut renderer, &places.world, 3);
     keep_image("portal closed.png", &closed);
 
     let rect = opening(&places.world, places.camera, places.near, -3);
@@ -299,10 +319,10 @@ fn a_portal_seen_through_a_portal_shows_its_own_far_side_when_asked_to() {
     // what changes.
     let quality = PortalQuality { depth: 2, shadow_distance: 1000.0, ..PortalQuality::default() };
     places.world.insert_resource(quality);
-    let deep = frames(&mut renderer, &places.world, 3);
+    let deep = settled(&mut renderer, &places.world, 3);
     keep_image("portal deep.png", &deep);
     places.world.insert_resource(PortalQuality { depth: 1, ..quality });
-    let shallow = frames(&mut renderer, &places.world, 3);
+    let shallow = settled(&mut renderer, &places.world, 3);
     keep_image("portal shallow.png", &shallow);
 
     let rect = opening(&places.world, places.camera, places.near, 2);
@@ -833,3 +853,86 @@ fn the_fog_over_water_is_the_same_with_a_portal_in_view_as_without() {
     assert!(all > 50_000, "{all} pixels looked at");
     assert!(differ * 200 < all, "{differ} of {all} pixels outside the opening differ with a Portal in view");
 }
+
+/// The first place roofed over its way to the Portal, so its ground there is in shade; and the far side's way out
+/// walled across with glowing walls, red on one side and blue on the other, as `walls` makes them.
+fn shaded_before_glow(renderer: &mut Renderer, light: PortalLight) -> Places {
+    let mut places = places(renderer, 0.0);
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.4, 0.4, 0.4, 1.0], ..MaterialDesc::default() }).unwrap();
+    let mut glowing = |colour: [f32; 3]| {
+        let desc = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: colour, ..MaterialDesc::default() };
+        renderer.add_material(&desc).unwrap()
+    };
+    let (red, blue) = (glowing([12.0, 0.4, 0.2]), glowing([0.2, 0.6, 12.0]));
+    // A roof over the first place's ground from behind the camera to past the Portal, and walls down its sides.
+    places.world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 3.4, 3.0), Quat::IDENTITY, Vec3::new(12.0, 0.2, 12.0))));
+    for x in [-6.0, 6.0] {
+        places.world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(x, 1.7, 3.0), Quat::IDENTITY, Vec3::new(0.2, 3.4, 12.0))));
+    }
+    // A glowing wall each side of the far Portal's way out, 3 m in front of it, filling what the opening shows.
+    for (x, material) in [(-2.5, red), (2.5, blue)] {
+        let at = SECOND + Vec3::new(x, 3.0, 3.0);
+        places.world.spawn((MeshRenderer::new(cube, material), Transform::new(at, Quat::IDENTITY, Vec3::new(5.0, 6.0, 0.2))));
+    }
+    places.world.insert_resource(PortalQuality { shadow_distance: 1000.0, light, ..PortalQuality::default() });
+    places
+}
+
+/// The ground's colour in front of the first place's Portal, a metre either side of its middle, 2 m before it.
+fn ground_before(places: &Places, pixels: &[u8]) -> ([f32; 3], [f32; 3]) {
+    let read = |x: f32| {
+        let (px, py) = on_screen(&places.world, places.camera, Vec3::new(x, 0.0, 4.0));
+        let mut sum = [0.0f32; 3];
+        for dy in 0..3 {
+            for dx in 0..3 {
+                let p = pixel(pixels, px + dx - 1, py + dy - 1);
+                for c in 0..3 {
+                    sum[c] += f32::from(p[c]) / 9.0;
+                }
+            }
+        }
+        sum
+    };
+    (read(-1.0), read(1.0))
+}
+
+#[test]
+fn a_portal_onto_a_glowing_place_lights_the_shaded_ground_in_front_of_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let places = shaded_before_glow(&mut renderer, PortalLight::Off);
+    let dark = settled(&mut renderer, &places.world, 12);
+    keep_image("portal light off.png", &dark);
+    let mut places = shaded_before_glow(&mut renderer, PortalLight::Average);
+    let lit = settled(&mut renderer, &places.world, 12);
+    keep_image("portal light average.png", &lit);
+    let ((dark_left, dark_right), (left, right)) = (ground_before(&places, &dark), ground_before(&places, &lit));
+    let sum = |c: [f32; 3]| c[0] + c[1] + c[2];
+    assert!(sum(left) > sum(dark_left) + 30.0 && sum(right) > sum(dark_right) + 30.0,
+        "the ground before the opening is lit: {dark_left:?} {dark_right:?} to {left:?} {right:?}");
+    // One colour, the far side's average: both sides alike, red and blue together.
+    let hue = |c: [f32; 3]| (c[0] - c[2]) / sum(c).max(1.0);
+    assert!((hue(left) - hue(right)).abs() < 0.02, "one colour each side: {left:?} {right:?}");
+    // Closed, its light goes.
+    places.world.get_mut::<Portal>(places.near).unwrap().open = false;
+    let closed = settled(&mut renderer, &places.world, 30);
+    keep_image("portal light closed.png", &closed);
+    let (shut_left, _) = ground_before(&places, &closed);
+    assert!(sum(shut_left) < sum(dark_left) + 10.0, "closed, it is dark again: {shut_left:?} against {dark_left:?}");
+}
+
+#[test]
+fn a_portal_lighting_with_its_picture_sheds_each_sides_colour_on_that_side() {
+    let Some(mut renderer) = renderer() else { return };
+    let places = shaded_before_glow(&mut renderer, PortalLight::Picture);
+    let lit = settled(&mut renderer, &places.world, 12);
+    keep_image("portal light picture.png", &lit);
+    let (left, right) = ground_before(&places, &lit);
+    let sum = |c: [f32; 3]| c[0] + c[1] + c[2];
+    let hue = |c: [f32; 3]| (c[0] - c[2]) / sum(c).max(1.0);
+    // The red wall shows on one side of the opening and the blue on the other, and the ground before each side
+    // leans to its colour, though it sees both: with one colour, both sides are alike (above).
+    assert!(sum(left) > 300.0 && sum(right) > 300.0, "lit: {left:?} {right:?}");
+    assert!((hue(left) - hue(right)).abs() > 0.05, "each side leans to its own colour: {left:?} {right:?}");
+}
+

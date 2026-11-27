@@ -366,6 +366,9 @@ pub struct Pipelines {
     pub portal_depth_over: vk::Pipeline,
     /// Lays the water's and glass's depth, drawn after the far sides, over the depth the passes after read.
     pub portal_depth_nearer: vk::Pipeline,
+    /// What a lit Portal's far side shows, read into its picture and its
+    /// average (see `portal_light`).
+    pub portal_light: vk::Pipeline,
     /// A plant drawn into each picture of its impostor's atlas: its colour
     /// and its normals (see `impostors`).
     pub impostor_bake: vk::Pipeline,
@@ -1418,6 +1421,7 @@ impl Pipelines {
                     c"portalDepthNearerFragment",
                 )
             })?,
+            portal_light: maker.compute("Portal light", portal, c"portalLightMain")?,
             mesh: meshlets
                 .as_ref()
                 .map(|modules| mesh_pipelines(maker, modules, (scene_formats, surface_formats)))
@@ -1626,6 +1630,7 @@ impl Pipelines {
             self.portal_depth,
             self.portal_depth_over,
             self.portal_depth_nearer,
+            self.portal_light,
             self.impostor_bake,
         ];
         let mesh = self.mesh.iter().flat_map(|m| {

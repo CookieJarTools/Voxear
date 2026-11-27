@@ -23,6 +23,7 @@ A Portal's opening stands on its Obj's position, on its sill, as wide as its Siz
 | **Open** | Closed, it shows its mist and nothing goes through |
 | **Mist** | The colour of the mist it shows while it is closed, or while its far side is not ready |
 | **View Distance** | **Project** uses the project's view distance; **Own** gives it its own **Distance**, in metres. Further off it shows its mist |
+| **Light** | How brightly its far side lights what stands in front of it: 1 as bright as the far side shows, 0 for none, up to 8 |
 
 ## Near and far
 
@@ -40,6 +41,27 @@ townGate.Portal.ViewDistance = 200f;   // its own; null for the project's again
 `portal.Shown` says how much of its far side shows through its mist, from 0 to 1.
 
 Tools set the project's with `vox editor call project.set key=portals.view_distance value=64`, and one Portal's as the Inspector does, with `field.set`: its field `view_distance` to `Own`, then `view_distance#2` to the distance.
+
+## Light through a Portal
+
+An open Portal lights what stands in front of it with what its far side shows. A gate from a dark hall onto a sunlit field lights the hall's floor in daylight; one into a burning dimension throws a red glow; one onto a night sky lights almost nothing. The light shines out of the opening's front, falls off over a few metres (four times the opening's size, between 6 and 20 m), casts shadows, and lights fog, so a hazy room shows the shafts coming through.
+
+The light is what the far side was seen to show: each time the camera sees the far side through the opening, the Portal takes a small picture of it, 16 by 16, leaving out anything standing in front of the opening. Until a Portal's far side has been seen it sheds no light, and once seen it keeps the light it was last seen with while the camera looks elsewhere. Closing it fades its light out in a few frames, and opening it again brings it back. The four nearest lit Portals within their view distance shed light at once.
+
+How it lights is the project's, in **Project Settings ▸ Graphics ▸ Portals ▸ Light**:
+
+- **Average**, the default: one colour, the average of what the far side shows.
+- **Picture**: the picture itself, each part of the opening its own colour. Red light falls from the side of the opening a fire shows in, and blue from the side showing sky. It costs a texture read for each lit Portal at each point it lights, in the fog too.
+- **Off**: Portals shed no light.
+
+Each Portal's **Light** sets how brightly: 2 for a rift whose glow fills a cave, 0 for a doorway that should stay dark. From a script:
+
+```csharp
+rift.Portal.Light = 2f;
+Portal.Lighting = highQuality ? PortalLighting.Picture : PortalLighting.Average;
+```
+
+Tools set them with `vox editor call project.set key=portals.light value=picture`, and one Portal's with `field.set`, its field `light`.
 
 ## What goes through
 
@@ -118,6 +140,7 @@ How much Portals may spend is the project's, in `voxear.toml`:
 | Draw Distance | How far ahead a far side is drawn, in metres, with the sky past it; 0 draws it as far as the world: 0 |
 | View Distance | How far from the opening a camera sees the far side of a Portal without its own, in metres: 96. Also in Project Settings ▸ Graphics ▸ Portals |
 | Dimension Distance | How close a camera comes to a Portal into another [[Dimensions|dimension]], as a dungeon's gate, before that dimension is loaded, in metres: 24. Only the nearest such Portal is open at a time. Also in Project Settings ▸ Graphics ▸ Portals |
+| Light | How far sides light what is in front of their Portals: `average`, `picture` or `off`. Also in Project Settings ▸ Graphics ▸ Portals |
 
 ```toml
 [portals]
@@ -129,6 +152,7 @@ water = true
 draw_distance = 0.0
 view_distance = 96.0
 dimension_distance = 24.0
+light = "average"
 ```
 
 ## In scene files
@@ -147,6 +171,7 @@ open = false
 passes = [0, 4]           # left out, every layer
 mist = [0.35, 0.55, 1.0]  # linear
 view_distance = 200.0     # its own; left out, the project's
+light = 2.0               # how brightly its far side lights; left out, 1
 
 [[obj]]
 id = 2
@@ -162,7 +187,7 @@ Each machine decides for itself what goes through, as it moves its own Objs, and
 
 ## Not done yet
 
-- Light and shadows from one side do not shine through to the other. A lamp near a Portal lights only its own side.
+- Light shines through as what the far side was seen to show, not as the far side's own lamps and sun reaching through: a lamp near a Portal lights only its own side, and the far side's sun casts no shadows of what stands on the near side's ground. A far side never seen sheds no light.
 - Sound does not carry through.
 - A body resting part-way through, such as a crate left in the opening, collides only on the side its middle is on.
 - Particles, smoke, glass, grass on a Terrain and the sea are not drawn on a far side. The water of Block Worlds is.

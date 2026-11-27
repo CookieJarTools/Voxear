@@ -42,6 +42,9 @@ static const float VOXEL_GRASS_LEAN = 0.2;
 static const float VOXEL_SWAY_MOST = 2.0;
 // How far a voxel's shadow is traced towards the sun, in metres.
 static const float VOXEL_SHADOW_REACH = 64.0;
+// A walk's footprint, in voxels, that takes every brick as solid, glass and all: the coarse rays'.
+static const float VOXEL_BRICKS_SOLID = 1e6;
+
 // How much coarser a lamp's shadow ray walks for each metre it goes, in metres of footprint.
 static const float VOXEL_LAMP_COARSENING = 0.06;
 // How brightly a voxel glowing at its brightest shines, times its colour.
@@ -284,8 +287,9 @@ bool voxelSwayedBrick(uint* bits, int3 b, float3 o, float3 d, float t, int axisI
 }
 
 // Walks the ray from `o` along `d` (both in the volume's voxels, `o` from its corner) to `tMax` voxels. A voxel is
-// `foot0 + t * footScale` voxels to a pixel at distance `t`, which picks the level it stops at.
-bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0, float footScale, out VoxelHit hit)
+// `foot0 + t * footScale` voxels to a pixel at distance `t`, which picks the level it stops at. The glass kept is the
+// first entered from what isn't glass: a walk `fromGlass`, started inside glass, keeps the next glass past it.
+bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0, float footScale, out VoxelHit hit, bool fromGlass = false)
 {
     hit = (VoxelHit)0;
     hit.axis = -1;
@@ -315,6 +319,7 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
     float time = push.frame->time;
     int lastBrick = -1;
     uint sway = 0;
+    bool inGlass = fromGlass;
     for (int i = 0; i < VOXEL_MOST_STEPS; i++)
     {
         if (t >= tExit)
@@ -322,6 +327,8 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
             hit.steps = i;
             return false;
         }
+        bool wasInGlass = inGlass;
+        inGlass = false;
         // A ray going back along an axis is in the cell below a boundary it lies exactly on: else one starting on the
         // corner of two sectors goes back and forth between them without moving on.
         float3 p = o + d * t;
@@ -344,8 +351,9 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
             hit.cell = c;
             hit.brick = brick;
             hit.steps = i;
-            // A brick holding glass is walked voxel by voxel however coarse the walk, so light passes its glass.
-            bool glassy = (bits[19] & VOXEL_SEE_THROUGH) != 0u;
+            // A brick holding glass is walked voxel by voxel however coarse the walk, so light passes its glass; but
+            // not by the coarse rays, which take every brick as solid.
+            bool glassy = (bits[19] & VOXEL_SEE_THROUGH) != 0u && foot < VOXEL_BRICKS_SOLID;
             if (foot >= 8.0 && !glassy)
             {
                 hit.level = 2;
@@ -390,12 +398,13 @@ bool voxelTrace(VoxelVolume volume, float3 o, float3 d, float tMax, float foot0,
                         hit.level = 0;
                         return true;
                     }
-                    if (hit.glassT < 0.0)
+                    if (hit.glassT < 0.0 && !wasInGlass)
                     {
                         hit.glassT = t;
                         hit.glassAxis = axis;
                         hit.glassColour = (volume.palette[place] & 0xFFFFFFu) | (kind << 24);
                     }
+                    inGlass = true;
                 }
                 size = 1;
             }
@@ -465,8 +474,8 @@ float voxelRingSkip(float4 outer, float4 hole, float3 o, float3 d, inout float f
 }
 
 // The nearest voxel of any volume along the ray from `from` along `d` (in the world), starting `start` metres out
-// and going no further than `reach`. `foot0` and `footScale` are as voxelTrace's, in metres.
-bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, float reach, float foot0, float footScale, out VoxelHit nearest)
+// and going no further than `reach`. `foot0`, `footScale` and `fromGlass` are as voxelTrace's, in metres.
+bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, float reach, float foot0, float footScale, out VoxelHit nearest, bool fromGlass = false)
 {
     nearest = (VoxelHit)0;
     nearest.metres = reach;
@@ -499,7 +508,7 @@ bool voxelsTrace(VoxelVolumes* volumes, float3 from, float3 d, float start, floa
             o += dv * skip;
             o[axis] = edge;
         }
-        bool met = voxelTrace(volume, o, dv, far - skip, (foot0 + (start + skip * volume.voxel) * footScale) / volume.voxel, footScale, hit);
+        bool met = voxelTrace(volume, o, dv, far - skip, (foot0 + (start + skip * volume.voxel) * footScale) / volume.voxel, footScale, hit, fromGlass);
         nearest.steps += hit.steps;
         if (hit.glassT >= 0.0 && start + (skip + hit.glassT) * volume.voxel < glass.glassMetres)
         {
@@ -906,7 +915,7 @@ void voxelCoarse(uint3 id: SV_DispatchThreadID)
     VoxelHit hit;
     // A footprint of eight voxels or more stops each walk at the first brick with anything in it. Each pixel's ray starts
     // a brick and a half short of it, in the bricks of the volume met, as a ring's bricks are larger.
-    bool found = voxelsTrace(volumes, voxelOrigin(frame, pixel), d, 0.0, 1e9, 1e6, 0.0, hit);
+    bool found = voxelsTrace(volumes, voxelOrigin(frame, pixel), d, 0.0, 1e9, VOXEL_BRICKS_SOLID, 0.0, hit);
     float voxel = found ? volumes->volumes[hit.volume].voxel : 0.0;
     volumes->coarse[id.y * volumes->coarseSize.x + id.x] = found ? max(hit.metres - 12.0 * voxel, 0.0) : 1e10;
 }
@@ -1332,27 +1341,14 @@ struct VoxelGlassOut
     float depth : SV_Depth;
 };
 
-// The see-through voxels in view, over everything opaque drawn behind them, as the depth pass found them: the first
-// each pixel's ray passed through, lit as a voxel is, and reflecting what is round it, in front of what is behind it
-// as much as it is solid. Drawn with its colour multiplied by how much of what is behind it hides, so it blends over
-// what is there.
-[shader("fragment")]
-VoxelGlassOut voxelGlass(VoxelVertex input)
+// How many panes of glass of voxels one behind another a pixel draws, nearest first.
+static const uint VOXEL_GLASS_LAYERS = 4;
+
+// A pane of glass of voxels the ray through `pixel` along `d` passed into `metres` out, across `axis` of `volume`, of
+// colour and kind `packed`: lit as a voxel is and reflecting what is round it, its colour and how much of what is
+// behind it it hides, as much as it is solid and what it reflects.
+float4 voxelGlassLit(Frame* frame, VoxelVolumes* volumes, float2 pixel, float3 d, float metres, int axis, VoxelVolume volume, uint packed)
 {
-    Frame* frame = push.frame;
-    float2 pixel = input.position.xy;
-    VoxelVolumes* volumes = voxelVolumes();
-    uint2 at = uint2(pixel);
-    uint4 glass = volumes->glassOn != 0u ? volumes->glass[at.y * volumes->seenWidth + at.x] : uint4(0);
-    if (glass.w != frame->frameIndex + 1)
-    {
-        discard;
-    }
-    float metres = asfloat(glass.x);
-    int axis = int(glass.y & 3u) - 1;
-    VoxelVolume volume = volumes->volumes[min(glass.y >> 4, volumes->count - 1)];
-    uint packed = glass.z;
-    float3 d = voxelRay(frame, pixel);
     float3 world = voxelOrigin(frame, pixel) + d * metres;
     float3 normal = voxelFace(volume, axis, d);
     float3 albedo = pow(float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0, 2.2);
@@ -1405,9 +1401,64 @@ VoxelGlassOut voxelGlass(VoxelVertex input)
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), metres);
         color = color * haze.a + haze.rgb * skyLook(frame) * hides;
     }
+    return float4(color, hides);
+}
+
+// The see-through voxels in view, over everything opaque drawn behind them: the first each pixel's ray passed
+// through, as the depth pass found it, then those behind it, up to VOXEL_GLASS_LAYERS, found by walking on from each
+// to the next glass in front of what is opaque there (`behind`, kept by voxelShadowFragment). Each is lit, laid over
+// those behind it, and the whole drawn with its colour multiplied by how much of what is behind them all hides, so it
+// blends over what is there, at the nearest's depth.
+[shader("fragment")]
+VoxelGlassOut voxelGlass(VoxelVertex input)
+{
+    Frame* frame = push.frame;
+    float2 pixel = input.position.xy;
+    VoxelVolumes* volumes = voxelVolumes();
+    uint2 at = uint2(pixel);
+    uint4 glass = volumes->glassOn != 0u ? volumes->glass[at.y * volumes->seenWidth + at.x] : uint4(0);
+    if (glass.w != frame->frameIndex + 1)
+    {
+        discard;
+    }
+    float nearest = asfloat(glass.x);
+    float metres = nearest;
+    int axis = int(glass.y & 3u) - 1;
+    uint index = min(glass.y >> 4, volumes->count - 1);
+    uint packed = glass.z;
+    float3 d = voxelRay(frame, pixel);
+    float3 eye = voxelOrigin(frame, pixel);
+    // Kept by the voxels' shadows pass; without it, the nearest glass alone.
+    float behind = volumes->shadowMask != NO_TEXTURE ? volumes->behind[at.y * volumes->seenWidth + at.x] : 0.0;
+    float footScale = voxelPixelAngle(frame, pixel) * volumes->lodScale;
+    float3 color = 0.0;
+    float through = 1.0;
+    for (uint layer = 0; layer < VOXEL_GLASS_LAYERS; layer++)
+    {
+        VoxelVolume volume = volumes->volumes[index];
+        float4 lit = voxelGlassLit(frame, volumes, pixel, d, metres, axis, volume, packed);
+        color += through * lit.rgb;
+        through *= 1.0 - lit.a;
+        if (through < 0.02 || layer + 1 == VOXEL_GLASS_LAYERS)
+        {
+            break;
+        }
+        // On from a quarter of a voxel inside this pane, to the next glass entered from what isn't glass.
+        VoxelHit next;
+        float start = metres + 0.25 * volume.voxel;
+        voxelsTrace(volumes, eye, d, start, behind, 0.0, footScale, next, true);
+        if (next.glassT < 0.0)
+        {
+            break;
+        }
+        metres = next.glassMetres;
+        axis = next.glassAxis;
+        index = next.glassVolume;
+        packed = next.glassColour;
+    }
     VoxelGlassOut o;
-    o.color = float4(color, hides);
-    o.depth = voxelDepthOf(frame, world);
+    o.color = float4(color, 1.0 - through);
+    o.depth = voxelDepthOf(frame, eye + d * nearest);
     return o;
 }
 
@@ -1480,8 +1531,14 @@ float4 voxelShadowFragment(VoxelVertex input) : SV_Target
     float lift;
     float near;
     float2 pixel = input.position.xy;
-    if (!voxelShadowPixel(frame, volumes, pixel, world, normal, metres, lift, near)
-        || dot(frame->sunColor, frame->sunColor) <= 0.0 || dot(normal, -frame->sunDirection) <= 0.0)
+    bool drawn = voxelShadowPixel(frame, volumes, pixel, world, normal, metres, lift, near);
+    // Where the pixel's ray passed glass of voxels, how far off what is opaque behind it is, for the glass pass.
+    uint2 at = uint2(pixel);
+    if (volumes->glassOn != 0u && volumes->glass[at.y * volumes->seenWidth + at.x].w == frame->frameIndex + 1)
+    {
+        volumes->behind[at.y * volumes->seenWidth + at.x] = drawn ? metres : 1e9;
+    }
+    if (!drawn || dot(frame->sunColor, frame->sunColor) <= 0.0 || dot(normal, -frame->sunDirection) <= 0.0)
     {
         return 1.0;
     }

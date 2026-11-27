@@ -77,6 +77,7 @@ mod tracks;
 mod payload;
 mod pipeline_cache;
 mod pipelines;
+pub mod portal_light;
 pub mod portals;
 mod post;
 mod post_passes;
@@ -222,7 +223,7 @@ pub use scene::{
     picture_sky_light, temperature_color,
 };
 pub use portals::{
-    CameraFollows, Carry, Portal, PortalFar, PortalPose, PortalSide, PortalTraveller, Straddles, ViewCarry,
+    CameraFollows, Carry, Portal, PortalFar, PortalLight, PortalPose, PortalSide, PortalTraveller, Straddles, ViewCarry,
 };
 pub use voxear_rhi::TextureId;
 pub use hot_reload::{CustomCode, compile_custom_shaders, engine_shader_dir};
@@ -2801,6 +2802,8 @@ struct View {
     warned_meshlets: bool,
     /// The views through the Portals it sees, kept from frame to frame.
     portals: Vec<PortalChild>,
+    /// The light its Portals shed, kept from frame to frame (see `portal_light`).
+    portal_glows: portal_light::PortalGlows,
     /// What stands still in its local lights' reach, whose shadows they keep.
     shadow_cache: shadow_cache::ShadowCache,
     /// AMD FSR 3.1's images, where FSR takes TAA's place, and those it no
@@ -3059,6 +3062,7 @@ impl View {
             ddgi_lit_by: None,
             warned_meshlets: false,
             portals: Vec::new(),
+            portal_glows: portal_light::PortalGlows::default(),
             shadow_cache: shadow_cache::ShadowCache::default(),
             fsr3: Default::default(),
             fsr3_retired: Default::default(),
@@ -3088,6 +3092,9 @@ impl View {
         }
         for child in self.portals {
             child.view.retire(frames);
+        }
+        for buffer in self.portal_glows.take_buffers() {
+            frames.retire(Retired::Buffer(buffer));
         }
         for buffers in self.buffers {
             let FrameBuffers {
@@ -3517,6 +3524,31 @@ impl View {
             post.global_illumination.enabled = false;
             post.fog.volumetric = false;
             extracted.ocean = None;
+        }
+        // The light its Portals' far sides shed into the camera's own place, each a picture kept from frame to
+        // frame where it shines as one (see `portal_light`); none in a view through a Portal.
+        let portal_quality = world.resource::<portals::PortalQuality>().copied().unwrap_or_default();
+        let mut portal_lit = Vec::new();
+        if portal.is_none() {
+            self.portal_glows.take(slot);
+            for lit in self.portal_glows.place(world, &mut extracted, &portal_quality, setup.frame_index) {
+                let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
+                let side = portal_light::PICTURE;
+                let desc = ImageDesc::new(side, side, vk::Format::R16G16B16A16_SFLOAT, usage);
+                let picture = fg.history_image(gpu, bindless, &format!("portal light {}", lit.entity.to_bits()), desc)?;
+                let fresh = fg.is_new(picture);
+                if let Some(light) = lit.light {
+                    if fresh {
+                        // Its picture went while it lit no more: it sheds nothing until its far side is seen again.
+                        self.portal_glows.forget(lit.entity);
+                        extracted.lights[light].color = [0.0; 3];
+                    }
+                    if portal_quality.light == portals::PortalLight::Picture {
+                        extracted.lights[light].cookie = fg.texture(picture).0;
+                    }
+                }
+                portal_lit.push((lit, picture, fresh));
+            }
         }
         // What the project's modules leave out is not drawn.
         let features = world.resource::<RenderFeatures>().copied().unwrap_or_default();
@@ -4850,6 +4882,21 @@ impl View {
         if let (Some(seen), Some(kept)) = (seen_depth, kept_depth) {
             lay_nearer_depth(fg, (pipelines, push), depth, kept, seen);
         }
+        // What each lit Portal's far side shows, now it is drawn, read into its picture and its average.
+        if let Some(sees) = sees.as_ref().filter(|_| !portal_lit.is_empty() && seen_depth.is_some()) {
+            let mut measured = Vec::new();
+            let mut reads = Vec::new();
+            for (opening, seen) in sees.seen.iter().enumerate() {
+                if let Some((lit, picture, fresh)) = portal_lit.iter().find(|(lit, ..)| lit.entity == seen.entity) {
+                    reads.push((opening as u32, measured.len() as u32, *picture, *fresh));
+                    measured.push(lit.entity);
+                }
+            }
+            if !reads.is_empty() {
+                let address = self.portal_glows.measures(gpu, slot, measured)?;
+                record_portal_light(fg, (pipelines, push, address), (hdr, depth, extent), &reads);
+            }
+        }
         // A view not seen for a while lets its buffers go with the view it was seen in.
         self.portals = children;
         if let Some(error) = failed {
@@ -5156,6 +5203,44 @@ fn table_copy(fg: &mut FrameGraph<'_>, buffers: &VsmBuffers) -> passes::TableCop
         to: (fg.import_buffer(&buffers.gpu_table), buffers.gpu_table.handle),
         size: buffers.table.size,
     }
+}
+
+/// Reads what each opening of `reads` shows of its far side in `hdr`, where
+/// it is the nearest thing in `depth`'s pixel, into its Portal's picture,
+/// and writes the picture's average to `address`, in turn (see
+/// `portal_light` and `portalLightMain`). Each read is its opening's number
+/// among the view's, its place among the averages, its picture, and
+/// whether that picture is new, holding nothing yet.
+fn record_portal_light(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push, address): (&Pipelines, Push, u64),
+    (hdr, depth, extent): (ImageId, ImageId, vk::Extent2D),
+    reads: &[(u32, u32, ImageId, bool)],
+) {
+    let pipeline = pipelines.portal_light;
+    let (hdr_texture, depth_texture) = (fg.texture(hdr).0, fg.texture(depth).0);
+    let mut images = vec![(hdr, ImageAccess::Sampled), (depth, ImageAccess::Sampled)];
+    images.extend(reads.iter().map(|(.., picture, _)| (*picture, ImageAccess::StorageWrite)));
+    let pushes: Vec<Push> = reads
+        .iter()
+        .map(|&(opening, at, picture, fresh)| Push {
+            frame: address,
+            texture: hdr_texture,
+            textures: [depth_texture, 0, 0, 0],
+            output: fg.storage(picture, 0).0,
+            size: [extent.width, extent.height],
+            level: opening,
+            list: at,
+            source: u32::from(fresh),
+            ..push
+        })
+        .collect();
+    fg.add_pass("Portal light", &images, &[], move |ctx| {
+        for push in &pushes {
+            passes::bind(ctx, pipeline, vk::PipelineBindPoint::COMPUTE, push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, 1, 1, 1) };
+        }
+    });
 }
 
 /// Copies the view's own depth into `kept`, as it is once its surfaces are

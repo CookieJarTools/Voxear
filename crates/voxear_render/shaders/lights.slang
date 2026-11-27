@@ -82,6 +82,39 @@ float3 cookieAt(Light light, float3 out)
     return textures[NonUniformResourceIndex(light.cookie)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0).rgb;
 }
 
+// What a rectangle light with a picture sheds on `position`, facing along `normal` (none, as in fog, for every way
+// alike): the picture's colours over 4 by 4 parts of the rectangle, each weighed by how much of the point's view it
+// fills and how squarely it faces each way, as a lit Portal's opening shows its far side (src/portal_light.rs); its
+// first column at the rectangle's -right end as its front sees it, its first row at the bottom. White for a light
+// without a picture.
+float3 rectanglePicture(Light light, float3 position, float3 normal)
+{
+    if (light.cookie == NO_TEXTURE)
+    {
+        return 1.0;
+    }
+    float3 up = lightUp(light);
+    float3 sum = 0.0;
+    float weights = 0.0;
+    for (uint j = 0; j < 4; j++)
+    {
+        for (uint i = 0; i < 4; i++)
+        {
+            float2 uv = (float2(i, j) + 0.5) / 4.0;
+            float3 part = light.position + light.right * ((0.5 - uv.x) * 2.0 * light.size.x) + up * ((uv.y - 0.5) * 2.0 * light.size.y);
+            float3 toPart = part - position;
+            float distanceSquared = max(dot(toPart, toPart), 1e-4);
+            toPart *= rsqrt(distanceSquared);
+            float facing = saturate(dot(-toPart, light.direction));
+            float receiving = dot(normal, normal) > 0.5 ? saturate(dot(toPart, normal)) : 1.0;
+            float weight = facing * receiving / distanceSquared;
+            sum += weight * textures[NonUniformResourceIndex(light.cookie)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0).rgb;
+            weights += weight;
+        }
+    }
+    return weights > 0.0 ? sum / weights : 0.0;
+}
+
 float3 shadePunctualLight(Surface s, Light light, float3 position)
 {
     float3 toLight = light.position - position;
@@ -228,7 +261,8 @@ float3 shadeRectangleLight(Surface s, Light light, float3 position)
     corners[1] = light.position + x - y;
     corners[2] = light.position + x + y;
     corners[3] = light.position - x + y;
-    return shadePolygon(s, light, corners, 4, 4.0 * halfSize.x * halfSize.y, position) * window;
+    float3 lit = shadePolygon(s, light, corners, 4, 4.0 * halfSize.x * halfSize.y, position) * window;
+    return lit * rectanglePicture(light, position, s.normal);
 }
 
 float3 shadeDiscLight(Surface s, Light light, float3 position)
@@ -851,6 +885,10 @@ LightInput localLightInput(Light light, float3 position, float3 normal, bool sof
     else if (light.kind == LIGHT_RECTANGLE || light.kind == LIGHT_DISC)
     {
         attenuation *= saturate(dot(-toLight, light.direction));
+        if (light.kind == LIGHT_RECTANGLE)
+        {
+            color *= rectanglePicture(light, position, normal);
+        }
     }
     if (light.profile != NO_TEXTURE)
     {

@@ -597,7 +597,8 @@ impl VoxelVolume {
         for stamp in &self.stamps {
             stamp_into(&mut builder, &mut palette, &mut places, stamp, per_metre);
         }
-        let packed = builder.pack(size, &palette);
+        // The ground's blades, tips, flowers and stems, as grass.
+        let packed = builder.pack_with_grass(size, &palette, Some(2..=12));
         (packed, palette)
     }
 }
@@ -1802,8 +1803,11 @@ pub(crate) fn record_glass(
         let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
         let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, ctx.extent(hdr), &color, Some(&target));
-        bind(ctx, pipelines.voxel_glass, vk::PipelineBindPoint::GRAPHICS, &push);
-        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+        // What gets through it, then what it sends to the eye.
+        for pipeline in [pipelines.voxel_glass_through, pipelines.voxel_glass] {
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+        }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }

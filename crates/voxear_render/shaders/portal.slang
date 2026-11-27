@@ -149,3 +149,67 @@ float portalDepthNearerFragment(FullOut input) : SV_Target0
     }
     return now;
 }
+
+// The light a Portal's far side sheds (src/portal_light.rs). One group reads the opening push.level at 16 by 16
+// points across it, the first at its bottom left corner as its front sees it: each where the opening is the nearest
+// thing in its pixel of the view's own depth (push.textures.x), from the picture as drawn (push.texture), and eased
+// into the Portal's picture (push.output), which keeps what is not seen now; nothing kept where push.source is 1, as
+// for a picture just made. The average of what is seen, and how much of the opening shows, go to the address in
+// push.frame, at push.list.
+groupshared float4 portalLightSums[256];
+
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void portalLightMain(uint3 id : SV_GroupThreadID, uint index : SV_GroupIndex)
+{
+    PortalQuad quad = buffers()->portalQuads[push.level];
+    float2 uv = (float2(id.xy) + 0.5) / 16.0;
+    // Between the corners as the view sees them, which keeps the perspective.
+    float4 clip = lerp(lerp(quad.corners[0], quad.corners[1], uv.x), lerp(quad.corners[3], quad.corners[2], uv.x), uv.y);
+    float4 seen = 0.0;
+    if (clip.w > 1e-4)
+    {
+        float3 ndc = clip.xyz / clip.w;
+        if (all(abs(ndc.xy) < 1.0) && ndc.z >= 0.0)
+        {
+            int2 at = int2((ndc.xy * 0.5 + 0.5) * float2(push.size));
+            float there = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(at, 0)).r;
+            float own = min(ndc.z, 1.0);
+            if (abs(there - own) <= max(own * 1e-2, 1e-6))
+            {
+                float3 colour = textures[NonUniformResourceIndex(push.texture)].Load(int3(at, 0)).rgb;
+                if (all(isfinite(colour)))
+                {
+                    seen = float4(clamp(colour, 0.0, 256.0), 1.0);
+                }
+            }
+        }
+    }
+    RWTexture2D<float4> picture = storageImagesRgba16f[push.output];
+    float4 kept = push.source != 0 ? 0.0 : picture[id.xy];
+    if (seen.w > 0.0)
+    {
+        kept = kept.w > 0.0 && all(isfinite(kept)) ? float4(lerp(kept.rgb, seen.rgb, 0.35), 1.0) : seen;
+    }
+    else if (!all(isfinite(kept)))
+    {
+        kept = 0.0;
+    }
+    picture[id.xy] = kept;
+    portalLightSums[index] = seen;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint stride = 128; stride > 0; stride >>= 1)
+    {
+        if (index < stride)
+        {
+            portalLightSums[index] += portalLightSums[index + stride];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (index == 0)
+    {
+        float4 sum = portalLightSums[0];
+        float4* averages = (float4*)push.frame;
+        averages[push.list] = float4(sum.w > 0.0 ? sum.rgb / sum.w : 0.0, sum.w / 256.0);
+    }
+}

@@ -284,8 +284,9 @@ fn an_endless_volumes_ground_made_on_the_gpu_is_the_ground_a_volume_makes_on_the
         }
     }
     // The volume made on the CPU is drawn a few hundred pixels otherwise from one run to the next where a ray grazes
-    // a blade of grass, and a ray worked out a little otherwise moves which: about 110 to 180 differ.
-    assert!(far * 100 < count, "{far} of {count} pixels differ by more than 24 levels");
+    // a blade of grass, and a ray worked out a little otherwise moves which: about 110 to 180 differed, and with the
+    // light through the blades, which sets a blade's sides further apart, about 330, as often brighter as darker.
+    assert!(far * 50 < count, "{far} of {count} pixels differ by more than 24 levels");
     let [r, g, b] = rgb_at(&endless, WIDTH / 2, HEIGHT / 2);
     assert!(g > r && g > b, "grass under the camera: {r} {g} {b}");
 }
@@ -2327,6 +2328,126 @@ fn a_sealed_room_of_voxels_is_dark_but_round_its_lamp_as_a_room_of_blocks_is() {
     assert!(red > blue * 3 / 2, "the lamp's light is warm: red {red} against blue {blue}");
 }
 
+#[test]
+fn foliage_seen_against_the_sun_glows_with_the_light_through_it() {
+    let Some(mut renderer) = renderer() else { return };
+    // A wood on Rolling Hills from 25 m up, looking down across it, towards the low sun in the west and away from it. Against the sun the foliage shows the sides the sun doesn't reach, lit by what scatters through the leaves
+    // and blades: brighter than the sky's light alone leaves them, measured against the foliage lit from behind.
+    let hills = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut shot = |yaw: f32, name: &str| {
+        let mut scene = with_trees(generated_view(hills.clone(), 8.0, 8.0, 25.0, 20.0));
+        let look = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(20f32.to_radians());
+        for (_, place) in scene.query::<(&Camera, &mut Transform)>() {
+            place.rotation = look;
+        }
+        let pixels = render(&mut renderer, &scene, 6);
+        keep_image(name, &pixels);
+        // The mean brightness of the green pixels, the foliage's.
+        let (mut sum, mut count) = (0i64, 0i64);
+        for y in (0..HEIGHT).step_by(2) {
+            for x in (0..WIDTH).step_by(2) {
+                let [r, g, b] = rgb_at(&pixels, x, y);
+                if g > r + 8 && g > b + 8 {
+                    sum += i64::from(r + g + b);
+                    count += 1;
+                }
+            }
+        }
+        assert!(count > 2000, "{name}: foliage in view: {count}");
+        sum as f32 / count as f32
+    };
+    let against = shot(-std::f32::consts::FRAC_PI_2, "foliage against the sun.png");
+    let behind = shot(std::f32::consts::FRAC_PI_2, "foliage with the sun behind.png");
+    eprintln!("foliage against the sun {against:.1}, with it behind {behind:.1}");
+    assert!(against > behind * 0.68, "against the sun {against:.1}, with it behind {behind:.1}");
+}
+
+/// A cube and a ball of milky crystal, each 1.5 m across, printed on flat ground, the low sun from the west, seen
+/// from the south a little above them: the picture, and where on it a point is.
+fn crystals(renderer: &mut Renderer, name: &str) -> (Vec<u8>, impl Fn(Vec3) -> (u32, u32)) {
+    let crystal = [236, 240, 246];
+    let mut settings = VoxelPrintSettings::default();
+    settings.materials = vec![VoxelPrintMaterial { colour: crystal, glass: 7, light: 0 }];
+    let print = VoxelPrint::from_voxels(
+        [64, 24, 24],
+        16,
+        Vec3::new(32.0, 0.0, 12.0),
+        vec![[crystal[0], crystal[1], crystal[2], 255]],
+        settings,
+        |c| {
+            let [x, y, z] = c.map(|a| a as i32);
+            let cube = x < 24;
+            let ball = {
+                let o = [x as f32 - 51.5, y as f32 - 11.5, z as f32 - 11.5];
+                o[0] * o[0] + o[1] * o[1] + o[2] * o[2] < 144.0
+            };
+            u8::from(cube || ball)
+        },
+    );
+    let mut scene = printed_from_above(Arc::new(print), 8.0);
+    let eye = Vec3::new(8.0, 3.6, 3.5);
+    let look = Quat::from_rotation_x(14f32.to_radians());
+    for (_, place) in scene.query::<(&Camera, &mut Transform)>() {
+        *place = Transform::new(eye, look, Vec3::ONE);
+    }
+    scene.insert_resource(PostProcess::neutral());
+    let pixels = render(renderer, &scene, 40);
+    keep_image(name, &pixels);
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let tan = (Camera::default().fov_y_for(aspect) * 0.5).tan();
+    let (forward, up) = (look * Vec3::Z, look * Vec3::Y);
+    let right = up.cross(forward);
+    let at = move |point: Vec3| {
+        let v = point - eye;
+        let (x, y) = (v.dot(right) / v.dot(forward) / (tan * aspect), v.dot(up) / v.dot(forward) / tan);
+        (((x + 1.0) * 0.5 * WIDTH as f32) as u32, ((1.0 - y) * 0.5 * HEIGHT as f32) as u32)
+    };
+    (pixels, at)
+}
+
+#[test]
+fn a_block_of_crystal_glows_on_its_sunlit_side_and_dims_away_from_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let (pixels, at) = crystals(&mut renderer, "crystals.png");
+    // The cube's south face, which the camera sees, the sun coming from the west: brighter near its west edge, where
+    // the sun comes into it through the least crystal, than near its east edge; and lit all over by what scatters in
+    // it, not dark as a face out of the sun.
+    let mean = |point: Vec3| {
+        let (x, y) = at(point);
+        let mut sum = 0;
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1), (2, 0), (0, 2), (2, 2), (1, 2), (2, 1)] {
+            sum += rgb_at(&pixels, x + dx, y + dy).iter().sum::<i32>();
+        }
+        sum / 9
+    };
+    let (west, east) = (mean(Vec3::new(6.15, 2.75, 7.25)), mean(Vec3::new(7.35, 2.75, 7.25)));
+    eprintln!("the cube's face: west {west}, east {east}");
+    assert!(west > east + 15, "brighter towards the sun: west {west}, east {east}");
+    assert!(east > 90, "lit through: east {east}");
+}
+
+#[test]
+fn a_flat_wall_of_voxels_has_no_lone_dark_pixels() {
+    let Some(mut renderer) = renderer() else { return };
+    // The sealed room lit by its lamp: its walls, floor and ceiling flat stone. A pixel far darker than all four
+    // beside it, where they are lit, is one neither voxel pass drew.
+    let pixels = sealed_voxel_room(&mut renderer, true);
+    keep_image("voxels lone dark pixels.png", &pixels);
+    let sum = |x: u32, y: u32| rgb_at(&pixels, x, y).iter().sum::<i32>();
+    let mut lone = Vec::new();
+    for y in 1..HEIGHT - 1 {
+        for x in 1..WIDTH - 1 {
+            let here = sum(x, y);
+            let beside = [sum(x - 1, y), sum(x + 1, y), sum(x, y - 1), sum(x, y + 1)];
+            let least = *beside.iter().min().unwrap();
+            if least > 45 && here * 2 < least {
+                lone.push((x, y));
+            }
+        }
+    }
+    assert!(lone.len() <= 2, "{} lone dark pixels, the first {:?}", lone.len(), &lone[..lone.len().min(8)]);
+}
+
 /// The frame's cost at 1920×1080 of a street of houses printed into Rolling
 /// Hills without its rivers, seen from 20 m up, with models
 /// standing among them: each pass and the whole frame the least of 60
@@ -3054,8 +3175,9 @@ fn far_from_its_obj(far: f32, tall: f32) {
     let near = render(&mut near_renderer, &scene, 3);
     keep_image(&format!("near its obj {far}.png"), &near);
     // Grass and flowers are placed by the voxel's place in the generator's world, which the offset moves, so the two
-    // are not the same pixel for pixel: the ground's shading is the same over squares of 20 pixels, and a streaked
-    // picture has many more pixels the same as the one beside them than as the one under them.
+    // are not the same pixel for pixel: the ground's shading is the same over squares of 20 pixels, within what the
+    // light through the blades and flowers varies with where they stand (two placements near the Obj differ as much),
+    // and a streaked picture has many more pixels the same as the one beside them than as the one under them.
     let block = |pixels: &[u8], bx: u32, by: u32| {
         let mut sum = [0i32; 3];
         for y in by * 20..by * 20 + 20 {
@@ -3070,7 +3192,7 @@ fn far_from_its_obj(far: f32, tall: f32) {
     let differ = blocks
         .filter(|&(bx, by)| {
             let (a, b) = (block(&made, bx, by), block(&near, bx, by));
-            (0..3).any(|i| (a[i] - b[i]).abs() > 12)
+            (0..3).any(|i| (a[i] - b[i]).abs() > 18)
         })
         .count();
     let runs = |pixels: &[u8]| {

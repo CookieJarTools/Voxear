@@ -34,6 +34,10 @@ pub struct Portal {
     /// metres; `None` for the project's ([`PortalQuality::view_distance`]).
     /// Further off it shows its mist, and nothing of its far side is drawn.
     pub view_distance: Option<f32>,
+    /// How brightly its far side lights what stands in front of it: 1 as
+    /// bright as the far side shows through it, 0 for no light (see
+    /// `portal_light`), as [`PortalQuality::light`] lets it.
+    pub light: f32,
 }
 
 impl Component for Portal {}
@@ -47,6 +51,7 @@ impl Default for Portal {
             passes: u32::MAX,
             mist: Vec3::new(0.35, 0.55, 1.0),
             view_distance: None,
+            light: 1.0,
         }
     }
 }
@@ -542,6 +547,25 @@ pub struct PortalQuality {
     /// metres. Only the nearest such Portal within it is open at a time, so
     /// no more than one such dimension is ever loaded.
     pub dimension_distance: f32,
+    /// How Portals' far sides light what stands in front of them.
+    pub light: PortalLight,
+}
+
+/// How an open Portal's far side lights the place in front of it (see
+/// `portal_light`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PortalLight {
+    /// Not at all.
+    Off,
+    /// In one colour, the average of what its far side shows: a door onto a
+    /// sunny field lights the room in front of it in daylight.
+    #[default]
+    Average,
+    /// In what its far side shows, each part of the opening its own colour:
+    /// the sky's blue from the top of the opening, a fire's red from beside
+    /// it. Costs a texture read for each light at each lit point, in the fog
+    /// too.
+    Picture,
 }
 
 impl Default for PortalQuality {
@@ -555,6 +579,7 @@ impl Default for PortalQuality {
             draw_distance: 0.0,
             view_distance: 96.0,
             dimension_distance: 24.0,
+            light: PortalLight::Average,
         }
     }
 }

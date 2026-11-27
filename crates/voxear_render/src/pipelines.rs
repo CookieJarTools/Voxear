@@ -241,6 +241,8 @@ pub struct Pipelines {
     pub voxel_lamp_shadows: vk::Pipeline,
     /// The voxels' see-through voxels over everything opaque.
     pub voxel_glass: vk::Pipeline,
+    /// The glass of voxels' first pass: what is behind it, multiplied by what of each colour gets through.
+    pub voxel_glass_through: vk::Pipeline,
     /// The light kept round the camera for the voxels: what lets it through each cell, and a step of spreading it.
     pub voxel_light_cells: vk::Pipeline,
     /// The sun's shadows of the voxels round the camera, from above, for fog, particles and water.
@@ -248,6 +250,7 @@ pub struct Pipelines {
     pub voxel_light_sky: vk::Pipeline,
     pub voxel_light_spread: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
+    pub voxel_world_spread: vk::Pipeline,
     pub voxel_world_columns: vk::Pipeline,
     pub voxel_world_tops: vk::Pipeline,
     pub voxel_world_trees: vk::Pipeline,
@@ -363,6 +366,9 @@ pub struct Pipelines {
     pub portal_depth_over: vk::Pipeline,
     /// Lays the water's and glass's depth, drawn after the far sides, over the depth the passes after read.
     pub portal_depth_nearer: vk::Pipeline,
+    /// What a lit Portal's far side shows, read into its picture and its
+    /// average (see `portal_light`).
+    pub portal_light: vk::Pipeline,
     /// A plant drawn into each picture of its impostor's atlas: its colour
     /// and its normals (see `impostors`).
     pub impostor_bake: vk::Pipeline,
@@ -1091,6 +1097,7 @@ impl Pipelines {
             voxel_light_sky: maker.compute("Voxel light sky", voxels, c"voxelLightSky")?,
             voxel_light_spread: maker.compute("Voxel light spread", voxels, c"voxelLightSpread")?,
             voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
+            voxel_world_spread: maker.compute("Voxel world spread", voxel_world, c"voxelWorldSpread")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
             voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
@@ -1144,8 +1151,16 @@ impl Pipelines {
                 depth_format: Some(DEPTH_FORMAT),
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
-                blend: Blend::Premultiplied,
+                blend: Blend::Additive,
                 ..GraphicsPipelineDesc::new("Glass (voxels)", voxels, c"voxelVertex", c"voxelGlass")
+            })?,
+            voxel_glass_through: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Filter,
+                ..GraphicsPipelineDesc::new("Glass through (voxels)", voxels, c"voxelVertex", c"voxelGlassThrough")
             })?,
             voxel_shadows: graphics(&GraphicsPipelineDesc {
                 color_formats: &[crate::voxel_volume::SUN_SHADOW_FORMAT],
@@ -1406,6 +1421,7 @@ impl Pipelines {
                     c"portalDepthNearerFragment",
                 )
             })?,
+            portal_light: maker.compute("Portal light", portal, c"portalLightMain")?,
             mesh: meshlets
                 .as_ref()
                 .map(|modules| mesh_pipelines(maker, modules, (scene_formats, surface_formats)))
@@ -1544,10 +1560,12 @@ impl Pipelines {
             self.voxel_shadows,
             self.voxel_lamp_shadows,
             self.voxel_glass,
+            self.voxel_glass_through,
             self.voxel_light_cells,
             self.voxel_sun_map,
             self.voxel_light_sky,
             self.voxel_light_spread,
+            self.voxel_world_spread,
             self.voxel_world_columns,
             self.voxel_world_tops,
             self.voxel_world_trees,
@@ -1612,6 +1630,7 @@ impl Pipelines {
             self.portal_depth,
             self.portal_depth_over,
             self.portal_depth_nearer,
+            self.portal_light,
             self.impostor_bake,
         ];
         let mesh = self.mesh.iter().flat_map(|m| {

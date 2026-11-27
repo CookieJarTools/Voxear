@@ -75,6 +75,18 @@ impl Builder {
     /// Packs the voxels within `size` (in voxels, from the corner at 0) for
     /// the GPU, with `palette`'s colours averaged into each brick's.
     pub fn pack(&self, size: [u32; 3], palette: &[[u8; 4]]) -> Packed {
+        self.pack_with_grass(size, palette, None)
+    }
+
+    /// As [`Builder::pack`], marking a brick whose voxels are all of the
+    /// palette places `grass` (a ground's blades and flowers) as grass, as
+    /// the GPU marks one: it leans in the wind and takes light through it.
+    pub fn pack_with_grass(
+        &self,
+        size: [u32; 3],
+        palette: &[[u8; 4]],
+        grass: Option<std::ops::RangeInclusive<u8>>,
+    ) -> Packed {
         let sector_count = size.map(|a| (a.div_ceil(SECTOR as u32) as i32).max(1));
         let count = (sector_count[0] * sector_count[1] * sector_count[2]) as usize;
         let mut sectors = vec![0u32; count * SECTOR_WORDS];
@@ -119,6 +131,7 @@ impl Builder {
                 let mut sum = [0u32; 3];
                 let mut counted = 0u32;
                 let mut kinds = 0u32;
+                let mut all_grass = grass.is_some();
                 words[18] = materials.len() as u32;
                 for (index, &cell) in cells.iter().enumerate() {
                     if cell == 0 {
@@ -129,6 +142,7 @@ impl Builder {
                     let group = (x >> 1) + 4 * ((y >> 1) + 4 * (z >> 1));
                     words[16 + (group >> 5)] |= 1 << (group & 31);
                     materials.push(cell - 1);
+                    all_grass &= grass.as_ref().is_some_and(|places| places.contains(&(cell - 1)));
                     let colour = palette.get(usize::from(cell - 1)).copied().unwrap_or([200, 200, 200, 255]);
                     for a in 0..3 {
                         sum[a] += u32::from(colour[a]);
@@ -142,6 +156,7 @@ impl Builder {
                 words[19] &= !(GLOWS | SEE_THROUGH);
                 words[19] |= if kinds & 0xF0 != 0 { GLOWS } else { 0 };
                 words[19] |= if kinds & 0x0F != 0 { SEE_THROUGH } else { 0 };
+                words[19] |= if all_grass && counted > 0 { SWAY_GRASS } else { 0 };
                 bricks.extend_from_slice(&words);
             }
         }
@@ -198,6 +213,8 @@ pub const SEE_THROUGH: u32 = 1 << 8;
 /// `shaders/voxels.slang`). A brick with ground or wood in it stays still;
 /// one of grass and flowers leans from its foot, as the GPU marks it.
 pub const SWAY_LEAVES: u32 = 2 << 25;
+/// The mark of a brick of grass and flowers alone, which leans from its foot.
+pub const SWAY_GRASS: u32 = 1 << 25;
 
 /// A volume's voxels packed for the GPU.
 #[derive(Clone, Debug, Default, PartialEq)]

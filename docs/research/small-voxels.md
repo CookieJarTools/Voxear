@@ -1286,13 +1286,41 @@ Since, the same day:
     against the sky never showed. The glass pass is now after the sky.
   Street, least of 60, three runs: the glass pass 0.165 → 0.30 ms, the voxels' shadows 2.45 → 2.51 ms; the frame
   about 0.1–0.2 ms more, within what another session on the GPU moved it.
+- **Lone black pixels on flat walls, found.** About 1,500 in a 640 × 360 view of the lit stone room: neither the
+  walk nor the light. The depth pass and the lit pass work the same depth out by the same sum in two shaders compiled
+  apart, which the GPU can round a step or two apart; the lit pass, tested nearer or equal, then lost to its own depth
+  pass. It now writes its depth 16 steps of the float nearer (`voxelLitDepth`), some 15 µm at 10 m.
+- **Light through foliage**, as a random walk in the leaves would scatter it, done the way the shadows are: the
+  voxels' shadows pass, for a pixel of foliage (a brick of leaves, or of grass and flowers), walks towards the sun
+  through foliage voxel by voxel, counting them (`throughFoliage` on `voxelTrace`), stopped only by what isn't foliage
+  or past ten; the mask's red is 0.6 to the power of the count. The lit pass adds, on the sides the sun doesn't light
+  and more looking towards the sun, the voxel's colour times that light, deepened by its colour once for each voxel
+  passed (`voxelFoliageScatter`); the face's own sunlight stays as it was, straight only where nothing was between.
+  It fades with distance, leaves from 32 to 64 m, grass and flowers from 12 to 24 m: taken everywhere, it brightened
+  a far meadow by two thirds and a far wood by a third, while coarser rings hold their grass in bricks with the
+  ground, which can't be told for foliage, and their leaf voxels, each as large as a few of full detail's, fill a
+  crown so densely that counting the light through in metres darkened them further; the tones at the rings' edge
+  parted either way. Against the low sun a wood's foliage went from 0.57 to 0.73 as bright as seen with the sun
+  behind. Fixed-size volumes built on the CPU now mark bricks of their ground's grass and flowers alone as the GPU
+  does (`pack_with_grass`), so their grass takes it too, and leans in the wind.
+- **Glass as a body.** A pane is measured from where the ray goes in to where it leaves (`glassOut`, from the same
+  walk that finds the next pane); a quarter metre hides as much as its colour is solid, so the density is
+  −4 ln(see/16) a metre. Up to four places along the ray inside, one for each two voxels, jittered per pixel and frame,
+  each walk towards the sun through the glass for how much of the sun gets there; what each stretch scatters, every
+  way and more towards the sun, is let out by the glass before it. A cube of milky crystal (7 of 16 see-through) seen
+  side-on to the sun is 520 bright at its sunlit edge to 310 at the other; on master 303 and 300. What is behind
+  takes its colour, the thicker the more (transmission `through^(1 + 1.5 (1 − hue))` per colour), in a first pass with
+  the filter blend (`Glass through (voxels)`); the second adds the glass's light. Scalar blending alone left the sky
+  behind a red pane bluish white.
+- **Cost**, the street of houses at 1080p, least of 60 frames: the frame from 9.16 to 10.31 ms with post off,
+  14.07 to 14.97 with the GI; glass 0.30 to 1.03 ms (its samples and two passes), voxel shadows 2.51 to 3.45 ms (the
+  walk through foliage); the opaque pass unchanged at 1.1 ms.
 
 Not done:
 
 - **Glass**: past four panes in a pixel, what is behind shows untinted.
-- **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
-  commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
-  walk's, not the light's.
+- **A black line along the far horizon** of a volume of flat ground, behind everything, seen from a metre or two up
+  (`crystals` in the tests); there on master as well.
 
 ## Stage 5, distance in rings (2026-11-26)
 
@@ -1778,6 +1806,50 @@ Chambers, and without its biomes' rock layers. Its rivers were already laid in.
 
   Making a column is about 5 ms of the GPU's time where it was 0.5 ms. Most of that is the overhangs' steepness: the
   Realm's height program run four more times for every voxel column.
-- **Not yet.** The steepness is worked out for each voxel column. A world of blocks works it out on a grid four
-  columns apart and reads between; done the same way on the GPU and the CPU, making a column would cost about a
-  sixteenth as much. Raised Land, Fins and Roof still leave the Volume out.
+- **Not yet.** Raised Land, Fins and Roof still leave the Volume out. The steepness is now worked out four columns
+  apart (below).
+
+## The Realm's ground at its old speed (2026-11-27)
+
+The Realm's window took 100–110 s round a still camera where it took 10 s before its Volume ran on the GPU.
+
+- **The steepness four columns apart.** The Overhangs node pushes only steep ground, and its mask of where the
+  ground is steep reads the generator's height at four places round each column: four more runs of the Realm's
+  height program a column. As a world of blocks does, the GPU now works the mask out at every fourth voxel column
+  each way and reads between (`GpuSpread`, a program of its own run by a pass before the columns'), and so does the
+  CPU's ground for collision, rays and navigation (`solid.rs`, four by four through `Volume::carried_grid`). Both
+  read between the same four columns, to the bit. The program reads its painted maps where the generator's program
+  keeps them, not from a copy of its own. Pictures of the spires, the Realm's summit and its cliffs are the same
+  crop for crop: of the summit's 2 million pixels, 8 differ by more than 30 levels of 255.
+
+  ![The Realm's summit, its steepness worked out at every column (left) and four columns apart (right)](../images/small-voxels/realm-steep-grid.webp)
+- **Where the time went.** One column a pass costs much the same however little work it is: the pass waits on
+  the longest program a thread runs, not on how many threads run it. With the mask apart, making a column went from
+  3.7 to 2.9 ms. The window was slow because a Volume in a volume hundreds of metres tall was made one column a
+  pass, to keep each pass short. While loading, nothing is drawn, so a Volume is now made sixteen columns a pass:
+  about 4.4 ms a pass, 0.28 ms a column. In play it is still made one column a pass in the finest ring.
+- **Each place a program runs from is a copy of it.** A pass that runs the generator's program from four places
+  holds four copies of its steps once compiled. Running the mask's program at a tree's foot from four places side
+  by side grew the compiled passes by 580 MB of the GPU's memory and made the columns 80 times slower. Now both the
+  four corners and the five places round a tree's foot run in a loop of one: the passes are 260 MB smaller than
+  before this change.
+- **Cost on the Realm** (1920×1080, reach 128 m in rings to 2 km; least of 60 frames, the GPU shared with the
+  editor):
+
+  | | Before | After |
+  |---|---|---|
+  | Window made, spires | 99–103 s | 29 s |
+  | Window made, summit | 109 s | 33 s |
+  | Making a column, one a pass | 3.7 ms | 2.9 ms |
+  | Making a column, sixteen a pass | | 0.28 ms |
+  | Frame | 12.5 ms | 12.5 ms |
+  | GPU memory after the passes compile | 2.0 GB | 1.7 GB |
+
+- **The frame's rise is what it shows.** Against the Realm before its Volume ran on the GPU, at the same place
+  and in the same run's conditions, the voxel passes take 1.2 ms more (9.9 → 11.1 ms of passes): the voxel sun map
+  0.34 ms, Opaque 0.39 ms and Depth 0.36 ms. Before, the view held none of its spires and the ground was its height
+  made solid; now four spires stand in it, casting long shadows the sun map draws, and the rays walk the ground the
+  overhangs moved. Nothing is being made in those frames, and working the steepness out apart changes none of it.
+  Measured again side by side, the frame is 11.7 ms before and 12.5–13.6 ms now, not 9.8 and 14.4: the GPU is
+  shared with other work, and the frame, the least of 60, moves by a millisecond or more from run to run.
+

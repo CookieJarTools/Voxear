@@ -2345,9 +2345,15 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
   draw_distance` cuts. A Portal in GrownPlants seen from 26 m and 60 m at 720p costs 3.6 ms and 1.8 ms; with
   its view distance short of the camera it shows its mist and the frame costs what it would without it. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
-  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
-  bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
-  part-way through, Portals to other levels.
+  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Light through
+  Portals (`portal_light`, `[portals] light`, each Portal's **Light**, `Portal.Light`, `Portal.Lighting`): an open
+  Portal is a shadowed rectangle light over its opening, shining what its far side was last seen to show, read
+  each frame its far side is drawn into a 16 by 16 picture where nothing stands before the opening; **Average**
+  shines the picture's average, **Picture** the picture itself, each point weighing 4 by 4 parts of it by how
+  much light each sends it, in the fog too; it fades as the Portal closes. Tests: shaded ground before a Portal
+  onto glowing walls lit and dark again once it closes, red and blue walls leaning each side of the ground to its
+  own colour. Still to come: bringing a far side in an endless world under +1.5 ms, the far side's own lamps and
+  sun shining through, shadows and sound through Portals, bodies resting part-way through, Portals to other levels.
 - **Dimensions (in progress).** Built, in the engine: worlds of their own in the one game, each with its own Block
   Worlds, sky, sun, post-processing and weather, at coordinates that may be another's. An Obj is in its root's
   dimension (`InDimension`), the level's with none; a `.dimension` asset is a scene's Objs and lighting under a
@@ -4673,8 +4679,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   where read (28 slots of 48), a Volume may carry 12 numbers, and a tall volume makes caves only in each column's
   band (a device lost before). Endless volumes are made round the camera looked through, not the first. The
   Realm's rivers were already cut in, and ground 64 km from the Obj is drawn as near it. Cost: frame 9.8 → 14.4 ms,
-  a column about 5 ms of GPU time, the window 10 → 110 s. Next: the overhangs' steepness worked out four columns
-  apart and read between, as a world of blocks does.
+  a column about 5 ms of GPU time, the window 10 → 110 s. Since (2026-11-27): the overhangs' steepness is worked
+  out four columns apart and read between, on the GPU and for collision alike, as a world of blocks does; a Volume
+  is made sixteen columns a pass while loading (0.28 ms a column), so the Realm's window comes in 29–33 s, not
+  100–110; the generator's program runs from one place in each pass, 260 MB less of the GPU for the compiled
+  passes. The same picture, crop for crop. The frame's rise is the spires and their shadows in view: 1.2 ms of
+  voxel passes, 11.7 → 12.5–13.6 ms measured side by side.
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.
@@ -4780,6 +4790,10 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - The GI's rays, and the sun's from what they meet, take the colour of glass of voxels they pass (2.70 → 2.80 ms).
   - Glass is drawn up to four panes deep, a pane kept whole and what is seen through it kept, and glass is drawn over
     the sky. The glass pass 0.165 → 0.30 ms on the street.
+  - Light through foliage: leaves, grass and flowers of voxels take the sun through the foliage between, so crowns
+    glow against the sun and are softly lit inside. Glass is a body: thicker is cloudier, and milky crystal glows on its
+    sunlit side. Lone black pixels on flat walls, a depth rounding between two passes, are gone. On the street the
+    glass pass 0.30 → 1.03 ms, voxel shadows 2.51 → 3.45 ms.
 - **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
   voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
   whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest

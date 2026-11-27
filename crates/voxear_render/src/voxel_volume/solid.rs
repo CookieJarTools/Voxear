@@ -36,6 +36,10 @@ const TREE_LOOK: f32 = 96.0;
 
 /// A generator's Volume where the GPU runs it: none where it leaves it out,
 /// as the ground is then its height made solid.
+/// How many voxel columns apart what a Volume's columns read between is made
+/// (`SPREAD_APART` in voxel_world.slang, as `Volume::carried_grid` makes it).
+const CARRIED_APART: i32 = 4;
+
 fn gpu_volume(generator: &super::VoxelGenerator) -> Option<voxear_terrain::generate::Volume<'_>> {
     generator.world.volume().filter(|_| super::endless::gpu_runs_volume(&generator.world))
 }
@@ -159,17 +163,34 @@ impl<'a> Ground<'a> {
 
     /// What a generator's Volume carries up voxel column (`x`, `z`): none
     /// without one.
+    ///
+    /// What changes slowly from column to column, as where the ground is
+    /// steep, is made at every fourth column each way and read between, as
+    /// the GPU's columns read it: so the columns are made four by four.
     fn carried(&mut self, x: i32, z: i32) -> Option<&Vec<f32>> {
-        let generator = self.volume.generator.as_ref()?;
-        let volume = gpu_volume(generator)?;
-        let v = self.voxel;
-        let (gx, gz) = ((x as f32 + 0.5) * v + generator.at[0], (z as f32 + 0.5) * v + generator.at[1]);
-        // Carried up from the ground without the rivers, as the GPU's columns carry it.
-        let bare = self.rivers.as_ref().map_or(&*generator.world, |rivers| rivers.bare());
-        Some(self.columns.entry((x, z)).or_insert_with(|| {
-            let height = bare.height_at(gx, gz);
-            volume.carried(&[gx], &[gz], &[height]).rows().iter().map(|row| row[0]).collect()
-        }))
+        if !self.columns.contains_key(&(x, z)) {
+            let generator = self.volume.generator.as_ref()?;
+            let volume = gpu_volume(generator)?;
+            let v = self.voxel;
+            let at = generator.at;
+            let place = |axis: usize, column: i32| (column as f32 + 0.5) * v + at[axis];
+            // Carried up from the ground without the rivers, as the GPU's columns carry it.
+            let bare = self.rivers.as_ref().map_or(&*generator.world, |rivers| rivers.bare());
+            let first = [x.div_euclid(CARRIED_APART) * CARRIED_APART, z.div_euclid(CARRIED_APART) * CARRIED_APART];
+            let side = CARRIED_APART as usize;
+            let heights: Vec<f32> = (0..side * side)
+                .map(|at| {
+                    let (i, j) = ((at % side) as i32, (at / side) as i32);
+                    bare.height_at(place(0, first[0] + i), place(1, first[1] + j))
+                })
+                .collect();
+            let carried = volume.carried_grid(first, [side, side], place, &heights);
+            for at in 0..side * side {
+                let key = (first[0] + (at % side) as i32, first[1] + (at / side) as i32);
+                self.columns.entry(key).or_insert_with(|| carried.rows().iter().map(|row| row[at]).collect());
+            }
+        }
+        self.columns.get(&(x, z))
     }
 
     /// Whether its generator's Volume may have ground standing apart from

@@ -1543,8 +1543,9 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
 }
 
 /// The way from `from` to `to` for something `height` metres tall that
-/// swims, opens doors and jumps, over the world of blocks `from` is in, of
-/// the dimension the game is seen from: how it ends, its corners in the
+/// swims, opens doors and jumps, over the world of blocks `from` is in (or
+/// the level's nav mesh, or an endless Voxel Volume's ground), of the
+/// dimension the game is seen from: how it ends, its corners in the
 /// world, and what it costs.
 pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathStatus, Vec<Vec3>, f32) {
     // A level of models: its baked nav mesh.
@@ -1572,7 +1573,27 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
         let found = find_path(&walked.nav, &ask);
         (found.status, found.corners.iter().map(|corner| walked.centre(*corner, walker)).collect(), found.cost)
     });
-    found.unwrap_or((PathStatus::None, Vec::new(), 0.0))
+    if let Some(found) = found {
+        return found;
+    }
+    // On an endless Voxel Volume's ground: by the ways found over it.
+    let current = voxear_scene::CurrentDimension::of(world);
+    let on_voxels = world
+        .query_ref::<(Entity, &voxear_render::VoxelVolume)>()
+        .into_iter()
+        .any(|(entity, volume)| volume.endless && dimension_of(world, entity) == current);
+    if on_voxels {
+        crate::voxel_nav::ensure(world);
+    }
+    let way = on_voxels.then(|| crate::voxel_ways::finder(world).way(world, current, from, to, height, NavAgent::default().radius));
+    match way.flatten() {
+        Some(way) => {
+            let length = way.corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+            let status = if way.complete { PathStatus::Complete } else { PathStatus::Partial };
+            (status, way.corners, length)
+        }
+        None => (PathStatus::None, Vec::new(), 0.0),
+    }
 }
 
 /// The place to stand nearest `at`, on its floor, no more than `reach`

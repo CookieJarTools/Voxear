@@ -248,7 +248,7 @@ An endless volume can spawn mobs on its ground round the player while the game p
 - **Near** and **Far**: they spawn no nearer the player than Near and no further than Far, in metres, on ground no steeper than 45°. Once the player is a fifth again further than Far from one, it is taken away, and another comes nearer.
 - **Within** and **Not Within**: Area Tags, as for trees: sheep set Within a Pasture tag spawn only in the pastures.
 
-The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume walks straight to where it's sent and wanders about where it was spawned, picking places it can stand. It doesn't yet find a way round what is in its way: one that can't get somewhere within 12 seconds gives up and picks somewhere else. A navigation of voxel ground can be put in the engine through `voxear_engine::voxel_ways`: every agent on a volume walks the ways it finds.
+The player is the game's camera, or the terrain's viewer where a game sets one. A Block Mob on a volume wanders about where it was spawned, picking places it can stand, and finds its way there round what is in its way, as a [[Nav Agents|Nav Agent]] does (see [Navigation](#navigation)). One that can't get somewhere within 12 seconds gives up and picks somewhere else.
 
 ```toml
 [[obj.voxel_volume.mobs]]
@@ -626,6 +626,17 @@ A character walking at 6 m/s over a generator's hills, through a wood of 100 tre
 
 Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Voxels.Raycast` meets the whole ground.
 
+## Navigation
+
+[[Nav Agents]] and [[Block Mobs]] find their way over an endless volume's ground as over a world of blocks: round walls, trees' trunks and pits, up banks and steps, and over shallow water, wading it. Nothing needs adding or baking. What they walk through and bump into is what collision finds: leaves, grass, flowers and cover are walked through.
+
+- **Cells.** The volume's voxels are gathered into cells about a quarter of a metre a side (four voxels at 16 a metre), a cell solid where any voxel in it is, and the places to stand are worked out from the cells as they are from a world's blocks. An agent steps up 45 cm and drops 2 m at most, and its way keeps its middle about 40 cm from walls and trunks, so a doorway a metre wide is walked through and a gap of half a metre is not.
+- **Made round what walks.** Cells are made in the background in columns 8 m a side, only round each Nav Agent and Block Mob, 24 m each way, and along each way asked for, 96 m ahead, the nearest first. A way asked for further than its cells reach goes as far as they do and is found on from there as it is walked. One asked for where there are no cells yet goes straight there until they are made. Columns far from everything that walks are let go after 30 seconds.
+- **Water.** An open cell under the sea's level, or under a river's or a lake's water, is water: waded where it is shallow, and kept out of where it is too deep to stand in.
+- **Changes.** Carving, filling, digging, felling and what gives way make the cells again where they reach, within a few frames, and an agent's way is found again round them.
+
+A column of cells takes about 75 ms to make over a volume's own hills, a quarter of a second over a generator's rolling hills, and more in mountains with overhangs and caves: the cells round an agent just come into the world take one to four seconds, and until then it walks straight towards where it was sent. A way 25 m long is found in under a millisecond. [[Finding Ways from Scripts|`Navigation.FindPath`]] and `vox editor call navigation.path` find ways over the volume too.
+
 ## How it is drawn
 
 A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog.
@@ -669,7 +680,8 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - It isn't scaled with its Obj. One of a set size turns with its Obj, about its corner; an endless one doesn't turn. A view draws up to 64 volumes, a felled piece one each.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
 - An endless one made by a generator has no Cave Network halls yet. Its rivers' water doesn't flow into a pit carved beside it. Its sea is under the ground inland too, so a cave dug below the sea's level is under water; turn the volume's Sea off where there is no coast.
-- Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested, and its mobs don't find ways round what stands in their way. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
+- Every tree of a kind is one of four plants. A felled tree lying as a body isn't kept when the level is left: only one stamped back is. A felled piece waits about a second before it falls, while collision round it is made, and felling a tree takes a few tenths of a second on the CPU. Its crops can't be harvested. Grass blades short enough to stand wholly in the half-metre brick with their soil keep still in the wind.
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
+- Ways over a volume's ground aren't shown in the Scene view's Navigation gizmo, and aren't found through caves under the ground's lowest point in a column nor more than about 100 m up from it. An agent swims no deep water there and takes no Nav Links. Its way is found for something about 80 cm wide, so a wider one may brush walls and trunks, or stick in a gap narrower than it is; its way may run up to a quarter of a metre past the rim of a drop.
 - What gives way under its own weight is found by parts of half-metre bricks: a load is shared as stiffly as each join's thinnest voxels hold, but within a part of a brick it is one body. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
 - Edits, voxels set one at a time, cut grass, felled trees and fallen pieces aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.

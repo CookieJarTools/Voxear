@@ -1614,7 +1614,7 @@ mod tests {
 
 /// An endless Voxel Volume's solid voxels as physics asks for them: its
 /// ground, edits and trees' logs, as the CPU finds them.
-struct Solids(voxear_render::VoxelSolids);
+pub(crate) struct Solids(pub(crate) voxear_render::VoxelSolids);
 
 impl crate::physics::VoxelSolids for Solids {
     fn voxel(&self) -> f32 {

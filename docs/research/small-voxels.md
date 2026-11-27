@@ -1577,3 +1577,39 @@ the bodies' falls are not, as the physics library isn't bit-for-bit alike across
 
 - The prototype's output as printed, the reference pictures and the prototype beside the meadow reference are in
   the shared notes of the sessions that did this research (`small-voxels.md` and its folder).
+
+## Stage 7 on: ways over voxel ground (2026-11-26)
+
+Nav Agents and Block Mobs on an endless volume walked straight to where they were sent, through the `voxel_ways`
+seam left for this. `voxear_engine::voxel_nav` now fills it.
+
+- **Cells, walked as blocks.** The navigation of worlds of blocks (`voxear_nav`) already makes places chunk by chunk,
+  regions over them, a coarse search and tight corners, kept up on threads as chunks change; a `Walker` is made for
+  any size of block. So the voxels are gathered into cells about a quarter of a metre a side (4 voxels at 16/m),
+  each a block of a `BlockMap` of the navigation's own: solid where collision's `fill` finds any voxel in it or
+  within a quarter of a metre beside it, water where the sea or a river's water (`voxel_water_at`, read a metre
+  apart) stands over an open cell. Leaves, grass and cover are walked through, as collision has them.
+- **One cell wide.** A walker wider than a block stands only where every column under it is within half a block of
+  the corner's (`blocks::fits`); on ground of small voxels sloping at all, cells step a quarter of a metre every few
+  columns, and a three-cell walker could not leave the cell it stood on. So every agent is walked as one cell wide
+  and what is solid is made wider instead: a doorway a metre wide stays two cells open, a way keeps its middle
+  about 40 cm from walls and trunks, and the rim of a drop is walked up to a quarter of a metre past its edge.
+- **Made round what walks.** Columns of chunks 8 m a side, from a chunk under the column's lowest ground up to the
+  first chunk over its highest with nothing solid, within 24 m of each agent and along each way asked for (96 m
+  ahead), nearest first, three at once on threads of their own. A change to the volume (`changed_from` boxes)
+  makes the columns it reaches again; columns 48 m past every agent and unwanted for 30 s are let go.
+- **Measured** (release, 4 columns each, other sessions' builds running):
+
+  | Ground | A column | 49 columns round a new agent | A 25 m way |
+  |---|---|---|---|
+  | The volume's own hills | 75 ms (2 chunks) | 1.2 s | 0.17 ms |
+  | Rolling Hills | 0.23–0.43 s (2–3 chunks) | 4.1 s | 0.3 ms |
+
+  River water read for every column of cells took a Rolling Hills column to 0.85 s; read a metre apart, 0.28 s. A
+  chunk's fill is 45 ms on Rolling Hills and 650 ms in Alpine with overhangs and caves, so mountains are slower.
+- **Tests.** Engine lib `voxel_nav::tests`: a way round a wall, then round its other end once that is walled off
+  (the change made again); round a pit too deep to climb out of. `tests/voxel_mobs.rs`: a Block Mob on Rolling
+  Hills sent past a wall walks round an end and gets there. `Navigation.FindPath` and `navigation.path` go through
+  it too.
+- **Not yet.** Deep water swum, Nav Links, caves under a column's lowest ground, more than about 100 m of buildings
+  over it, the Navigation gizmo's squares, and agents as wide as they are.

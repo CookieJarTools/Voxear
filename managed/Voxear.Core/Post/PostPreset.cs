@@ -36,4 +36,7 @@ public enum PostPreset
 	SnowyVillage,
 	HighlandSummer,
 	EnchantedNight,
+
+	/// <summary>Abyss's: dim warm smoke, heavy vignette, colour fringes, grain, and a view that breathes and wavers.</summary>
+	Abyss,
 }

@@ -4849,6 +4849,28 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Measured: a voxel 17–19 bytes, a box 47, a print 65, a felled tree 134 bytes and 2.4 KB of snapshots, a
     house's corner blown in 2.4 KB and about 1.8 KB of snapshots.
   - Not yet: a client showing its own dig before the server's answer, volumes in other dimensions.
+- **An abyss: a second dimension of small voxels (2026-11-27).** The first game's other world, entered through a
+  Portal from the Realm: a dead plain of ash and broken ledges under a sky of smoke lit orange from behind, jagged
+  rocks hanging in the air to the horizon, embers and ash drifting, a low drone. Manual: An Abyss.
+  - **Voxel Volumes keep to their dimension.** A view draws only the volumes of the dimension it sees, and the light
+    round the camera is that dimension's. An endless volume in another dimension is made round where the nearest
+    Portal into it would take the camera, so its far side is there to see before anyone goes through.
+  - **Portal views draw at the size their seer drew at.** A dimension whose own post-processing draws at another
+    scale (native against balanced) lost the GPU through a Portal. The far side's voxels are walked only within
+    its opening: 2.7 ms where it was 6 ms at 1080p.
+  - **Floating rocks** (`[obj.voxel_volume.rocks]`, Inspector Floating Rocks): rocks of facets and tails, most
+    small and a few huge, hung over an endless volume's ground as a hash of their place says, each its own set-size
+    volume made on a thread, drifting and turning slowly, ash on top and seams that glow. The 32 that matter most
+    are drawn. Not yet: colliding with them, or sharing them in a networked game beyond each machine making the same.
+  - **Grain and Warp** in `[post]`: film grain strongest in the dark, and a view that slowly breathes and wavers.
+    The **Abyss** look (`look = "abyss"`, `PostPreset.Abyss`, `LightingSettings.Abyss`) sets the sky, sun, haze,
+    fringes, grain and warp together.
+  - Measured on an RTX 3070 at 1920 × 1080, the least of 28 frames on a GPU other sessions shared: 15.2 ms on the
+    abyss's plain with its rocks and the Portal back to the Realm in view; the Realm looking through the Portal 17.0
+    ms, of which the far side is 2.7 ms.
+  - Tests: a volume in another dimension drawn only where the camera sees it; rocks hung, drawn and taken away;
+    rocks hashed alike, shells with ash and seams, drifting about their middles; the look's settings and the GPU
+    record's layout; the Inspector's rows. Every Portal picture test passes with master's wait for shadow pages.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

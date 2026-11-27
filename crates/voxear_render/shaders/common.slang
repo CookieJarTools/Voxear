@@ -621,7 +621,17 @@ struct Post
     // 1 when the picture goes to a display image the encode pass then fits to the window (HDR, or SDR beside it),
     // which dithers in its place.
     uint displayImage;
-    uint lookPad;
+    // Film grain: how strong, how large its specks in pixels, how coloured; and the view's breathing and waver, as
+    // shares of the picture, and breaths a second (src/post.rs's Grain and Warp).
+    float grain;
+    float grainSize;
+    float grainColour;
+    float warpBreathing;
+    float warpWaver;
+    float warpSpeed;
+    float warpPad0;
+    float warpPad1;
+    float warpPad2;
     float4 lookValues[LOOK_VALUES];
 };
 

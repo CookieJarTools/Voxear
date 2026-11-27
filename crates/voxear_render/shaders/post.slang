@@ -638,6 +638,48 @@ float3 dither(float3 color, float2 pixel, uint frameIndex)
     return fromSrgb(toSrgb(color) + noise / 255.0);
 }
 
+// A whole-number hash of three numbers (pcg3d), for grain that has no pattern on any GPU.
+uint3 grainHash(uint3 v)
+{
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+// Where the picture is read from for `uv` while the view breathes and wavers: swelling and sinking about its middle
+// in a slow, uneven breath that never settles into a beat, and wavering in slow waves across it, more towards its
+// edges, as though seen through heat.
+float2 warped(float2 uv, Post post, float time, float aspect)
+{
+    float2 d = uv - 0.5;
+    float t = time * post.warpSpeed * 6.2831853;
+    float breath = sin(t) * 0.7 + sin(t * 0.37 + 1.3) * 0.3;
+    d *= 1.0 - post.warpBreathing * breath;
+    float edge = saturate(length(d * float2(aspect, 1.0)) * 1.6);
+    float w = t * 4.0;
+    float2 wave = float2(sin(uv.y * 9.0 + w + sin(uv.x * 4.0 + w * 0.3)), sin(uv.x * 7.0 - w * 0.8 + cos(uv.y * 5.0 - w * 0.2)));
+    d += wave * post.warpWaver * float2(1.0 / aspect, 1.0) * (0.35 + 0.65 * edge);
+    return d + 0.5;
+}
+
+// Film grain over a finished colour: specks `post.grainSize` pixels across, new each frame, grey or coloured, added
+// where the eye sees it, strongest in the shadows and mid-tones.
+float3 filmGrain(float3 color, float2 pixel, uint frameIndex, Post post)
+{
+    uint2 speck = uint2(pixel / max(post.grainSize, 1.0));
+    float3 noise = float3(grainHash(uint3(speck, frameIndex))) / 4294967295.0 - 0.5;
+    noise = lerp(noise.xxx, noise, post.grainColour);
+    float3 seen = toSrgb(saturate(color));
+    float strength = post.grain * 0.22 * (1.0 - 0.7 * smoothstep(0.35, 1.0, luminance(seen)));
+    return fromSrgb(saturate(seen + noise * strength));
+}
+
 // The composite and the finish may draw into part of the output (the
 // editor's Scene panel), so push.size holds where that part starts, to turn
 // output pixels back into pixels of the view's own images.
@@ -682,9 +724,19 @@ float4 compositeFragment(PostOut input) : SV_Target
     Frame* frame = push.frame;
     Post post = frame->post;
     float2 uv = input.uv;
+    float aspect = float(frame->viewport.x) / float(frame->viewport.y);
+    bool warping = post.warpBreathing > 0.0 || post.warpWaver > 0.0;
+    if (warping)
+    {
+        uv = warped(uv, post, frame->time, aspect);
+    }
 
     float3 color;
-    if (post.chromaticAberration > 0.0)
+    if (warping && post.chromaticAberration <= 0.0)
+    {
+        color = sampleLinear(push.textures.x, uv).rgb;
+    }
+    else if (post.chromaticAberration > 0.0)
     {
         float2 shift = (uv - 0.5) * post.chromaticAberration * 0.02;
         color = float3(sampleLinear(push.textures.x, uv + shift).r, sampleLinear(push.textures.x, uv).g, sampleLinear(push.textures.x, uv - shift).b);
@@ -731,11 +783,15 @@ float4 compositeFragment(PostOut input) : SV_Target
 
     if (post.vignette > 0.0)
     {
-        float aspect = float(frame->viewport.x) / float(frame->viewport.y);
         float2 d = (uv - 0.5) * float2(lerp(1.0, aspect, post.vignetteRoundness), 1.0);
         float corner = length(float2(lerp(0.5, 0.5 * aspect, post.vignetteRoundness), 0.5));
         float shade = pow(saturate(length(d) / corner), 1.0 + 4.0 * (1.0 - post.vignetteSmoothness));
         color *= 1.0 - post.vignette * shade;
+    }
+
+    if (post.grain > 0.0)
+    {
+        color = filmGrain(color, input.position.xy, frame->frameIndex, post);
     }
 
     color = saturate(color);

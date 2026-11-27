@@ -57,6 +57,12 @@ public sealed class PostSettings
 	/// <summary>Splits colours towards the screen's edges, as a cheap lens does. 0 is off.</summary>
 	public float ChromaticAberration;
 
+	/// <summary>Fine noise over the picture, as on film or a camera in the dark.</summary>
+	public readonly GrainSettings Grain = new();
+
+	/// <summary>The view slowly breathing and wavering, as through heat or unease.</summary>
+	public readonly WarpSettings Warp = new();
+
 	/// <summary>The scene drawn at a few pixels to the screen's many and enlarged with hard edges, as pixel art is.</summary>
 	public readonly PixelsSettings Pixels = new();
 
@@ -93,6 +99,8 @@ public sealed class PostSettings
 		DepthOfField.Read(PostJson.Section(from, "depth_of_field"));
 		MotionBlur.Read(PostJson.Section(from, "motion_blur"));
 		PostJson.Read(from, "chromatic_aberration", ref ChromaticAberration);
+		Grain.Read(PostJson.Section(from, "grain"));
+		Warp.Read(PostJson.Section(from, "warp"));
 		Pixels.Read(PostJson.Section(from, "pixels"));
 	}
 
@@ -113,6 +121,8 @@ public sealed class PostSettings
 		to["depth_of_field"] = PostJson.Node(DepthOfField.Write);
 		to["motion_blur"] = PostJson.Node(MotionBlur.Write);
 		to["chromatic_aberration"] = ChromaticAberration;
+		to["grain"] = PostJson.Node(Grain.Write);
+		to["warp"] = PostJson.Node(Warp.Write);
 		to["pixels"] = PostJson.Node(Pixels.Write);
 		return to;
 	}

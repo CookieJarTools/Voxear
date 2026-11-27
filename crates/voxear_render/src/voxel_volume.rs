@@ -34,6 +34,7 @@ mod light;
 pub mod print;
 mod ray;
 mod rivers;
+mod rocks;
 mod solid;
 mod trees;
 mod voxelize;
@@ -44,6 +45,7 @@ use anyhow::Result;
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
+use voxear_scene::DimensionId;
 
 pub use changes::{
     CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelFelledTree, REGION_BRICKS as VOXEL_REGION_BRICKS, VoxelChanges,
@@ -60,6 +62,7 @@ pub use ground::{GROUND_COLORS, VoxelGround};
 pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
 pub use voxear_terrain::generate::structures::AreaRules as VoxelAreaRules;
 pub use print::{VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture, VoxelPrintSettings};
+pub use rocks::{MOST_ROCKS, VoxelRocks};
 pub use ray::{VoxelRayHit, VoxelRayMeets, raycast, raycast_meeting};
 pub use rivers::{GpuVoxelWater, VoxelWaterPoint, water_at};
 pub use solid::{VoxelSolids, ground_at as voxel_ground_at};
@@ -145,6 +148,9 @@ pub struct VoxelVolume {
     pub most_pieces: u32,
     /// How its felled trees fall and rest, and what flies from cut grass.
     pub felling: VoxelFelling,
+    /// The rocks that hang in the air over an endless volume's ground, if
+    /// it has any.
+    pub rocks: Option<VoxelRocks>,
 }
 
 /// How an endless Voxel Volume's felled trees fall and come to rest, and
@@ -510,6 +516,7 @@ impl Default for VoxelVolume {
             strain: VoxelStrain::Solved,
             most_pieces: MOST_PIECES,
             felling: VoxelFelling::default(),
+            rocks: None,
         }
     }
 }
@@ -535,6 +542,7 @@ impl PartialEq for VoxelVolume {
             && self.felled == other.felled
             && self.regrow == other.regrow
             && self.felling == other.felling
+            && self.rocks == other.rocks
             && (Arc::ptr_eq(&self.changes, &other.changes) || self.changes == other.changes)
     }
 }
@@ -809,8 +817,21 @@ pub(crate) struct VoxelVolumes {
     /// Endless volumes, made on the GPU round the camera: each one's rings,
     /// the finest first, itself.
     endless: HashMap<Entity, Vec<endless::Endless>>,
-    /// Each volume drawn this frame and its corner.
+    /// Each volume drawn this frame and its corner, and the dimension each
+    /// is in, in the same order.
     drawn: Vec<(GpuVoxelVolume, Vec3)>,
+    drawn_in: Vec<DimensionId>,
+    /// Where each endless volume was last made round: the camera where it is
+    /// in the camera's dimension, else where the Portal into its own that the
+    /// camera is nearest would take the camera.
+    followed: HashMap<Entity, Vec3>,
+    /// The dimension the camera sees, whose volumes light the cells round it.
+    seen_dimension: DimensionId,
+    /// The floating rocks hung over endless volumes round where each is
+    /// made, by their volume and their place in its grid, and the settings
+    /// each volume's were made by.
+    rocks: HashMap<(Entity, [i32; 2]), RockMade>,
+    rocks_of: HashMap<Entity, VoxelRocks>,
     /// The water over endless volumes' rivers: how many times each one's
     /// changed as last seen, a count of the changes to all of it, and for
     /// each frame slot its buffer, which change it holds and how many squares.
@@ -828,6 +849,17 @@ pub(crate) struct VoxelVolumes {
     /// How many times a volume had been made over when all was last made.
     settled: u64,
 }
+
+/// A floating rock being made on a thread, or made: its volume's voxels,
+/// how large its volume is, and how high the ground under it stands over
+/// its endless volume's floor.
+enum RockMade {
+    Making(rocks::Rock, JoinHandle<(VoxelVolume, Packed, Vec<[u8; 4]>, f32)>),
+    Made(rocks::Rock, Resident, Vec3, f32),
+}
+
+/// The most floating rocks made on threads at once.
+const ROCKS_MAKING: usize = 3;
 
 /// How many volumes are drawn, and their bricks and bytes on the GPU.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -847,9 +879,11 @@ impl VoxelVolumes {
     /// `looking` is the Obj the first view looks through where it is told
     /// one, as `vox render --camera` and the editor's Scene view tell it:
     /// endless volumes are made round it.
-    pub fn prepare(&mut self, gpu: &Gpu, frames: &mut Frames, world: &World, looking: Option<Entity>) -> Result<()> {
+    /// `time` is the game's, in seconds, which floating rocks drift by.
+    pub fn prepare(&mut self, gpu: &Gpu, frames: &mut Frames, world: &World, looking: Option<Entity>, time: f32) -> Result<()> {
         voxear_core::profile_scope!("Voxel Volumes");
         self.drawn.clear();
+        self.drawn_in.clear();
         let mut seen = Vec::new();
         let found: Vec<(Entity, VoxelVolume, Vec3, Quat)> = world
             .query_ref::<(Entity, &VoxelVolume, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
@@ -868,10 +902,30 @@ impl VoxelVolumes {
             })
             .collect();
         let camera = camera_of(world, looking);
+        let (seen_dimension, camera) = match camera {
+            Some((Some(entity), at)) => {
+                let (carried, _) = crate::portals::ViewCarry::of(world, entity, at, Quat::IDENTITY);
+                (crate::portals::ViewCarry::dimension(world, entity), Some(carried))
+            }
+            Some((None, at)) => (DimensionId::LEVEL, Some(at)),
+            None => (DimensionId::LEVEL, None),
+        };
         self.camera = camera;
+        self.seen_dimension = seen_dimension;
         for (entity, volume, corner, turn) in found {
             seen.push(entity);
+            let dimension = voxear_scene::dimension_of(world, entity);
             if volume.endless {
+                // Made round the camera in its own dimension, else round where a Portal into it would take the camera.
+                let follow = camera.and_then(|camera| follow_in(world, (camera, seen_dimension), dimension));
+                let before = self.followed.get(&entity).copied();
+                let follow = match follow {
+                    Some(at) => *self.followed.entry(entity).insert_entry(at).get(),
+                    None => *self.followed.entry(entity).or_insert(camera.unwrap_or(corner)),
+                };
+                if before.is_none_or(|before| before.distance(follow) > 50.0) {
+                    tracing::debug!("endless volume {entity:?} in {dimension:?} made round {follow}, the camera seeing {seen_dimension:?} at {camera:?}");
+                }
                 let rings = rings_of(&volume);
                 let made = self.endless.entry(entity).or_default();
                 // Rings no longer wanted are let go.
@@ -888,14 +942,16 @@ impl VoxelVolumes {
                     if fit(gpu, frames, &mut made[k], ring, volume.voxels_per_metre)? {
                         self.made_over += 1;
                     }
-                    made[k].follow(corner, camera.unwrap_or(corner), inner, self.loading);
+                    made[k].follow(corner, follow, inner, self.loading);
                     // Alone, with no ring round it, it draws all it has made.
                     if !ringed {
                         made[k].unbounded();
                     }
                     inner = made[k].outer();
                     self.drawn.push(made[k].drawn());
+                    self.drawn_in.push(dimension);
                 }
+                self.hang_rocks(gpu, frames, (entity, &volume, dimension), (corner, follow), time)?;
                 continue;
             }
             let current = self.resident.get(&entity).is_some_and(|(made, _)| *made == volume);
@@ -920,6 +976,7 @@ impl VoxelVolumes {
                 let turned = turn.angle_between(Quat::IDENTITY) > 1e-5;
                 let turn = if turned { turn.normalize().to_array() } else { [0.0; 4] };
                 self.drawn.push((GpuVoxelVolume { turn, ..resident.record }, corner));
+                self.drawn_in.push(dimension);
             }
         }
         let gone: Vec<Entity> = self.endless.keys().filter(|entity| !seen.contains(entity)).copied().collect();
@@ -942,13 +999,104 @@ impl VoxelVolumes {
             }
         }
         self.making.retain(|entity, _| seen.contains(entity));
+        self.followed.retain(|entity, _| seen.contains(entity));
+        let gone: Vec<(Entity, [i32; 2])> = self.rocks.keys().filter(|(entity, _)| !seen.contains(entity)).copied().collect();
+        for key in gone {
+            if let Some(RockMade::Made(_, resident, ..)) = self.rocks.remove(&key) {
+                frames.retire(Retired::Buffer(resident.buffer));
+            }
+        }
         Ok(())
+    }
+
+    /// Hangs an endless volume's floating rocks round where it is made
+    /// (`follow`), its corner at `corner`: those that matter most made on
+    /// threads, a few at a time, those no longer wanted let go, and each
+    /// made drawn where it has drifted to at `time`.
+    fn hang_rocks(
+        &mut self,
+        gpu: &Gpu,
+        frames: &mut Frames,
+        (entity, volume, dimension): (Entity, &VoxelVolume, DimensionId),
+        (corner, follow): (Vec3, Vec3),
+        time: f32,
+    ) -> Result<()> {
+        let wanted_settings = volume.rocks.filter(|rocks| rocks.most > 0 && rocks.how_often > 0.0);
+        // Other settings make other rocks: those made are let go.
+        if self.rocks_of.get(&entity).copied() != wanted_settings {
+            let old: Vec<(Entity, [i32; 2])> = self.rocks.keys().filter(|(owner, _)| *owner == entity).copied().collect();
+            for key in old {
+                if let Some(RockMade::Made(_, resident, ..)) = self.rocks.remove(&key) {
+                    frames.retire(Retired::Buffer(resident.buffer));
+                }
+            }
+            match wanted_settings {
+                Some(settings) => drop(self.rocks_of.insert(entity, settings)),
+                None => drop(self.rocks_of.remove(&entity)),
+            }
+        }
+        let Some(settings) = wanted_settings else { return Ok(()) };
+        let reach = volume.distance.max(volume.reach).clamp(256.0, 2048.0);
+        let camera = follow - corner;
+        let kept: Vec<[i32; 2]> = self.rocks.keys().filter(|(owner, _)| *owner == entity).map(|(_, cell)| *cell).collect();
+        // Room among the volumes a view draws, after everything else.
+        let room = MAX_VOXEL_VOLUMES.saturating_sub(self.drawn.len() + 8).min(settings.most as usize);
+        let wanted = rocks::round(&settings, [camera.x, camera.z], reach, room, &kept);
+        let unwanted = kept.iter().filter(|cell| !wanted.iter().any(|rock| rock.cell == **cell));
+        for cell in unwanted.copied().collect::<Vec<_>>() {
+            if let Some(RockMade::Made(_, resident, ..)) = self.rocks.remove(&(entity, cell)) {
+                frames.retire(Retired::Buffer(resident.buffer));
+            }
+        }
+        let finished: Vec<(Entity, [i32; 2])> = self
+            .rocks
+            .iter()
+            .filter(|(key, made)| key.0 == entity && matches!(made, RockMade::Making(_, job) if job.is_finished()))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in finished {
+            let Some(RockMade::Making(rock, job)) = self.rocks.remove(&key) else { continue };
+            let (made, packed, palette, ground) = job.join().map_err(|_| anyhow::anyhow!("making a floating rock failed"))?;
+            let resident = upload(gpu, &made, &packed, &palette)?;
+            tracing::debug!("floating rock {:?}, {:.0} m across, made: {} bricks", key.1, rock.size, resident.bricks);
+            self.rocks.insert(key, RockMade::Made(rock, resident, made.size, ground));
+        }
+        // Those still to make started after those made are brought up, so a wait for every volume to be made
+        // never finds none being made between one batch and the next.
+        let mut making = self.rocks.values().filter(|made| matches!(made, RockMade::Making(..))).count();
+        for rock in &wanted {
+            if making >= ROCKS_MAKING || self.rocks.contains_key(&(entity, rock.cell)) {
+                continue;
+            }
+            let (rock, from) = (*rock, volume.clone());
+            let job = std::thread::Builder::new().name("Floating rock".into()).spawn(move || {
+                let (made, packed, palette) = rocks::build(&settings, &rock);
+                let ground = solid::ground_at(&from, rock.at[0], rock.at[1]).map_or(0.0, |(height, _)| height);
+                (made, packed, palette, ground)
+            })?;
+            self.rocks.insert((entity, rock.cell), RockMade::Making(rock, job));
+            making += 1;
+        }
+        for rock in &wanted {
+            if let Some(RockMade::Made(rock, resident, extent, ground)) = self.rocks.get(&(entity, rock.cell)) {
+                let (at, turn) = rocks::pose(&settings, rock, *extent, *ground, time);
+                self.drawn.push((GpuVoxelVolume { turn: turn.normalize().to_array(), ..resident.record }, corner + at));
+                self.drawn_in.push(dimension);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every floating rock wanted round the camera is made.
+    fn rocks_making(&self) -> bool {
+        self.rocks.values().any(|made| matches!(made, RockMade::Making(..)))
     }
 
     /// Whether any volume is still being made, or an endless one has columns
     /// round the camera still to make.
     pub fn making(&self) -> bool {
         !self.making.is_empty()
+            || self.rocks_making()
             || self.endless.values().flatten().any(|made| made.unfinished() || made.short().is_some())
     }
 
@@ -976,8 +1124,9 @@ impl VoxelVolumes {
             self.settled = if self.making() { self.settled } else { self.made_over };
         }
         let fresh = self.made_over != self.settled;
+        let lit = self.drawn_in_dimension(self.seen_dimension);
         let grid = self.light.as_mut().expect("made above");
-        let view = grid.record(gpu, fg, pipelines, (slot, &pools), (&self.drawn, self.made_over, fresh), camera)?;
+        let view = grid.record(gpu, fg, pipelines, (slot, &pools), (&lit, self.made_over, fresh), camera)?;
         Ok((pools, view))
     }
 
@@ -1028,14 +1177,31 @@ impl VoxelVolumes {
             counts.bytes += resident.bytes;
         }
         counts.bytes += self.endless.values().flatten().map(endless::Endless::bytes).sum::<u64>();
+        for made in self.rocks.values() {
+            if let RockMade::Made(_, resident, ..) = made {
+                counts.bricks += resident.bricks as u64;
+                counts.bytes += resident.bytes;
+            }
+        }
         counts.water_squares = self.endless.values().flatten().map(|made| made.water_squares().count() as u32).sum();
         counts.columns_made = self.endless.values().flatten().map(endless::Endless::making_now).sum();
         counts
     }
 
-    /// Each volume drawn this frame, and its corner, for every view.
-    pub fn drawn(&self) -> std::sync::Arc<[(GpuVoxelVolume, Vec3)]> {
-        self.drawn.iter().copied().collect()
+    /// Each volume drawn this frame, its corner and its dimension, for every
+    /// view to draw those of the dimension it sees.
+    pub fn drawn(&self) -> std::sync::Arc<[(GpuVoxelVolume, Vec3, DimensionId)]> {
+        self.drawn.iter().zip(&self.drawn_in).map(|(&(record, corner), &dimension)| (record, corner, dimension)).collect()
+    }
+
+    /// The dimension the cells' light round the camera is of: the one it sees.
+    pub fn lit_dimension(&self) -> DimensionId {
+        self.seen_dimension
+    }
+
+    fn drawn_in_dimension(&self, dimension: DimensionId) -> Vec<(GpuVoxelVolume, Vec3)> {
+        let pairs = self.drawn.iter().zip(&self.drawn_in);
+        pairs.filter(|(_, in_it)| **in_it == dimension).map(|(drawn, _)| *drawn).collect()
     }
 
     /// The water over endless volumes' rivers and lakes for frame slot
@@ -1174,9 +1340,31 @@ pub(crate) fn gather(
         coarse: None,
         seen: None,
         pools: Vec::new(),
+        clip: None,
         shadow: None,
         light,
     })
+}
+
+/// Keeps a full-screen pass to `clip`, a rectangle of the view from -1 to 1
+/// each way, and a little round it: a view through a Portal walks its
+/// voxels only where its opening shows.
+fn scissor_to(ctx: &crate::graph::PassContext, clip: Option<[f32; 4]>, target: ImageId) {
+    let Some([x0, y0, x1, y1]) = clip else { return };
+    let extent = ctx.extent(target);
+    let (wide, high) = (extent.width as f32, extent.height as f32);
+    let margin = 0.02;
+    let pixel = |v: f32, size: f32| ((v * 0.5 + 0.5).clamp(0.0, 1.0) * size) as i32;
+    let (left, top) = (pixel(x0 - margin, wide), pixel(y0 - margin, high));
+    let (right, bottom) = (pixel(x1 + margin, wide) + 1, pixel(y1 + margin, high) + 1);
+    let scissor = vk::Rect2D {
+        offset: vk::Offset2D { x: left, y: top },
+        extent: vk::Extent2D {
+            width: (right - left).clamp(1, (extent.width as i32 - left).max(1)) as u32,
+            height: (bottom - top).clamp(1, (extent.height as i32 - top).max(1)) as u32,
+        },
+    };
+    unsafe { ctx.gpu.device.cmd_set_scissor(ctx.cmd, 0, &[scissor]) };
 }
 
 /// Names `texture` as the voxels' shadows on everything in a view's volumes
@@ -1194,6 +1382,12 @@ impl VoxelVolumes {
         }
         for (_, making) in self.making.drain() {
             let _ = making.job.join();
+        }
+        for (_, made) in self.rocks.drain() {
+            match made {
+                RockMade::Making(_, job) => drop(job.join()),
+                RockMade::Made(_, resident, ..) => gpu.destroy_buffer(resident.buffer),
+            }
         }
         for made in self.endless.drain().flat_map(|(_, rings)| rings) {
             made.destroy(gpu);
@@ -1274,10 +1468,10 @@ fn fit(gpu: &Gpu, frames: &mut Frames, made: &mut endless::Endless, volume: &Vox
 /// Where the camera endless volumes are made round is in `world`: the Obj
 /// `looking` names where it is one, else the first camera drawn on the
 /// display, else the first camera there is.
-fn camera_of(world: &World, looking: Option<Entity>) -> Option<Vec3> {
+fn camera_of(world: &World, looking: Option<Entity>) -> Option<(Option<Entity>, Vec3)> {
     let place = |entity: Entity| {
         let placed = world.get::<voxear_scene::WorldTransform>(entity).map(|placed| placed.0.w_axis.truncate());
-        placed.or_else(|| world.get::<voxear_scene::Transform>(entity).map(|local| local.position))
+        placed.or_else(|| world.get::<voxear_scene::Transform>(entity).map(|local| local.position)).map(|at| (Some(entity), at))
     };
     if let Some(at) = looking.and_then(place) {
         return Some(at);
@@ -1288,12 +1482,41 @@ fn camera_of(world: &World, looking: Option<Entity>) -> Option<Vec3> {
         .and_then(|view| place(view.camera));
     drawn.or_else(|| {
         world
-            .query_ref::<(&crate::Camera, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+            .query_ref::<(Entity, &crate::Camera, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
             .without::<voxear_scene::Destroying>()
             .into_iter()
             .next()
-            .map(|(_, local, placed)| placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+            .map(|(entity, _, local, placed)| (Some(entity), placed.map_or(local.position, |placed| placed.0.w_axis.truncate())))
     })
+}
+
+/// Where an endless volume in `dimension` is made round, for a camera at
+/// `camera` seeing `seen`: the camera itself in its own dimension; in
+/// another, where the nearest Portal of the camera's dimension that leads
+/// into it would take the camera, which is where its far side is seen from.
+/// None where no Portal leads there: it stays where it was made.
+fn follow_in(world: &World, (camera, seen): (Vec3, DimensionId), dimension: DimensionId) -> Option<Vec3> {
+    if dimension == seen {
+        return Some(camera);
+    }
+    let switched = voxear_scene::Switched::in_dimension(world, seen);
+    let portals = world.query_ref::<(Entity, &crate::portals::Portal)>().without::<voxear_scene::Destroying>();
+    let mut nearest: Option<(f32, Vec3)> = None;
+    for (entity, portal) in portals {
+        let Some(to) = portal.to.filter(|to| *to != entity && world.has::<crate::portals::Portal>(*to)) else { continue };
+        if !switched.is_active(entity) || voxear_scene::dimension_of(world, to) != dimension {
+            continue;
+        }
+        let (Some(near), Some(far)) = (crate::portals::PortalPose::of_obj(world, entity), crate::portals::PortalPose::of_obj(world, to))
+        else {
+            continue;
+        };
+        let away = crate::portals::away(&near, portal.size, camera);
+        if nearest.is_none_or(|(best, _)| away < best) {
+            nearest = Some((away, crate::portals::Carry::between(&near, &far).point(camera)));
+        }
+    }
+    nearest.map(|(_, at)| at)
 }
 
 /// What a view's voxel passes draw: its coarse rays, if the picture is not
@@ -1312,6 +1535,10 @@ pub(crate) struct ViewVoxels {
     /// What endless volumes' making writes this frame, which the voxel
     /// passes read.
     pub pools: Vec<crate::graph::BufferId>,
+    /// For a view through a Portal, the opening's rectangle in the view, its
+    /// lowest and highest x and y from -1 to 1: the voxels are walked only
+    /// there, as nothing else of the far side shows.
+    pub clip: Option<[f32; 4]>,
     /// Whether the sun reaches each pixel past the voxels, traced from
     /// whatever the depth passes drew there, and which of its lamps do.
     pub shadow: Option<(ImageId, ImageId)>,
@@ -1506,9 +1733,11 @@ pub(crate) fn record_depth(
 ) {
     let mut reads = coarse_reads(view, &[]);
     reads.extend(view.seen.map(|seen| (seen, BufferAccess::FragmentWrite)));
+    let clip = view.clip;
     fg.add_pass("Depth (voxels)", &targets.images(), &reads, move |ctx| {
         targets.begin(ctx);
         bind(ctx, pipelines.voxel_depth, vk::PipelineBindPoint::GRAPHICS, &push);
+        scissor_to(ctx, clip, targets.depth);
         unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
@@ -1595,12 +1824,14 @@ pub(crate) fn record_opaque(
 ) {
     let mut reads = coarse_reads(view, buffers);
     reads.extend(view.seen.map(|seen| (seen, BufferAccess::ShaderRead)));
+    let clip = view.clip;
     fg.add_pass("Opaque (voxels)", &images, &reads, move |ctx| {
         let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
         let color = [attachment(ctx.view(hdr), layout, None), attachment(ctx.view(velocity), layout, None)];
         let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, ctx.extent(hdr), &color, Some(&target));
         bind(ctx, pipelines.voxel_forward, vk::PipelineBindPoint::GRAPHICS, &push);
+        scissor_to(ctx, clip, hdr);
         unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });

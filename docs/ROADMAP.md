@@ -4866,7 +4866,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     ms, of which the far side is 2.7 ms.
   - Tests: a volume in another dimension drawn only where the camera sees it; rocks hung, drawn and taken away;
     rocks hashed alike, shells with ash and seams, drifting about their middles; the look's settings and the GPU
-    record's layout; the Inspector's rows. Three of the Portal picture tests fail as they did before.
+    record's layout; the Inspector's rows. Every Portal picture test passes with master's wait for shadow pages.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -678,6 +678,20 @@ pub enum Prop {
     VoxelFelled,
     /// How many seconds an endless volume's cut grass takes to grow back: none for never.
     VoxelRegrow,
+    /// Whether an endless volume has rocks hanging over its ground, and how
+    /// they hang: how far apart their places are, how many have one, how
+    /// large and how high they are, how far they drift and how fast they
+    /// turn, how much they glow, the most drawn and their seed.
+    VoxelRocks,
+    VoxelRockSpacing,
+    VoxelRockHowOften,
+    VoxelRockSize,
+    VoxelRockHeight,
+    VoxelRockDrift,
+    VoxelRockTurn,
+    VoxelRockEmbers,
+    VoxelMostRocks,
+    VoxelRockSeed,
     /// What holds up what is built in an endless volume: earth and the ground, the ground alone, or everything.
     VoxelAnchor,
     /// How an endless volume finds where what is built gives way: off, load paths, or solved.
@@ -1336,6 +1350,16 @@ impl Prop {
             | Prop::VoxelWater
             | Prop::VoxelFelled
             | Prop::VoxelRegrow
+            | Prop::VoxelRocks
+            | Prop::VoxelRockSpacing
+            | Prop::VoxelRockHowOften
+            | Prop::VoxelRockSize
+            | Prop::VoxelRockHeight
+            | Prop::VoxelRockDrift
+            | Prop::VoxelRockTurn
+            | Prop::VoxelRockEmbers
+            | Prop::VoxelMostRocks
+            | Prop::VoxelRockSeed
             | Prop::VoxelAnchor
             | Prop::VoxelStrain
             | Prop::VoxelBuilt
@@ -1789,6 +1813,16 @@ impl Prop {
             Prop::VoxelWater => "water",
             Prop::VoxelFelled => "felled",
             Prop::VoxelRegrow => "regrow",
+            Prop::VoxelRocks => "rocks",
+            Prop::VoxelRockSpacing => "rock_spacing",
+            Prop::VoxelRockHowOften => "rock_how_often",
+            Prop::VoxelRockSize => "rock_size",
+            Prop::VoxelRockHeight => "rock_height",
+            Prop::VoxelRockDrift => "rock_drift",
+            Prop::VoxelRockTurn => "rock_turn",
+            Prop::VoxelRockEmbers => "rock_embers",
+            Prop::VoxelMostRocks => "most_rocks",
+            Prop::VoxelRockSeed => "rock_seed",
             Prop::VoxelAnchor => "anchor",
             Prop::VoxelStrain => "strain",
             Prop::VoxelBuilt => "built",
@@ -2455,6 +2489,20 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 }
                 props.push(Prop::VoxelTreeAdd);
                 props.extend([Prop::VoxelFelled, Prop::VoxelRegrow]);
+                props.push(Prop::VoxelRocks);
+                if source.is_some_and(|source| source.0.rocks.is_some()) {
+                    props.extend([
+                        Prop::VoxelRockSpacing,
+                        Prop::VoxelRockHowOften,
+                        Prop::VoxelRockSize,
+                        Prop::VoxelRockHeight,
+                        Prop::VoxelRockDrift,
+                        Prop::VoxelRockTurn,
+                        Prop::VoxelRockEmbers,
+                        Prop::VoxelMostRocks,
+                        Prop::VoxelRockSeed,
+                    ]);
+                }
                 props.extend([Prop::VoxelAnchor, Prop::VoxelStrain, Prop::VoxelBuilt, Prop::VoxelMostPieces]);
                 if let Some(source) = source {
                     props.extend(crate::voxel_growth_props::fields(&source.0).into_iter().map(Prop::VoxelGrowth));
@@ -3111,6 +3159,16 @@ pub fn label(prop: &Prop) -> String {
         Prop::VoxelWater => "Water",
         Prop::VoxelFelled => "Felled",
         Prop::VoxelRegrow => "Regrow",
+        Prop::VoxelRocks => "Floating Rocks",
+        Prop::VoxelRockSpacing => "Rock Spacing",
+        Prop::VoxelRockHowOften => "Rocks How Often",
+        Prop::VoxelRockSize => "Rock Size",
+        Prop::VoxelRockHeight => "Rock Height",
+        Prop::VoxelRockDrift => "Rock Drift",
+        Prop::VoxelRockTurn => "Rock Turn",
+        Prop::VoxelRockEmbers => "Rock Embers",
+        Prop::VoxelMostRocks => "Most Rocks",
+        Prop::VoxelRockSeed => "Rock Seed",
         Prop::VoxelAnchor => "Anchor",
         Prop::VoxelStrain => "Strain",
         Prop::VoxelBuilt => "Built Of",
@@ -4307,6 +4365,16 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::VoxelWater
         | Prop::VoxelFelled
         | Prop::VoxelRegrow
+        | Prop::VoxelRocks
+        | Prop::VoxelRockSpacing
+        | Prop::VoxelRockHowOften
+        | Prop::VoxelRockSize
+        | Prop::VoxelRockHeight
+        | Prop::VoxelRockDrift
+        | Prop::VoxelRockTurn
+        | Prop::VoxelRockEmbers
+        | Prop::VoxelMostRocks
+        | Prop::VoxelRockSeed
         | Prop::VoxelAnchor
         | Prop::VoxelStrain
         | Prop::VoxelBuilt
@@ -6473,6 +6541,11 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
 }
 
 /// Changes a component, if the Obj has it.
+/// A volume's floating rocks, made as they come where it has none.
+fn rocks_of(data: &mut voxear_engine::voxel_volumes::VoxelVolumeData) -> &mut voxear_render::VoxelRocks {
+    data.rocks.get_or_insert_with(Default::default)
+}
+
 /// A Voxel Volume's field as the Inspector shows it.
 fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop) -> Option<Value> {
     let ground = &data.ground;
@@ -6493,6 +6566,16 @@ fn voxel_value(data: &voxear_engine::voxel_volumes::VoxelVolumeData, prop: &Prop
             voxear_render::VoxelFelled::ALL.iter().map(|felled| felled.name().to_string()).collect(),
         ),
         Prop::VoxelRegrow => Value::Number(data.regrow),
+        Prop::VoxelRocks => Value::Toggle(data.rocks.is_some()),
+        Prop::VoxelRockSpacing => Value::Number(data.rocks?.spacing),
+        Prop::VoxelRockHowOften => Value::Number(data.rocks?.how_often),
+        Prop::VoxelRockSize => Value::Vector(data.rocks?.size.to_vec()),
+        Prop::VoxelRockHeight => Value::Vector(data.rocks?.height.to_vec()),
+        Prop::VoxelRockDrift => Value::Number(data.rocks?.drift),
+        Prop::VoxelRockTurn => Value::Number(data.rocks?.turn),
+        Prop::VoxelRockEmbers => Value::Number(data.rocks?.embers),
+        Prop::VoxelMostRocks => Value::Whole(i64::from(data.rocks?.most)),
+        Prop::VoxelRockSeed => Value::Whole(i64::from(data.rocks?.seed)),
         Prop::VoxelAnchor => Value::Choice(
             voxear_render::VoxelAnchor::ALL.iter().position(|&anchor| anchor == data.anchor).unwrap_or(0),
             voxear_render::VoxelAnchor::ALL.iter().map(|anchor| anchor.name().to_string()).collect(),
@@ -6548,6 +6631,20 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
             data.felled = voxear_render::VoxelFelled::ALL.get(index).copied().unwrap_or_default();
         }
         (Prop::VoxelRegrow, Value::Number(n)) => data.regrow = n.clamp(0.0, 1.0e6),
+        (Prop::VoxelRocks, Value::Toggle(on)) => data.rocks = on.then(|| data.rocks.unwrap_or_default()),
+        (Prop::VoxelRockSpacing, Value::Number(n)) => rocks_of(data).spacing = n.clamp(8.0, 2048.0),
+        (Prop::VoxelRockHowOften, Value::Number(n)) => rocks_of(data).how_often = n.clamp(0.0, 1.0),
+        (Prop::VoxelRockSize, Value::Vector(v)) if v.len() >= 2 => {
+            rocks_of(data).size = [v[0].clamp(0.5, 400.0), v[1].clamp(v[0].clamp(0.5, 400.0), 400.0)];
+        }
+        (Prop::VoxelRockHeight, Value::Vector(v)) if v.len() >= 2 => {
+            rocks_of(data).height = [v[0].clamp(0.0, 1000.0), v[1].clamp(v[0].clamp(0.0, 1000.0), 1000.0)];
+        }
+        (Prop::VoxelRockDrift, Value::Number(n)) => rocks_of(data).drift = n.clamp(0.0, 100.0),
+        (Prop::VoxelRockTurn, Value::Number(n)) => rocks_of(data).turn = n.clamp(-90.0, 90.0),
+        (Prop::VoxelRockEmbers, Value::Number(n)) => rocks_of(data).embers = n.clamp(0.0, 1.0),
+        (Prop::VoxelMostRocks, Value::Whole(n)) => rocks_of(data).most = n.clamp(0, voxear_render::MOST_ROCKS as i64) as u32,
+        (Prop::VoxelRockSeed, Value::Whole(n)) => rocks_of(data).seed = n.clamp(0, i64::from(u32::MAX)) as u32,
         (Prop::VoxelAnchor, Value::Choice(index, _)) => {
             data.anchor = voxear_render::VoxelAnchor::ALL.get(index).copied().unwrap_or_default();
         }

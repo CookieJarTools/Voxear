@@ -30,14 +30,19 @@
 //! Village** (soft winter light, warm windows glowing), **Highland Summer**
 //! (bright, rich and painterly) and **Enchanted Night** (a violet moonlit
 //! sky full of stars).
+//!
+//! **Abyss**: a world that is wrong. A sky of thick orange-brown smoke lit
+//! from behind by fire past the horizon, a low hidden sun, dim warm haze
+//! that swallows the distance, and a view that grains, fringes, breathes and
+//! wavers.
 
 use anyhow::{Result, bail};
 use voxear_core::math::Vec3;
 
 use crate::{
     post::{
-        AmbientOcclusion, Bloom, DepthOfField, Exposure, Fog, GlobalIllumination, Grading, PostProcess, Tonemap, Tonemapper,
-        Vignette,
+        AmbientOcclusion, Bloom, DepthOfField, Exposure, Fog, GlobalIllumination, Grading, Grain, PostProcess, Tonemap,
+        Tonemapper, Vignette, Warp,
     },
     scene::{Clouds, Sky, SkyMode, temperature_color},
     shadows::{SHADOW_DISTANCE, SHADOW_SPLIT},
@@ -61,12 +66,13 @@ pub enum LookName {
     SnowyVillage,
     HighlandSummer,
     EnchantedNight,
+    Abyss,
 }
 
 impl LookName {
     /// Every look, in the order menus list them, each with the name files
     /// write and the name people read.
-    pub const ALL: [(LookName, &'static str, &'static str); 15] = [
+    pub const ALL: [(LookName, &'static str, &'static str); 16] = [
         (LookName::GoldenHour, "golden_hour", "Golden Hour"),
         (LookName::Storybook, "storybook", "Storybook"),
         (LookName::SoftOvercast, "soft_overcast", "Soft Overcast"),
@@ -82,6 +88,7 @@ impl LookName {
         (LookName::SnowyVillage, "snowy_village", "Snowy Village"),
         (LookName::HighlandSummer, "highland_summer", "Highland Summer"),
         (LookName::EnchantedNight, "enchanted_night", "Enchanted Night"),
+        (LookName::Abyss, "abyss", "Abyss"),
     ];
 
     pub fn parse(name: &str) -> Result<Self> {
@@ -253,6 +260,7 @@ impl Look {
             LookName::SnowyVillage => Self::snowy_village(),
             LookName::HighlandSummer => Self::highland_summer(),
             LookName::EnchantedNight => Self::enchanted_night(),
+            LookName::Abyss => Self::abyss(),
         }
     }
 
@@ -1032,6 +1040,77 @@ impl Look {
     }
 }
 
+impl Look {
+    // ---------------------------------------------------------------- A world that is wrong
+
+    fn abyss() -> Self {
+        let base = PostProcess::voxear();
+        let post = PostProcess {
+            // Dim, and kept dim: the eye never quite adjusts to it.
+            exposure: Exposure { compensation: -0.2, min_ev: -2.0, max_ev: 1.5, ..base.exposure },
+            tonemap: Tonemap { mapper: Tonemapper::Agx, contrast: 1.25, saturation: 1.1 },
+            // Warm throughout, a little drained, the shade sunk towards brown rather than black.
+            grading: Grading {
+                temperature: 0.06,
+                saturation: 0.85,
+                lift: [0.01, 0.005, 0.002],
+                gain: [1.04, 0.97, 0.88],
+                ..base.grading
+            },
+            bloom: Bloom { intensity: 0.12, scatter: 0.9, tint: [1.0, 0.7, 0.45], ..base.bloom },
+            vignette: Vignette { intensity: 0.5, smoothness: 0.55, ..base.vignette },
+            // Smoke that hangs high as well as low, so far rocks in the air fade into it, glowing towards the light.
+            fog: Fog {
+                density: 0.0045,
+                height_falloff: 0.008,
+                color: Some([0.34, 0.2, 0.12]),
+                sun_glow: 0.95,
+                volumetric: true,
+                volumetric_distance: 96.0,
+                anisotropy: 0.7,
+                ..base.fog
+            },
+            ambient_occlusion: AmbientOcclusion { strength: 1.4, tint: [0.12, 0.04, 0.02], ..base.ambient_occlusion },
+            // Things slightly off: fringes at the edges, grain in the dark, and a view that breathes.
+            chromatic_aberration: 0.45,
+            grain: Grain { intensity: 0.2, size: 1.2, colour: 0.25 },
+            warp: Warp { breathing: 0.008, waver: 0.0025, speed: 0.09 },
+            ..base
+        };
+        let sky = Sky {
+            mode: SkyMode::Gradient,
+            // Deep shadow overhead, smoke lit orange from behind at the horizon.
+            zenith: linear([0.14, 0.075, 0.045]),
+            horizon: linear([0.95, 0.5, 0.18]),
+            ground: linear([0.12, 0.08, 0.06]),
+            ambient: 1.3,
+            // Thick, billowing smoke with breaks in it, low and slow.
+            clouds: Clouds {
+                height: 380.0,
+                thickness: 1600.0,
+                size: 1400.0,
+                density: 3.0,
+                drift: 3.0,
+                shadows: 0.4,
+                ..Clouds::covering(0.8)
+            },
+            ..Sky::default()
+        };
+        let sun = SunLook {
+            tint: linear([1.0, 0.5, 0.22]),
+            strength: 0.45,
+            softness: 4.0,
+            shadow_tint: linear([0.08, 0.02, 0.01]),
+            shadow_distance: SHADOW_DISTANCE,
+            shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
+        };
+        Self { post, sky, sun }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1047,6 +1126,17 @@ mod tests {
         assert!(Look::of(LookName::SoftOvercast).post.global_illumination.enabled);
         assert!(Look::of(LookName::DarkForest).sun.canopy > 0.0);
         assert!(PostProcess::voxear().depth_of_field.far, "blurring both ways unless a look says otherwise");
+    }
+
+    #[test]
+    fn the_abyss_grains_fringes_and_breathes_under_smoke() {
+        let abyss = Look::of(LookName::parse("abyss").unwrap());
+        assert!(abyss.post.grain.intensity > 0.0 && abyss.post.warp.breathing > 0.0 && abyss.post.chromatic_aberration > 0.2);
+        assert!(abyss.sky.clouds.cover > 0.5, "a sky of smoke");
+        assert!(abyss.sky.horizon.x > abyss.sky.zenith.x * 3.0, "lit from behind at the horizon, dark overhead");
+        assert!(PostProcess::voxear().grain.intensity == 0.0 && PostProcess::voxear().warp == Warp::default(), "off unless asked for");
+        let gpu = abyss.post.to_gpu(Vec3::ONE);
+        assert!(gpu.grain > 0.0 && gpu.warp_waver > 0.0);
     }
 
     #[test]

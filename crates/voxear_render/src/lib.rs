@@ -173,7 +173,7 @@ pub use lightmaps::{
 pub use voxel_volume::{
     GROUND_COLORS as VOXEL_GROUND_COLORS, LARGEST_VOLUME, PAVING_COLORS as VOXEL_PAVING_COLORS, MOST_VOXELS_A_METRE,
     VoxelBiomes, VoxelCounts, VoxelEdit, VoxelGenerator,
-    VoxelGround, VoxelMaterial, VoxelPicture, VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture,
+    VoxelGround, VoxelMaterial, VoxelPicture, VoxelRocks, MOST_ROCKS, VoxelPrint, VoxelPrintFill, VoxelPrintMaterial, VoxelPrintPicture,
     VoxelPrintSettings, VoxelArea, VoxelAreaRules, VoxelChanges, VoxelCover, VoxelCoverKind, VoxelHeld, VoxelKind,
     VoxelPrinted, VoxelRayHit, VoxelSet, VoxelShape, VoxelSolids, VoxelStamp, VoxelTrees, VoxelVolume, VoxelWaterLook,
     VoxelWaterPoint, MOST_COVER_KINDS, voxel_areas_allow, voxel_ground_at, print::MOST_COLOURS as MOST_PRINT_COLOURS,
@@ -1136,7 +1136,8 @@ impl Renderer {
         let started = std::time::Instant::now();
         self.voxels.loading = true;
         let made = loop {
-            self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera)?;
+            let time = particles::time_of(world, 0.0);
+            self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera, time)?;
             // Endless volumes' columns round the camera made now, outside the frames.
             self.voxels.make_endless_now(&self.gpu, (&self.pipelines, &self.bindless))?;
             if !self.voxels.making() {
@@ -2181,7 +2182,7 @@ impl Renderer {
         let camera = self.views.first().and_then(|view| view.prev_camera).map(|(at, _)| at);
         self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, (frame_index, camera))?;
         // Voxel Volumes made again where they changed, on threads of their own, and brought up once made.
-        self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera)?;
+        self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera, particles::time_of(world, time))?;
         // Every simulated particle's step, for all the views.
         let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
@@ -2238,6 +2239,7 @@ impl Renderer {
         let voxel_draws = voxels.drawn();
         // Endless volumes' columns made round the camera, before any view walks them.
         let (voxel_pools, voxel_light) = voxels.record(gpu, &mut fg, *pipelines, frame.slot)?;
+        let voxel_light = voxel_light.map(|light| (light, voxels.lit_dimension()));
         // The water over their rivers and lakes, which every view draws.
         let voxel_water = voxels.water(gpu, frame.slot)?;
         let ui = &ui_buffers[frame.slot];
@@ -2832,8 +2834,10 @@ struct PortalPass {
     hdr: ImageId,
     velocity: ImageId,
     depth: ImageId,
-    /// The size of the view it is seen in, and its options: its own.
+    /// The size of the view it is seen in, the size that view is drawn at,
+    /// which it draws at too, and that view's options: its own.
     size: (u32, u32),
+    drawn: (u32, u32),
     options: ViewOptions,
     /// That view's sky tables and sky light, which it reads, and how far
     /// its clouds have drifted.
@@ -2936,11 +2940,13 @@ struct ViewSetup {
     terrains: std::sync::Arc<[terrain::Drawn]>,
     /// This frame's worlds of blocks, as every view draws them.
     blocks: std::sync::Arc<[blocks::DrawnBlocks]>,
-    /// The Voxel Volumes drawn this frame, and their corners.
-    voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3)]>,
+    /// The Voxel Volumes drawn this frame, their corners and the dimension
+    /// each is in.
+    voxels: std::sync::Arc<[(voxel_volume::GpuVoxelVolume, voxear_core::math::Vec3, voxear_scene::DimensionId)]>,
     /// What endless volumes' making writes this frame, which the voxel passes read.
     voxel_pools: Vec<graph::BufferId>,
-    voxel_light: Option<voxel_volume::LightView>,
+    /// The light round the camera, of the volumes of the dimension it is lit in.
+    voxel_light: Option<(voxel_volume::LightView, voxear_scene::DimensionId)>,
     /// The water over endless volumes' rivers and lakes: its buffer's
     /// address, and how many squares it has, then of waterfalls and of their
     /// lips after.
@@ -3466,7 +3472,7 @@ impl View {
         // A view through a Portal is the size of the view it is seen in, with its options.
         let view = match portal {
             Some(pass) => {
-                self.options = pass.options;
+                self.options = ViewOptions { drawn_size: Some(pass.drawn), ..pass.options };
                 let extent = vk::Extent2D { width: pass.size.0, height: pass.size.1 };
                 vk::Rect2D { offset: vk::Offset2D::default(), extent }
             }
@@ -3835,7 +3841,14 @@ impl View {
         let gathered =
             grass::gather(terrains, (&seen_blocks[..], offset), &extracted.frame, extracted.origin, &buffers.grass);
         // The Voxel Volumes this view draws, and the coarse rays its voxel passes start from.
-        let view_voxels = match setup.voxels.is_empty() {
+        // Only those of the dimension the view sees.
+        let seen_voxels: Vec<_> = setup
+            .voxels
+            .iter()
+            .filter(|(.., dimension)| *dimension == extracted.dimension)
+            .map(|&(record, corner, _)| (record, corner))
+            .collect();
+        let view_voxels = match seen_voxels.is_empty() {
             true => None,
             false => {
                 let size = [extent.width, extent.height];
@@ -3846,12 +3859,13 @@ impl View {
                 let buffers = &self.buffers[slot];
                 let [list, coarse] = buffers.voxels.as_ref().expect("made above");
                 let seen = buffers.voxels_seen.as_ref().expect("made above");
-                let light = setup.voxel_light;
-                voxel_volume::gather(&setup.voxels, (list, coarse, Some(seen)), size, offset, light).map(|view| {
+                let light = setup.voxel_light.filter(|(_, lit)| *lit == extracted.dimension).map(|(light, _)| light);
+                voxel_volume::gather(&seen_voxels, (list, coarse, Some(seen)), size, offset, light).map(|view| {
                     voxel_volume::ViewVoxels {
                         coarse: Some(fg.import_buffer(coarse)),
                         seen: Some(fg.import_buffer(seen)),
                         pools: setup.voxel_pools.clone(),
+                        clip: portal.map(|pass| pass.rect),
                         ..view
                     }
                 })
@@ -5036,6 +5050,7 @@ fn draw_portals(
             velocity,
             depth,
             size: sees.size,
+            drawn: (sees.extent.width, sees.extent.height),
             options: sees.options,
             atmosphere: sees.atmosphere,
             sky_light: sees.sky_light,

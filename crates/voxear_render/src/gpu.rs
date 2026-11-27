@@ -1221,7 +1221,17 @@ pub struct GpuPost {
     /// 1 when the picture goes to a display image the encode pass fits to
     /// the window.
     pub display_image: u32,
-    pub _look_pad: u32,
+    /// Film grain: how strong, how large its specks in pixels, and how
+    /// coloured.
+    pub grain: f32,
+    pub grain_size: f32,
+    pub grain_colour: f32,
+    /// The view's breathing and waver, as shares of the picture, and breaths
+    /// a second.
+    pub warp_breathing: f32,
+    pub warp_waver: f32,
+    pub warp_speed: f32,
+    pub _warp_pad: [f32; 3],
     pub look_values: [[f32; 4]; crate::looks::LOOK_VALUES],
 }
 

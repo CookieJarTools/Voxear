@@ -446,6 +446,11 @@ pub struct ViewOptions {
     /// Draws the scene at this share of the view's size, whatever its
     /// post-processing says, as `vox render --render-scale` does.
     pub render_scale: Option<f32>,
+    /// The size the scene is drawn at, whatever its post-processing says: a
+    /// view through a Portal draws into the picture of the view it is seen
+    /// in, at the size that one was drawn at, though the dimension it shows
+    /// draws at a scale of its own.
+    pub drawn_size: Option<(u32, u32)>,
     /// The upscaler in place of the post-processing's, to compare them.
     pub upscaler: Option<crate::post::Upscaler>,
     /// Whether local lights keep their shadows of what stands still from
@@ -481,6 +486,7 @@ impl Default for ViewOptions {
             gizmos: true,
             meshlet_culling: true,
             render_scale: None,
+            drawn_size: None,
             upscaler: None,
             local_shadow_cache: true,
             sun_shadows: None,
@@ -857,13 +863,15 @@ pub fn extract(
         post.anti_aliasing.sharpness = 0.0;
     }
     let taa = post.anti_aliasing.mode == AntiAliasingMode::Taa;
-    let scale = match taa {
-        true => options.render_scale.map_or_else(|| post.anti_aliasing.drawn_scale(), |scale| scale.clamp(0.25, 1.0)),
-        false => 1.0,
+    let scale = match (taa, options.drawn_size) {
+        (_, Some(drawn)) => drawn.1 as f32 / height.max(1) as f32,
+        (true, None) => options.render_scale.map_or_else(|| post.anti_aliasing.drawn_scale(), |scale| scale.clamp(0.25, 1.0)),
+        (false, None) => 1.0,
     };
-    let (width, height) = match &grid {
-        Some(grid) => grid.drawn,
-        None => render_size((width, height), scale),
+    let (width, height) = match (&grid, options.drawn_size) {
+        (_, Some(drawn)) => drawn,
+        (Some(grid), None) => grid.drawn,
+        (None, None) => render_size((width, height), scale),
     };
     let fov = lens.fov_y;
     // The drawn picture sees its margin round the view too; an orthographic camera snaps onto its pixels' grid.

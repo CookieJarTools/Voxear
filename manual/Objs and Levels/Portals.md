@@ -48,7 +48,7 @@ An open Portal lights what stands in front of it with what its far side shows. A
 
 The light is what the far side was seen to show: each time the camera sees the far side through the opening, the Portal takes a small picture of it, 16 by 16, leaving out anything standing in front of the opening. Until a Portal's far side has been seen it sheds no light, and once seen it keeps the light it was last seen with while the camera looks elsewhere. Closing it fades its light out in a few frames, and opening it again brings it back. The four nearest lit Portals within their view distance shed light at once.
 
-How it lights is the project's, in **Project Settings ▸ Graphics ▸ Portals ▸ Light**:
+How it lights is the project's, in **Project Settings ▸ Quality ▸ Portals ▸ Light**:
 
 - **Average**, the default: one colour, the average of what the far side shows.
 - **Picture**: the picture itself, each part of the opening its own colour. Red light falls from the side of the opening a fire shows in, and blue from the side showing sky. It costs a texture read for each lit Portal at each point it lights, in the fog too.
@@ -59,6 +59,12 @@ Each Portal's **Light** sets how brightly: 2 for a rift whose glow fills a cave,
 ```csharp
 rift.Portal.Light = 2f;
 Portal.Lighting = highQuality ? PortalLighting.Picture : PortalLighting.Average;
+```
+
+A game's graphics options can offer it as a quality choice, and keep the player's pick with the rest of the Portals settings:
+
+```csharp
+ProjectSettings.ChangePortals(portals => portals.Light = slowMachine ? PortalLighting.Off : PortalLighting.Picture);
 ```
 
 Tools set them with `vox editor call project.set key=portals.light value=picture`, and one Portal's with `field.set`, its field `light`.
@@ -140,7 +146,7 @@ How much Portals may spend is the project's, in `voxear.toml`:
 | Draw Distance | How far ahead a far side is drawn, in metres, with the sky past it; 0 draws it as far as the world: 0 |
 | View Distance | How far from the opening a camera sees the far side of a Portal without its own, in metres: 96. Also in Project Settings ▸ Graphics ▸ Portals |
 | Dimension Distance | How close a camera comes to a Portal into another [[Dimensions|dimension]], as a dungeon's gate, before that dimension is loaded, in metres: 24. Only the nearest such Portal is open at a time. Also in Project Settings ▸ Graphics ▸ Portals |
-| Light | How far sides light what is in front of their Portals: `average`, `picture` or `off`. Also in Project Settings ▸ Graphics ▸ Portals |
+| Light | How far sides light what is in front of their Portals: `average`, `picture` or `off`. Also in Project Settings ▸ Quality ▸ Portals |
 
 ```toml
 [portals]

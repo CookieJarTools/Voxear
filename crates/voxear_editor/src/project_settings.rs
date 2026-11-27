@@ -420,7 +420,7 @@ const FIXED: &[Setting] = &[
         "How far from its opening a camera sees a Portal's far side, for each Portal without a view distance of its own. Further shows more far sides at once, each costing a view.",
     ),
     Setting::new(
-        ("Graphics", "Portals"),
+        ("Quality", "Portals"),
         "portals.light",
         "Light",
         Kind::Choice(PORTAL_LIGHT),

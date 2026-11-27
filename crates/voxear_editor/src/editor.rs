@@ -60,6 +60,7 @@ mod reverb_bakes;
 mod lighting_bakes;
 mod placing;
 mod play;
+mod test_runs;
 mod prefab_mode;
 mod prefab_overrides;
 mod voxel_prints;
@@ -443,6 +444,9 @@ pub struct Editor {
     /// A World Generator changed in its Inspector by a drag still held, to save once it is let go.
     world_gen_to_save: Option<(String, voxear_terrain::generate::WorldGen)>,
     memory_profiler: MemoryPanel,
+    /// The Tests window, and the tests waiting to run, the next first.
+    tests: crate::tests_panel::TestsPanel,
+    test_queue: std::collections::VecDeque<crate::tests_panel::TestKey>,
     audio: AudioPanel,
     block_database: BlockDatabase,
     /// The Block World that was selected when a block picked in the Blocks
@@ -725,6 +729,8 @@ impl Editor {
         let voxshade = crate::voxshade_panel::VoxShadePanel::new(&mut ui, nodes.voxshade_panel);
         let model = ModelPanel::new(&mut ui, nodes.model_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
+        let tests_panel = find(&ui, "tests-panel");
+        let tests = crate::tests_panel::TestsPanel::new(&mut ui, tests_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
         let block_database = BlockDatabase::new(&mut ui, nodes.blocks_panel);
         let localization = LocalizationPanel::new(&mut ui, nodes.localization_panel);
@@ -829,6 +835,8 @@ impl Editor {
             model_guid: None,
             world_gen_to_save: None,
             memory_profiler,
+            tests,
+            test_queue: std::collections::VecDeque::new(),
             audio,
             block_database,
             built_in: None,
@@ -1136,6 +1144,7 @@ impl Editor {
             self.frame_debugger.update(&mut self.ui, frames_shown, renderer);
             let memory_shown = self.shown(self.nodes.memory_panel);
             self.memory_profiler.update(&mut self.ui, memory_shown, &self.game, renderer);
+            self.update_tests();
             let audio_shown = self.shown(self.nodes.audio_panel);
             if let Some(picked) = self.audio.update(&mut self.ui, audio_shown, &self.game) {
                 self.select(Some(picked));

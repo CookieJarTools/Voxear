@@ -134,6 +134,7 @@ mod nav_props;
 mod plants_props;
 mod plants_tools;
 mod terrain_panel;
+mod tests_panel;
 mod terrain_props;
 mod terrain_tools;
 pub mod scene_tools;

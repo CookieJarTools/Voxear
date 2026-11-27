@@ -3126,6 +3126,79 @@ TextField.build-title:focus {
     gap: 5px;
 }
 
+/* A Mesh Renderer's mesh and material, as large pictures side by side, each named under it. */
+.mesh-card {
+    flex-shrink: 0;
+    gap: 8px;
+    margin: 6px 0px 6px 0px;
+}
+
+.mesh-card-tile {
+    flex-grow: 1;
+    flex-basis: 0px;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 0px 6px 0px;
+    border-radius: 8px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-line);
+}
+
+.mesh-card-frame {
+    width: 72px;
+    height: 72px;
+}
+
+.mesh-card-image {
+    width: 72px;
+    height: 72px;
+    border-radius: 6px;
+}
+
+.mesh-card-caption {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+/* A terrain brush's picture: the brush from above and its cross-section, with what it is under them. */
+.brush-card {
+    flex-shrink: 0;
+    height: 72px;
+    margin: 6px 0px 2px 0px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.brush-card-picture {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.brush-card-words {
+    position: absolute;
+    right: 10px;
+    top: 7px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.82);
+}
+
+.terrain-tools > .segment {
+    gap: 5px;
+}
+
+/* Only the picked tool names itself beside its icon; the others say who they are in their tooltips. */
+.terrain-tools > .segment > Label {
+    display: none;
+}
+
+.terrain-tools > .segment:checked > Label {
+    display: flex;
+}
+
 /* A Light's picture: the sky it lights or its glow, drawn edge to edge, with what it is over it. */
 .light-card {
     flex-shrink: 0;
@@ -4994,4 +5067,139 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .prop.found > .prop-label {
     color: var(--vx-accent);
     font-weight: 600;
+}
+
+/* The Tests window: Run All, a filter and how they came out over the list; each category a heading with its run
+   button, each test a mark, its title, its time and its run button, and what a failure said under it. */
+.tests-panel {
+    flex-direction: column;
+}
+
+.tests-bar {
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px 0px 10px;
+}
+
+.tests-run-all {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.tests-filter {
+    flex-grow: 1;
+    min-width: 60px;
+    max-width: 240px;
+}
+
+.tests-summary {
+    flex-shrink: 0;
+    padding: 6px 12px 0px 12px;
+    font-size: 11px;
+    color: var(--vx-muted);
+    white-space: nowrap;
+}
+
+.tests-list {
+    padding: 4px 6px;
+    margin-top: 6px;
+    border-top: 1px solid var(--vx-line);
+}
+
+.tests-empty {
+    margin: 16px;
+    color: var(--vx-muted);
+    white-space: normal;
+}
+
+.tests-category {
+    flex-shrink: 0;
+    height: 28px;
+    align-items: center;
+    gap: 8px;
+    padding: 0px 6px;
+    margin-top: 6px;
+    border-bottom: 1px solid var(--vx-line);
+}
+
+.tests-category-name {
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.tests-category-counts {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.tests-test {
+    flex-shrink: 0;
+    border-radius: 5px;
+}
+
+.tests-test:hover {
+    background-color: var(--vx-hover);
+}
+
+.tests-test-line {
+    height: 26px;
+    align-items: center;
+    gap: 8px;
+    padding: 0px 6px 0px 14px;
+}
+
+.tests-mark {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    background-color: var(--vx-line-2);
+}
+
+.tests-mark.test-passed {
+    background-color: var(--vx-success);
+}
+
+.tests-mark.test-failed {
+    background-color: var(--vx-danger);
+}
+
+.tests-mark.test-waiting {
+    background-color: var(--vx-accent);
+    animation: busy-pulse 700ms ease-in-out infinite alternate;
+}
+
+.tests-title {
+    flex-grow: 1;
+    min-width: 0px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.tests-time {
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.tests-run > Icon {
+    width: 11px;
+    height: 11px;
+}
+
+.tests-failure {
+    margin: 0px 8px 6px 30px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-family: mono;
+    font-size: 11px;
+    white-space: normal;
+    color: var(--vx-danger);
+    background-color: rgba(229, 83, 75, 0.1);
 }

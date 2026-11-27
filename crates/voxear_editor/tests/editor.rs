@@ -45,6 +45,13 @@ fn open_logging(log: LogCapture) -> Option<(Renderer, voxear_editor::Editor)> {
     Some((renderer, editor))
 }
 
+/// The name on a Project tile, in the box that cuts it at the right.
+fn tile_name(ui: &Ui, tile: NodeId) -> String {
+    let mut names = Vec::new();
+    with_class(ui, tile, "tile-name", &mut names);
+    names.first().map(|&name| ui.text(name)).unwrap_or_default()
+}
+
 #[test]
 fn the_inspector_edits_the_selected_obj() {
     let Some((mut renderer, mut editor)) = open() else { return };
@@ -92,7 +99,7 @@ fn the_project_shows_folders_as_tiles_and_opens_them() {
     let mut tiles = Vec::new();
     with_class(&editor.ui, root, "tile", &mut tiles);
     let ui = &editor.ui;
-    let models = tiles.into_iter().find(|&tile| ui.is_visible(tile) && ui.text(ui.children(tile)[1]) == "Models");
+    let models = tiles.into_iter().find(|&tile| ui.is_visible(tile) && tile_name(ui, tile) == "Models");
     let [x, y, w, h] = ui.rect(models.expect("a tile for the Models folder"));
     let ui = &mut editor.ui;
     ui.pointer_move(x + w / 2.0, y + h / 2.0);
@@ -114,7 +121,7 @@ fn a_selected_script_shows_its_code() {
     let tile_named = |editor: &voxear_editor::Editor, name: &str| {
         let (ui, mut tiles) = (&editor.ui, Vec::new());
         with_class(ui, ui.root(), "tile", &mut tiles);
-        tiles.into_iter().find(|&tile| ui.is_visible(tile) && ui.text(ui.children(tile)[1]).starts_with(name))
+        tiles.into_iter().find(|&tile| ui.is_visible(tile) && tile_name(ui, tile).starts_with(name))
     };
     let press = |editor: &mut voxear_editor::Editor, tile: NodeId, times: usize| {
         let [x, y, w, h] = editor.ui.rect(tile);
@@ -1110,7 +1117,7 @@ fn drag(ui: &mut Ui, from: NodeId, to: NodeId) {
 fn tile(ui: &Ui, name: &str) -> Option<NodeId> {
     let mut tiles = Vec::new();
     with_class(ui, ui.root(), "tile", &mut tiles);
-    tiles.into_iter().find(|&t| ui.is_visible(t) && ui.children(t).get(1).is_some_and(|&n| ui.text(n) == name))
+    tiles.into_iter().find(|&t| ui.is_visible(t) && tile_name(ui, t) == name)
 }
 
 #[test]
@@ -1213,7 +1220,7 @@ fn a_model_opens_out_to_its_parts_and_a_field_takes_one() {
     let names: Vec<String> = parts
         .into_iter()
         .filter(|&part| editor.ui.is_visible(part) && editor.ui.has_class(part, "tile"))
-        .map(|part| editor.ui.text(editor.ui.children(part)[1]))
+        .map(|part| tile_name(&editor.ui, part))
         .collect();
     assert!(
         names.len() >= 2 && names.last().map(String::as_str) == Some("Checker"),
@@ -2078,6 +2085,22 @@ fn light_types(ui: &Ui, buttons: NodeId) -> bool {
 }
 
 #[test]
+fn a_mesh_renderer_shows_its_mesh_and_material_large_side_by_side() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    for _ in 0..20 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "mesh-card.png");
+    let card = first_with(&editor.ui, editor.ui.root(), "mesh-card").expect("the mesh and material, large");
+    assert_eq!(texts_in(&editor.ui, card), ["Mesh", "Material"]);
+    let mut images = Vec::new();
+    with_class(&editor.ui, card, "mesh-card-image", &mut images);
+    assert_eq!(images.len(), 2);
+}
+
+#[test]
 fn a_light_shows_its_type_as_buttons_a_picture_of_it_and_its_rows_under_headings() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let sun = obj(&editor, "Sun").unwrap();
@@ -2614,6 +2637,9 @@ fn the_project_panel_shows_assets_and_makes_renames_and_deletes_files() {
     // A new material from the menu, named in the rename bar.
     context_click(&mut editor.ui, day);
     frame(&mut editor, &mut renderer);
+    // A long menu in a small window: scrolled to, as the wheel does.
+    let new = menu_item(&editor.ui, "New Material").expect("the menu makes materials");
+    scroll_to(&mut editor, &mut renderer, new);
     let new = menu_item(&editor.ui, "New Material").expect("the menu makes materials");
     click(&mut editor.ui, new);
     frame(&mut editor, &mut renderer);
@@ -6523,7 +6549,7 @@ fn hierarchies_and_project_panels_open_more_than_once() {
     let mut tiles = Vec::new();
     with_class(&editor.ui, files[1], "tile", &mut tiles);
     let models =
-        tiles.into_iter().find(|&t| editor.ui.is_visible(t) && editor.ui.text(editor.ui.children(t)[1]) == "Models");
+        tiles.into_iter().find(|&t| editor.ui.is_visible(t) && tile_name(&editor.ui, t) == "Models");
     let [x, y, w, h] = editor.ui.rect(models.expect("the second shows the project's folders"));
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
     for _ in 0..2 {

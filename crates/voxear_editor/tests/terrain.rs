@@ -142,7 +142,9 @@ fn type_number(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, labe
 /// Picks one of the Terrain's tools by its segment.
 fn show_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, tool: &str) {
     let strip = first_with(&editor.ui, editor.ui.root(), "terrain-tools").expect("the Terrain's tools");
-    let segment = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == tool).expect("the tool");
+    // A tab shows its icon and its name beside it.
+    let says = |s: NodeId| editor.ui.text(s) == tool || editor.ui.children(s).iter().any(|&p| editor.ui.text(p) == tool);
+    let segment = editor.ui.children(strip).into_iter().find(|&s| says(s)).expect("the tool");
     click(&mut editor.ui, segment);
     frame(editor, renderer);
     frame(editor, renderer);
@@ -176,6 +178,13 @@ fn editor_with_a_terrain() -> Option<(tempfile::TempDir, Renderer, voxear_editor
 /// How high the field's ground is at `(x, z)` from its corner.
 fn height(editor: &voxear_editor::Editor, field: Entity, x: f32, z: f32) -> f32 {
     editor.game.engine.world.get::<Terrain>(field).unwrap().heights.height_at(x, z)
+}
+
+/// The name on a Project tile, in the box that cuts it at the right.
+fn tile_name(ui: &Ui, tile: NodeId) -> String {
+    let mut names = Vec::new();
+    with_class(ui, tile, "tile-name", &mut names);
+    names.first().map(|&name| ui.text(name)).unwrap_or_default()
 }
 
 #[test]
@@ -323,6 +332,13 @@ fn a_brush_stroke_in_the_scene_view_raises_the_ground_as_one_step_to_undo() {
     for label in ["Brush", "Size", "Strength"] {
         assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the brush's {label}");
     }
+    // A picture of the brush, saying what it is, over its rows under a heading.
+    let card = first_with(&editor.ui, editor.ui.root(), "brush-card").expect("the brush's picture");
+    let words = first_with(&editor.ui, card, "brush-card-words").unwrap();
+    assert_eq!(editor.ui.text(words), "Raise or Lower · 8 m · 50%");
+    assert!(!editor.ui.shapes(first_with(&editor.ui, card, "brush-card-picture").unwrap()).is_empty());
+    let title = first_with(&editor.ui, editor.ui.root(), "attr-title").expect("a heading");
+    assert_eq!(editor.ui.text(title), "Brush");
     // Over the ground below the middle of the Scene view, held for a few frames.
     let camera = editor.scene_camera().expect("the Scene view");
     let [x, y, w, h] = camera.rect;
@@ -1140,7 +1156,9 @@ fn show_block_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, 
     let strip = first_with(&editor.ui, editor.ui.root(), "block-tools").expect("the Block World's tools");
     scroll_to(editor, renderer, strip);
     let strip = first_with(&editor.ui, editor.ui.root(), "block-tools").expect("the Block World's tools");
-    let segment = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == tool).expect("the tool");
+    // A tab shows its icon and its name beside it.
+    let says = |s: NodeId| editor.ui.text(s) == tool || editor.ui.children(s).iter().any(|&p| editor.ui.text(p) == tool);
+    let segment = editor.ui.children(strip).into_iter().find(|&s| says(s)).expect("the tool");
     click(&mut editor.ui, segment);
     frame(editor, renderer);
     frame(editor, renderer);
@@ -3115,7 +3133,7 @@ fn a_biome_in_the_inspector_is_saved_as_it_is_edited_and_every_world_listing_it_
     frame(&mut editor, &mut renderer);
     let mut tiles = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "tile", &mut tiles);
-    let named = |tile: NodeId| editor.ui.children(tile).get(1).map(|&name| editor.ui.text(name)).unwrap_or_default();
+    let named = |tile: NodeId| tile_name(&editor.ui, tile);
     let cool = tiles.into_iter().find(|&tile| editor.ui.is_visible(tile) && named(tile) == "Cool.biome");
     let cool = cool.expect("the Project panel shows the Biomes folder");
     context_click(&mut editor.ui, cool);

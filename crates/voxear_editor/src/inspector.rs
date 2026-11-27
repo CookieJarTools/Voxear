@@ -1454,6 +1454,7 @@ impl Inspector {
                 }
                 if let Prop::Terrain(field) = value {
                     meta.range = crate::terrain_props::range(&game.engine.world, entity, *field).map(|r| r.map(f64::from));
+                    meta.title = crate::terrain_props::heading(&game.engine.world, entity, *field).or(meta.title);
                 }
                 if let Prop::BlockWorld(field) = value {
                     meta.range = crate::block_props::range(*field).map(|r| r.map(f64::from));
@@ -1504,6 +1505,22 @@ impl Inspector {
                 // A Light's picture, under its type's buttons.
                 if *value == Prop::LightAppearance {
                     self.light_card = Some(crate::light_inspector::LightCard::new(ui, container));
+                }
+                // A Mesh Renderer's mesh and material, large, side by side over their rows.
+                if *value == Prop::Mesh && *part == Part::Renderer {
+                    let card = ui.panel(container, Style::row());
+                    ui.add_class(card, "mesh-card");
+                    for (shown, title) in [(Prop::Mesh, "Mesh"), (Prop::Material, "Material")] {
+                        let tile = ui.panel(card, Style::column());
+                        ui.add_class(tile, "mesh-card-tile");
+                        let frame = ui.panel(tile, Style::default());
+                        ui.add_class(frame, "mesh-card-frame");
+                        let image = ui.image(frame);
+                        ui.add_class(image, "mesh-card-image");
+                        let caption = ui.add_label(tile, title);
+                        ui.add_class(caption, "mesh-card-caption");
+                        self.previews.push((shown, image, MESH_CARD_PREVIEW));
+                    }
                 }
                 self.decorate(ui, container, game, (entity, value), (&meta, &label));
                 let row = prop(ui, container, &label);
@@ -2012,6 +2029,9 @@ impl Inspector {
     fn update_lods(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
         if let Some(card) = &mut self.light_card {
             card.update(ui, &game.engine.world, entity);
+        }
+        if let Some(panel) = &mut self.terrain_panel {
+            panel.show_brush(ui, &game.engine.world);
         }
         let Some(lods) = &mut self.group_lods else { return self.update_mesh_lods(ui, game, entity, renderer) };
         if let Some(level) = lods.clicked_level(ui).filter(|&level| level != self.lod_level) {
@@ -3368,6 +3388,9 @@ pub(crate) fn field_tooltip(types: &ScriptTypes, prop: &Prop) -> Option<String> 
     };
     Some(written.to_string())
 }
+
+/// How big a Mesh Renderer's previews of its mesh and material are, in logical pixels.
+const MESH_CARD_PREVIEW: u32 = 72;
 
 /// What a section's header has at its right: the Transform's menu button,
 /// a tick, on or off, or nothing, for a component Unity gives no tick and

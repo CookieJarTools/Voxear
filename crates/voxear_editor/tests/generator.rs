@@ -163,7 +163,9 @@ fn pick_node(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: 
 /// Picks one of the Terrain's tools by its segment.
 fn show_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, tool: &str) {
     let strip = first_with(&editor.ui, editor.ui.root(), "terrain-tools").expect("the Terrain's tools");
-    let segment = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == tool).expect("the tool");
+    // A tab shows its icon and its name beside it.
+    let says = |s: NodeId| editor.ui.text(s) == tool || editor.ui.children(s).iter().any(|&p| editor.ui.text(p) == tool);
+    let segment = editor.ui.children(strip).into_iter().find(|&s| says(s)).expect("the tool");
     click(&mut editor.ui, segment);
     frame(editor, renderer);
     frame(editor, renderer);

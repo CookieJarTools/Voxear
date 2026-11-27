@@ -289,6 +289,29 @@ impl Editor {
         }
     }
 
+    /// Runs a `[Test]` method: against the running game while playing, or
+    /// against the edited level, what it changed one step to undo. `None`
+    /// while the scripts build, to try again; the outer error when it could
+    /// not run, the inner one why it failed.
+    pub(super) fn run_script_test(&mut self, type_name: &str, method: &str) -> Option<Result<Result<(), String>>> {
+        match &self.play.mode {
+            Mode::Playing(_) => Some(self.game.engine.run_check(type_name, method)),
+            Mode::Building(_) => None,
+            Mode::Editing if self.play.ready && self.play.scripts.is_none() => {
+                Some(Err(anyhow::anyhow!("this project has no scripts")))
+            }
+            Mode::Editing if self.play.error.is_some() => {
+                Some(Err(anyhow::anyhow!("the scripts did not build or start; the Console says why")))
+            }
+            Mode::Editing if !self.play.ready => {
+                self.play.start_only = true;
+                self.build_scripts();
+                None
+            }
+            Mode::Editing => Some(self.run_on_edits(|scripts, world| scripts.run_check(world, type_name, method))),
+        }
+    }
+
     /// Runs a command against the edited level, keeping what it changed as
     /// one step to undo: Objs it changed, and those it destroyed, which undo
     /// brings back.

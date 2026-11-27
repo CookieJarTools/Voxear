@@ -1155,7 +1155,6 @@ impl ProjectView {
             }
             add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
-            add(MenuItem::separator(), None);
             let contents = self.contents.borrow();
             if let Some(path) = contents.mark_path(entry) {
                 let liked = contents.marks.favourites.iter().any(|f| f == path);
@@ -1166,8 +1165,8 @@ impl ProjectView {
                 if folder && !is_root {
                     add(MenuItem::new("Folder Colour…"), Some(MenuAction::FolderColour));
                 }
-                add(MenuItem::separator(), None);
             }
+            add(MenuItem::separator(), None);
             add(MenuItem::new("Rename").enabled(!is_root && !fixed), Some(MenuAction::Rename));
             add(MenuItem::new("Duplicate").enabled(duplicates && !fixed), Some(MenuAction::Duplicate));
             add(MenuItem::new("Delete").enabled(!is_root && !fixed), Some(MenuAction::Delete));

@@ -246,6 +246,8 @@ impl Editor {
             "build" | "input" | "audio" | "localization" | "packages" | "generator" | "voxshade" | "model" => {
                 self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene")
             }
+            // The tests open by the Console, where there is room for what a failure says.
+            "tests" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "console"),
             // The project's blocks open by its files.
             "blocks" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "project"),
             _ => self.ui.open_dock_panel(self.nodes.dock, id),

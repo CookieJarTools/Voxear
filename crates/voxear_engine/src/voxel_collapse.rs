@@ -148,9 +148,11 @@ pub fn blast(world: &mut World, at: Vec3, radius: f32, options: BlastOptions, on
         }
         done.reached += 1;
         done.dug += dug.len();
+        let changes = Arc::new(changes);
         if let Some(kept) = world.get_mut::<VoxelVolume>(entity) {
-            kept.changes = Arc::new(changes);
+            kept.changes = changes.clone();
         }
+        crate::voxel_sync::hint_change(world, entity, &volume, &changes, crate::voxel_sync::HintWhat::Blast(local));
         raise_dust(world, dust.iter().map(|p| corner + *p));
         let job =
             Job { before: volume, dug, from: at, throw: options.throw, pieces: options.pieces, rest: options.rest };

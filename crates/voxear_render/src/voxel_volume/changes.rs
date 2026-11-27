@@ -67,7 +67,7 @@ impl ChangedBrick {
         (local.x + BRICK * (local.y + BRICK * local.z)) as usize
     }
 
-    fn is_set(&self, index: usize) -> bool {
+    pub fn is_set(&self, index: usize) -> bool {
         self.set[index >> 6] >> (index & 63) & 1 != 0
     }
 
@@ -538,6 +538,385 @@ impl VoxelChanges {
         }
         Ok(changes)
     }
+
+    /// The region a column of bricks is kept in.
+    fn region_of(x: i32, z: i32) -> [i32; 2] {
+        [x.div_euclid(REGION_BRICKS), z.div_euclid(REGION_BRICKS)]
+    }
+
+    /// Every region holding a brick, a cut or a felled tree, in order.
+    pub fn region_keys(&self) -> Vec<[i32; 2]> {
+        let mut keys: Vec<[i32; 2]> = self.bricks.keys().map(|b| Self::region_of(b[0], b[2])).collect();
+        keys.extend(self.cuts.keys().map(|b| Self::region_of(b[0], b[1])));
+        keys.extend(self.felled.keys().map(|f| Self::region_of(f[0].div_euclid(BRICK), f[1].div_euclid(BRICK))));
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    /// Region `region` as region files, as many as it takes for none to
+    /// hold more than about `most` bytes before packing: its bricks shared
+    /// among them, its cut grass and felled trees in the first. None where
+    /// it holds nothing.
+    pub fn region_parts(&self, region: [i32; 2], most: usize) -> Vec<Vec<u8>> {
+        let mut parts = vec![Region::default()];
+        let mut size = 0;
+        for (brick, changed) in &self.bricks {
+            if Self::region_of(brick[0], brick[2]) != region {
+                continue;
+            }
+            let bytes = 4 + 64 + changed.count() as usize;
+            if size + bytes > most && size > 0 {
+                parts.push(Region::default());
+                size = 0;
+            }
+            size += bytes;
+            parts.last_mut().expect("a part").bricks.push((*brick, changed));
+        }
+        for (brick, cut) in &self.cuts {
+            if Self::region_of(brick[0], brick[1]) == region {
+                parts[0].cuts.push((*brick, cut));
+            }
+        }
+        for (foot, felled) in &self.felled {
+            if Self::region_of(foot[0].div_euclid(BRICK), foot[1].div_euclid(BRICK)) == region {
+                parts[0].felled.push((*foot, felled));
+            }
+        }
+        let empty = |part: &Region| part.bricks.is_empty() && part.cuts.is_empty() && part.felled.is_empty();
+        if parts.iter().all(empty) {
+            return Vec::new();
+        }
+        parts.iter().map(|part| self.region_bytes(region, part)).collect()
+    }
+
+    /// Lets go of everything kept in region `region`: its bricks, cut grass
+    /// and felled trees, back to what the ground and the edits make.
+    pub fn clear_region(&mut self, region: [i32; 2]) {
+        self.bricks.retain(|b, _| Self::region_of(b[0], b[2]) != region);
+        self.cuts.retain(|b, _| Self::region_of(b[0], b[1]) != region);
+        self.felled.retain(|f, _| Self::region_of(f[0].div_euclid(BRICK), f[1].div_euclid(BRICK)) != region);
+    }
+
+    /// What `older` must take to become these: each brick, column of cut
+    /// grass and felled tree that differs, the bricks voxel by voxel.
+    pub fn delta_from(&self, older: &Self) -> VoxelDelta {
+        let mut delta = VoxelDelta::default();
+        let kind_of = |changes: &Self, code: u8| match code {
+            0 => None,
+            code => Some(changes.kinds[usize::from(code) - 1]),
+        };
+        let mut keys: Vec<[i32; 3]> = self.bricks.keys().chain(older.bricks.keys()).copied().collect();
+        keys.sort();
+        keys.dedup();
+        let same_kinds = self.kinds == older.kinds;
+        for key in keys {
+            let (now, was) = (self.bricks.get(&key), older.bricks.get(&key));
+            if let (Some(now), Some(was)) = (now, was)
+                && same_kinds
+                && (Arc::ptr_eq(now, was) || now == was)
+            {
+                continue;
+            }
+            let mut voxels = Vec::new();
+            for index in 0..512 {
+                let at = |brick: Option<&Arc<ChangedBrick>>, changes: &Self| {
+                    brick.filter(|b| b.is_set(index)).map(|b| kind_of(changes, b.codes[index]))
+                };
+                let (to, from) = (at(now, self), at(was, older));
+                if to != from {
+                    voxels.push((index as u16, to));
+                }
+            }
+            if !voxels.is_empty() {
+                delta.bricks.push((key, voxels));
+            }
+        }
+        let mut columns: Vec<[i32; 2]> = self.cuts.keys().chain(older.cuts.keys()).copied().collect();
+        columns.sort();
+        columns.dedup();
+        for key in columns {
+            let (now, was) = (self.cuts.get(&key), older.cuts.get(&key));
+            let same = match (now, was) {
+                (Some(now), Some(was)) => Arc::ptr_eq(now, was) || now == was,
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                delta.cuts.push((key, now.map(|cut| (**cut).clone())));
+            }
+        }
+        let mut feet: Vec<[i32; 2]> = self.felled.keys().chain(older.felled.keys()).copied().collect();
+        feet.sort();
+        feet.dedup();
+        for foot in feet {
+            let now = self.felled.get(&foot).copied();
+            if now != older.felled.get(&foot).copied() {
+                delta.felled.push((foot, now));
+            }
+        }
+        delta
+    }
+
+    /// Takes `delta` in, as [`VoxelChanges::delta_from`] made it from these:
+    /// gives whether every voxel set found room for its kind.
+    pub fn apply_delta(&mut self, delta: &VoxelDelta) -> bool {
+        let mut all = true;
+        for (brick, voxels) in &delta.bricks {
+            let low = IVec3::from(brick.map(|a| a * BRICK));
+            for &(index, to) in voxels {
+                let index = i32::from(index);
+                let cell = low + IVec3::new(index % BRICK, (index / BRICK) % BRICK, index / (BRICK * BRICK));
+                match to {
+                    None => self.unset(cell),
+                    Some(to) => all &= self.set(cell, to),
+                }
+            }
+        }
+        for (key, cut) in &delta.cuts {
+            match cut {
+                Some(cut) => drop(self.cuts.insert(*key, Arc::new(cut.clone()))),
+                None => drop(self.cuts.remove(key)),
+            }
+        }
+        for (foot, felled) in &delta.felled {
+            match felled {
+                Some(felled) => drop(self.felled.insert(*foot, *felled)),
+                None => drop(self.felled.remove(foot)),
+            }
+        }
+        all
+    }
+}
+
+/// What one volume's changes must take to become another's (see
+/// [`VoxelChanges::delta_from`]): its bricks voxel by voxel, each voxel let
+/// go (none) or set to air or a kind; its columns of cut grass and its
+/// felled trees whole, or let go.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoxelDelta {
+    pub bricks: Vec<([i32; 3], Vec<(u16, Option<VoxelSet>)>)>,
+    pub cuts: Vec<([i32; 2], Option<CutColumns>)>,
+    pub felled: Vec<([i32; 2], Option<Felled>)>,
+}
+
+/// Payloads longer than this are packed with zstd.
+const PACK_OVER: usize = 160;
+/// A brick with at most this many voxels changed names them by place, more
+/// by a bit each.
+const LISTED: usize = 30;
+
+impl VoxelDelta {
+    pub fn is_empty(&self) -> bool {
+        self.bricks.is_empty() && self.cuts.is_empty() && self.felled.is_empty()
+    }
+
+    /// How many voxels it sets or lets go.
+    pub fn voxels(&self) -> usize {
+        self.bricks.iter().map(|(_, voxels)| voxels.len()).sum()
+    }
+
+    /// As bytes: a byte for whether the rest is packed with zstd (and then
+    /// its length), then the kinds it uses (a ground or paving and a tint),
+    /// then each brick (its place zigzagged, how many voxels, their places
+    /// in the brick listed or as 512 bits, and each one's code: 0 let go, 1
+    /// air, a kind's place and two), each column of cut grass and each
+    /// felled tree.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut kinds: Vec<VoxelKind> = Vec::new();
+        for (_, voxels) in &self.bricks {
+            for (_, to) in voxels {
+                if let Some(Some(kind)) = to
+                    && !kinds.contains(kind)
+                {
+                    kinds.push(*kind);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        put_varint(&mut out, kinds.len() as u64);
+        for kind in &kinds {
+            out.push(kind.material as u8);
+            out.push(u8::from(kind.tint.is_some()));
+            if let Some(tint) = kind.tint {
+                out.extend_from_slice(&tint);
+            }
+        }
+        put_varint(&mut out, self.bricks.len() as u64);
+        for (brick, voxels) in &self.bricks {
+            brick.iter().for_each(|&a| put_zigzag(&mut out, a));
+            put_varint(&mut out, voxels.len() as u64);
+            if voxels.len() <= LISTED {
+                voxels.iter().for_each(|(index, _)| out.extend_from_slice(&index.to_le_bytes()));
+            } else {
+                let mut bits = [0u64; 8];
+                voxels.iter().for_each(|&(index, _)| bits[usize::from(index) >> 6] |= 1 << (index & 63));
+                bits.iter().for_each(|word| out.extend_from_slice(&word.to_le_bytes()));
+            }
+            // In the order the places were given: listed as they come, or by place from the bits.
+            let mut sorted: Vec<&(u16, Option<VoxelSet>)> = voxels.iter().collect();
+            if voxels.len() > LISTED {
+                sorted.sort_by_key(|(index, _)| *index);
+            }
+            for (_, to) in sorted {
+                let code = match to {
+                    None => 0,
+                    Some(None) => 1,
+                    Some(Some(kind)) => 2 + kinds.iter().position(|k| k == kind).expect("listed") as u64,
+                };
+                put_varint(&mut out, code);
+            }
+        }
+        put_varint(&mut out, self.cuts.len() as u64);
+        for (key, cut) in &self.cuts {
+            key.iter().for_each(|&a| put_zigzag(&mut out, a));
+            out.push(u8::from(cut.is_some()));
+            if let Some(cut) = cut {
+                out.extend_from_slice(&cut.set.to_le_bytes());
+                out.extend((0..64).filter(|&index| cut.set >> index & 1 != 0).map(|index| cut.left[index]));
+            }
+        }
+        put_varint(&mut out, self.felled.len() as u64);
+        for (foot, felled) in &self.felled {
+            foot.iter().for_each(|&a| put_zigzag(&mut out, a));
+            out.push(u8::from(felled.is_some()));
+            if let Some(felled) = felled {
+                [felled.cut].iter().chain(&felled.low).chain(&felled.high).for_each(|&n| put_zigzag(&mut out, n));
+            }
+        }
+        if out.len() > PACK_OVER
+            && let Ok(packed) = zstd::bulk::compress(&out, 3)
+            && packed.len() + 5 < out.len()
+        {
+            let mut packed_out = vec![1];
+            put_varint(&mut packed_out, out.len() as u64);
+            packed_out.extend_from_slice(&packed);
+            return packed_out;
+        }
+        let mut plain = vec![0];
+        plain.extend_from_slice(&out);
+        plain
+    }
+
+    /// The delta in `bytes`, as [`VoxelDelta::to_bytes`] wrote it.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let unpacked;
+        let body = match bytes.first() {
+            Some(0) => &bytes[1..],
+            Some(1) => {
+                let mut at = 1;
+                let length = get_varint(bytes, &mut at)? as usize;
+                ensure!(length <= 64 << 20, "a delta of voxels too large");
+                unpacked = zstd::bulk::decompress(&bytes[at..], length)?;
+                &unpacked[..]
+            }
+            _ => bail!("not a delta of voxels"),
+        };
+        let mut at = 0;
+        let byte = |at: &mut usize| -> Result<u8> {
+            let b = *body.get(*at).context("the delta ends early")?;
+            *at += 1;
+            Ok(b)
+        };
+        let mut kinds = Vec::new();
+        for _ in 0..get_varint(body, &mut at)? {
+            let material = *VoxelMaterial::ALL.get(usize::from(byte(&mut at)?)).context("a voxel of no ground")?;
+            let tint = match byte(&mut at)? {
+                0 => None,
+                _ => Some([byte(&mut at)?, byte(&mut at)?, byte(&mut at)?]),
+            };
+            kinds.push(VoxelKind { material, tint });
+        }
+        let mut delta = VoxelDelta::default();
+        for _ in 0..get_varint(body, &mut at)? {
+            let brick = [get_zigzag(body, &mut at)?, get_zigzag(body, &mut at)?, get_zigzag(body, &mut at)?];
+            let count = get_varint(body, &mut at)? as usize;
+            ensure!(count <= 512, "a brick of more than 512 voxels");
+            let places: Vec<u16> = if count <= LISTED {
+                (0..count).map(|_| Ok(u16::from_le_bytes([byte(&mut at)?, byte(&mut at)?]))).collect::<Result<_>>()?
+            } else {
+                let mut bits = [0u64; 8];
+                for word in &mut bits {
+                    let piece = body.get(at..at + 8).context("the delta ends early")?;
+                    *word = u64::from_le_bytes(piece.try_into()?);
+                    at += 8;
+                }
+                (0..512u16).filter(|&i| bits[usize::from(i) >> 6] >> (i & 63) & 1 != 0).collect()
+            };
+            ensure!(places.len() == count && places.iter().all(|&p| p < 512), "a brick's voxels out of place");
+            let mut voxels = Vec::with_capacity(count);
+            for index in places {
+                let to = match get_varint(body, &mut at)? {
+                    0 => None,
+                    1 => Some(None),
+                    code => Some(Some(*kinds.get(code as usize - 2).context("a voxel of no kind")?)),
+                };
+                voxels.push((index, to));
+            }
+            delta.bricks.push((brick, voxels));
+        }
+        for _ in 0..get_varint(body, &mut at)? {
+            let key = [get_zigzag(body, &mut at)?, get_zigzag(body, &mut at)?];
+            let cut = match byte(&mut at)? {
+                0 => None,
+                _ => {
+                    let piece = body.get(at..at + 8).context("the delta ends early")?;
+                    let mut cut = CutColumns { set: u64::from_le_bytes(piece.try_into()?), ..CutColumns::default() };
+                    at += 8;
+                    for index in (0..64).filter(|&index| cut.set >> index & 1 != 0) {
+                        cut.left[index] = byte(&mut at)?;
+                    }
+                    Some(cut)
+                }
+            };
+            delta.cuts.push((key, cut));
+        }
+        for _ in 0..get_varint(body, &mut at)? {
+            let foot = [get_zigzag(body, &mut at)?, get_zigzag(body, &mut at)?];
+            let felled = match byte(&mut at)? {
+                0 => None,
+                _ => {
+                    let mut n = [0i32; 7];
+                    for number in &mut n {
+                        *number = get_zigzag(body, &mut at)?;
+                    }
+                    Some(Felled { cut: n[0], low: [n[1], n[2], n[3]], high: [n[4], n[5], n[6]] })
+                }
+            };
+            delta.felled.push((foot, felled));
+        }
+        Ok(delta)
+    }
+}
+
+fn put_varint(out: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        out.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+fn put_zigzag(out: &mut Vec<u8>, value: i32) {
+    put_varint(out, u64::from(((value << 1) ^ (value >> 31)) as u32));
+}
+
+fn get_varint(bytes: &[u8], at: &mut usize) -> Result<u64> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let byte = *bytes.get(*at).context("the delta ends early")?;
+        *at += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+    }
+    bail!("a number too long")
+}
+
+fn get_zigzag(bytes: &[u8], at: &mut usize) -> Result<i32> {
+    let zigzag = get_varint(bytes, at)? as u32;
+    Ok((zigzag >> 1) as i32 ^ -((zigzag & 1) as i32))
 }
 
 #[cfg(test)]
@@ -576,6 +955,59 @@ mod tests {
         let changed = fewer.changed_from(&changes);
         // The two bricks the wall was in, which keep the tunnel's voxels.
         assert_eq!(changed, vec![([0, 24, 0], [7, 31, 7]), ([0, 32, 0], [7, 39, 7])]);
+    }
+
+    #[test]
+    fn a_delta_takes_one_volumes_changes_to_anothers_and_reads_back_from_its_bytes() {
+        let mut was = VoxelChanges::default();
+        let brick = VoxelKind { material: VoxelMaterial::Bricks, tint: Some([200, 60, 60]) };
+        let planks = VoxelKind { material: VoxelMaterial::Planks, tint: None };
+        for x in 0..40 {
+            was.set(IVec3::new(x, 30, 5), Some(planks));
+        }
+        was.cut(3, 3, 2);
+        // The other placed its kinds in another order, dug and built more, cut more grass and felled a tree.
+        let mut now = VoxelChanges::default();
+        now.set(IVec3::new(-9, 2, 2), Some(brick));
+        for x in 0..40 {
+            now.set(IVec3::new(x, 30, 5), Some(planks));
+        }
+        now.unset(IVec3::new(-9, 2, 2));
+        for x in -20..20 {
+            for y in 0..12 {
+                now.set(IVec3::new(x, y, 1), if (x + y) % 3 == 0 { Some(brick) } else { None });
+            }
+        }
+        now.set(IVec3::new(7, 30, 5), None);
+        now.cut(3, 3, 2);
+        now.cut(-4, 9, 0);
+        now.fell([1, 1], Felled { cut: 4, low: [-8, 0, -8], high: [8, 90, 8] });
+        let delta = now.delta_from(&was);
+        assert!(delta.voxels() > 400 && delta.voxels() < 500, "{} voxels", delta.voxels());
+        assert_eq!((delta.cuts.len(), delta.felled.len()), (1, 1));
+        let bytes = delta.to_bytes();
+        assert_eq!(VoxelDelta::from_bytes(&bytes).unwrap(), delta);
+        assert!(bytes.len() < 400, "{} bytes", bytes.len());
+        let mut taken = was.clone();
+        assert!(taken.apply_delta(&VoxelDelta::from_bytes(&bytes).unwrap()));
+        assert!(taken.delta_from(&now).is_empty() && now.delta_from(&taken).is_empty(), "the same voxels");
+        // A voxel dug alone costs a few bytes.
+        let mut one = now.clone();
+        one.set(IVec3::new(100, 40, 100), None);
+        assert!(one.delta_from(&now).to_bytes().len() < 16);
+        // Back the other way, and as regions in parts.
+        let mut back = now.clone();
+        back.apply_delta(&was.delta_from(&now));
+        assert!(back.delta_from(&was).is_empty());
+        let region = now.region_keys()[0];
+        let parts = now.region_parts(region, 200);
+        assert!(parts.len() > 1, "cut into parts");
+        let mut read = VoxelChanges::default();
+        parts.iter().for_each(|part| read.read_region(part).unwrap());
+        read.clear_region([9, 9]);
+        let mut only = now.clone();
+        now.region_keys().into_iter().filter(|r| *r != region).for_each(|r| only.clear_region(r));
+        assert!(read.delta_from(&only).is_empty() && only.delta_from(&read).is_empty());
     }
 
     #[test]

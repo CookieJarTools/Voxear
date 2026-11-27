@@ -1457,6 +1457,8 @@ impl Game {
         self.net_begin(delta, renderer.as_deref_mut());
         // A player's machine makes the dimensions its server names, and takes in their edits.
         self.join_dimensions(renderer.as_deref_mut());
+        // A player's machine makes what the server's endless Voxel Volumes became.
+        crate::voxel_sync::take_in(&mut self.content, &mut self.engine.world, &self.levels);
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             profile_scope!("Collider Meshes");
@@ -1703,6 +1705,7 @@ impl Game {
         crate::net::set_level(&mut self.engine.world, self.levels.current());
         self.share_net_objects();
         self.serve_dimensions();
+        crate::voxel_sync::serve(&mut self.content, &mut self.engine.world, &self.levels);
         crate::net::frame_end(&mut self.engine.world);
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);

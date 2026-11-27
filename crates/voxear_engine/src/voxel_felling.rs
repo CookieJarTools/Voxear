@@ -184,8 +184,9 @@ pub fn cut(world: &mut World, cut: &VoxelCut, options: CutOptions, only: Option<
         if made.columns == 0 && made.voxels == 0 {
             continue;
         }
-        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
-            volume.changes = Arc::new(changes);
+        let changes = Arc::new(changes);
+        if let Some(kept) = world.get_mut::<VoxelVolume>(entity) {
+            kept.changes = changes.clone();
         }
         done.reached += 1;
         done.columns += made.columns;
@@ -201,14 +202,19 @@ pub fn cut(world: &mut World, cut: &VoxelCut, options: CutOptions, only: Option<
             VoxelCut::Points(points) => points.iter().fold(Vec3::ZERO, |sum, p| sum + *p) / points.len().max(1) as f32,
             VoxelCut::Ball { at, .. } | VoxelCut::Slice { at, .. } => *at,
         };
+        let mut spawned = Vec::new();
         for piece in made.pieces {
             let place = corner + piece.low.as_vec3() * piece.voxel + piece.middle();
             let obj = match options.pieces {
                 CutPieces::Gone => None,
                 CutPieces::Fall => Some(spawn(world, entity, corner, piece.clone(), middle_of_cut + corner, options)),
             };
+            spawned.push(obj);
             done.pieces.push(FelledPiece::of(obj, place, &piece, false));
         }
+        // Every machine cuts the same, its pieces as these.
+        let what = crate::voxel_sync::HintWhat::Cut { cut: local, pieces: spawned };
+        crate::voxel_sync::hint_change(world, entity, &volume, &changes, what);
     }
     done
 }
@@ -307,6 +313,59 @@ pub(crate) fn spawn_body(
     world.insert(entity, rigidbody);
     world.insert(entity, body);
     entity
+}
+
+/// A piece the server let loose, shown on a player's machine (see
+/// `voxel_sync`): a body held where the server puts it, its logs' boxes for
+/// others to meet, and its voxels a volume under it, at `place` in the
+/// world. Its number is the caller's to set.
+pub(crate) fn spawn_shown(
+    world: &mut World,
+    volume: Entity,
+    piece: Arc<VoxelPiece>,
+    middle: Vec3,
+    place: (Vec3, Quat),
+    built: bool,
+) -> Entity {
+    let (name, acoustic) = if built { ("Fallen piece", Acoustic::Brick) } else { ("Felled tree", Acoustic::Wood) };
+    let boxes: Vec<(Vec3, Vec3)> = piece.boxes(MOST_BOXES).into_iter().map(|(at, half)| (at - middle, half)).collect();
+    let key = place.0.to_array().iter().fold(piece.voxels.len() as u64, |key, a| {
+        key.rotate_left(17) ^ u64::from(a.to_bits())
+    });
+    let roughness = world.get::<VoxelVolume>(volume).map_or(0.8, |volume| volume.roughness);
+    let mut placed = Transform::from_position(place.0);
+    placed.rotation = place.1;
+    let entity = world.spawn((placed, voxear_scene::Name(name.into())));
+    let look = world.spawn((Transform::from_position(-middle), voxear_scene::Name(format!("{name} voxels"))));
+    world.insert(look, voxear_scene::Parent(entity));
+    world.insert(look, piece_volume(&piece, roughness));
+    world.insert(entity, Collider { friction: 0.8, acoustic, ..Collider::default() });
+    world.insert(entity, ColliderBoxes { key, boxes: boxes.into() });
+    world.insert(entity, Rigidbody { mass: piece.mass.max(1.0), kinematic: true, ..Rigidbody::default() });
+    world.insert(entity, crate::voxel_sync::ShownPiece { id: 0, volume, piece, middle, look });
+    entity
+}
+
+/// Makes a shown piece's voxels `piece`, as the server's were pressed or
+/// chipped.
+pub(crate) fn reshape_shown(world: &mut World, entity: Entity, piece: Arc<VoxelPiece>) {
+    let Some(shown) = world.get::<crate::voxel_sync::ShownPiece>(entity).cloned() else { return };
+    let roughness = world.get::<VoxelVolume>(shown.look).map_or(0.8, |look| look.roughness);
+    world.insert(shown.look, piece_volume(&piece, roughness));
+    if let Some(kept) = world.get_mut::<crate::voxel_sync::ShownPiece>(entity) {
+        kept.piece = piece;
+    }
+}
+
+/// Takes a shown piece away: its voxels kept a moment longer at `stamped`
+/// where it was stamped back into its volume, else at once.
+pub(crate) fn let_go_shown(world: &mut World, entity: Entity, stamped: Option<(Vec3, Quat)>) {
+    let Some(shown) = world.get::<crate::voxel_sync::ShownPiece>(entity).cloned() else { return };
+    world.despawn(entity);
+    match stamped {
+        Some((position, rotation)) => linger(world, shown.look, position, rotation, shown.middle),
+        None => drop(world.despawn(shown.look)),
+    }
 }
 
 /// A piece's voxels as a Voxel Volume of a set size, as large as its box,
@@ -429,7 +488,7 @@ pub fn fall(world: &mut World, dt: f32) {
     for (entity, body, (position, rotation)) in stamp {
         match body {
             Some(body) => {
-                stamp_back(world, &body, position, rotation);
+                stamp_back(world, entity, &body, position, rotation);
                 let look = body.look;
                 world.despawn(entity);
                 linger(world, look, position, rotation, body.middle);
@@ -496,17 +555,42 @@ fn crush_leaves(world: &mut World, entity: Entity) {
     let Some(volume) = world.get::<VoxelVolume>(body.volume).cloned() else { return };
     let corner = world.get::<voxear_scene::WorldTransform>(body.volume).map(|t| t.0.w_axis.truncate());
     let Some(corner) = corner.or_else(|| world.get::<Transform>(body.volume).map(|t| t.position)) else { return };
-    let piece = &body.piece;
+    // At its pose as it goes over the network, so every machine presses the same leaves.
+    let pose = crate::voxel_sync::PiecePose::of(position - corner, rotation);
+    let (depth, to) = (volume.felling.press_depth, volume.felling.press_to);
+    let Some(pressed) = pressed(&volume, &body.piece, pose, body.middle, depth, to) else { return };
+    let pressed = Arc::new(pressed);
+    let roughness = world.get::<VoxelVolume>(body.look).map_or(0.8, |look| look.roughness);
+    world.insert(body.look, piece_volume(&pressed, roughness));
+    if let Some(kept) = world.get_mut::<VoxelPieceBody>(entity) {
+        kept.piece = pressed.clone();
+    }
+    let hint = crate::voxel_sync::Hint::Pressed { piece: entity, pose, before: body.piece, after: pressed, depth, to };
+    crate::voxel_sync::hint(world, hint);
+}
+
+/// Piece `piece` of `volume` with its leaves pressed against the ground
+/// where it lies at `pose` (its Obj's place `middle` metres from its box's
+/// least corner): those less than `depth` metres over the ground squashed
+/// down to `to` of their height over it, those under it brought up onto
+/// it. None where none moved. The ground is the volume's own, as made.
+pub(crate) fn pressed(
+    volume: &VoxelVolume,
+    piece: &VoxelPiece,
+    pose: crate::voxel_sync::PiecePose,
+    middle: Vec3,
+    depth: f32,
+    to: f32,
+) -> Option<VoxelPiece> {
     let v = piece.voxel;
-    let pose = Mat4::from_translation(position) * Mat4::from_quat(rotation) * Mat4::from_translation(-body.middle);
+    let pose = pose.matrix(middle);
     let back = pose.inverse();
     let mut grounds: std::collections::HashMap<(i32, i32), f32> = std::collections::HashMap::new();
     let mut ground_at = |p: Vec3| {
         let key = ((p.x / (v * 4.0)).floor() as i32, (p.z / (v * 4.0)).floor() as i32);
-        *grounds.entry(key).or_insert_with(|| {
-            voxear_render::voxel_ground_at(&volume, p.x - corner.x, p.z - corner.z)
-                .map_or(f32::MIN, |(h, _)| corner.y + h)
-        })
+        *grounds
+            .entry(key)
+            .or_insert_with(|| voxear_render::voxel_ground_at(volume, p.x, p.z).map_or(f32::MIN, |(h, _)| h))
     };
     let mut cells: std::collections::BTreeMap<[u16; 3], u8> = piece.voxels.iter().copied().collect();
     let mut moved = 0;
@@ -517,31 +601,23 @@ fn crush_leaves(world: &mut World, entity: Entity) {
         let p = pose.transform_point3((Vec3::new(f32::from(c[0]), f32::from(c[1]), f32::from(c[2])) + 0.5) * v);
         let ground = ground_at(p);
         let over = p.y - ground;
-        if over >= volume.felling.press_depth {
+        if over >= depth {
             continue;
         }
-        let pressed = ground + over.max(0.0) * volume.felling.press_to + v * 0.5;
+        let pressed = ground + over.max(0.0) * to + v * 0.5;
         if (pressed - p.y).abs() < v * 0.5 {
             continue;
         }
-        let to = back.transform_point3(Vec3::new(p.x, pressed, p.z)) / v;
+        let into = back.transform_point3(Vec3::new(p.x, pressed, p.z)) / v;
         cells.remove(c);
         moved += 1;
-        let inside = to.cmpge(Vec3::ZERO).all() && (0..3).all(|a| (to[a] as u32) < piece.size[a]);
+        let inside = into.cmpge(Vec3::ZERO).all() && (0..3).all(|a| (into[a] as u32) < piece.size[a]);
         if inside {
-            let cell = to.floor().to_array().map(|a| a as u16);
+            let cell = into.floor().to_array().map(|a| a as u16);
             cells.entry(cell).or_insert(*place);
         }
     }
-    if moved == 0 {
-        return;
-    }
-    let pressed = VoxelPiece { voxels: cells.into_iter().collect(), ..(**piece).clone() };
-    let roughness = world.get::<VoxelVolume>(body.look).map_or(0.8, |look| look.roughness);
-    world.insert(body.look, piece_volume(&pressed, roughness));
-    if let Some(kept) = world.get_mut::<VoxelPieceBody>(entity) {
-        kept.piece = Arc::new(pressed);
-    }
+    (moved > 0).then(|| VoxelPiece { voxels: cells.into_iter().collect(), ..piece.clone() })
 }
 
 /// Stamps felled piece `entity` into its volume where it lies now, whether
@@ -551,7 +627,7 @@ pub fn stamp_piece(world: &mut World, entity: Entity) -> bool {
     let Some((position, rotation)) = world.get::<Transform>(entity).map(|t| (t.position, t.rotation)) else {
         return false;
     };
-    stamp_back(world, &body, position, rotation);
+    stamp_back(world, entity, &body, position, rotation);
     world.despawn(entity);
     linger(world, body.look, position, rotation, body.middle);
     true
@@ -565,20 +641,24 @@ pub fn remove_piece(world: &mut World, entity: Entity) -> bool {
     true
 }
 
-/// Stamps a piece back into its volume where it lies, its Obj at
-/// `position`, turned `rotation`.
-fn stamp_back(world: &mut World, body: &VoxelPieceBody, position: Vec3, rotation: Quat) {
+/// Stamps piece `entity` back into its volume where it lies, its Obj at
+/// `position`, turned `rotation`: at that pose to a millimetre, as it goes
+/// over the network, so every machine stamps the same voxels.
+fn stamp_back(world: &mut World, entity: Entity, body: &VoxelPieceBody, position: Vec3, rotation: Quat) {
     let Some(corner) = world.get::<Transform>(body.volume).map(|t| t.position) else { return };
     let corner =
         world.get::<voxear_scene::WorldTransform>(body.volume).map_or(corner, |placed| placed.0.w_axis.truncate());
     let Some(volume) = world.get::<VoxelVolume>(body.volume).cloned() else { return };
     // From metres of the piece's box to metres from the volume's corner.
-    let pose =
-        Mat4::from_translation(position - corner) * Mat4::from_quat(rotation) * Mat4::from_translation(-body.middle);
+    let placed = crate::voxel_sync::PiecePose::of(position - corner, rotation);
+    let pose = placed.matrix(body.middle);
     let mut changes = (*volume.changes).clone();
     voxear_render::voxel_stamp(&volume, &mut changes, &body.piece, pose);
+    let changes = Arc::new(changes);
+    let what = crate::voxel_sync::HintWhat::Stamp { piece: entity, pose: placed, shape: body.piece.clone() };
+    crate::voxel_sync::hint_change(world, body.volume, &volume, &changes, what);
     if let Some(volume) = world.get_mut::<VoxelVolume>(body.volume) {
-        volume.changes = Arc::new(changes);
+        volume.changes = changes;
     }
 }
 
@@ -598,6 +678,10 @@ fn tallest(volume: &VoxelVolume) -> f32 {
 /// `dt` seconds' worth, from the stubble a cut left to as tall as they grow
 /// over the volume's `regrow` seconds, where it has any.
 pub fn tend_cuts(world: &mut World, dt: f32) {
+    // A player's machine in a session has its cut grass grow as the server's does, from what it sends.
+    if crate::net::is_client(world) {
+        return;
+    }
     let growing: Vec<(Entity, f32, f32)> = world
         .query_ref::<(Entity, &VoxelVolume)>()
         .into_iter()
@@ -614,10 +698,15 @@ pub fn tend_cuts(world: &mut World, dt: f32) {
         }
         *clock = 0.0;
         let grow = (tall / GROW_STEPS).ceil().clamp(1.0, 255.0) as u8;
-        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
-            let mut changes = (*volume.changes).clone();
-            if changes.tend_cuts(grow, tall.ceil().clamp(1.0, 255.0) as u8) {
-                volume.changes = Arc::new(changes);
+        let tallest = tall.ceil().clamp(1.0, 255.0) as u8;
+        let Some(volume) = world.get::<VoxelVolume>(entity).cloned() else { continue };
+        let mut changes = (*volume.changes).clone();
+        if changes.tend_cuts(grow, tallest) {
+            let changes = Arc::new(changes);
+            let what = crate::voxel_sync::HintWhat::Tend { grow, tallest };
+            crate::voxel_sync::hint_change(world, entity, &volume, &changes, what);
+            if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+                volume.changes = changes;
             }
         }
     }

@@ -27,6 +27,7 @@ mod rpcs;
 mod crowd_sync;
 mod scripts;
 mod storms;
+mod voxels;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -58,6 +59,10 @@ pub use rewind::{MOST_REWIND, raycast_as_seen_by};
 pub use rpcs::{ENGINE_KEYS, MOB_ACTS, Rpc, RpcTarget};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
+pub use voxels::{
+    VoxelBytes, ask_voxels, owe_voxels, piece_poses, player_place, send_voxels, set_piece_poses, take_voxel_asks,
+    take_voxel_joins, take_voxel_news, voxel_bytes,
+};
 use messages::{Message, REPEATS};
 
 /// How a session's connections are doing, for the stats overlay: a
@@ -302,6 +307,8 @@ pub struct NetSession {
     dims: dimensions::Dims,
     /// What players asked of the server's Nav Agents (see `nav`).
     nav_asked: Vec<nav::NavAsked>,
+    /// The endless Voxel Volumes' news and pieces (see `voxels`).
+    voxels: voxels::VoxelNet,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -346,6 +353,7 @@ impl NetSession {
             records: crowd_sync::RecordSync::default(),
             dims: dimensions::Dims::default(),
             nav_asked: Vec::new(),
+            voxels: voxels::VoxelNet::default(),
         }
     }
 
@@ -472,6 +480,7 @@ impl NetSession {
                     self.replication.viewers.remove(&player);
                     self.rpcs.forget(player);
                     self.rewind.forget(player);
+                    self.voxels.forget(player);
                     if self.settings.authority == NetAuthority::Shared {
                         self.authority.left.push(player);
                     }
@@ -520,6 +529,7 @@ impl NetSession {
                         self.rpcs.incoming.push_back(rpc);
                     }
                     message @ (Message::Ready(_) | Message::Crossed { .. }) => heard.push((player, message)),
+                    Message::VoxelAsk(bytes) if self.rpcs.allow(player, self.now) => self.voxels.asked(player, bytes),
                     message @ Message::NavGo { .. } if self.rpcs.allow(player, self.now) => heard.push((player, message)),
                     // Anything else from a client is dropped.
                     _ => {}
@@ -591,6 +601,8 @@ impl NetSession {
                 Message::Level(level) => self.level_request = Some(level),
                 Message::Storms(bytes) => self.storms.arrived(bytes, rtt),
                 Message::CrowdRecords(bytes) => self.records.arrived(bytes),
+                Message::Voxels(bytes) => self.voxels.heard(bytes),
+                Message::VoxelPoses(bytes) => self.voxels.heard_poses(&bytes),
                 Message::Sync { tick, ahead } if ahead != messages::UNHEARD => self.keep_pace(tick, i64::from(ahead), rtt),
                 Message::Spawn { id, owner, origin, dimension, tick, state, fields } => {
                     self.replication.note(id, tick, state);
@@ -718,6 +730,13 @@ impl NetSession {
             let seen = &viewer.dimensions;
             // What a lost snapshot carried goes again, as it is now.
             for delivery in server.take_deliveries(client) {
+                // The pieces' snapshots are the volumes' own.
+                if let voxear_net::Delivery::Acked(tag) | voxear_net::Delivery::Lost(tag) = delivery
+                    && tag & voxels::POSE_TAG != 0
+                {
+                    self.voxels.delivered(*player, delivery);
+                    continue;
+                }
                 let voxear_net::Delivery::Lost(tag) = delivery else {
                     if let voxear_net::Delivery::Acked(tag) = delivery {
                         viewer.carried.remove(&tag);
@@ -1080,6 +1099,8 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     }
     if session.role == NetRole::Client {
         session.advance_shown(delta);
+        let ticks = f64::from(delta) * f64::from(session.settings.tick_rate);
+        session.voxels.advance(ticks);
         dimensions::settle_client(world, &mut session);
         let theirs: std::collections::HashSet<NetId> = session.prediction.ids.union(&session.authority.owned).copied().collect();
         session.replication.show(world, &theirs);
@@ -1107,6 +1128,7 @@ pub fn frame_end(world: &mut World) {
     authority::send_owned(world, &mut session);
     dimensions::send_own_crossings(world, &mut session);
     session.replicate(world);
+    voxels::send(&mut session);
     storms::send(world, &mut session);
     crowd_sync::send(world, &mut session);
     session.flush();

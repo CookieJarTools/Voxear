@@ -519,6 +519,11 @@ pub struct Template {
     paths: HashMap<ObjPath, usize>,
 }
 
+/// A Voxel Volume, its stamps' models read, how it was written, and what
+/// its scene made of it.
+pub type VoxelVolumeParts =
+    (voxear_render::VoxelVolume, crate::voxel_volumes::VoxelVolumeSource, crate::voxel_sync::VoxelVolumeLoaded);
+
 #[derive(Clone, Debug)]
 pub struct TemplateObj {
     pub path: ObjPath,
@@ -608,8 +613,9 @@ pub struct TemplateObj {
     pub terrain: Option<Box<TerrainParts>>,
     /// A Block World, which fewer have.
     pub block_world: Option<Box<BlockWorldParts>>,
-    /// A Voxel Volume, its stamps' models read, and how it was written.
-    pub voxel_volume: Option<Box<(voxear_render::VoxelVolume, crate::voxel_volumes::VoxelVolumeSource)>>,
+    /// A Voxel Volume, its stamps' models read, how it was written, and what
+    /// its scene made of it.
+    pub voxel_volume: Option<Box<VoxelVolumeParts>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
     /// it was written.
     pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
@@ -947,6 +953,7 @@ impl Template {
             if let Some(parts) = &obj.voxel_volume {
                 world.insert(entity, parts.0.clone());
                 world.insert(entity, parts.1.clone());
+                world.insert(entity, parts.2.clone());
             }
             if let Some(parts) = &obj.block_world {
                 world.insert(entity, parts.blocks.clone());
@@ -1463,7 +1470,13 @@ pub(crate) fn resolve_obj(
     };
     let voxel_volume = data.voxel_volume.as_ref().map(|written| {
         let made = crate::voxel_volumes::made(content, written);
-        Box::new((made, crate::voxel_volumes::VoxelVolumeSource(written.clone())))
+        // As its scene made it, what a player's machine has of it before joining a session.
+        let loaded = crate::voxel_sync::VoxelVolumeLoaded {
+            edits: written.edits.len(),
+            made: made.edits.len(),
+            changes: made.changes.clone(),
+        };
+        Box::new((made, crate::voxel_volumes::VoxelVolumeSource(written.clone()), loaded))
     });
     // A mesh Dry Area's mesh needs a renderer to load it, and its box for scripts' questions; without one it keeps
     // to the Obj's own.

@@ -612,6 +612,42 @@ Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Vo
 
 A column of cells takes about 75 ms to make over a volume's own hills, a quarter of a second over a generator's rolling hills, and more in mountains with overhangs and caves: the cells round an agent just come into the world take one to four seconds, and until then it walks straight towards where it was sent. A way 25 m long is found in under a millisecond. [[Finding Ways from Scripts|`Navigation.FindPath`]] and `vox editor call navigation.path` find ways over the volume too.
 
+## Over the network
+
+In a networked game (see [[Playing over the Network]]) every machine makes the scene's own volume from the same files, and the server's is the one that counts: what a game changes as it plays goes from the server to every player, and ends the same on every machine to the voxel, for what is drawn, for collision, for rays and for the ways Nav Agents find. Nothing needs adding.
+
+- **The server changes it.** A carve, a fill, a shape, a print, a voxel dug, placed or restored, a cut, a blast: made by the server's own scripts, they are made at once and sent. Made by a script on a player's machine, they are a request to the server, which checks it and makes it as its own; until it does, nothing changes on the player's machine. What `Voxels` gives back there is only what was asked: how many volumes it reaches, how many points. A script that builds on every machine should build on the server alone:
+
+```csharp
+// The server raises the fort; every player's machine is sent it.
+if (Net.IsServer) Voxels.Print(Fort, hill, fit: true);
+// Any player's pick: a request, which the server makes and sends to everyone.
+if (Input.Pressed(dig) && Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f))
+{
+    Voxels.Dig(hit.Point - hit.Normal * 0.01f);
+}
+```
+
+- **What is sent.** Each frame something changed, the server sends every player on a reliable channel the edits it added, each in a few numbers (a print by its GUID), and then a delta of the voxels set one at a time against what players were last sent: each half-metre brick that differs, voxel by voxel, and each column of cut grass and felled tree that differs. Every machine makes an edit's voxels itself, the same to the voxel, as every shape is worked out in whole numbers. What the server works out alone, as what gives way after a blast, goes as the voxels it dug.
+- **Worked out on each machine.** Where a player's machine can work something out from the volume it has, the server sends a word of it in place of its voxels: a cut through grass and trees, a blast's crater, cut grass growing back a step, a piece stamped back where it came to rest, at its pose to a millimetre (the server stamps it at the same pose). It sends the word only where players' volume is just as the server's was when the change was made, so they work out the same; otherwise the delta carries what it did. Whatever happens, the delta after it makes every machine's volume the server's.
+- **Pieces falling.** A felled tree's pieces and what comes loose of a building fall as bodies on the server. Each goes to players once, by a number: a tree's as the place among what the cut made, as every machine cuts the same tree the same way; what was built with its voxels, packed, a few hundred bytes each. Its pose goes twenty times a second in a snapshot of every piece that moved since the last snapshot that player said they had: how far it moved, in millimetres, and its turn in 35 bits where it turned. A player's machine shows each a moment behind, moving smoothly between snapshots, as it does shared Objs; others bump into it there. A tree's leaves are pressed against the ground where it rests on every machine, from its pose; a piece chipped on the server has its voxels sent again.
+- **Joining late.** A player who joins after the game has changed the volume is sent, within half of their connection, the edits added since the scene loaded, then the region files of each region whose voxels differ from the scene's own, those nearest the player first (their first Obj, or the volume's corner if they have none after a second), then the pieces still falling; then what changes from there on. Their machine first takes the volume back to as its scene made it.
+
+| Change | Sent to each player |
+| --- | --- |
+| A turned box of bricks, tinted | 47 bytes |
+| A voxel dug, or placed | 17 to 19 bytes |
+| 512 voxels dug in a half-metre cube | 38 bytes |
+| 256 of them restored | 36 bytes |
+| A print, fitted to the ground | 65 bytes |
+| Grass cut 3 m across | 20 bytes |
+| A tree felled, falling and stamped back where it rests | 134 bytes, and about 2.4 KB of snapshots |
+| A house's corner blown in, six pieces falling and stamped back | 2.4 KB, and about 1.8 KB of snapshots |
+
+A player joining after a street was paved, a cellar dug, a tower built a voxel at a time and grass cut was sent 987 bytes: the region files of those changes hold 803.
+
+The server checks what players ask of the volumes: within 24 m for a ball's radius or a box's side, 4,096 points at once, 256 points of an outline. A game with rules of its own (only within reach of the player, only where they own the land) sets its own check in Rust with `voxel_sync::set_ask_check`, which is asked of every request with the player who made it.
+
 ## How it is drawn
 
 A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog.
@@ -659,4 +695,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
 - Ways over a volume's ground aren't shown in the Scene view's Navigation gizmo, and aren't found through caves under the ground's lowest point in a column nor more than about 100 m up from it. An agent swims no deep water there and takes no Nav Links. Its way is found for something about 80 cm wide, so a wider one may brush walls and trunks, or stick in a gap narrower than it is; its way may run up to a quarter of a metre past the rim of a drop.
 - What gives way under its own weight is found by parts of half-metre bricks: a load is shared as stiffly as each join's thinnest voxels hold, but within a part of a brick it is one body. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
-- Edits, voxels set one at a time, cut grass, felled trees and fallen pieces aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.
+- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's machine shows its own dig only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug.

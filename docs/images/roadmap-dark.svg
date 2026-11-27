@@ -97,7 +97,7 @@
 <circle cx="56" cy="872" r="7.5" fill="#0d1117" stroke="#8a97ff" stroke-width="2"/><path d="M56 866.5 a5.5 5.5 0 0 1 0 11 z" fill="#8a97ff"/>
 <text x="80" y="877" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1"></text>
 <text x="120" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#e6edf3">Small voxels</text>
-<text x="380" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Voxels to the horizon: mountains, rivers, trees, digging, collision, ways, light, collapse</text>
+<text x="380" y="877" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Voxels to the horizon: rivers, trees, digging, collision, ways, light, collapse, networked</text>
 <circle cx="56" cy="912" r="7" fill="#0d1117" stroke="#656c76" stroke-width="2"/>
 <text x="80" y="917" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M13</text>
 <text x="120" y="917" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#e6edf3">Virtualised geometry</text>

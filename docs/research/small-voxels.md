@@ -1587,3 +1587,74 @@ seam left for this. `voxear_engine::voxel_nav` now fills it.
   it too.
 - **Not yet.** Deep water swum, Nav Links, caves under a column's lowest ground, more than about 100 m of buildings
   over it, the Navigation gizmo's squares, and agents as wide as they are.
+
+## Stages 4 and 7 over the network: built (2026-11-27)
+
+The two designs above (edits over the network, a collapse over the network) are built in
+`voxear_engine::voxel_sync` and `net/voxels.rs`, with what they measure from the engine test
+`tests/net_voxels.rs` (a dedicated server and two or three players' machines in one process, through a network in
+memory with a little loss and delay).
+
+- **The server's volume is everyone's.** A client's `Voxels.Dig`, `Place`, `Restore`, `Carve`, `Fill`, the shapes,
+  `Print`, `Cut`, `Slice` and `Blast` become a request (`VoxelAsk`, in the level's own coordinates), which the
+  server checks (the usual limits, or a game's own `set_ask_check`) and makes as its own scripts' are. Nothing is
+  shown on the client until the server's answer: prediction of digs is left for later.
+- **What goes, each frame something changed.** The server keeps, per volume, what players have: how many of its
+  edits were sent and its changes as players have them (an `Arc`, cheap to keep). It sends, in order on the reliable
+  channel: the edits added (`VoxelEditData` in a few numbers, floats as their bits, a print by GUID); hints; new
+  pieces; and last a delta of its changes against players' (`VoxelChanges::delta_from`: per brick that differs, the
+  voxels that differ, listed by place up to 30 or as 512 bits, each a code into a table of the kinds it uses; cut
+  columns and felled trees whole; zstd over 160 bytes). The delta is assignment, not a change, so whatever came
+  before it, every client ends with the server's changes. Kinds go by what they are, not by code, as each machine
+  numbers its kinds in the order it met them.
+- **Hints are words in place of voxels.** A cut (grass and trees felled), a blast's dig, cut grass growing a step,
+  a piece stamped back, a felled piece's leaves pressed on the ground. The first design worked each hint out again
+  on the server's copy of what players have, so the delta after it carried only the difference; that cost a second
+  felling (0.12–0.35 s) on the server. Built instead: the place that changes the volume notes its changes before and
+  after (`hint_change`), and the hint goes only if players' copy *is* the before (the same `Arc`) and the volume had
+  as many edits as players will; then players' copy becomes the after. A client running the same function on the
+  same volume gets the same result, as the shapes are whole numbers and felling, stamping and the blast's dig are
+  worked out the same on any machine of the same build. Otherwise the hint is dropped and the delta carries it.
+- **Pieces.** Each is named by a number of the session. Pieces a hinted cut made are named by their place among
+  the pieces the cut makes, so a felled tree's voxels are never sent: sent as voxels they were 150 KB a tree,
+  twice (once cut, once pressed), because hashed leaves don't pack. What was built comes loose by the server's
+  settle alone (the strain baselines are in memory, never saved or sent, so a late joiner's settle would differ),
+  so those pieces go with their voxels: a bit a voxel of the piece's box and a colour byte each, zstd, 200–440
+  bytes for the house's pieces, and the client digs them out of its volume as the server did. Leaves are pressed at
+  the quantised pose (`voxel_felling::pressed`, now worked out in the volume's own coordinates), so every machine
+  presses the same; a chipped piece's voxels go again.
+- **Poses.** Twenty times a second each client is sent a snapshot of the pieces' poses, tagged; it goes against the
+  newest snapshot that client acknowledged (`Delivery::Acked`): a piece unchanged is left out, one moved goes as
+  millimetres moved (zigzag varints) and its turn where it turned (three smallest parts, 11 bits each, and which
+  was left out: 35 bits), a piece new to it whole, and the pieces gone from the base listed. The client keeps the
+  last 64 snapshots to read the next against, and shows each piece about five ticks behind the newest, between
+  samples. A piece's rest is the server's: it stamps at the pose quantised to a millimetre and 11-bit turn, and
+  sends that pose in the stamp hint.
+- **Joining.** As a player joins (once they have an Obj, or after 60 ticks) the server gathers, from what players
+  have, each volume's name (scene GUID and Obj path), the edits added since its scene (`VoxelVolumeLoaded` keeps what
+  each scene made: its edits' count and its changes), and the region files of each region that differs from the
+  scene's own, nearest the player first, in parts of at most 40 KB before packing; then the pieces still falling.
+  It goes within half the connection's budget, and news after it waits behind it in the same queue. The client takes
+  its volume back to the scene's first, so whatever it did before joining is gone.
+
+| Measured (bytes to each player) | |
+|---|---|
+| A turned box of bricks, tinted (the server's) | 47 |
+| 512 voxels dug in a half-metre cube (a player's request) | 38 |
+| One voxel placed / dug | 19 / 17 |
+| 256 voxels restored | 36 |
+| A print, fitted, by GUID | 65 |
+| Grass cut in a 3 m ball (a cut hint) | 20 |
+| A tree felled, fallen and stamped (cut hint, piece by place, pressed, stamp, delta) | 134, and 4.9 KB of snapshots for two players over 7.5 s |
+| A house's corner blown in (blast hint, 6 built pieces with their voxels, rounds' digs, stamps) | 2.4 KB, and 3.5–4.9 KB of snapshots for two players |
+| A late joiner, after a street, a cellar, a tower and cut grass | 987, against 803 in the region files |
+
+The requests themselves: a point is three floats, packed with zstd past 128 bytes.
+
+- **Agreement**, checked after each change on every machine: the edit lists equal, the changes' delta empty both
+  ways, collision's solids over a 20 × 6 × 20 m box voxel for voxel, 1,152 rays, and a Nav Agent's way round a
+  wall corner for corner. The GPU draws from the same edits and changes; its agreement with the CPU is the GPU
+  tests' (`tests/voxels.rs`).
+- **Not yet.** A client showing its own dig before the server's answer. Volumes in other dimensions. Pieces chipping
+  and digging out what they hit are the server's alone and reach clients as its digs. A C# check of requests (the
+  check is Rust only).

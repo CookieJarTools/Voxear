@@ -181,7 +181,7 @@ pub use voxel_volume::{
     VoxelFelled, VoxelFelledTree, VoxelFelling, VoxelPiece, VoxelRayMeets, voxel_cut, voxel_stamp, voxel_tree_trunks,
     raycast_meeting as voxel_raycast_meeting, MOST_PIECES, VOXEL_CRUMBS, VoxelAnchor, VoxelBlast, VoxelBlastDone,
     VoxelLoosened, VoxelSettled, VoxelStuff, voxel_blast, voxel_blast_dig, voxel_loosen, voxel_settle, voxel_dug_between, VoxelRound,
-    VoxelStrain, VoxelStrainDone, VoxelStrainMemory, VoxelJoinLoad,
+    VoxelStrain, VoxelStrainDone, VoxelStrainMemory, VoxelJoinLoad, VoxelDelta, VOXEL_REGION_BRICKS,
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;

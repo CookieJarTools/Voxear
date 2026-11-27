@@ -2285,6 +2285,28 @@ fn a_sealed_room_of_voxels_is_dark_but_round_its_lamp_as_a_room_of_blocks_is() {
     assert!(red > blue * 3 / 2, "the lamp's light is warm: red {red} against blue {blue}");
 }
 
+#[test]
+fn a_flat_wall_of_voxels_has_no_lone_dark_pixels() {
+    let Some(mut renderer) = renderer() else { return };
+    // The sealed room lit by its lamp: its walls, floor and ceiling flat stone. A pixel far darker than all four
+    // beside it, where they are lit, is one neither voxel pass drew.
+    let pixels = sealed_voxel_room(&mut renderer, true);
+    keep_image("voxels lone dark pixels.png", &pixels);
+    let sum = |x: u32, y: u32| rgb_at(&pixels, x, y).iter().sum::<i32>();
+    let mut lone = Vec::new();
+    for y in 1..HEIGHT - 1 {
+        for x in 1..WIDTH - 1 {
+            let here = sum(x, y);
+            let beside = [sum(x - 1, y), sum(x + 1, y), sum(x, y - 1), sum(x, y + 1)];
+            let least = *beside.iter().min().unwrap();
+            if least > 45 && here * 2 < least {
+                lone.push((x, y));
+            }
+        }
+    }
+    assert!(lone.len() <= 2, "{} lone dark pixels, the first {:?}", lone.len(), &lone[..lone.len().min(8)]);
+}
+
 /// The frame's cost at 1920×1080 of a street of houses printed into Rolling
 /// Hills without its rivers, seen from 20 m up, with models
 /// standing among them: each pass and the whole frame the least of 60

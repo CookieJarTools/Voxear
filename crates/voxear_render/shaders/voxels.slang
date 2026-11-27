@@ -1006,6 +1006,14 @@ float voxelDepthOf(Frame* frame, float3 world)
     return clip.z / clip.w;
 }
 
+// The depth the lit pass writes for a voxel the depth pass met at `world`: a few steps of the float nearer, as the two
+// shaders, compiled apart, can work the same depth out a step or two apart, and the lit pass, tested nearer or equal,
+// would then leave lone pixels of a flat wall undrawn.
+float voxelLitDepth(Frame* frame, float3 world)
+{
+    return asfloat(asuint(voxelDepthOf(frame, world)) + 16u);
+}
+
 struct VoxelDepthOut
 {
     float4 surface : SV_Target0;
@@ -1165,7 +1173,7 @@ VoxelOut voxelWaterLit(Frame* frame, float2 pixel, float3 d, VoxelHit hit)
     VoxelOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));
-    o.depth = voxelDepthOf(frame, world);
+    o.depth = voxelLitDepth(frame, world);
     return o;
 }
 
@@ -1326,7 +1334,7 @@ VoxelOut voxelOpaque(VoxelVertex input)
     VoxelOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(transform(frame->unjitteredViewProj, float4(world, 1.0)), transform(frame->prevViewProj, float4(world, 1.0)));
-    o.depth = voxelDepthOf(frame, world);
+    o.depth = voxelLitDepth(frame, world);
     return o;
 }
 

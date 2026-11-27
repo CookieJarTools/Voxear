@@ -241,6 +241,8 @@ pub struct Pipelines {
     pub voxel_lamp_shadows: vk::Pipeline,
     /// The voxels' see-through voxels over everything opaque.
     pub voxel_glass: vk::Pipeline,
+    /// The glass of voxels' first pass: what is behind it, multiplied by what of each colour gets through.
+    pub voxel_glass_through: vk::Pipeline,
     /// The light kept round the camera for the voxels: what lets it through each cell, and a step of spreading it.
     pub voxel_light_cells: vk::Pipeline,
     /// The sun's shadows of the voxels round the camera, from above, for fog, particles and water.
@@ -1144,8 +1146,16 @@ impl Pipelines {
                 depth_format: Some(DEPTH_FORMAT),
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
-                blend: Blend::Premultiplied,
+                blend: Blend::Additive,
                 ..GraphicsPipelineDesc::new("Glass (voxels)", voxels, c"voxelVertex", c"voxelGlass")
+            })?,
+            voxel_glass_through: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Filter,
+                ..GraphicsPipelineDesc::new("Glass through (voxels)", voxels, c"voxelVertex", c"voxelGlassThrough")
             })?,
             voxel_shadows: graphics(&GraphicsPipelineDesc {
                 color_formats: &[crate::voxel_volume::SUN_SHADOW_FORMAT],
@@ -1544,6 +1554,7 @@ impl Pipelines {
             self.voxel_shadows,
             self.voxel_lamp_shadows,
             self.voxel_glass,
+            self.voxel_glass_through,
             self.voxel_light_cells,
             self.voxel_sun_map,
             self.voxel_light_sky,

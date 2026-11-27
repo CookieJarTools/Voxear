@@ -155,6 +155,22 @@ fn frames(renderer: &mut Renderer, world: &World, count: u32) -> Vec<u8> {
     renderer.read_pixels().expect("pixels").2
 }
 
+/// As [`frames`], then on until the sun's shadow pages are all drawn, as
+/// they are a few frames after the view first sees a place: so two pictures
+/// differ by what changed between them, not by how far their shadows had
+/// come.
+fn settled(renderer: &mut Renderer, world: &World, count: u32) -> Vec<u8> {
+    let mut pixels = frames(renderer, world, count);
+    for frame in 0..60 {
+        if renderer.stats().virtual_shadow_drawn == 0 {
+            break;
+        }
+        renderer.render(world, 2.0 + frame as f32 / 60.0).expect("frame renders");
+        pixels = renderer.read_pixels().expect("pixels").2;
+    }
+    pixels
+}
+
 /// Turned to look from `eye` at `target`.
 fn looking(eye: Vec3, target: Vec3) -> Quat {
     let way = (target - eye).normalize();
@@ -208,7 +224,7 @@ fn an_opening_shows_the_far_place_as_a_camera_standing_there_sees_it() {
         }
         let turned = looking(eye, Vec3::new(0.0, 1.5, 6.0));
         *places.world.get_mut::<Transform>(places.camera).unwrap() = Transform::new(eye, turned, Vec3::ONE);
-        let through = frames(&mut renderer, &places.world, 3);
+        let through = settled(&mut renderer, &places.world, 3);
         keep_image(&format!("portal {shot} through.png"), &through);
         let rect = opening(&places.world, places.camera, places.near, 0);
         assert!((rect[2] - rect[0]) * (rect[3] - rect[1]) > 3000, "the opening shows large enough to judge: {rect:?}");
@@ -230,7 +246,7 @@ fn an_opening_shows_the_far_place_as_a_camera_standing_there_sees_it() {
         }
         *places.world.get_mut::<Transform>(places.camera).unwrap() =
             Transform::new(carry.point(eye), carry.turn(turned), Vec3::ONE);
-        let there = frames(&mut renderer, &places.world, 3);
+        let there = settled(&mut renderer, &places.world, 3);
         keep_image(&format!("portal {shot} there.png"), &there);
 
         // Every pixel well inside the opening is the far place's, as near as soft shadows' grain allows.
@@ -263,10 +279,10 @@ fn only_the_opening_changes_and_what_stands_in_front_of_it_stays() {
         MeshRenderer::new(cube, white),
         Transform::new(Vec3::new(-0.45, 1.0, 4.0), Quat::IDENTITY, Vec3::new(0.5, 2.0, 0.5)),
     ));
-    let open = frames(&mut renderer, &places.world, 3);
+    let open = settled(&mut renderer, &places.world, 3);
     keep_image("portal open.png", &open);
     places.world.get_mut::<Portal>(places.near).unwrap().open = false;
-    let closed = frames(&mut renderer, &places.world, 3);
+    let closed = settled(&mut renderer, &places.world, 3);
     keep_image("portal closed.png", &closed);
 
     let rect = opening(&places.world, places.camera, places.near, -3);
@@ -299,10 +315,10 @@ fn a_portal_seen_through_a_portal_shows_its_own_far_side_when_asked_to() {
     // what changes.
     let quality = PortalQuality { depth: 2, shadow_distance: 1000.0, ..PortalQuality::default() };
     places.world.insert_resource(quality);
-    let deep = frames(&mut renderer, &places.world, 3);
+    let deep = settled(&mut renderer, &places.world, 3);
     keep_image("portal deep.png", &deep);
     places.world.insert_resource(PortalQuality { depth: 1, ..quality });
-    let shallow = frames(&mut renderer, &places.world, 3);
+    let shallow = settled(&mut renderer, &places.world, 3);
     keep_image("portal shallow.png", &shallow);
 
     let rect = opening(&places.world, places.camera, places.near, 2);

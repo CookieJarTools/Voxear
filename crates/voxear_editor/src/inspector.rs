@@ -434,6 +434,8 @@ pub struct Inspector {
     /// What the Mesh Renderer and the LOD Group show of levels of detail,
     /// and the camera they say it of.
     mesh_lods: Option<MeshLods>,
+    /// A Light's picture at the top of its section.
+    light_card: Option<crate::light_inspector::LightCard>,
     group_lods: Option<GroupLods>,
     /// A Terrain's tools and its layers (see `terrain_panel`).
     terrain_panel: Option<crate::terrain_panel::TerrainPanel>,
@@ -519,6 +521,7 @@ impl Inspector {
             copied: None,
             also: Vec::new(),
             mesh_lods: None,
+            light_card: None,
             group_lods: None,
             terrain_panel: None,
             block_panel: None,
@@ -1206,6 +1209,7 @@ impl Inspector {
         self.group_tabs.clear();
         self.group_foldouts.clear();
         (self.mesh_lods, self.group_lods, self.terrain_panel, self.plants_panel) = (None, None, None, None);
+        self.light_card = None;
         if let Some(panel) = self.volume_panel.take() {
             self.volume_group = Some(panel.group());
         }
@@ -1454,6 +1458,11 @@ impl Inspector {
                 if let Prop::BlockWorld(field) = value {
                     meta.range = crate::block_props::range(*field).map(|r| r.map(f64::from));
                 }
+                if *part == Part::Light
+                    && let Some(light) = game.engine.world.get::<voxear_render::Light>(entity)
+                {
+                    crate::light_inspector::adjust(&mut meta, light, value);
+                }
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
                 let enabled = attributes::enabled(game, &self.types, entity, value);
                 // While playing, a C# component's values are read and written in the running
@@ -1491,6 +1500,10 @@ impl Inspector {
                 if let Some((Some(settings), index)) = attributes::item_of(&self.types, value) {
                     label = index.to_string();
                     meta.hide_label |= !settings.index_labels;
+                }
+                // A Light's picture, under its type's buttons.
+                if *value == Prop::LightAppearance {
+                    self.light_card = Some(crate::light_inspector::LightCard::new(ui, container));
                 }
                 self.decorate(ui, container, game, (entity, value), (&meta, &label));
                 let row = prop(ui, container, &label);
@@ -1997,6 +2010,9 @@ impl Inspector {
     /// LOD the camera sees, of the mesh and of the group. Returns whether
     /// another level was selected, so its settings show.
     fn update_lods(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
+        if let Some(card) = &mut self.light_card {
+            card.update(ui, &game.engine.world, entity);
+        }
         let Some(lods) = &mut self.group_lods else { return self.update_mesh_lods(ui, game, entity, renderer) };
         if let Some(level) = lods.clicked_level(ui).filter(|&level| level != self.lod_level) {
             self.lod_level = level;
@@ -2784,8 +2800,17 @@ fn attribute_control(ui: &mut Ui, row: NodeId, value: &Value, meta: &FieldInspec
     if let (Value::Choice(index, options), true) = (value, meta.enum_buttons) {
         let buttons = ui.segmented(row);
         ui.add_class(buttons, "attr-buttons");
-        for option in options {
-            ui.add_segment(buttons, option, None);
+        for (at, option) in options.iter().enumerate() {
+            // With icons, a button shows its icon alone and names it in its tooltip.
+            match meta.option_icons.get(at) {
+                Some(icon) => {
+                    let segment = ui.add_segment(buttons, "", Some(icon));
+                    ui.set_tooltip(segment, option, None);
+                }
+                None => {
+                    ui.add_segment(buttons, option, None);
+                }
+            }
         }
         ui.set_segment(buttons, *index);
         return Some(Control::Buttons(buttons, options.clone()));

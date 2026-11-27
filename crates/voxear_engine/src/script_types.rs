@@ -422,6 +422,9 @@ pub struct FieldInspector {
     /// A handle that edits it in the Scene view, as `[PositionHandle]` and
     /// the others ask.
     pub handle: Option<FieldHandle>,
+    /// With `enum_buttons`, the icon on each button, in the options' order,
+    /// as the editor's own pickers give them (a Light's type).
+    pub option_icons: Vec<String>,
 }
 
 /// A Scene view handle on a field (`[PositionHandle]`, `[RadiusHandle]`,

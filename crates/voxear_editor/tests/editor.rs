@@ -2064,6 +2064,61 @@ fn dock_tab(ui: &Ui, title: &str) -> Option<NodeId> {
     tabs.into_iter().find(|&tab| ui.is_visible(tab) && says(tab))
 }
 
+/// Whether a row of buttons is a Light's types: icons alone, the first the sun's.
+fn light_types(ui: &Ui, buttons: NodeId) -> bool {
+    let first = ui.children(buttons).first().copied();
+    first.is_some_and(|segment| ui.children(segment).iter().any(|&part| ui.icon_name(part) == Some("light")))
+}
+
+#[test]
+fn a_light_shows_its_type_as_buttons_a_picture_of_it_and_its_rows_under_headings() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let sun = obj(&editor, "Sun").unwrap();
+    editor.select(Some(sun));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "light-sun.png");
+    let root = editor.ui.root();
+    let card = first_with(&editor.ui, root, "light-card").expect("a picture of the light");
+    let texts = texts_in(&editor.ui, card);
+    assert!(texts[0].starts_with("Sun · ") && texts[0].contains("° "), "{texts:?}");
+    assert!(!editor.ui.shapes(first_with(&editor.ui, card, "light-card-picture").unwrap()).is_empty(), "drawn");
+    let mut titles = Vec::new();
+    with_class(&editor.ui, root, "attr-title", &mut titles);
+    let titles: Vec<String> = titles.into_iter().filter(|&t| shown(&editor.ui, t)).map(|t| editor.ui.text(t)).collect();
+    assert_eq!(titles, ["Light", "Shape", "Shadows", "Baking"]);
+    // The type is a row of buttons with icons; picking one changes it.
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, root, "attr-buttons", &mut buttons);
+    let types = buttons.into_iter().find(|&b| light_types(&editor.ui, b)).unwrap();
+    let segments = editor.ui.children(types);
+    assert_eq!(segments.len(), 6);
+    assert!(editor.ui.children(segments[1]).iter().any(|&p| editor.ui.icon_name(p) == Some("bulb")));
+    let lamp = obj(&editor, "Lamp").unwrap();
+    editor.select(Some(lamp));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "light-lamp.png");
+    let card = first_with(&editor.ui, editor.ui.root(), "light-card").unwrap();
+    let kind = editor.game.engine.world.get::<voxear_render::Light>(lamp).unwrap().kind;
+    assert!(kind != voxear_render::LightKind::Directional);
+    assert!(texts_in(&editor.ui, card)[0].ends_with(" m"), "a local light says how far it reaches");
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "attr-buttons", &mut buttons);
+    let types = buttons.into_iter().find(|&b| light_types(&editor.ui, b)).unwrap();
+    let spot = editor.ui.children(types)[2];
+    click(&mut editor.ui, spot);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let light = editor.game.engine.world.get::<voxear_render::Light>(lamp).unwrap();
+    assert_eq!(light.kind, voxear_render::LightKind::Spot, "picked from its button");
+    shot(&mut renderer, "light-spot.png");
+    assert!(prop_row(&editor.ui, "Outer angle").is_some(), "a spot light's own rows show");
+}
+
 #[test]
 fn the_game_view_goes_full_screen_and_draws_gizmos_from_its_title_bar() {
     let Some((mut renderer, mut editor)) = open() else { return };

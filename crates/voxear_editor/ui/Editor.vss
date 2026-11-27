@@ -3075,6 +3075,50 @@ TextField.build-title:focus {
     min-width: 0px;
 }
 
+/* Buttons with no label beside them, as a Light's type, fill the row, each as wide as the others. */
+.no-label > .attr-buttons {
+    flex-grow: 1;
+}
+
+.no-label > .attr-buttons > .segment {
+    flex-grow: 1;
+    flex-basis: 0px;
+    gap: 5px;
+}
+
+/* A Light's picture: the sky it lights or its glow, drawn edge to edge, with what it is over it. */
+.light-card {
+    flex-shrink: 0;
+    margin: 6px 0px 4px 0px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.light-card-picture {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.light-card-title {
+    position: absolute;
+    left: 10px;
+    top: 8px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.light-card-detail {
+    position: absolute;
+    left: 10px;
+    bottom: 7px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.78);
+}
+
 /* A [TableList]: a column for each field, a row for each item. */
 .attr-table {
     display: grid;

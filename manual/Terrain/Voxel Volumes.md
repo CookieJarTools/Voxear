@@ -536,6 +536,31 @@ On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a mill
 
 **Falling and resting.** A piece that hits the volume hard digs out what it hits, as a small blast does, and what that cuts off falls too; pieces that hit each other chip where they meet, dust flying. A piece of fewer than 320 voxels is dust, no body, and so is the smallest falling once more fall at once than the volume's **Most Pieces** (24 unless set; a view draws 64 volumes). Once a piece has lain still for a second it is stamped back into the volume where it lies, voxels placed in its own colours, built again: rubble on the floor that can be blown out in turn. `Voxels.Piece`, `Voxels.StampPiece` and `Voxels.RemovePiece` work on a fallen piece's Obj as on a felled tree's.
 
+**Bending before it snaps.** Timber bends before it breaks; stone, brick, earth and glass snap. A part of planks that gives way by bending stays hinged where it broke, as a floor whose post is blown out hangs from its wall: while its weight, with all hinged beyond it, turns it about the hinge harder than the bent join holds, it bends further, 30 degrees a second; once it holds, it hangs there bent, and in a moment it rests and is stamped back as it lies. It tears off and falls once it has bent 55 degrees, or once more hangs from it than the bent join bears: a short balcony hangs on, a long floor, or one with a post's stone still on its end, bends and then snaps. A floor broken in several places hangs piece from piece, each bearing all beyond it.
+
+**Ropes.** A Voxel Rope, on an Obj where it is tied, holds the point of what was built its **Hangs** reaches below it. What is built round that point and held up by nothing else hangs from the rope as soon as it is tied, and whatever comes loose later with that point in it hangs from it too: a platform whose posts are blown out swings under its gantry, turning about the point it is held by. The rope is its **Length** long (as far as to the point it holds where 0) and snaps when what hangs pulls harder than its **Strength** in newtons, its weight and its swing together (never where 0), when a blast reaches it, or when the game cuts it. What hung from a cut rope falls, and rests as pieces do; while it hangs it stays a body. A piece hangs from one rope. The rope is drawn as a line of voxels from where it is tied to the point it holds.
+
+```csharp
+// A cage hung from the overhang: blow the overhang's foot and the cage swings out over the drop.
+var rope = Voxels.Hang(overhang + Vector3.UnitY * 0.2f, cage.Top, strength: 30000f);
+// ...a bolt through the rope:
+if (rope is { } tied) Voxels.CutRope(tied);
+```
+
+```
+vox editor call voxels.rope '{ "tied": [32, 9, 32], "holds": [32.03, 3.65, 32.03], "strength": 25000 }'
+vox editor call voxels.cut_rope '{ "obj": "<guid>:3" }'
+```
+
+```toml
+[obj.voxel_rope]
+hangs = [0.0, -5.35, 0.0]
+length = 6.0
+strength = 25000.0
+```
+
+A Distance joint can hold a point of its Obj as well as its centre (`hold` in `[obj.joint]`), which is what a Voxel Rope uses.
+
 What comes loose is dug out a voxel at a time, so it costs as much as digging it would, and is saved in the region files with the other changes. What each join bore at rest is kept while the level runs, not saved: a house left cracked but standing is whole again when the level is loaded.
 
 In the editor nothing falls: a blast takes what comes loose away, and digging and carving there let nothing loose. While the game plays it falls as in the game. `vox editor call` does the same; `wait` settles before it answers, every round at once, and lists the pieces:

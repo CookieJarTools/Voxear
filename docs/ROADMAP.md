@@ -4789,6 +4789,8 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - Pieces that hit hard dig what they hit, small ones and those past Most Pieces are dust, and each is stamped back
     where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
   - Cracks wander through the voxels round the bricks' faces, so broken edges are ragged.
+  - Timber bends before it snaps: floors hang hinged from their walls until too much hangs. Voxel Ropes hold what
+    was built, which hangs and swings once nothing else holds it, and snap when pulled too hard or cut.
   - Designed, not built: a collapse over the network, 2 to 4 KB of piece snapshots for a house's corner.
 
 ## M13 — Virtualised geometry (Nanite-style)

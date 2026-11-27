@@ -1520,6 +1520,32 @@ stages, each measured before the next.
   `a_house_blown_in_is_drawn_as_the_cpu_finds_it_after_what_came_loose_was_dug_out`: a house on hills blown in and
   every round dug, 0 of 33,536 surface voxels differ (the hills' own known one-voxel differences aside).
 
+### Bending before snapping, and ropes (2026-11-27)
+
+- **Hinged timber.** A part of timber (the only stuff that bends) that comes loose through joins broken by bending,
+  bending the worst of pull, shear and bending, stays hinged to what it broke from (`VoxelHinge`: where, and what the
+  bent joins hold: 2e5 Pa over their section modulus turning, 1.2e4 Pa over their area hanging). In the engine the
+  piece gets a hinge Joint about the line square to the way its weight hangs; while its weight and all hinged beyond
+  it turns it harder than the hinge holds, the joint is remade each step a little looser (30 degrees a second, either
+  way, gravity choosing), else held within 0.3 degrees; it tears off past 55 degrees or when more hangs from it than
+  it bears. A piece hinged on one that comes loose later, or before, is hinged onto it, never in a loop; one hinged
+  on a piece stamped back is hinged to where it lies. It rests only once nothing beyond it has bent for a second.
+  Measured (engine test, five runs): a 1.5 m floor hangs bent 3 to 6 degrees; a 6 m floor breaks in five hinged
+  pieces and tears off every run. Without counting what hangs beyond a hinge, the 6 m floor folded and held in half
+  the runs; with pieces hinged only one way, its hinges at the wall were stamped while the rest hung from them.
+- **Ropes.** A Voxel Rope component (`voxel_ropes.rs`), tied at its Obj, holding the point `hangs` below. Tying one
+  settles the volume round that point, so what only the rope holds hangs at once; a piece that comes loose with the
+  point in it gets a Distance joint holding that point (a new `hold` on Distance joints, a `Rope` joint in the
+  physics shim from a point of the body, not its centre) within the rope's length of where it is tied, and stays a
+  body. It snaps when its piece's weight and swing (m(g + v²/L)) pull harder than its strength, when a blast reaches
+  the line, or by `Voxels.CutRope`. Drawn as a 2-voxel line of voxels, remade as its length changes.
+- Tests: render `a_timber_floor_whose_post_is_blown_out_stays_hinged_to_its_wall_and_stone_snaps`; engine
+  `a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_snaps`,
+  `a_slab_blown_off_its_posts_hangs_from_a_rope_and_swings_and_falls_once_cut` (it swings 0.6 m across),
+  `what_was_built_held_by_nothing_but_a_rope_hangs_once_tied`; editor
+  `a_tool_ties_a_rope_to_what_was_built_which_the_inspector_sets_and_the_scene_saves`.
+- Not built: how a hinged piece's snap would go over the network (its tear as an event, like a rope's cut).
+
 ### A collapse over the network: a design
 
 What a collapse needs to send is small, because nearly all of it is worked out the same way on every machine; only

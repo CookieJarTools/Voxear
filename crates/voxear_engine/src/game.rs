@@ -1455,6 +1455,8 @@ impl Game {
             physics.world_mut().ask_in(current.0);
         }
         self.net_begin(delta, renderer.as_deref_mut());
+        // What players asked of the volumes, checked by the rules, and held for the scripts' check this frame.
+        crate::voxel_asks::receive(&mut self.engine.world);
         // A player's machine makes the dimensions its server names, and takes in their edits.
         self.join_dimensions(renderer.as_deref_mut());
         // A player's machine makes what the server's endless Voxel Volumes became.

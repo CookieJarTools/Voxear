@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use voxear_core::math::{Mat4, Quat, Vec3};
+use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{VoxelCut, VoxelFelled, VoxelPiece, VoxelVolume};
 use voxear_scene::Transform;

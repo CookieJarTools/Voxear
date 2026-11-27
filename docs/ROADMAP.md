@@ -4844,7 +4844,11 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - A player joining late gets the edits since the scene and the region files that differ, nearest first.
   - Measured: a voxel 17–19 bytes, a box 47, a print 65, a felled tree 134 bytes and 2.4 KB of snapshots, a
     house's corner blown in 2.4 KB and about 1.8 KB of snapshots.
-  - Not yet: a client showing its own dig before the server's answer, volumes in other dimensions.
+  - Since (2026-11-27): a player's own digging, building and grass cutting shows at once and is let go of as the
+    server's answer comes with what it made; Voxel Ropes are shared, tied and cut from any machine; requests are
+    checked by rules or a typed C# check (`VoxelRequests`); `vox editor call net.voxels` shows what each player
+    costs, what waits and what was refused.
+  - Not yet: volumes in other dimensions, a player's own prints and blasts shown before the server's answer.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

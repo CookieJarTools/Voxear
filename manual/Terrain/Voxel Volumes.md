@@ -643,7 +643,7 @@ A column of cells takes about 75 ms to make over a volume's own hills, a quarter
 
 In a networked game (see [[Playing over the Network]]) every machine makes the scene's own volume from the same files, and the server's is the one that counts: what a game changes as it plays goes from the server to every player, and ends the same on every machine to the voxel, for what is drawn, for collision, for rays and for the ways Nav Agents find. Nothing needs adding.
 
-- **The server changes it.** A carve, a fill, a shape, a print, a voxel dug, placed or restored, a cut, a blast: made by the server's own scripts, they are made at once and sent. Made by a script on a player's machine, they are a request to the server, which checks it and makes it as its own; until it does, nothing changes on the player's machine. What `Voxels` gives back there is only what was asked: how many volumes it reaches, how many points. A script that builds on every machine should build on the server alone:
+- **The server changes it.** A carve, a fill, a shape, a print, a voxel dug, placed or restored, a cut, a blast, a rope tied or cut: made by the server's own scripts, they are made at once and sent. Made by a script on a player's machine, they are a request to the server, which checks it and makes it as its own. What `Voxels` gives back there is only what was asked: how many volumes it reaches, how many points. A script that builds on every machine should build on the server alone:
 
 ```csharp
 // The server raises the fort; every player's machine is sent it.
@@ -655,6 +655,7 @@ if (Input.Pressed(dig) && Voxels.Raycast(camera.Position, camera.Forward, out va
 }
 ```
 
+- **Shown at once.** A player's own dig, place, restore, carve, fill or shape, and the grass their cut cuts, are shown on their machine as they ask, before the server answers. The server's answer comes in the same message as what it made, so their machine lets go of what it showed as it takes the server's: nothing is shown twice, nor gone and back. A request the server refuses is let go of, and what it showed goes. A rope a player ties is shown at once too, and becomes the server's rope as it comes. Prints, blasts and felled trees are shown as the server makes them, a round trip later.
 - **What is sent.** Each frame something changed, the server sends every player on a reliable channel the edits it added, each in a few numbers (a print by its GUID), and then a delta of the voxels set one at a time against what players were last sent: each half-metre brick that differs, voxel by voxel, and each column of cut grass and felled tree that differs. Every machine makes an edit's voxels itself, the same to the voxel, as every shape is worked out in whole numbers. What the server works out alone, as what gives way after a blast, goes as the voxels it dug.
 - **Worked out on each machine.** Where a player's machine can work something out from the volume it has, the server sends a word of it in place of its voxels: a cut through grass and trees, a blast's crater, cut grass growing back a step, a piece stamped back where it came to rest, at its pose to a millimetre (the server stamps it at the same pose). It sends the word only where players' volume is just as the server's was when the change was made, so they work out the same; otherwise the delta carries what it did. Whatever happens, the delta after it makes every machine's volume the server's.
 - **Pieces falling.** A felled tree's pieces and what comes loose of a building fall as bodies on the server. Each goes to players once, by a number: a tree's as the place among what the cut made, as every machine cuts the same tree the same way; what was built with its voxels, packed, a few hundred bytes each. Its pose goes twenty times a second in a snapshot of every piece that moved since the last snapshot that player said they had: how far it moved, in millimetres, and its turn in 35 bits where it turned. A player's machine shows each a moment behind, moving smoothly between snapshots, as it does shared Objs; others bump into it there. A tree's leaves are pressed against the ground where it rests on every machine, from its pose; a piece chipped on the server has its voxels sent again.
@@ -671,9 +672,39 @@ if (Input.Pressed(dig) && Voxels.Raycast(camera.Position, camera.Forward, out va
 | A tree felled, falling and stamped back where it rests | 134 bytes, and about 2.4 KB of snapshots |
 | A house's corner blown in, six pieces falling and stamped back | 2.4 KB, and about 1.8 KB of snapshots |
 
-A player joining after a street was paved, a cellar dug, a tower built a voxel at a time and grass cut was sent 987 bytes: the region files of those changes hold 803.
+A request's answer costs the player who asked about 2 bytes more. A player joining after a street was paved, a cellar dug, a tower built a voxel at a time and grass cut was sent 987 bytes: the region files of those changes hold 803.
 
-The server checks what players ask of the volumes: within 24 m for a ball's radius or a box's side, 4,096 points at once, 256 points of an outline. A game with rules of its own (only within reach of the player, only where they own the land) sets its own check in Rust with `voxel_sync::set_ask_check`, which is asked of every request with the player who made it.
+### What players may ask
+
+The server checks every request before it makes it, and answers it either way. The easy way is `VoxelRequests`' rules, on the server: which kinds players may ask, how far from their own Obj, how large and how many points at once. Unless set, every kind, anywhere, a ball's radius or a box's side within 24 m, 4,096 points, an outline of 256 points.
+
+```csharp
+// Players dig, build and cut within 8 m of themselves, nothing larger than a metre and a half; no blasts, no ropes.
+VoxelRequests.Allowed = VoxelRequestKinds.Building | VoxelRequestKinds.Cut;
+VoxelRequests.Reach = 8f;
+VoxelRequests.Largest = 1.5f;
+```
+
+The full way is a check of the game's own, which sees each request the rules let through whole (who asked, its kind, where it is, how large, how many points, the ground it fills) and accepts it or refuses it with a reason. The request is held until the check answers, within the frame it came in; one it never answers is refused after a second.
+
+```csharp
+VoxelRequests.Check = request => request.Kind switch
+{
+    VoxelRequestKind.Blast when !Charges.Has(request.Player) => VoxelAnswer.Refuse("no charge"),
+    VoxelRequestKind.Dig or VoxelRequestKind.Carve when Town.Contains(request.At) => VoxelAnswer.Refuse("in the town"),
+    _ => VoxelAnswer.Accept,
+};
+```
+
+A game in Rust sets the same rules with `voxel_asks::set_rules` and its check with `voxel_asks::set_ask_check`.
+
+### Ropes over the network
+
+A Voxel Rope is the server's as the volume is. Each rope, placed by a scene or tied as the game plays, goes to every player by a number: where it is tied, how long and strong it is, whether it has snapped, and the piece and point it holds, which their machine shows hanging and swinging as the server's does. `Voxels.Hang` and `Voxels.CutRope` on a player's machine ask the server; a player joining later is sent every rope as it is. A player's machine never ties what a rope holds itself, nor snaps one.
+
+### Watching it
+
+`vox editor call net.voxels` (and `vox mcp`'s tool of the same name) says, while a networked game plays in the editor, what the volumes cost each player: bytes and messages of news, what they were sent as they joined, the pieces' snapshots, what waits to go; the requests waiting for the game's check, the last refused and why, and the rules. On a player's machine it says how many of its own requests it shows before the server's answer.
 
 ## How it is drawn
 
@@ -726,4 +757,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
 - Ways over a volume's ground aren't shown in the Scene view's Navigation gizmo, and aren't found through caves under the ground's lowest point in a column nor more than about 100 m up from it. An agent swims no deep water there and takes no Nav Links. Its way is found for something about 80 cm wide, so a wider one may brush walls and trunks, or stick in a gap narrower than it is; its way may run up to a quarter of a metre past the rim of a drop.
 - What gives way under its own weight is found by parts of half-metre bricks: a load is shared as stiffly as each join's thinnest voxels hold, but within a part of a brick it is one body. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
-- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's machine shows its own dig only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug. Voxel Ropes aren't shared yet: a rope hung or cut on a player's machine is that machine's own, though what hangs from the server's ropes falls and swings on every machine as its pieces do.
+- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's own print, blast or felled tree is shown only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug.

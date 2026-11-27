@@ -30,6 +30,14 @@ internal static unsafe class NativeNet
 	public const int Authority = 18;
 	public const int Aim = 19;
 	public const int SetAim = 20;
+	public const int RequestKinds = 21;
+	public const int RequestReach = 22;
+	public const int RequestLargest = 23;
+	public const int RequestPoints = 24;
+	public const int ScriptsCheck = 25;
+	public const int TakeRequest = 26;
+	public const int RequestInfo = 27;
+	public const int AnswerRequest = 28;
 
 	public const int ConnectedEvent = 1;
 	public const int DisconnectedEvent = 2;
@@ -48,6 +56,20 @@ internal static unsafe class NativeNet
 		var answer = Native.IsConnected ? Native.Api->NetCall(what, a, b, null, 0, (float*)&read) : 0;
 		values = read;
 		return answer;
+	}
+
+	/// <summary>A call with numbers and text.</summary>
+	public static int Call(int what, int a, int b, string text)
+	{
+		if (!Native.IsConnected)
+		{
+			return 0;
+		}
+		var bytes = Encoding.UTF8.GetBytes(text);
+		fixed (byte* written = bytes)
+		{
+			return Native.Api->NetCall(what, a, b, written, bytes.Length, null);
+		}
 	}
 
 	public static int Call(int what, string text)

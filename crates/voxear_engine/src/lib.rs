@@ -72,6 +72,7 @@ pub mod smoke;
 pub mod storm_sounds;
 pub mod storms;
 pub mod voxel_prints;
+pub mod voxel_asks;
 pub mod voxel_sync;
 pub mod voxel_mobs;
 pub mod voxel_nav;

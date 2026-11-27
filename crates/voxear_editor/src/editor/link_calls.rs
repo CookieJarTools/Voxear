@@ -315,6 +315,7 @@ impl Editor {
             "voxels.rope" => self.voxels_rope(args, renderer),
             "voxels.cut_rope" => self.voxels_cut_rope(args),
             "voxels.settled" => self.voxels_settled(),
+            "net.voxels" => self.net_voxels(),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
             "voxel_prints.materials" => self.voxel_prints_materials(args),
@@ -2711,6 +2712,53 @@ impl Editor {
         }
         let cut = voxear_engine::voxel_ropes::cut(&mut self.game.engine.world, obj);
         done(json!({ "cut": cut }))
+    }
+
+    fn net_voxels(&mut self) -> Called {
+        use voxear_engine::voxel_asks::{self, VoxelAskKind};
+        let world = &self.game.engine.world;
+        let role = world.resource::<voxear_engine::net::NetSession>().map(|session| match session.role() {
+            voxear_engine::net::NetRole::Server => "server",
+            voxear_engine::net::NetRole::Host => "host",
+            voxear_engine::net::NetRole::Client => "client",
+        });
+        let totals = voxear_engine::net::voxel_bytes(world);
+        let players: Vec<Json> = voxear_engine::net::voxel_players(world)
+            .into_iter()
+            .map(|p| {
+                json!({
+                    "player": p.player.map(|p| p.0), "joined": p.joined, "news_bytes": p.news_bytes,
+                    "news_messages": p.news_messages, "joining_bytes": p.joining_bytes, "pose_bytes": p.pose_bytes,
+                    "waiting_bytes": p.waiting_bytes,
+                })
+            })
+            .collect();
+        let waiting: Vec<Json> = voxel_asks::waiting(world)
+            .into_iter()
+            .map(|(player, number, kind, frames)| {
+                json!({ "player": player.0, "number": number, "kind": kind.name(), "frames": frames })
+            })
+            .collect();
+        let refusals: Vec<Json> = voxel_asks::refusals(world)
+            .into_iter()
+            .map(|r| {
+                json!({ "player": r.player.0, "number": r.number, "kind": r.kind.name(), "reason": r.reason, "tick": r.tick })
+            })
+            .collect();
+        let rules = voxel_asks::rules(world);
+        let allowed: Vec<&str> =
+            VoxelAskKind::ALL.iter().filter(|kind| rules.allowed & kind.bit() != 0).map(|kind| kind.name()).collect();
+        done(json!({
+            "role": role,
+            "totals": { "news": totals.news, "joining": totals.joining, "poses": totals.poses, "asks": totals.asks },
+            "players": players,
+            "waiting": waiting,
+            "refusals": refusals,
+            "rules": {
+                "allowed": allowed, "reach": rules.reach, "largest": rules.largest, "most_points": rules.most_points,
+            },
+            "predicted": voxear_engine::voxel_sync::predicted(world),
+        }))
     }
 
     fn voxels_settled(&mut self) -> Called {

@@ -672,6 +672,13 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ settled, falling }",
     },
     CallInfo {
+        name: "net.voxels",
+        about: "While a networked game plays, what its endless Voxel Volumes cost over the network: on a server, each player's bytes and messages of news, what they were sent as they joined, the falling pieces' snapshots and what still waits to go; the requests players made that wait for the game's C# check; the last requests refused and why; and the rules requests are checked by. On a player's machine, how many of its own requests it shows before the server's answer.",
+        args: &[],
+        changes: false,
+        returns: "{ role, totals: { news, joining, poses, asks }, players: [{ player, joined, news_bytes, news_messages, joining_bytes, pose_bytes, waiting_bytes }], waiting: [{ player, number, kind, frames }], refusals: [{ player, number, kind, reason, tick }], rules: { allowed, reach, largest, most_points }, predicted }",
+    },
+    CallInfo {
         name: "voxels.restore",
         about: "Lets the voxels at points of the world go back to what their volume's ground and edits make, undoing digging and placing there, as a script's Voxels.Restore does. One step to undo.",
         args: &[

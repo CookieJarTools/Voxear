@@ -824,9 +824,9 @@ pub(crate) fn register() {
     voxear_scripting::set_voxel_ropes(|world, act, n, obj| match act {
         0 => {
             let (tied, holds) = (Vec3::new(n[0], n[1], n[2]), Vec3::new(n[3], n[4], n[5]));
-            Some(crate::voxel_ropes::hang(world, tied, holds, n[6], n[7]))
+            crate::voxel_sync::hang(world, tied, holds, n[6], n[7])
         }
-        _ => obj.filter(|obj| crate::voxel_ropes::cut(world, *obj)),
+        _ => obj.filter(|obj| crate::voxel_sync::cut_rope(world, *obj)),
     });
     voxear_scripting::set_voxel_blasts(|world, at, radius, pieces, throw| {
         use crate::voxel_collapse::{BlastOptions, blast};
@@ -1013,7 +1013,8 @@ fn request_reach(request: &voxear_scripting::VoxelShapeRequest) -> (Vec3, Vec3) 
 
 /// Makes what a player asked of the endless volumes on the server, as the
 /// server's own scripts would (see `voxel_sync`).
-pub(crate) fn make_ask(content: &mut Content, world: &mut World, ask: &crate::voxel_sync::VoxelAsk) {
+/// Gives the rope a request tied, if it tied one.
+pub(crate) fn make_ask(content: &mut Content, world: &mut World, ask: &crate::voxel_sync::VoxelAsk) -> Option<Entity> {
     use crate::voxel_collapse::{BlastOptions, blast};
     use crate::voxel_felling::CutOptions;
     use crate::voxel_sync::VoxelAsk;
@@ -1040,7 +1041,13 @@ pub(crate) fn make_ask(content: &mut Content, world: &mut World, ask: &crate::vo
             let options = BlastOptions { pieces: *pieces, throw: *throw, ..BlastOptions::default() };
             blast(world, *at, *radius, options, None);
         }
+        VoxelAsk::Hang { tied, holds, length, strength } => {
+            return Some(crate::voxel_ropes::hang(world, *tied, *holds, *length, *strength));
+        }
+        // The session's ropes are cut where they are known by number (`voxel_sync`).
+        VoxelAsk::CutRope { .. } => {}
     }
+    None
 }
 
 /// A felled piece as scripts read it.

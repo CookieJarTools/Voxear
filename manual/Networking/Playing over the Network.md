@@ -77,7 +77,7 @@ The server makes the ground round every player, as each player's own machine doe
 
 A player's machine makes the ground from the same files and seed as the server, so the ground itself is never sent. What is sent is what was changed: as a player joins, the server sends every change made to the level's worlds of blocks since they were made, the nearest to the player first, in the same packed form a save keeps them in. Changes made while they play go as your game's own RPCs.
 
-The level's endless [[Voxel Volumes]] are shared by the engine itself: what the server changes in them as the game plays, and what players ask it to change (digging, building, printing, cutting, felling and blasting), reaches every player, and one joining late is sent it all as they join (see [[Voxel Volumes#Over the network]]).
+The level's endless [[Voxel Volumes]] and their Voxel Ropes are shared by the engine itself: what the server changes in them as the game plays, and what players ask it to change (digging, building, printing, cutting, felling, blasting, tying and cutting ropes), reaches every player, and one joining late is sent it all as they join. A player's own digging and building shows on their machine at once. `VoxelRequests` says what players may ask, and `vox editor call net.voxels` what it costs (see [[Voxel Volumes#Over the network]]).
 
 ## Network settings
 

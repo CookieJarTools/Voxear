@@ -144,6 +144,15 @@ const REPLAYING: i32 = 17;
 const AUTHORITY: i32 = 18;
 const AIM: i32 = 19;
 const SET_AIM: i32 = 20;
+// What players may ask of the voxel volumes, and the C# check (`VoxelRequests`).
+const REQUEST_KINDS: i32 = 21;
+const REQUEST_REACH: i32 = 22;
+const REQUEST_LARGEST: i32 = 23;
+const REQUEST_POINTS: i32 = 24;
+const SCRIPTS_CHECK: i32 = 25;
+const TAKE_REQUEST: i32 = 26;
+const REQUEST_INFO: i32 = 27;
+const ANSWER_REQUEST: i32 = 28;
 
 // Events, as TAKE_EVENT gives them.
 const CONNECTED_EVENT: i32 = 1;
@@ -235,8 +244,58 @@ fn call(world: &mut World, what: i32, a: i32, b: i32, text: &str, out: &mut [f32
             super::stop(world);
             1
         }
+        REQUEST_KINDS..=ANSWER_REQUEST => requests(world, what, a, b, text, out),
         _ => 0,
     }
+}
+
+/// What answers `VoxelRequests`: with `b` 1 a rule set to `a` (a float's bits
+/// for a length), else read; the C# check on or off; the next request it has
+/// not seen (its id, and where and how large in `out`) and what it is (its
+/// kind, and who asked, how many points and its ground in `out`); and its
+/// answer, a reason in `text`.
+fn requests(world: &mut World, what: i32, a: i32, b: i32, text: &str, out: &mut [f32; 4]) -> i32 {
+    use crate::voxel_asks::{self, VoxelAskKind};
+    let mut rules = voxel_asks::rules(world);
+    let set = b == 1;
+    match what {
+        REQUEST_KINDS if set => rules.allowed = a as u32,
+        REQUEST_REACH if set => rules.reach = f32::from_bits(a as u32).max(0.0),
+        REQUEST_LARGEST if set => rules.largest = f32::from_bits(a as u32).max(0.0),
+        REQUEST_POINTS if set => rules.most_points = a.max(0) as usize,
+        REQUEST_KINDS => return rules.allowed as i32,
+        REQUEST_REACH => {
+            out[0] = rules.reach;
+            return 1;
+        }
+        REQUEST_LARGEST => {
+            out[0] = rules.largest;
+            return 1;
+        }
+        REQUEST_POINTS => return rules.most_points.min(i32::MAX as usize) as i32,
+        SCRIPTS_CHECK => {
+            voxel_asks::set_scripts_check(world, a == 1);
+            return 1;
+        }
+        TAKE_REQUEST => {
+            let Some((id, _, info)) = voxel_asks::next_for_script(world) else { return 0 };
+            *out = [info.at.x, info.at.y, info.at.z, info.size];
+            return id as i32;
+        }
+        REQUEST_INFO => {
+            let Some((player, info)) = voxel_asks::held(world, a as u32) else { return -1 };
+            let material = info.material.map_or(-1.0, |m| m as u8 as f32);
+            *out = [f32::from(player.0), info.points as f32, material, 0.0];
+            return VoxelAskKind::ALL.iter().position(|kind| *kind == info.kind).unwrap_or(0) as i32;
+        }
+        ANSWER_REQUEST => {
+            let (id, accepted) = (a as u32, b == 1);
+            return i32::from(voxel_asks::answer_from_script(world, id, accepted, text));
+        }
+        _ => return 0,
+    }
+    voxel_asks::set_rules(world, rules);
+    1
 }
 
 /// An address, with the project's port when it names none.

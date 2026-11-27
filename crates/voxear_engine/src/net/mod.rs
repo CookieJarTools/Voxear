@@ -60,8 +60,8 @@ pub use rpcs::{ENGINE_KEYS, MOB_ACTS, Rpc, RpcTarget};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
 pub use voxels::{
-    VoxelBytes, ask_voxels, owe_voxels, piece_poses, player_place, send_voxels, set_piece_poses, take_voxel_asks,
-    take_voxel_joins, take_voxel_news, voxel_bytes,
+    VoxelBytes, VoxelPlayer, ask_voxels, local_player, owe_voxels, piece_poses, player_place, send_voxels,
+    set_piece_poses, take_voxel_asks, take_voxel_joins, take_voxel_news, voxel_bytes, voxel_players,
 };
 use messages::{Message, REPEATS};
 

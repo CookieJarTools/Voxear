@@ -101,6 +101,28 @@ pub fn hang(world: &mut World, tied: Vec3, holds: Vec3, length: f32, strength: f
     obj
 }
 
+/// What rope `obj` holds now: whether it snapped, the piece hanging from
+/// it and the point it holds, in metres of the piece's Obj.
+pub(crate) fn state(world: &World, obj: Entity) -> (bool, Option<Entity>, Vec3) {
+    let holds = world.get::<RopeHolds>(obj).copied().unwrap_or_default();
+    (holds.snapped, holds.piece.filter(|piece| world.is_alive(*piece)), holds.point)
+}
+
+/// Shows rope `obj` as the server has it, on a player's machine: snapped or
+/// not, holding `point` of `piece`, if any. Nothing here ties or snaps it.
+pub(crate) fn show(world: &mut World, obj: Entity, snapped: bool, piece: Option<Entity>, point: Vec3) {
+    let holds = world.get::<RopeHolds>(obj).copied().unwrap_or_default();
+    world.insert(obj, RopeHolds { piece, point, snapped, tied: true, ..holds });
+}
+
+/// Takes rope `obj` away, and the voxels it was drawn with.
+pub(crate) fn remove(world: &mut World, obj: Entity) {
+    if let Some(look) = world.get::<RopeHolds>(obj).and_then(|holds| holds.look) {
+        world.despawn(look);
+    }
+    world.despawn(obj);
+}
+
 /// Cuts rope `obj`: what hangs from it falls. Whether it was a rope not cut
 /// already.
 pub fn cut(world: &mut World, obj: Entity) -> bool {
@@ -317,6 +339,13 @@ pub(crate) fn tend(world: &mut World, dt: f32) {
             .collect(),
         None => Vec::new(),
     };
+    // A player's machine in a session draws its ropes as the server has them, and ties and snaps none.
+    if crate::net::is_client(world) {
+        for (obj, rope, tied) in found {
+            draw(world, obj, rope, tied);
+        }
+        return;
+    }
     for (obj, rope, tied) in found {
         let mut holds = world.get::<RopeHolds>(obj).copied().unwrap_or_default();
         if !holds.tied {

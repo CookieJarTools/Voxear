@@ -12,6 +12,7 @@ internal static class NetworkingModule
 	internal static void Start()
 	{
 		ModuleHooks.Dispatch += Net.Dispatch;
+		ModuleHooks.Dispatch += VoxelRequests.Dispatch;
 		ModuleHooks.TakeNetFields += Replication.TakeIn;
 		ModuleHooks.Forget += Net.Forget;
 	}

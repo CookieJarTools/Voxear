@@ -1853,3 +1853,33 @@ The Realm's window took 100–110 s round a still camera where it took 10 s befo
   Measured again side by side, the frame is 11.7 ms before and 12.5–13.6 ms now, not 9.8 and 14.4: the GPU is
   shared with other work, and the frame, the least of 60, moves by a millisecond or more from run to run.
 
+
+## Co-op follow-ups: shown at once, ropes, checks, stats (2026-11-27)
+
+- **A player's own change shown at once** (`voxel_sync::ask`). A dig, place, restore, carve, fill or shape, and a
+  cut's grass (its cut columns alone, found once with `voxel_cut` and kept as a delta; trees fall as the server fells
+  them), are made on the asking machine as it asks, each request numbered. The machine keeps each volume as the
+  server's news has it (edits, their scene form and the changes, all `Arc`s) while it shows requests over it: when
+  news comes it takes them off, takes the news, and shows those still unanswered again. The server answers every
+  request (`News::Answered`, made or refused) inside the same reliable message as the news that holds what it made,
+  that player's own copy of the frame's message, so the request is let go of exactly as its result arrives: in the
+  test the dug voxel and the one wall are there on every frame, never two walls. A request unanswered after 300
+  frames is let go of all the same. Answers cost each asking player about 2 bytes a request.
+- **Ropes shared.** Each rope (scene-placed by GUID and path, or tied in play by where in the level) goes by a number
+  with its make, whether it snapped and the piece (by its number) and point it holds, whenever any of that changes;
+  late joiners get every rope. Player machines only draw ropes (`voxel_ropes::tend` ties and snaps nothing there:
+  before, a scene's rope on a client settled its volume locally, which would have parted it from the server's).
+  `Voxels.Hang` on a client shows its rope at once (tying nothing) and asks; the server's rope news names the request
+  that tied it, and the client's rope becomes it. `Voxels.CutRope` asks by the rope's number.
+- **Checks** (`voxel_asks.rs`). Easy: `VoxelAskRules` (kinds as bits, reach from the player's own Obj, largest,
+  most points), C# `VoxelRequests.Allowed/Reach/Largest/MostPoints`. Full: Rust `set_ask_check`, and C#
+  `VoxelRequests.Check` (`Func<VoxelRequest, VoxelAnswer>`, typed: player, `VoxelRequestKind`, place, size, points,
+  ground). Requests are taken in as the frame begins (after `net_begin`), the C# check answers them in the scripts'
+  update through the numbered `Net` calls (21–28: no script API change), and the server makes them as the frame ends:
+  no frame lost. Unanswered after 60 frames: refused. The last 32 refusals are kept with their reason.
+- **Stats.** `vox editor call net.voxels` (and the MCP tool): per player news bytes and messages, joining bytes, pose
+  bytes, bytes still queued; totals; requests waiting for the C# check; the last refusals; the rules; and on a
+  client how many requests it shows unanswered.
+- **Tests** (`tests/net_voxels.rs`): `a_players_own_dig_and_box_show_at_once_and_stay_as_the_server_answers_with_nothing_twice`
+  (answered in 6 frames with a little loss and delay; refused by the rules, by a Rust check and by a check run as C#
+  runs it), `a_rope_tied_and_cut_by_players_hangs_and_falls_alike_on_every_machine_and_a_late_joiner_sees_it`.

@@ -192,6 +192,10 @@ pub enum VoxelAsk {
     Cut { cut: VoxelCut, toward: Option<Vec3>, pieces: CutPieces, rest: Option<PieceRest> },
     /// What was built blown out.
     Blast { at: Vec3, radius: f32, pieces: CutPieces, throw: f32 },
+    /// A rope tied at `tied` holding the point `holds` of what was built.
+    Hang { tied: Vec3, holds: Vec3, length: f32, strength: f32 },
+    /// A rope cut, by its number in the session, tied at `at`.
+    CutRope { rope: u32, at: Vec3 },
 }
 
 /// The most points a request sets, and the largest ball or box it reaches,
@@ -199,18 +203,7 @@ pub enum VoxelAsk {
 pub const MOST_ASKED_POINTS: usize = 4096;
 pub const MOST_ASKED_REACH: f32 = 24.0;
 
-/// The game's own check of what players ask of the volumes, on a server:
-/// true to make it. See [`set_ask_check`].
-pub type AskCheck = Arc<dyn Fn(&World, PlayerId, &VoxelAsk) -> bool + Send + Sync>;
-
-struct AskChecker(AskCheck);
-
-/// Has the server ask `check` of every request a player makes of its
-/// volumes before making it, in place of the usual limits
-/// ([`MOST_ASKED_POINTS`], [`MOST_ASKED_REACH`]).
-pub fn set_ask_check(world: &mut World, check: AskCheck) {
-    world.insert_resource(AskChecker(check));
-}
+pub use crate::voxel_asks::{AskCheck, set_ask_check};
 
 impl VoxelAsk {
     /// It moved by `by` metres, as from one machine's world into another's.
@@ -233,22 +226,10 @@ impl VoxelAsk {
             Self::Blast { at, radius, pieces, throw } => {
                 Self::Blast { at: *at + by, radius: *radius, pieces: *pieces, throw: *throw }
             }
-        }
-    }
-
-    /// Whether it keeps within the usual limits.
-    fn within_limits(&self) -> bool {
-        let small = |size: f32| size.is_finite() && size <= MOST_ASKED_REACH;
-        match self {
-            Self::Shape(data) | Self::Print(data) => {
-                small(data.radius) && data.size.iter().all(|s| small(*s)) && data.points.len() <= 256
+            Self::Hang { tied, holds, length, strength } => {
+                Self::Hang { tied: *tied + by, holds: *holds + by, length: *length, strength: *strength }
             }
-            Self::Set { points, .. } | Self::Restore { points } => points.len() <= MOST_ASKED_POINTS,
-            Self::Cut { cut, .. } => match cut {
-                VoxelCut::Points(points) => points.len() <= MOST_ASKED_POINTS,
-                VoxelCut::Ball { radius, .. } | VoxelCut::Slice { radius, .. } => small(*radius),
-            },
-            Self::Blast { radius, throw, .. } => small(*radius) && throw.is_finite(),
+            Self::CutRope { rope, at } => Self::CutRope { rope: *rope, at: *at + by },
         }
     }
 
@@ -340,6 +321,18 @@ impl VoxelAsk {
                 w.write_bool(*pieces == CutPieces::Gone);
                 w.write_f32(*throw);
             }
+            Self::Hang { tied, holds, length, strength } => {
+                w.write_bits(6, 3);
+                write_vec(&mut w, *tied);
+                write_vec(&mut w, *holds);
+                w.write_f32(*length);
+                w.write_f32(*strength);
+            }
+            Self::CutRope { rope, at } => {
+                w.write_bits(7, 3);
+                w.write_varint(u64::from(*rope));
+                write_vec(&mut w, *at);
+            }
         }
         w.finish()
     }
@@ -376,10 +369,47 @@ impl VoxelAsk {
                 let pieces = if r.read_bool()? { CutPieces::Gone } else { CutPieces::Fall };
                 Self::Blast { at, radius, pieces, throw: r.read_f32()? }
             }
-            _ => return None,
+            6 => Self::Hang {
+                tied: read_vec(&mut r)?,
+                holds: read_vec(&mut r)?,
+                length: r.read_f32()?,
+                strength: r.read_f32()?,
+            },
+            _ => Self::CutRope { rope: u32::try_from(r.read_varint()?).ok()?, at: read_vec(&mut r)? },
         };
         Some(ask)
     }
+}
+
+/// A request as a player's machine sends it: its number from that machine,
+/// then the request.
+fn ask_bytes(number: u32, ask: &VoxelAsk) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut number = u64::from(number);
+    while number >= 0x80 {
+        out.push((number as u8) | 0x80);
+        number >>= 7;
+    }
+    out.push(number as u8);
+    out.extend_from_slice(&ask.to_bytes());
+    out
+}
+
+/// A request's number and the request, as [`ask_bytes`] wrote them.
+pub(crate) fn read_ask(bytes: &[u8]) -> Option<(u32, VoxelAsk)> {
+    let (mut number, mut at) = (0u64, 0);
+    loop {
+        let byte = *bytes.get(at)?;
+        number |= u64::from(byte & 0x7f) << (7 * at);
+        at += 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        if at > 4 {
+            return None;
+        }
+    }
+    Some((u32::try_from(number).ok()?, VoxelAsk::from_bytes(&bytes[at..])?))
 }
 
 fn write_vec(w: &mut BitWriter, v: Vec3) {
@@ -709,6 +739,34 @@ enum News {
     },
     /// Everything there was when they joined is sent.
     Ready,
+    /// To the player who asked: their request `number` was made (`accepted`) or refused, and what it did is in
+    /// the news before.
+    Answered {
+        number: u32,
+        accepted: bool,
+    },
+    /// A rope by its number, where it is, how it is made, whether it has snapped and the piece and point (in
+    /// the piece's Obj's own metres) it holds; tied at the request of a player (`asked`: who, and its number
+    /// from them).
+    Rope {
+        id: u32,
+        place: RopePlace,
+        rope: crate::voxel_ropes::VoxelRope,
+        snapped: bool,
+        holds: Option<(u32, Vec3)>,
+        asked: Option<(u16, u32)>,
+    },
+    RopeGone {
+        id: u32,
+    },
+}
+
+/// Where a rope is: placed by a scene, by its GUID and the Obj's path; or
+/// tied as the game played, where it is tied in the level.
+#[derive(Clone, Debug, PartialEq)]
+enum RopePlace {
+    Scene { scene: String, path: String },
+    Tied(Vec3),
 }
 
 fn write_pose(w: &mut BitWriter, pose: &PiecePose) {
@@ -767,9 +825,8 @@ fn write_news(w: &mut BitWriter, news: &News) {
             write_bytes(w, bytes);
         }
         News::Pressed { id, pose, depth, to } => {
-            // After Ready, as a kind of its own.
             w.write_bits(7, 3);
-            w.write_bool(true);
+            w.write_varint(1);
             w.write_varint(u64::from(*id));
             write_pose(w, pose);
             w.write_f32(*depth);
@@ -827,7 +884,48 @@ fn write_news(w: &mut BitWriter, news: &News) {
         }
         News::Ready => {
             w.write_bits(7, 3);
-            w.write_bool(false);
+            w.write_varint(0);
+        }
+        News::Answered { number, accepted } => {
+            w.write_bits(7, 3);
+            w.write_varint(2);
+            w.write_varint(u64::from(*number));
+            w.write_bool(*accepted);
+        }
+        News::Rope { id, place, rope, snapped, holds, asked } => {
+            w.write_bits(7, 3);
+            w.write_varint(3);
+            w.write_varint(u64::from(*id));
+            match place {
+                RopePlace::Scene { scene, path } => {
+                    w.write_bool(true);
+                    write_text(w, scene);
+                    write_text(w, path);
+                }
+                RopePlace::Tied(at) => {
+                    w.write_bool(false);
+                    write_vec(w, *at);
+                }
+            }
+            rope.hangs.iter().for_each(|&a| w.write_f32(a));
+            w.write_f32(rope.length);
+            w.write_f32(rope.strength);
+            w.write_bool(*snapped);
+            w.write_bool(holds.is_some());
+            if let Some((piece, point)) = holds {
+                w.write_varint(u64::from(*piece));
+                write_vec(w, *point);
+            }
+            w.write_bool(asked.is_some());
+            if let Some((player, number)) = asked {
+                w.write_varint(u64::from(*player));
+                w.write_varint(u64::from(*number));
+            }
+        }
+        News::RopeGone { id } => {
+            w.write_bits(7, 3);
+            w.write_varint(4);
+            w.write_varint(u64::from(*id));
         }
     }
 }
@@ -878,11 +976,35 @@ fn read_news(r: &mut BitReader) -> Option<News> {
         }
         5 => News::Delta { volume: number(r)?, bytes: read_bytes(r)? },
         6 => News::Gone { id: u32::try_from(r.read_varint()?).ok()? },
-        _ if r.read_bool()? => {
-            let id = u32::try_from(r.read_varint()?).ok()?;
-            News::Pressed { id, pose: read_pose(r)?, depth: r.read_f32()?, to: r.read_f32()? }
-        }
-        _ => News::Ready,
+        _ => match r.read_varint()? {
+            0 => News::Ready,
+            1 => {
+                let id = u32::try_from(r.read_varint()?).ok()?;
+                News::Pressed { id, pose: read_pose(r)?, depth: r.read_f32()?, to: r.read_f32()? }
+            }
+            2 => News::Answered { number: u32::try_from(r.read_varint()?).ok()?, accepted: r.read_bool()? },
+            3 => {
+                let id = u32::try_from(r.read_varint()?).ok()?;
+                let place = match r.read_bool()? {
+                    true => RopePlace::Scene { scene: read_text(r)?, path: read_text(r)? },
+                    false => RopePlace::Tied(read_vec(r)?),
+                };
+                let hangs = [r.read_f32()?, r.read_f32()?, r.read_f32()?];
+                let rope = crate::voxel_ropes::VoxelRope { hangs, length: r.read_f32()?, strength: r.read_f32()? };
+                let snapped = r.read_bool()?;
+                let holds = match r.read_bool()? {
+                    true => Some((u32::try_from(r.read_varint()?).ok()?, read_vec(r)?)),
+                    false => None,
+                };
+                let asked = match r.read_bool()? {
+                    true => Some((u16::try_from(r.read_varint()?).ok()?, u32::try_from(r.read_varint()?).ok()?)),
+                    false => None,
+                };
+                News::Rope { id, place, rope, snapped, holds, asked }
+            }
+            4 => News::RopeGone { id: u32::try_from(r.read_varint()?).ok()? },
+            _ => return None,
+        },
     };
     Some(news)
 }
@@ -979,6 +1101,79 @@ struct Serving {
     next_number: u16,
     pieces: HashMap<Entity, SentPiece>,
     next_piece: u32,
+    ropes: HashMap<Entity, SentRope>,
+    next_rope: u32,
+    /// Ropes tied at a player's request, not yet sent: who asked and its number from them.
+    asked_ropes: HashMap<Entity, (PlayerId, u32)>,
+}
+
+/// A rope the server shares, as players have it.
+struct SentRope {
+    id: u32,
+    place: RopePlace,
+    rope: crate::voxel_ropes::VoxelRope,
+    snapped: bool,
+    /// The piece it holds by its number, and the point, in millimetres of the piece's Obj.
+    holds: Option<(u32, [i32; 3])>,
+}
+
+impl SentRope {
+    fn news(&self, asked: Option<(PlayerId, u32)>) -> News {
+        let holds = self.holds.map(|(piece, at)| (piece, Vec3::from(at.map(|a| a as f32 / 1000.0))));
+        News::Rope {
+            id: self.id,
+            place: self.place.clone(),
+            rope: self.rope,
+            snapped: self.snapped,
+            holds,
+            asked: asked.map(|(player, number)| (player.0, number)),
+        }
+    }
+}
+
+/// Every rope's news this frame: those new, those that snapped or took or
+/// let go of a piece, and those gone.
+fn rope_news(world: &World, levels: &Levels, serving: &mut Serving) -> Vec<News> {
+    let origin = voxear_scene::WorldOrigin::of(world).0.as_vec3();
+    let found: Vec<(Entity, crate::voxel_ropes::VoxelRope, Vec3)> = world
+        .query_ref::<(Entity, &crate::voxel_ropes::VoxelRope)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .filter_map(|(entity, rope)| Some((entity, *rope, corner_of(world, entity)?)))
+        .collect();
+    let mut news = Vec::new();
+    for (entity, rope, tied) in &found {
+        let (snapped, piece, point) = crate::voxel_ropes::state(world, *entity);
+        let holds = piece
+            .and_then(|piece| serving.pieces.get(&piece))
+            .map(|sent| (sent.id, point.to_array().map(|a| (a * 1000.0).round() as i32)));
+        match serving.ropes.get_mut(entity) {
+            None => {
+                let place = match levels.place_of(*entity) {
+                    Some((scene, path)) => RopePlace::Scene { scene: scene.to_string(), path: path.to_string() },
+                    None => RopePlace::Tied(*tied + origin),
+                };
+                let id = serving.next_rope;
+                serving.next_rope = serving.next_rope.wrapping_add(1);
+                let sent = SentRope { id, place, rope: *rope, snapped, holds };
+                news.push(sent.news(serving.asked_ropes.remove(entity)));
+                serving.ropes.insert(*entity, sent);
+            }
+            Some(sent) if sent.snapped != snapped || sent.holds != holds || sent.rope != *rope => {
+                (sent.snapped, sent.holds, sent.rope) = (snapped, holds, *rope);
+                news.push(sent.news(None));
+            }
+            Some(_) => {}
+        }
+    }
+    let gone: Vec<Entity> = serving.ropes.keys().copied().filter(|e| found.iter().all(|(f, ..)| f != e)).collect();
+    for entity in gone {
+        if let Some(sent) = serving.ropes.remove(&entity) {
+            news.push(News::RopeGone { id: sent.id });
+        }
+    }
+    serving.asked_ropes.retain(|entity, _| world.is_alive(*entity));
+    news
 }
 
 /// Whether this machine asks the server to change its volumes: a player's
@@ -989,11 +1184,185 @@ pub fn asks(world: &World) -> bool {
 
 /// Asks the server to change its volumes, from a player's machine, `ask`
 /// placed in this machine's world: the server makes it, if it accepts it,
-/// and sends what came of it back. Gives whether it was sent.
-pub fn ask(world: &mut World, ask: &VoxelAsk) -> bool {
+/// and sends what came of it back. A dig, a place, a restore, a shape or a
+/// cut of grass is shown here at once, and let go of as the server's answer
+/// comes with what it made, or refused. Gives the request's number, none
+/// where it was not sent.
+pub fn ask(world: &mut World, ask: &VoxelAsk) -> Option<u32> {
     let origin = voxear_scene::WorldOrigin::of(world).0.as_vec3();
-    net::ask_voxels(world, ask.moved(origin).to_bytes())
+    let mut joined = world.remove_resource::<Joined>().unwrap_or_default();
+    joined.next_number = joined.next_number.wrapping_add(1).max(1);
+    let number = joined.next_number;
+    let sent = net::ask_voxels(world, ask_bytes(number, &ask.moved(origin)));
+    if sent && predicts(ask) {
+        keep_confirmed(world, &mut joined);
+        let cuts = match ask {
+            VoxelAsk::Cut { cut, .. } => grass_cut(world, cut),
+            _ => Vec::new(),
+        };
+        let predicted = Predicted { number, ask: ask.clone(), cuts, frames: 0 };
+        predict(world, &predicted);
+        joined.predicted.push(predicted);
+    }
+    world.insert_resource(joined);
+    sent.then_some(number)
 }
+
+/// Whether a request is shown on the asking machine before the server
+/// answers.
+fn predicts(ask: &VoxelAsk) -> bool {
+    matches!(ask, VoxelAsk::Shape(_) | VoxelAsk::Set { .. } | VoxelAsk::Restore { .. } | VoxelAsk::Cut { .. })
+}
+
+/// A request shown before the server's answer: its number, what it asked
+/// (in this machine's world), the grass a cut cuts in each volume, and how
+/// many frames it has waited.
+struct Predicted {
+    number: u32,
+    ask: VoxelAsk,
+    cuts: Vec<(Entity, VoxelDelta)>,
+    frames: u32,
+}
+
+/// Frames a request is shown waiting for the server's answer, before it is
+/// let go all the same.
+const PREDICTED_FOR: u32 = 300;
+
+/// A volume as the server's news has it, kept while what this machine
+/// asked is shown over it.
+struct Confirmed {
+    edits: Arc<Vec<voxear_render::VoxelEdit>>,
+    data: Vec<VoxelEditData>,
+    changes: Arc<VoxelChanges>,
+}
+
+/// Keeps every endless volume as it is, where not kept already: as the
+/// server's news has it, before what is shown over it.
+fn keep_confirmed(world: &World, joined: &mut Joined) {
+    let volumes: Vec<(Entity, &VoxelVolume)> =
+        world.query_ref::<(Entity, &VoxelVolume)>().into_iter().filter(|(_, volume)| volume.endless).collect();
+    for (entity, volume) in volumes {
+        joined.confirmed.entry(entity).or_insert_with(|| Confirmed {
+            edits: volume.edits.clone(),
+            data: world.get::<VoxelVolumeSource>(entity).map(|source| source.0.edits.clone()).unwrap_or_default(),
+            changes: volume.changes.clone(),
+        });
+    }
+}
+
+/// Takes every volume back to as the server's news has it.
+fn restore(world: &mut World, joined: &mut Joined) {
+    for (entity, kept) in joined.confirmed.drain() {
+        if let Some(volume) = world.get_mut::<VoxelVolume>(entity) {
+            (volume.edits, volume.changes) = (kept.edits, kept.changes);
+        }
+        if let Some(source) = world.get_mut::<VoxelVolumeSource>(entity) {
+            source.0.edits = kept.data;
+        }
+    }
+}
+
+/// Shows what this machine asked again, over the volumes as the news has
+/// them.
+fn replay(world: &mut World, joined: &mut Joined) {
+    if joined.predicted.is_empty() {
+        return;
+    }
+    keep_confirmed(world, joined);
+    for predicted in &joined.predicted {
+        predict(world, predicted);
+    }
+}
+
+/// Shows a request on this machine, as the server would make it.
+fn predict(world: &mut World, predicted: &Predicted) {
+    use crate::voxel_volumes::{set_voxels, shape_edit, unset_voxels};
+    match &predicted.ask {
+        VoxelAsk::Shape(data) => drop(shape_edit(world, data, None)),
+        VoxelAsk::Set { points, to } => drop(set_voxels(world, points, *to, None)),
+        VoxelAsk::Restore { points } => unset_voxels(world, points, None),
+        VoxelAsk::Cut { .. } => {
+            for (entity, delta) in &predicted.cuts {
+                if let Some(volume) = world.get_mut::<VoxelVolume>(*entity) {
+                    Arc::make_mut(&mut volume.changes).apply_delta(delta);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The grass, cover and crops a cut cuts in each endless volume, as a delta
+/// of their cut columns alone: trees fall as the server fells them.
+fn grass_cut(world: &World, cut: &VoxelCut) -> Vec<(Entity, VoxelDelta)> {
+    let volumes: Vec<(Entity, &VoxelVolume)> =
+        world.query_ref::<(Entity, &VoxelVolume)>().into_iter().filter(|(_, volume)| volume.endless).collect();
+    let mut cuts = Vec::new();
+    for (entity, volume) in volumes {
+        let Some(corner) = corner_of(world, entity) else { continue };
+        let local = match cut {
+            VoxelCut::Points(points) => VoxelCut::Points(points.iter().map(|p| *p - corner).collect()),
+            VoxelCut::Ball { at, radius } => VoxelCut::Ball { at: *at - corner, radius: *radius },
+            VoxelCut::Slice { at, across, radius } => {
+                VoxelCut::Slice { at: *at - corner, across: *across, radius: *radius }
+            }
+        };
+        let (changes, made) = voxear_render::voxel_cut(volume, &local);
+        if made.columns == 0 {
+            continue;
+        }
+        let delta = changes.delta_from(&volume.changes);
+        cuts.push((entity, VoxelDelta { cuts: delta.cuts, ..VoxelDelta::default() }));
+    }
+    cuts
+}
+
+/// Ties a rope at `tied` holding the point `holds` of what was built, as
+/// `voxel_ropes::hang` does: on a player's machine the rope is shown at
+/// once, tying nothing, and the server asked to tie its own, which takes its
+/// place (or it goes, refused). Gives the rope's Obj; none where the server
+/// could not be asked.
+pub fn hang(world: &mut World, tied: Vec3, holds: Vec3, length: f32, strength: f32) -> Option<Entity> {
+    if !asks(world) {
+        return Some(crate::voxel_ropes::hang(world, tied, holds, length, strength));
+    }
+    let rope = crate::voxel_ropes::hang(world, tied, holds, length, strength);
+    crate::voxel_ropes::show(world, rope, false, None, Vec3::ZERO);
+    match ask(world, &VoxelAsk::Hang { tied, holds, length, strength }) {
+        Some(number) => {
+            world.insert(rope, AskedRope(number));
+            Some(rope)
+        }
+        None => {
+            crate::voxel_ropes::remove(world, rope);
+            None
+        }
+    }
+}
+
+/// Cuts rope `obj`, as `voxel_ropes::cut` does: on a player's machine, asks
+/// the server to cut it. Whether it was cut, or asked to be.
+pub fn cut_rope(world: &mut World, obj: Entity) -> bool {
+    if !asks(world) {
+        return crate::voxel_ropes::cut(world, obj);
+    }
+    let Some(rope) = world.get::<RopeNumber>(obj).map(|number| number.0) else { return false };
+    let at = corner_of(world, obj).unwrap_or_default();
+    ask(world, &VoxelAsk::CutRope { rope, at }).is_some()
+}
+
+/// A rope tied here at this machine's request, by its number, until the
+/// server's rope takes its place.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AskedRope(pub u32);
+
+impl Component for AskedRope {}
+
+/// A rope's number in the session, on a player's machine.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RopeNumber(pub u32);
+
+impl Component for RopeNumber {}
 
 /// On a server or a host, each frame before what it sends goes: makes what
 /// players asked of its volumes, then sends what changed in them.
@@ -1007,8 +1376,8 @@ pub(crate) fn serve(content: &mut Content, world: &mut World, levels: &Levels) {
     if world.resource::<Hints>().is_none() {
         world.insert_resource(Hints::default());
     }
-    make_asks(content, world);
     let mut serving = world.remove_resource::<Serving>().unwrap_or_default();
+    let answers = make_asks(content, world, &mut serving);
     let mut news = Vec::new();
     // Volumes new to the session: told whole, as to a player joining.
     let fresh: Vec<(Entity, String, String)> = world
@@ -1046,13 +1415,24 @@ pub(crate) fn serve(content: &mut Content, world: &mut World, levels: &Levels) {
             let (id, volume, middle, built, pose) = (sent.id, sent.volume, sent.middle, sent.built, sent.pose);
             joining.push(News::Piece { id, volume, middle, built, dug: false, pose, made: None, bytes });
         }
+        joining.extend(serving.ropes.values().map(|sent| sent.news(None)));
         joining.push(News::Ready);
         net::owe_voxels(world, player, messages_of(&joining));
     }
     news.extend(this_frame(world, &mut serving, &resynced));
-    if !news.is_empty() {
-        net::send_voxels(world, messages_of(&news));
+    news.extend(rope_news(world, levels, &mut serving));
+    // Each player's answers go in the same message as what they did, so their machine lets go of what it
+    // showed of them as it takes what the server made.
+    let mut theirs: HashMap<PlayerId, Vec<News>> = HashMap::new();
+    for (player, number, accepted) in answers {
+        theirs.entry(player).or_default().push(News::Answered { number, accepted });
     }
+    let own: HashMap<PlayerId, Vec<Vec<u8>>> =
+        theirs.into_iter().map(|(player, answers)| (player, messages_of(&[news.clone(), answers].concat()))).collect();
+    if !news.is_empty() || !own.is_empty() {
+        net::send_voxels(world, messages_of(&news), own);
+    }
+    crate::voxel_asks::stamp_refusals(world);
     // Where each piece is, for players' snapshots.
     let mut poses = Vec::new();
     for (entity, sent) in &mut serving.pieces {
@@ -1097,7 +1477,7 @@ fn whole(world: &World, shared: &mut Shared, toward: Option<Vec3>, fresh: bool) 
     let toward = toward.unwrap_or(corner);
     let away = |region: &[i32; 2]| {
         let middle = corner + Vec3::new(region[0] as f32 + 0.5, 0.0, region[1] as f32 + 0.5) * side;
-        (middle - toward).truncate().length_squared()
+        Vec3::new(middle.x - toward.x, 0.0, middle.z - toward.z).length_squared()
     };
     regions.sort_by(|a, b| away(a).total_cmp(&away(b)));
     for region in regions {
@@ -1300,29 +1680,33 @@ fn hinted(
     }
 }
 
-/// Makes what players asked of the volumes, those the game's check (or the
-/// usual limits) let through.
-fn make_asks(content: &mut Content, world: &mut World) {
-    let asked = net::take_voxel_asks(world);
-    if asked.is_empty() {
-        return;
-    }
-    let origin = voxear_scene::WorldOrigin::of(world).0.as_vec3();
-    let check = world.resource::<AskChecker>().map(|checker| checker.0.clone());
-    for (player, bytes) in asked {
-        let Some(ask) = VoxelAsk::from_bytes(&bytes) else {
-            tracing::warn!("player {} asked something of the voxel volumes that could not be read", player.0);
-            continue;
+/// Makes what players asked of the volumes that their checks let through,
+/// in order: each answered, with who asked, its number from them and
+/// whether it was made.
+fn make_asks(content: &mut Content, world: &mut World, serving: &mut Serving) -> Vec<(PlayerId, u32, bool)> {
+    let (ready, refused) = crate::voxel_asks::take(world);
+    let mut answers: Vec<(PlayerId, u32, bool)> = refused.into_iter().map(|(player, n)| (player, n, false)).collect();
+    for (player, number, ask) in ready {
+        let made = match &ask {
+            VoxelAsk::CutRope { rope, .. } => {
+                let found = serving.ropes.iter().find(|(_, sent)| sent.id == *rope).map(|(entity, _)| *entity);
+                found.is_some_and(|rope| crate::voxel_ropes::cut(world, rope))
+            }
+            VoxelAsk::Hang { .. } => match crate::voxel_volumes::make_ask(content, world, &ask) {
+                Some(rope) => {
+                    serving.asked_ropes.insert(rope, (player, number));
+                    true
+                }
+                None => false,
+            },
+            ask => {
+                crate::voxel_volumes::make_ask(content, world, ask);
+                true
+            }
         };
-        let ask = ask.moved(-origin);
-        let allowed = match &check {
-            Some(check) => check(world, player, &ask),
-            None => ask.within_limits(),
-        };
-        if allowed {
-            crate::voxel_volumes::make_ask(content, world, &ask);
-        }
+        answers.push((player, number, made));
     }
+    answers
 }
 
 // --- A player's machine's part. ---
@@ -1351,6 +1735,18 @@ struct Joined {
     /// What the last cut made come loose here, for the server's pieces of it to be.
     cut_made: Vec<Arc<VoxelPiece>>,
     ready: bool,
+    /// This machine's requests: the last number given, those shown before the server's answer, and the volumes
+    /// as the news has them while they are.
+    next_number: u32,
+    predicted: Vec<Predicted>,
+    confirmed: HashMap<Entity, Confirmed>,
+    ropes: HashMap<u32, Entity>,
+}
+
+/// How many of this machine's requests it shows before the server's
+/// answer, on a player's machine.
+pub fn predicted(world: &World) -> usize {
+    world.resource::<Joined>().map_or(0, |joined| joined.predicted.len())
 }
 
 /// Whether a player's machine has everything the server's volumes had when
@@ -1374,10 +1770,19 @@ pub(crate) fn take_in(content: &mut Content, world: &mut World, levels: &Levels)
             None => tracing::warn!("news of the server's voxel volumes could not be read"),
         }
     }
+    // What this machine asked and shows is taken off while news comes in, and shown again after over it.
+    let shown = !joined.waiting.is_empty() && !joined.confirmed.is_empty();
+    if shown {
+        restore(world, &mut joined);
+    }
     while let Some(news) = joined.waiting.front() {
         let number = match news {
             News::Edits { volume, .. } | News::Region { volume, .. } | News::Piece { volume, .. } => Some(*volume),
             News::Hint { volume, .. } | News::Delta { volume, .. } => Some(*volume),
+            // A rope its scene placed waits for the scene, as a volume does.
+            News::Rope { place: RopePlace::Scene { scene, path }, .. } if scene_obj(levels, scene, path).is_none() => {
+                break;
+            }
             _ => None,
         };
         // A volume this machine has not made yet: everything after it waits.
@@ -1389,10 +1794,26 @@ pub(crate) fn take_in(content: &mut Content, world: &mut World, levels: &Levels)
             None => None,
         };
         let Some(news) = joined.waiting.pop_front() else { break };
-        take_news(content, world, &mut joined, news, entity);
+        take_news(content, world, levels, &mut joined, news, entity);
+    }
+    // Requests the server never answered are let go of.
+    joined.predicted.iter_mut().for_each(|predicted| predicted.frames += 1);
+    if joined.predicted.iter().any(|predicted| predicted.frames > PREDICTED_FOR) {
+        if !shown {
+            restore(world, &mut joined);
+        }
+        joined.predicted.retain(|predicted| predicted.frames <= PREDICTED_FOR);
+        replay(world, &mut joined);
+    } else if shown {
+        replay(world, &mut joined);
     }
     show_pieces(world, &joined);
     world.insert_resource(joined);
+}
+
+/// The Obj a scene placed at `path`, by the scene's GUID.
+fn scene_obj(levels: &Levels, scene: &str, path: &str) -> Option<Entity> {
+    levels.entity_at(scene.parse().ok()?, &crate::prefab::ObjPath::parse(path).ok()?)
 }
 
 /// This machine's volume the server numbered `number`, found by its scene
@@ -1409,7 +1830,14 @@ fn volume_here(world: &World, levels: &Levels, joined: &mut Joined, number: u16)
     Some(entity)
 }
 
-fn take_news(content: &mut Content, world: &mut World, joined: &mut Joined, news: News, volume: Option<Entity>) {
+fn take_news(
+    content: &mut Content,
+    world: &mut World,
+    levels: &Levels,
+    joined: &mut Joined,
+    news: News,
+    volume: Option<Entity>,
+) {
     match (news, volume) {
         (News::Named { number, scene, path }, _) => drop(joined.named.insert(number, (scene, path, None))),
         (News::Edits { keep, edits, .. }, Some(entity)) => {
@@ -1517,6 +1945,53 @@ fn take_news(content: &mut Content, world: &mut World, joined: &mut Joined, news
             }
         }
         (News::Ready, _) => joined.ready = true,
+        (News::Answered { number, accepted }, _) => {
+            joined.predicted.retain(|predicted| predicted.number != number);
+            // A rope tied here at its asking: refused, it goes; made, the server's rope took its place.
+            let asked: Vec<Entity> = world
+                .query_ref::<(Entity, &AskedRope)>()
+                .into_iter()
+                .filter(|(_, asked)| asked.0 == number)
+                .map(|(entity, _)| entity)
+                .collect();
+            for rope in asked {
+                match accepted {
+                    true => drop(world.remove::<AskedRope>(rope)),
+                    false => crate::voxel_ropes::remove(world, rope),
+                }
+            }
+        }
+        (News::Rope { id, place, rope, snapped, holds, asked }, _) => {
+            let local = net::local_player(world).map(|player| player.0);
+            let mine = asked.filter(|(player, _)| Some(*player) == local).and_then(|(_, number)| {
+                let found = world.query_ref::<(Entity, &AskedRope)>().into_iter().find(|(_, a)| a.0 == number);
+                found.map(|(entity, _)| entity)
+            });
+            let found = joined.ropes.get(&id).copied().filter(|entity| world.is_alive(*entity)).or(mine);
+            let entity = match (found, &place) {
+                (Some(entity), _) => entity,
+                (None, RopePlace::Scene { scene, path }) => match scene_obj(levels, scene, path) {
+                    Some(entity) => entity,
+                    None => return,
+                },
+                (None, RopePlace::Tied(at)) => {
+                    let origin = voxear_scene::WorldOrigin::of(world).0.as_vec3();
+                    let tied = *at - origin;
+                    crate::voxel_ropes::hang(world, tied, tied + Vec3::from(rope.hangs), rope.length, rope.strength)
+                }
+            };
+            world.insert(entity, rope);
+            world.insert(entity, RopeNumber(id));
+            let piece = holds.and_then(|(piece, _)| joined.pieces.get(&piece).copied());
+            let point = holds.map_or(Vec3::ZERO, |(_, point)| point);
+            crate::voxel_ropes::show(world, entity, snapped, piece, point);
+            joined.ropes.insert(id, entity);
+        }
+        (News::RopeGone { id }, _) => {
+            if let Some(entity) = joined.ropes.remove(&id) {
+                crate::voxel_ropes::remove(world, entity);
+            }
+        }
         (_, None) => {}
     }
 }

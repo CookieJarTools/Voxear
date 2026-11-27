@@ -57,6 +57,24 @@ struct Player {
     acked: Option<u32>,
     next_view: u32,
     delivered: Vec<Delivery>,
+    /// What they were sent, for the stats.
+    sent: VoxelPlayer,
+}
+
+/// What a player was sent of the volumes, on the server.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VoxelPlayer {
+    pub player: Option<PlayerId>,
+    /// Bytes and messages of news of what changed as the game played.
+    pub news_bytes: u64,
+    pub news_messages: u64,
+    /// Bytes of what there was when they joined, and whether all of it is gathered for them.
+    pub joining_bytes: u64,
+    pub joined: bool,
+    /// Bytes of the pieces' snapshots.
+    pub pose_bytes: u64,
+    /// Bytes queued for them, not sent yet.
+    pub waiting_bytes: u64,
 }
 
 #[derive(Default)]
@@ -313,6 +331,7 @@ pub(super) fn send(session: &mut NetSession) {
         let bytes = Message::VoxelPoses(write_poses(number, base.map(|(n, _)| n), tick, &entries, &dropped))
             .encode(session.origin);
         voxels.bytes.poses += bytes.len() as u64;
+        one.sent.pose_bytes += bytes.len() as u64;
         one.views.insert(number, view);
         let _ = server.send_tagged(client, Channel::UNRELIABLE, &bytes, number | POSE_TAG);
     }
@@ -334,19 +353,50 @@ pub fn owe_voxels(world: &mut World, player: PlayerId, messages: Vec<Vec<u8>>) {
     let Some(session) = world.resource_mut::<NetSession>() else { return };
     let voxels = &mut session.voxels;
     let one = voxels.players.entry(player).or_default();
-    voxels.bytes.joining += messages.iter().map(|m| m.len() as u64).sum::<u64>();
+    let bytes = messages.iter().map(|m| m.len() as u64).sum::<u64>();
+    voxels.bytes.joining += bytes;
+    one.sent.joining_bytes += bytes;
     one.queue.extend(messages);
     one.given = true;
 }
 
-/// Sends news of the volumes to every player given everything there was.
-pub fn send_voxels(world: &mut World, messages: Vec<Vec<u8>>) {
+/// Sends news of the volumes to every player given everything there was:
+/// `messages`, or for a player in `own`, their own messages in its place
+/// (the same news with their answers).
+pub fn send_voxels(world: &mut World, messages: Vec<Vec<u8>>, mut own: HashMap<PlayerId, Vec<Vec<u8>>>) {
     let Some(session) = world.resource_mut::<NetSession>() else { return };
     let voxels = &mut session.voxels;
-    for one in voxels.players.values_mut().filter(|one| one.given) {
-        voxels.bytes.news += messages.iter().map(|m| m.len() as u64).sum::<u64>();
-        one.queue.extend(messages.iter().cloned());
+    for (player, one) in voxels.players.iter_mut().filter(|(_, one)| one.given) {
+        let theirs = own.remove(player).unwrap_or_else(|| messages.clone());
+        let bytes = theirs.iter().map(|m| m.len() as u64).sum::<u64>();
+        voxels.bytes.news += bytes;
+        one.sent.news_bytes += bytes;
+        one.sent.news_messages += theirs.len() as u64;
+        one.queue.extend(theirs);
     }
+}
+
+/// What each player was sent of the volumes, on a server.
+pub fn voxel_players(world: &World) -> Vec<VoxelPlayer> {
+    let Some(session) = world.resource::<NetSession>() else { return Vec::new() };
+    let mut players: Vec<VoxelPlayer> = session
+        .voxels
+        .players
+        .iter()
+        .map(|(player, one)| VoxelPlayer {
+            player: Some(*player),
+            joined: one.given,
+            waiting_bytes: one.queue.iter().map(|m| m.len() as u64).sum(),
+            ..one.sent
+        })
+        .collect();
+    players.sort_by_key(|p| p.player.map(|p| p.0));
+    players
+}
+
+/// This machine's player in the session, if it has one.
+pub fn local_player(world: &World) -> Option<PlayerId> {
+    world.resource::<NetSession>()?.local_player()
 }
 
 /// Where each piece falling is this frame, on a server, by its number.

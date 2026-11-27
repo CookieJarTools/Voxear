@@ -204,6 +204,7 @@ fn agree(game: &Match, low: Vec3, high: Vec3, what: &str) {
         assert_eq!(rays(&ours, low, high), hits, "{what}: player {n}'s rays");
         let shown = client.engine.world.query_ref::<&ShownPiece>().into_iter().count();
         assert_eq!(shown, 0, "{what}: player {n} still shows a piece");
+        assert_eq!(voxel_sync::predicted(&client.engine.world), 0, "{what}: player {n} still waits for an answer");
     }
 }
 
@@ -268,9 +269,10 @@ fn a_dig_a_print_and_a_cut_agree_to_the_voxel_on_every_machine() {
     let before = game.sent();
     let hole = points(Vec3::new(4.0, 1.5, 4.0), Vec3::new(4.5, 2.0, 4.5));
     let ask = VoxelAsk::Set { points: hole.clone(), to: None };
-    assert!(voxel_sync::ask(&mut game.clients[0].engine.world, &ask));
-    // Not dug on the player's machine until the server says so.
-    assert!(volume(&game.clients[0]).changes.no_voxels(), "a request, not dug at once");
+    assert!(voxel_sync::ask(&mut game.clients[0].engine.world, &ask).is_some());
+    // Shown dug on the player's machine at once, until the server's answer.
+    assert!(!volume(&game.clients[0]).changes.no_voxels(), "shown dug at once");
+    assert_eq!(voxel_sync::predicted(&game.clients[0].engine.world), 1);
     game.frames(10);
     costs.push(("512 voxels dug, a player's", news_since(&game, before)));
     assert!(!volume(&game.server).changes.no_voxels(), "dug on the server");
@@ -478,4 +480,160 @@ fn a_player_joining_late_gets_every_change_made_before() {
     voxear_engine::voxel_volumes::edit(&mut game.server.engine.world, Vec3::new(18.0, 2.0, 8.0), 1.2, None, None);
     game.frames(10);
     agree(&game, low, high, "after joining");
+}
+
+/// The voxel `at` (metres from the volume's corner) as a machine's changes set it.
+fn set_at(game: &Game, at: Vec3) -> Option<voxear_render::VoxelHeld> {
+    volume(game).changes.get((at * 16.0).floor().as_ivec3())
+}
+
+#[test]
+fn a_players_own_dig_and_box_show_at_once_and_stay_as_the_server_answers_with_nothing_twice() {
+    let mut game = Match::new(2);
+    let (low, high) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(20.0, 6.0, 20.0));
+    // A dig: shown at once, and on every frame after, never gone and back.
+    let cell = Vec3::new(5.03, 1.97, 5.03);
+    voxel_sync::ask(&mut game.clients[0].engine.world, &VoxelAsk::Set { points: vec![cell], to: None }).unwrap();
+    assert_eq!(set_at(&game.clients[0], cell), Some(voxear_render::VoxelHeld::Air), "dug at once");
+    // A box of bricks: one edit at once, one edit once answered, never two.
+    let wall = VoxelEditData {
+        shape: VoxelEditShape::Box,
+        at: [9.0, 2.0, 9.0],
+        size: [2.0, 1.5, 0.5],
+        fill: Some(VoxelMaterial::Bricks),
+        ..VoxelEditData::default()
+    };
+    voxel_sync::ask(&mut game.clients[0].engine.world, &VoxelAsk::Shape(wall)).unwrap();
+    assert_eq!(volume(&game.clients[0]).edits.len(), 1, "built at once");
+    let mut frames = 0;
+    while voxel_sync::predicted(&game.clients[0].engine.world) > 0 {
+        game.frames(1);
+        frames += 1;
+        assert!(frames < 120, "answered");
+        assert_eq!(set_at(&game.clients[0], cell), Some(voxear_render::VoxelHeld::Air), "still dug, frame {frames}");
+        assert_eq!(volume(&game.clients[0]).edits.len(), 1, "one wall, frame {frames}");
+    }
+    eprintln!("answered in {frames} frames");
+    for _ in 0..10 {
+        game.frames(1);
+        assert_eq!(volume(&game.clients[0]).edits.len(), 1, "one wall after the answer");
+    }
+    agree(&game, low, high, "dug and built at once");
+
+    // Refused by the rules: shown at once, then let go.
+    let rules = voxear_engine::voxel_asks::VoxelAskRules {
+        allowed: !voxear_engine::voxel_asks::VoxelAskKind::Place.bit(),
+        ..Default::default()
+    };
+    voxear_engine::voxel_asks::set_rules(&mut game.server.engine.world, rules);
+    let placed = Vec3::new(7.03, 2.03, 7.03);
+    let planks = Some(VoxelKind { material: VoxelMaterial::Planks, tint: None });
+    voxel_sync::ask(&mut game.clients[1].engine.world, &VoxelAsk::Set { points: vec![placed], to: planks }).unwrap();
+    assert!(set_at(&game.clients[1], placed).is_some(), "placed at once");
+    game.frames(20);
+    assert_eq!(set_at(&game.clients[1], placed), None, "let go once refused");
+    let refusals = voxear_engine::voxel_asks::refusals(&game.server.engine.world);
+    assert_eq!(refusals.last().map(|r| r.reason.as_str()), Some("players may not place"), "{refusals:?}");
+    agree(&game, low, high, "a place refused");
+
+    // Refused by the game's own check in Rust: no blasts.
+    voxear_engine::voxel_asks::set_ask_check(
+        &mut game.server.engine.world,
+        std::sync::Arc::new(|_, _, ask| !matches!(ask, VoxelAsk::Blast { .. })),
+    );
+    let blast = VoxelAsk::Blast {
+        at: Vec3::new(9.0, 2.5, 9.0),
+        radius: 1.0,
+        pieces: voxear_engine::voxel_felling::CutPieces::Fall,
+        throw: 0.0,
+    };
+    voxel_sync::ask(&mut game.clients[1].engine.world, &blast).unwrap();
+    game.frames(20);
+    assert_eq!(voxear_engine::voxel_asks::refusals(&game.server.engine.world).len(), 2);
+    agree(&game, low, high, "a blast refused");
+
+    // Checked as a C# check does, within the frame each came in: digs deeper than half a metre under the ground
+    // refused with a reason.
+    game.server.engine.schedule.add_system("Update", "check", |world| {
+        voxear_engine::voxel_asks::set_scripts_check(world, true);
+        while let Some((id, _, info)) = voxear_engine::voxel_asks::next_for_script(world) {
+            let deep = info.at.y < 1.5;
+            voxear_engine::voxel_asks::answer_from_script(world, id, !deep, if deep { "too deep" } else { "" });
+        }
+    });
+    game.frames(2);
+    let deep = Vec3::new(3.03, 1.03, 3.03);
+    voxel_sync::ask(&mut game.clients[0].engine.world, &VoxelAsk::Set { points: vec![deep], to: None }).unwrap();
+    let shallow = Vec3::new(3.03, 1.97, 3.03);
+    voxel_sync::ask(&mut game.clients[0].engine.world, &VoxelAsk::Set { points: vec![shallow], to: None }).unwrap();
+    game.frames(20);
+    assert_eq!(set_at(&game.server, deep), None, "the deep dig refused");
+    assert_eq!(set_at(&game.server, shallow), Some(voxear_render::VoxelHeld::Air), "the shallow dig made");
+    let refusals = voxear_engine::voxel_asks::refusals(&game.server.engine.world);
+    assert_eq!(refusals.last().map(|r| r.reason.as_str()), Some("too deep"));
+    agree(&game, low, high, "checked as C# checks");
+    // What the stats say.
+    let players = net::voxel_players(&game.server.engine.world);
+    assert_eq!(players.len(), 2);
+    assert!(players.iter().all(|p| p.joined && p.news_bytes > 0 && p.news_messages > 0), "{players:?}");
+    assert!(voxear_engine::voxel_asks::waiting(&game.server.engine.world).is_empty());
+}
+
+fn ropes(game: &Game) -> Vec<(Entity, voxear_engine::voxel_ropes::RopeHolds)> {
+    use voxear_engine::voxel_ropes::{RopeHolds, VoxelRope};
+    let world = &game.engine.world;
+    let found: Vec<Entity> = world.query_ref::<(Entity, &VoxelRope)>().into_iter().map(|(e, _)| e).collect();
+    found.into_iter().map(|e| (e, world.get::<RopeHolds>(e).copied().unwrap_or_default())).collect()
+}
+
+#[test]
+fn a_rope_tied_and_cut_by_players_hangs_and_falls_alike_on_every_machine_and_a_late_joiner_sees_it() {
+    let mut game = Match::new(2);
+    let (low, high) = (Vec3::new(12.0, 0.0, 0.0), Vec3::new(28.0, 9.0, 8.0));
+    // A box of planks built in the air, a player's rope tied over it.
+    let crate_ = VoxelEditData {
+        shape: VoxelEditShape::Box,
+        at: [20.0, 4.0, 4.0],
+        size: [1.0, 1.0, 1.0],
+        fill: Some(VoxelMaterial::Planks),
+        ..VoxelEditData::default()
+    };
+    voxear_engine::voxel_volumes::shape_edit(&mut game.server.engine.world, &crate_, None);
+    game.frames(5);
+    let tied = Vec3::new(20.5, 8.0, 4.0);
+    let rope = voxel_sync::hang(&mut game.clients[0].engine.world, tied, Vec3::new(20.0, 4.9, 4.0), 0.0, 0.0).unwrap();
+    assert_eq!(ropes(&game.clients[0]).len(), 1, "shown at once");
+    // It hangs on the server; every player's machine shows the piece held by one rope.
+    let mut hung = false;
+    for _ in 0..60 * 4 {
+        game.frames(1);
+        let held = |g: &Game| {
+            ropes(g).iter().any(|(_, holds)| holds.piece.is_some_and(|p| g.engine.world.has::<ShownPiece>(p)))
+        };
+        if ropes(&game.server).iter().any(|(_, h)| h.piece.is_some()) && game.clients.iter().all(held) {
+            hung = true;
+            break;
+        }
+    }
+    assert!(hung, "it hangs from the rope on every machine");
+    for client in &game.clients {
+        assert_eq!(ropes(client).len(), 1, "one rope, not two");
+    }
+    assert!(game.clients[0].engine.world.is_alive(rope), "the player's own rope became the server's");
+    game.frames(60);
+    // A player joining now sees it hanging.
+    game.join();
+    game.frames(10);
+    let late = &game.clients[2];
+    let held = ropes(late);
+    assert_eq!(held.len(), 1);
+    assert!(held[0].1.piece.is_some_and(|p| late.engine.world.has::<ShownPiece>(p)), "the late joiner's rope holds it");
+    // The other player cuts it: it falls, rests and is stamped the same everywhere.
+    let theirs = ropes(&game.clients[1])[0].0;
+    assert!(voxel_sync::cut_rope(&mut game.clients[1].engine.world, theirs));
+    game.play_until_still(60 * 30);
+    for g in std::iter::once(&game.server).chain(&game.clients) {
+        assert!(ropes(g).iter().all(|(_, holds)| holds.snapped), "snapped everywhere");
+    }
+    agree(&game, low, high, "a rope cut");
 }

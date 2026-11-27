@@ -431,6 +431,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
+    root.voxel_rope = instance.voxel_rope.or(root.voxel_rope);
     root.particles = instance.particles.or(root.particles);
     root.force_field = instance.force_field.or(root.force_field);
     root.smoke = instance.smoke.or(root.smoke);
@@ -519,6 +520,11 @@ pub struct Template {
     paths: HashMap<ObjPath, usize>,
 }
 
+/// A Voxel Volume, its stamps' models read, how it was written, and what
+/// its scene made of it.
+pub type VoxelVolumeParts =
+    (voxear_render::VoxelVolume, crate::voxel_volumes::VoxelVolumeSource, crate::voxel_sync::VoxelVolumeLoaded);
+
 #[derive(Clone, Debug)]
 pub struct TemplateObj {
     pub path: ObjPath,
@@ -553,6 +559,7 @@ pub struct TemplateObj {
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
+    pub voxel_rope: Option<crate::voxel_ropes::VoxelRope>,
     pub particles: Option<ParticleSystem>,
     pub force_field: Option<ForceField>,
     pub smoke: Option<voxear_render::Smoke>,
@@ -608,8 +615,9 @@ pub struct TemplateObj {
     pub terrain: Option<Box<TerrainParts>>,
     /// A Block World, which fewer have.
     pub block_world: Option<Box<BlockWorldParts>>,
-    /// A Voxel Volume, its stamps' models read, and how it was written.
-    pub voxel_volume: Option<Box<(voxear_render::VoxelVolume, crate::voxel_volumes::VoxelVolumeSource)>>,
+    /// A Voxel Volume, its stamps' models read, how it was written, and what
+    /// its scene made of it.
+    pub voxel_volume: Option<Box<VoxelVolumeParts>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
     /// it was written.
     pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
@@ -780,6 +788,9 @@ impl Template {
             if let Some(wind) = obj.wind_zone {
                 world.insert(entity, wind);
             }
+            if let Some(rope) = obj.voxel_rope {
+                world.insert(entity, rope);
+            }
             if let Some(particles) = obj.particles {
                 world.insert(entity, particles);
             }
@@ -947,6 +958,7 @@ impl Template {
             if let Some(parts) = &obj.voxel_volume {
                 world.insert(entity, parts.0.clone());
                 world.insert(entity, parts.1.clone());
+                world.insert(entity, parts.2.clone());
             }
             if let Some(parts) = &obj.block_world {
                 world.insert(entity, parts.blocks.clone());
@@ -1463,7 +1475,13 @@ pub(crate) fn resolve_obj(
     };
     let voxel_volume = data.voxel_volume.as_ref().map(|written| {
         let made = crate::voxel_volumes::made(content, written);
-        Box::new((made, crate::voxel_volumes::VoxelVolumeSource(written.clone())))
+        // As its scene made it, what a player's machine has of it before joining a session.
+        let loaded = crate::voxel_sync::VoxelVolumeLoaded {
+            edits: written.edits.len(),
+            made: made.edits.len(),
+            changes: made.changes.clone(),
+        };
+        Box::new((made, crate::voxel_volumes::VoxelVolumeSource(written.clone()), loaded))
     });
     // A mesh Dry Area's mesh needs a renderer to load it, and its box for scripts' questions; without one it keeps
     // to the Obj's own.
@@ -1525,6 +1543,7 @@ pub(crate) fn resolve_obj(
         rigidbody: data.rigidbody,
         character: data.character,
         wind_zone: data.wind_zone,
+        voxel_rope: data.voxel_rope,
         particles: data.particles,
         force_field: data.force_field,
         smoke: data.smoke,

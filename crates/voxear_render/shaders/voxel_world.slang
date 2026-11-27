@@ -2415,6 +2415,8 @@ groupshared uint sharedEditCount;
 groupshared uint sharedSum[4];
 // With a Volume: which voxels of the brick and a border of one round it are solid, ten a side.
 groupshared uint sharedSolid[32];
+// Which of them are see-through, glass of a print: solid, but hiding nothing behind them.
+groupshared uint sharedClear[32];
 groupshared uint sharedEven;
 groupshared uint sharedSlot;
 groupshared uint sharedOffset;
@@ -2441,6 +2443,21 @@ bool solidNear(int3 l, int3 off)
     return ((sharedSolid[at >> 5] >> (at & 31u)) & 1u) != 0;
 }
 
+// Whether the voxel `off` from voxel `l` hides what is beside it: solid and not see-through. A voxel is kept only where
+// one beside it doesn't, so glass is kept whole, and so is what is seen through it.
+bool hidesNear(int3 l, int3 off)
+{
+    int3 r = l + off + 1;
+    uint at = uint(r.x + 10 * (r.y + 10 * r.z));
+    return solidNear(l, off) && ((sharedClear[at >> 5] >> (at & 31u)) & 1u) == 0;
+}
+
+// Whether `held`, what print edit `e` holds at a voxel, is see-through.
+bool heldClear(WorldMake* make, uint e, uint held)
+{
+    return (held & HELD_COLOUR) != 0u && (paletteKind(make->palette, editColour(make, e, held & 0xFFFFu) - 1u) & 15u) != 0u;
+}
+
 // The voxel the Volume makes at voxel `l` of the brick, `p` in the world's voxels, whose column's ground is `h`
 // high: nothing where it is open, or solid with no open air beside it, which is never seen. What the column's ground
 // is where it is open to the sky, as a top; the layers under it near the column's ground, in the sides of overhangs
@@ -2452,8 +2469,8 @@ uint volumeVoxel(WorldMake* make, uint job, uint column, int h, int3 l, int3 p)
         return 0;
     }
     bool open = !solidNear(l, int3(0, 1, 0));
-    bool seen = open || !solidNear(l, int3(0, -1, 0)) || !solidNear(l, int3(1, 0, 0)) || !solidNear(l, int3(-1, 0, 0))
-        || !solidNear(l, int3(0, 0, 1)) || !solidNear(l, int3(0, 0, -1));
+    bool seen = !hidesNear(l, int3(0, 1, 0)) || !hidesNear(l, int3(0, -1, 0)) || !hidesNear(l, int3(1, 0, 0))
+        || !hidesNear(l, int3(-1, 0, 0)) || !hidesNear(l, int3(0, 0, 1)) || !hidesNear(l, int3(0, 0, -1));
     if (!seen)
     {
         return 0;
@@ -2500,6 +2517,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (index < 32)
     {
         sharedSolid[index] = 0;
+        sharedClear[index] = 0;
         sharedBanks[index] = 0;
     }
     if (index == 0)
@@ -2637,17 +2655,23 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
                 || (q.y < tall && (volume ? densityAt(make, job, q.x, q.y, q.z) > 0.0 : q.y <= heightOf(make, job, q.x, q.z)));
             int3 w = int3(corner.x + q.x, q.y, corner.y + q.z);
             int under = heightOf(make, job, q.x, q.z);
+            bool clear = false;
             for (uint k = 0; k < editCount; k++)
             {
                 uint held = editHeld(make, sharedEdits[k], w, under);
                 if (held != 0u)
                 {
                     solid = heldSolid(held);
+                    clear = heldClear(make, sharedEdits[k], held);
                 }
             }
             if (solid)
             {
                 InterlockedOr(sharedSolid[at >> 5], 1u << (at & 31u));
+            }
+            if (solid && clear)
+            {
+                InterlockedOr(sharedClear[at >> 5], 1u << (at & 31u));
             }
         }
         GroupMemoryBarrierWithGroupSync();
@@ -2678,8 +2702,8 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         // Solid where the ground and the edits leave it, and seen: open air beside it.
         if (solidNear(l, int3(0, 0, 0)))
         {
-            bool seen = !solidNear(l, int3(0, 1, 0)) || !solidNear(l, int3(0, -1, 0)) || !solidNear(l, int3(1, 0, 0))
-                || !solidNear(l, int3(-1, 0, 0)) || !solidNear(l, int3(0, 0, 1)) || !solidNear(l, int3(0, 0, -1));
+            bool seen = !hidesNear(l, int3(0, 1, 0)) || !hidesNear(l, int3(0, -1, 0)) || !hidesNear(l, int3(1, 0, 0))
+                || !hidesNear(l, int3(-1, 0, 0)) || !hidesNear(l, int3(0, 0, 1)) || !hidesNear(l, int3(0, 0, -1));
             if (seen)
             {
                 m = groundVoxel(make, groundTop(make, job, px, pz, column), max(h - y, 0), here);

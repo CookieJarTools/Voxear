@@ -38,6 +38,9 @@ pub struct WindowOptions {
     pub frames: Option<u64>,
     /// Start with the stats overlay shown.
     pub stats: bool,
+    /// The stats overlay on F1 without the other tools, as a build's
+    /// profile can ask for its players.
+    pub stats_key: bool,
     /// The fly camera, the stats overlay on F1, the debug views and RenderDoc
     /// captures: for working on a game, not for playing it.
     pub tools: bool,
@@ -59,6 +62,7 @@ impl WindowOptions {
             fullscreen: false,
             frames: None,
             stats: false,
+            stats_key: true,
             tools: true,
             console: None,
         }
@@ -344,6 +348,10 @@ impl App {
     /// cascade, light complexity, normals, meshlets and ambient occlusion
     /// views; F8 frees the camera or gives the mouse back to the game.
     fn key(&mut self, key: &Key) {
+        // A build's players can have the stats on F1 with none of the other tools.
+        if !self.options.tools && self.options.stats_key && *key == Key::Named(NamedKey::F1) {
+            return self.overlay.toggle();
+        }
         if self.options.tools && *key == Key::Named(NamedKey::F8) {
             return self.toggle_free();
         }

@@ -5556,6 +5556,7 @@ company_name = "Orbit Games"
 window = "windowed"          # or "fullscreen", borderless
 width = 1600
 height = 900
+stats = "key"                # the stats panel for players: "off" (default), "key" on F1, or "shown"
 
 [version]
 version = "1.2.0"

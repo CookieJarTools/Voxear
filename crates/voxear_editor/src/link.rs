@@ -161,8 +161,25 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ obj, name, parent, active, persistent, position, rotation, scale, components: [{ component, title, enabled, fields: [{ field, label, type, value, … }] }] }",
     },
     CallInfo {
+        name: "tests.list",
+        about: "The game's [Test] methods, in the order they run, by category, each with how it last came out in the Tests window: not run, waiting, passed or failed, with how long it took and what a failure said; and whether any still wait to run.",
+        args: &[],
+        changes: false,
+        returns: "{ tests: [{ title, category, order, type, method, outcome, ms, message }], running }",
+    },
+    CallInfo {
+        name: "tests.run",
+        about: "Runs tests as the Tests window's buttons do, one a frame: every test, a category's, or one by its title or method. While editing, what a test changes is one step to undo. Ask tests.list until running is false for how they came out.",
+        args: &[
+            maybe("category", ArgKind::Text, "Only this category's tests."),
+            maybe("test", ArgKind::Text, "Only this test, by its title or its method's name."),
+        ],
+        changes: true,
+        returns: "{ queued }",
+    },
+    CallInfo {
         name: "inspector.mode",
-        about: "An Inspector's mode, as its ⋯ menu switches it: Normal, or Debug, which shows what is really there: every component as the scene file writes it, the engine's own state, every field of each C# behaviour, private ones too, and while playing, the live state behind the components.",
+        about: "An Inspector's mode, as its window menu switches it: Normal, or Debug, which shows what is really there: every component as the scene file writes it, the engine's own state, every field of each C# behaviour, private ones too, and while playing, the live state behind the components.",
         args: &[
             maybe("inspector", ArgKind::Whole, "Which Inspector: 1 for the first, the default, 2 for the next…"),
             maybe("mode", ArgKind::Text, "Normal or Debug; left out, only says which it is in."),
@@ -626,6 +643,26 @@ pub const CALLS: &[CallInfo] = &[
         ],
         changes: true,
         returns: "{ reached, dug, pieces, broken, rounds }",
+    },
+    CallInfo {
+        name: "voxels.rope",
+        about: "Ties a rope at `tied` holding the point `holds` of what was built in an endless Voxel Volume, as a script's Voxels.Hang does: a new Obj with a Voxel Rope. While the game plays, what is built round that point and held by nothing else hangs from it and swings, and so does whatever comes loose later with that point in it; it snaps when pulled harder than `strength`, or when a blast reaches it. One step to undo.",
+        args: &[
+            arg("tied", ArgKind::Vector, "Where the rope is tied, in metres, in the world."),
+            arg("holds", ArgKind::Vector, "The point of what was built it holds, in metres, in the world."),
+            maybe("length", ArgKind::Number, "How long it is, in metres: as far as between the two unless given."),
+            maybe("strength", ArgKind::Number, "How hard it may be pulled before it snaps, in newtons: never unless given."),
+            maybe("name", ArgKind::Text, "The new Obj's name: Rope unless given."),
+        ],
+        changes: true,
+        returns: "{ obj, length }",
+    },
+    CallInfo {
+        name: "voxels.cut_rope",
+        about: "Cuts a Voxel Rope, as a script's Voxels.CutRope does: what hangs from it falls.",
+        args: &[arg("obj", ArgKind::Obj, "The rope's Obj.")],
+        changes: true,
+        returns: "{ cut }",
     },
     CallInfo {
         name: "voxels.settled",
@@ -1896,6 +1933,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Lightmap
             | Part::LightProbeGroup
             | Part::WindZone
+            | Part::VoxelRope
             | Part::ParticleSystem
             | Part::ForceField
             | Part::Smoke

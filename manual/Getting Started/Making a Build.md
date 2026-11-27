@@ -35,6 +35,8 @@ Select a profile to change it: the platform, which levels go in and which one st
 
 The window size and full screen are how the game starts. Your scripts can change them while it runs, as a settings menu does: see [[The Window and the Mouse]].
 
+**Stats panel** puts the engine's stats in a Release build too, for testers or players to see how the game runs: its frame rate, CPU and GPU time, draws and particles. **On F1** has F1 show and hide it, and **Shown** starts with it showing. A Development build has it on F1 whatever this says. In the editor, the Scene view's and the Game view's **Stats** show the same numbers, smaller, over the view.
+
 For now, a build is made on the platform it is for: build the Windows profiles on Windows, and the Linux ones on Linux.
 
 ## What a build makes

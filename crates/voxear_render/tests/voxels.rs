@@ -1799,15 +1799,18 @@ struct House {
     pillar: bool,
     /// The window's glass red and less clear.
     red_glass: bool,
+    /// A pane of red glass in the east wall too, across from the window.
+    far_window: bool,
 }
 
 /// A house 4 m square and 3 m tall printed on flat endless ground at
 /// `(8, 2, 8)`: stone walls a quarter of a metre thick, with what `has`
 /// says: a roof as thick; a door 1 m wide and 2 m tall in its east wall; a
 /// lantern of glowing voxels in its north-west corner on the floor; a pane
-/// of glass 1 m square in its west wall; and a red pillar inside behind it.
+/// of glass 1 m square in its west wall; a red pillar inside behind it; and
+/// a pane of red glass across from the window in its east wall.
 fn house(has: House) -> Arc<VoxelPrint> {
-    let House { roof, door: doorway, lantern, window, pillar, red_glass } = has;
+    let House { roof, door: doorway, lantern, window, pillar, red_glass, far_window } = has;
     let stone = [150, 146, 138, 255];
     let flame = [255, 186, 80, 255];
     let (glass, clear) = if red_glass { ([220, 40, 30], 8) } else { ([196, 222, 230], 14) };
@@ -1815,13 +1818,14 @@ fn house(has: House) -> Arc<VoxelPrint> {
     settings.materials = vec![
         VoxelPrintMaterial { colour: [255, 186, 80], glass: 0, light: 14 },
         VoxelPrintMaterial { colour: glass, glass: clear, light: 0 },
+        VoxelPrintMaterial { colour: [230, 30, 20], glass: 8, light: 0 },
     ];
     let glass = [glass[0], glass[1], glass[2], 255];
     let print = VoxelPrint::from_voxels(
         [64, 48, 64],
         16,
         Vec3::new(32.0, 0.0, 32.0),
-        vec![stone, flame, glass, [200, 30, 30, 255]],
+        vec![stone, flame, glass, [200, 30, 30, 255], [230, 30, 20, 255]],
         settings,
         |c| {
             let [x, y, z] = c.map(|a| a as i32);
@@ -1829,6 +1833,7 @@ fn house(has: House) -> Arc<VoxelPrint> {
             let top = y >= 44;
             let door = doorway && x >= 60 && (24..40).contains(&z) && y < 32;
             let pane = x < 4 && (24..40).contains(&z) && (16..32).contains(&y);
+            let far_pane = x >= 60 && (24..40).contains(&z) && (16..32).contains(&y);
             let lamp = (6..10).contains(&x) && (6..10).contains(&z) && y < 6;
             let red = (16..32).contains(&x) && (20..44).contains(&z) && y < 40;
             if pillar && red {
@@ -1837,6 +1842,8 @@ fn house(has: House) -> Arc<VoxelPrint> {
                 2
             } else if window && pane {
                 3
+            } else if far_window && far_pane {
+                5
             } else if (wall && !door) || (roof && top) {
                 1
             } else {
@@ -2074,6 +2081,61 @@ fn a_lamp_through_red_glass_lights_the_ground_outside_red() {
     assert!(sum(clear) > sum(wall) + 40, "lit through clear glass: {clear:?} against {wall:?}");
     assert!(red[1] * 10 < clear[1] * 6, "through red glass, less green: {red:?} against {clear:?}");
     assert!(red[0] * clear[1] > clear[0] * red[1] * 3 / 2, "through red glass, redder: {red:?} against {clear:?}");
+}
+
+#[test]
+fn glass_behind_glass_is_drawn_and_not_over_what_stands_between() {
+    let Some(mut renderer) = renderer() else { return };
+    // From 4 m west of the house, looking east through its clear west window and the red one across the room from
+    // it, with a white cube standing in the room between them: through both panes, the sky beyond is red; the cube
+    // is seen through the clear pane alone, as without the red one.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let white = MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let white = renderer.add_material(&white).unwrap();
+    let eye = Vec3::new(4.0, 3.5, 8.0);
+    let east = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    let mut shot = |far_window: bool, name: &str| {
+        let mut scene = printed_from_above(house(House { window: true, far_window, ..House::default() }), 8.0);
+        for (_, place) in scene.query::<(&Camera, &mut Transform)>() {
+            *place = Transform::new(eye, east, Vec3::ONE);
+        }
+        let placed = Transform::new(Vec3::new(8.0, 3.5, 8.0), Quat::IDENTITY, Vec3::splat(0.3));
+        scene.spawn((MeshRenderer::new(cube, white), placed));
+        let pixels = render(&mut renderer, &scene, 6);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let one = shot(false, "glass one pane.png");
+    let two = shot(true, "glass two panes.png");
+    // Where on the picture a point is.
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let tan = (Camera::default().fov_y_for(aspect) * 0.5).tan();
+    let (forward, up) = (east * Vec3::Z, east * Vec3::Y);
+    let right = up.cross(forward);
+    let at = |pixels: &[u8], point: Vec3| {
+        let v = point - eye;
+        let (x, y) = (v.dot(right) / v.dot(forward) / (tan * aspect), v.dot(up) / v.dot(forward) / tan);
+        let (px, py) = (((x + 1.0) * 0.5 * WIDTH as f32) as u32, ((1.0 - y) * 0.5 * HEIGHT as f32) as u32);
+        let mut sum = [0; 3];
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let c = rgb_at(pixels, px + dx, py + dy);
+            for (total, c) in sum.iter_mut().zip(c) {
+                *total += c / 4;
+            }
+        }
+        sum
+    };
+    // Beside the cube, through both windows, the sky beyond the far pane, red through it; and the cube's middle.
+    let red = at(&two, Vec3::new(10.0, 3.6, 8.35));
+    assert!(red[0] > red[1] + 12 && red[0] > red[2] + 6, "the sky through both panes, red: {red:?}");
+    let middle = Vec3::new(7.85, 3.5, 8.0);
+    let (alone, between) = (at(&one, middle), at(&two, middle));
+    for i in 0..3 {
+        assert!(
+            (alone[i] - between[i]).abs() <= 6,
+            "the cube untouched by the pane behind it: {between:?} against {alone:?}"
+        );
+    }
 }
 
 #[test]

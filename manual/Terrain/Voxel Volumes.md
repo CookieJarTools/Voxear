@@ -538,6 +538,31 @@ On a house of 1,068 bricks the solve takes 90 ms and the paths a fifth of a mill
 
 **Falling and resting.** A piece that hits the volume hard digs out what it hits, as a small blast does, and what that cuts off falls too; pieces that hit each other chip where they meet, dust flying. A piece of fewer than 320 voxels is dust, no body, and so is the smallest falling once more fall at once than the volume's **Most Pieces** (24 unless set; a view draws 64 volumes). Once a piece has lain still for a second it is stamped back into the volume where it lies, voxels placed in its own colours, built again: rubble on the floor that can be blown out in turn. `Voxels.Piece`, `Voxels.StampPiece` and `Voxels.RemovePiece` work on a fallen piece's Obj as on a felled tree's.
 
+**Bending before it snaps.** Timber bends before it breaks; stone, brick, earth and glass snap. A part of planks that gives way by bending stays hinged where it broke, as a floor whose post is blown out hangs from its wall: while its weight, with all hinged beyond it, turns it about the hinge harder than the bent join holds, it bends further, 30 degrees a second; once it holds, it hangs there bent, and in a moment it rests and is stamped back as it lies. It tears off and falls once it has bent 55 degrees, or once more hangs from it than the bent join bears: a short balcony hangs on, a long floor, or one with a post's stone still on its end, bends and then snaps. A floor broken in several places hangs piece from piece, each bearing all beyond it.
+
+**Ropes.** A Voxel Rope, on an Obj where it is tied, holds the point of what was built its **Hangs** reaches below it. What is built round that point and held up by nothing else hangs from the rope as soon as it is tied, and whatever comes loose later with that point in it hangs from it too: a platform whose posts are blown out drops into the rope under its gantry, sways a little and settles, leaning about the point it is held by. What a rope catches is let go into it, not thrown, and is heavy in the air (Drag 2, Angular Drag 6), so a building hanging moves as a heavy thing does, not as a light one on a string. The rope is its **Length** long (as far as to the point it holds where 0) and snaps when what hangs pulls harder than its **Strength** in newtons, its weight and its swing together (never where 0), when a blast reaches it, or when the game cuts it. A piece hangs from every rope whose point is in it, and they share its weight as they must for it to hang still: four ropes at a platform's corners bear a quarter each and it hangs level; cut one and the two across the diagonal from it bear half each, the third little, and it leans; cut another and the last two may hold it or be pulled past their strength and snap, and it falls. A rope pulled past its strength takes the jolt for a fifth of a second before it snaps, or snaps at once pulled half as hard again. What hung from its last rope falls, and rests as pieces do; while it hangs it stays a body. The rope is drawn as a line of voxels from where it is tied to the point it holds.
+
+```csharp
+// A cage hung from the overhang: blow the overhang's foot and the cage swings out over the drop.
+var rope = Voxels.Hang(overhang + Vector3.UnitY * 0.2f, cage.Top, strength: 30000f);
+// ...a bolt through the rope:
+if (rope is { } tied) Voxels.CutRope(tied);
+```
+
+```
+vox editor call voxels.rope '{ "tied": [32, 9, 32], "holds": [32.03, 3.65, 32.03], "strength": 25000 }'
+vox editor call voxels.cut_rope '{ "obj": "<guid>:3" }'
+```
+
+```toml
+[obj.voxel_rope]
+hangs = [0.0, -5.35, 0.0]
+length = 6.0
+strength = 25000.0
+```
+
+A Distance joint can hold a point of its Obj as well as its centre (`hold` in `[obj.joint]`), which is what a Voxel Rope uses; an Obj may have more joints beside its Joint (`MoreJoints`, from code), one for each rope holding it.
+
 What comes loose is dug out a voxel at a time, so it costs as much as digging it would, and is saved in the region files with the other changes. What each join bore at rest is kept while the level runs, not saved: a house left cracked but standing is whole again when the level is loaded.
 
 In the editor nothing falls: a blast takes what comes loose away, and digging and carving there let nothing loose. While the game plays it falls as in the game. `vox editor call` does the same; `wait` settles before it answers, every round at once, and lists the pieces:
@@ -614,6 +639,42 @@ Physics rays (`Physics.Raycast`) meet only the chunks made round what moves; `Vo
 
 A column of cells takes about 75 ms to make over a volume's own hills, a quarter of a second over a generator's rolling hills, and more in mountains with overhangs and caves: the cells round an agent just come into the world take one to four seconds, and until then it walks straight towards where it was sent. A way 25 m long is found in under a millisecond. [[Finding Ways from Scripts|`Navigation.FindPath`]] and `vox editor call navigation.path` find ways over the volume too.
 
+## Over the network
+
+In a networked game (see [[Playing over the Network]]) every machine makes the scene's own volume from the same files, and the server's is the one that counts: what a game changes as it plays goes from the server to every player, and ends the same on every machine to the voxel, for what is drawn, for collision, for rays and for the ways Nav Agents find. Nothing needs adding.
+
+- **The server changes it.** A carve, a fill, a shape, a print, a voxel dug, placed or restored, a cut, a blast: made by the server's own scripts, they are made at once and sent. Made by a script on a player's machine, they are a request to the server, which checks it and makes it as its own; until it does, nothing changes on the player's machine. What `Voxels` gives back there is only what was asked: how many volumes it reaches, how many points. A script that builds on every machine should build on the server alone:
+
+```csharp
+// The server raises the fort; every player's machine is sent it.
+if (Net.IsServer) Voxels.Print(Fort, hill, fit: true);
+// Any player's pick: a request, which the server makes and sends to everyone.
+if (Input.Pressed(dig) && Voxels.Raycast(camera.Position, camera.Forward, out var hit, 6f))
+{
+    Voxels.Dig(hit.Point - hit.Normal * 0.01f);
+}
+```
+
+- **What is sent.** Each frame something changed, the server sends every player on a reliable channel the edits it added, each in a few numbers (a print by its GUID), and then a delta of the voxels set one at a time against what players were last sent: each half-metre brick that differs, voxel by voxel, and each column of cut grass and felled tree that differs. Every machine makes an edit's voxels itself, the same to the voxel, as every shape is worked out in whole numbers. What the server works out alone, as what gives way after a blast, goes as the voxels it dug.
+- **Worked out on each machine.** Where a player's machine can work something out from the volume it has, the server sends a word of it in place of its voxels: a cut through grass and trees, a blast's crater, cut grass growing back a step, a piece stamped back where it came to rest, at its pose to a millimetre (the server stamps it at the same pose). It sends the word only where players' volume is just as the server's was when the change was made, so they work out the same; otherwise the delta carries what it did. Whatever happens, the delta after it makes every machine's volume the server's.
+- **Pieces falling.** A felled tree's pieces and what comes loose of a building fall as bodies on the server. Each goes to players once, by a number: a tree's as the place among what the cut made, as every machine cuts the same tree the same way; what was built with its voxels, packed, a few hundred bytes each. Its pose goes twenty times a second in a snapshot of every piece that moved since the last snapshot that player said they had: how far it moved, in millimetres, and its turn in 35 bits where it turned. A player's machine shows each a moment behind, moving smoothly between snapshots, as it does shared Objs; others bump into it there. A tree's leaves are pressed against the ground where it rests on every machine, from its pose; a piece chipped on the server has its voxels sent again.
+- **Joining late.** A player who joins after the game has changed the volume is sent, within half of their connection, the edits added since the scene loaded, then the region files of each region whose voxels differ from the scene's own, those nearest the player first (their first Obj, or the volume's corner if they have none after a second), then the pieces still falling; then what changes from there on. Their machine first takes the volume back to as its scene made it.
+
+| Change | Sent to each player |
+| --- | --- |
+| A turned box of bricks, tinted | 47 bytes |
+| A voxel dug, or placed | 17 to 19 bytes |
+| 512 voxels dug in a half-metre cube | 38 bytes |
+| 256 of them restored | 36 bytes |
+| A print, fitted to the ground | 65 bytes |
+| Grass cut 3 m across | 20 bytes |
+| A tree felled, falling and stamped back where it rests | 134 bytes, and about 2.4 KB of snapshots |
+| A house's corner blown in, six pieces falling and stamped back | 2.4 KB, and about 1.8 KB of snapshots |
+
+A player joining after a street was paved, a cellar dug, a tower built a voxel at a time and grass cut was sent 987 bytes: the region files of those changes hold 803.
+
+The server checks what players ask of the volumes: within 24 m for a ball's radius or a box's side, 4,096 points at once, 256 points of an outline. A game with rules of its own (only within reach of the player, only where they own the land) sets its own check in Rust with `voxel_sync::set_ask_check`, which is asked of every request with the player who made it.
+
 ## How it is drawn
 
 A volume is lit as everything else is: by the sun, with the shadows of meshes, blocks and terrain on it, by lamps, by the sky's light and bounced light, with ambient occlusion and reflections, and in the scene's fog.
@@ -642,7 +703,7 @@ With **Global Illumination** on in the post-processing, its probes light rooms i
 
 ### Glass
 
-A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, taking its colour; a lamp's light through a window lies on the ground outside in the glass's colour, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Only the nearest glass in a pixel is drawn. A brick of voxels holding glass is walked voxel by voxel however far off it is, so the light of lamps and the GI's rays pass its glass at any distance, and take its colour: with the GI on, sun through a red window bounces red round the room. The Profiler calls it **Glass (voxels)**.
+A voxel can be see-through, as glass in a window is: what is behind it shows through, a little paler, its own colour over it as much as it is solid, and it reflects the sky and what is round it. The sun shines through it onto the floor of a room, taking its colour; a lamp's light through a window lies on the ground outside in the glass's colour, and the light of a room comes in through its windows. Which colours of a Voxel Print are glass is chosen in its Inspector. Up to four panes one behind another are drawn, nearest over furthest: through a clear window, the red window across the room shows red, and what stands in the room between them isn't tinted by it. A pane is kept whole however thick it is, and so is what is seen through it, as a window's frame. A brick of voxels holding glass is walked voxel by voxel however far off it is, so the light of lamps and the GI's rays pass its glass at any distance, and take its colour: with the GI on, sun through a red window bounces red round the room. The Profiler calls it **Glass (voxels)**.
 
 By the sea, a volume's ground is part of the sea floor the waves feel, as meshes standing still are: the waves calm and shorten over its shallows, and foam runs along the shore where they meet it. The floor is found by walking straight down through the voxels round the camera, as far out as the volume reaches.
 
@@ -652,7 +713,7 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 
 ## What it doesn't do yet
 
-- Only the first 24 lamps whose light reaches a pixel are looked for behind voxels. Only the nearest glass in a pixel is drawn. Lamps whose light reaches a pixel through glass all take the colour of the first one's glass. Glass meshes don't take the voxels' shadows.
+- Only the first 24 lamps whose light reaches a pixel are looked for behind voxels. Past the fourth pane of glass in a pixel, what is behind shows untinted. Lamps whose light reaches a pixel through glass all take the colour of the first one's glass. Glass meshes don't take the voxels' shadows.
 - Fog, particles and water take the voxels' shadows from a map 64 m across round the camera, a texel 25 cm; past it, none.
 - It isn't scaled with its Obj. One of a set size turns with its Obj, about its corner; an endless one doesn't turn. A view draws up to 64 volumes, a felled piece one each.
 - One of a set size is drawn whole, however far away it is. An endless one's rings are made again whenever they come into view, not kept on disk. Smooth water is laid over the full detail's rivers alone: further out, their beds are dry unless the water is of voxels.
@@ -661,4 +722,4 @@ The Profiler's **Voxel coarse rays**, **Depth (voxels)**, **Voxel shadows**, **O
 - A volume of a set size can't be changed yet, only an endless one. A volume of a set size doesn't collide yet; an endless one does.
 - Ways over a volume's ground aren't shown in the Scene view's Navigation gizmo, and aren't found through caves under the ground's lowest point in a column nor more than about 100 m up from it. An agent swims no deep water there and takes no Nav Links. Its way is found for something about 80 cm wide, so a wider one may brush walls and trunks, or stick in a gap narrower than it is; its way may run up to a quarter of a metre past the rim of a drop.
 - What gives way under its own weight is found by parts of half-metre bricks: a load is shared as stiffly as each join's thinnest voxels hold, but within a part of a brick it is one body. A piece stamped back where it came to rest is part of the volume again, not of the house it fell from: it holds as what it lies on does. What was built in a volume of a set size, or in a piece, doesn't come loose.
-- Edits, voxels set one at a time, cut grass, felled trees and fallen pieces aren't sent over the network yet: every machine makes the scene's own, but not those a game makes as it plays.
+- Over the network, only volumes placed in the level's scenes are shared, not those in other dimensions. A player's machine shows its own dig only once the server has made it. Pieces chipping each other and digging out what they hit are the server's, and reach players as what it dug. Voxel Ropes aren't shared yet: a rope hung or cut on a player's machine is that machine's own, though what hangs from the server's ropes falls and swings on every machine as its pieces do.

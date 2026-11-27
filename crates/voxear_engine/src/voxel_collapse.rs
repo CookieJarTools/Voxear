@@ -138,6 +138,7 @@ fn volumes(world: &World, only: Option<Entity>) -> Vec<(Entity, Vec3)> {
 /// with its other changes.
 pub fn blast(world: &mut World, at: Vec3, radius: f32, options: BlastOptions, only: Option<Entity>) -> BlastDone {
     let mut done = BlastDone::default();
+    crate::voxel_ropes::cut_within(world, at, radius);
     for (entity, corner) in volumes(world, only) {
         let Some(volume) = world.get::<VoxelVolume>(entity).cloned() else { continue };
         let local = VoxelBlast { at: at - corner, radius };
@@ -148,9 +149,11 @@ pub fn blast(world: &mut World, at: Vec3, radius: f32, options: BlastOptions, on
         }
         done.reached += 1;
         done.dug += dug.len();
+        let changes = Arc::new(changes);
         if let Some(kept) = world.get_mut::<VoxelVolume>(entity) {
-            kept.changes = Arc::new(changes);
+            kept.changes = changes.clone();
         }
+        crate::voxel_sync::hint_change(world, entity, &volume, &changes, crate::voxel_sync::HintWhat::Blast(local));
         raise_dust(world, dust.iter().map(|p| corner + *p));
         let job =
             Job { before: volume, dug, from: at, throw: options.throw, pieces: options.pieces, rest: options.rest };
@@ -190,6 +193,29 @@ pub fn settle_after(world: &mut World, entity: Entity, before: VoxelVolume, low:
     }
     let from = (low + high) * 0.5;
     queue(world, entity, Job { before, dug, from, throw: 0.0, pieces, rest: None });
+}
+
+/// Settles every endless volume round voxel `at` in the world: what is
+/// built there, held to nothing that holds, comes loose; as when a rope is
+/// tied to what is built, which then hangs from it.
+pub(crate) fn settle_around(world: &mut World, at: Vec3) {
+    for (entity, corner) in volumes(world, None) {
+        let Some(volume) = world.get::<VoxelVolume>(entity).cloned() else { continue };
+        if volume.anchor == voxear_render::VoxelAnchor::Everything {
+            continue;
+        }
+        let voxel = 1.0 / volume.voxels_per_metre.clamp(1, voxear_render::MOST_VOXELS_A_METRE) as f32;
+        let local = at - corner;
+        if local.y < 0.0 || local.y >= volume.size.y {
+            continue;
+        }
+        let cell = (local / voxel).floor().as_ivec3();
+        queue(
+            world,
+            entity,
+            Job { before: volume, dug: vec![cell], from: at, throw: 0.0, pieces: CutPieces::Fall, rest: None },
+        );
+    }
 }
 
 /// Starts working out `job` on a thread of its own, or keeps it for when
@@ -235,11 +261,21 @@ fn settle_now(world: &mut World, entity: Entity, job: Job) -> (Vec<FelledPiece>,
         &settled.loosened.dig,
         settled.loosened.pieces.clone(),
         &settled.loosened.crumbs,
+        &[],
         &job,
         true,
     );
     for round in &settled.strain.loose {
-        pieces.extend(loosen(world, entity, &round.dig, round.pieces.clone(), &round.crumbs, &job, false));
+        pieces.extend(loosen(
+            world,
+            entity,
+            &round.dig,
+            round.pieces.clone(),
+            &round.crumbs,
+            &round.hinges,
+            &job,
+            false,
+        ));
     }
     (pieces, settled.strain.broken, settled.strain.rounds)
 }
@@ -252,6 +288,7 @@ fn loosen(
     dig: &[IVec3],
     pieces: Vec<VoxelPiece>,
     crumbs: &[Vec3],
+    hinges: &[voxear_render::VoxelHinge],
     job: &Job,
     thrown: bool,
 ) -> Vec<FelledPiece> {
@@ -267,8 +304,9 @@ fn loosen(
     }
     raise_dust(world, crumbs.iter().map(|p| corner + *p));
     let mut made = Vec::new();
-    for piece in pieces {
+    for (k, piece) in pieces.into_iter().enumerate() {
         let place = corner + piece.low.as_vec3() * piece.voxel + piece.middle();
+        let hinge = hinges.iter().find(|hinge| hinge.piece == k);
         let gone = job.pieces == CutPieces::Gone;
         if gone || piece.voxels.len() < DEBRIS {
             if !gone {
@@ -281,6 +319,7 @@ fn loosen(
         // its foot toward it.
         let toward = ((job.from - place) * Vec3::new(1.0, 0.0, 1.0)).normalize_or_zero();
         let push = match (thrown, job.throw > 0.0) {
+            _ if hinge.is_some() => PiecePush::Drop,
             (true, true) => PiecePush::Away { from: job.from, speed: job.throw },
             (false, _) if toward != Vec3::ZERO => PiecePush::Tip,
             _ => PiecePush::Drop,
@@ -304,9 +343,199 @@ fn loosen(
             (body.toward, body.pivot) = (toward, pivot);
         }
         world.insert(obj, PieceSpeed::default());
+        if let Some(hinge) = hinge {
+            hinge_piece(world, obj, place, corner + hinge.point, hinge.holds, hinge.bears);
+        }
+        crate::voxel_ropes::catch(world, obj, &piece, corner);
+        rehinge_onto(world, obj, &piece, corner);
         made.push(felled(Some(obj), place, &piece));
     }
     made
+}
+
+/// How far a hinged piece bends, in degrees a second, while its weight
+/// turns it about its hinge harder than the hinge holds; and how far it
+/// bends before it snaps, in degrees.
+const BEND_RATE: f32 = 30.0;
+const GIVE: f32 = 55.0;
+/// How much a hinge holding still lets its piece turn either way, in
+/// degrees.
+const HOLD_STILL: f32 = 0.3;
+
+/// A piece hinged to what it broke from: where the hinge is, from the
+/// piece's Obj, how much its weight about it the hinge holds, in newton
+/// metres, and whether it is bending now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PieceHinge {
+    pub anchor: Vec3,
+    pub holds: f32,
+    /// How much weight may hang from it, in newtons.
+    pub bears: f32,
+    pub bending: bool,
+    /// How long it and all hinged beyond it have not bent, in seconds, and
+    /// whether that is long enough for it to come to rest.
+    pub unbent: f32,
+    pub settled: bool,
+}
+
+impl Component for PieceHinge {}
+
+/// Hinges piece `obj`, whose Obj is at `place`, to what stands at `point`
+/// in the world: it turns about the line through there square to the way
+/// its weight hangs from it.
+fn hinge_piece(world: &mut World, obj: Entity, place: Vec3, point: Vec3, holds: f32, bears: f32) {
+    let out = (place - point) * Vec3::new(1.0, 0.0, 1.0);
+    // Turning about this, its weight goes down: out across, down.
+    let axis = out.cross(Vec3::NEG_Y).normalize_or(Vec3::X);
+    let anchor = point - place;
+    let joint = crate::physics::Joint {
+        kind: crate::physics::JointType::Hinge,
+        anchor: anchor.to_array(),
+        axis: axis.to_array(),
+        limits: Some([-HOLD_STILL, HOLD_STILL]),
+        ..crate::physics::Joint::default()
+    };
+    world.insert(obj, joint);
+    world.insert(obj, PieceHinge { anchor, holds, bears, bending: false, unbent: 0.0, settled: false });
+    // Where what it broke from has come loose already, hinged to that piece.
+    let holding = world
+        .query_ref::<(Entity, &VoxelPieceBody, &Transform)>()
+        .into_iter()
+        .filter(|(e, body, _)| *e != obj && body.built)
+        .find(|(_, body, t)| {
+            let piece = &body.piece;
+            let local = (t.rotation.inverse() * (point - t.position) + body.middle) / piece.voxel;
+            let cells: std::collections::HashSet<[u16; 3]> = piece.voxels.iter().map(|(c, _)| *c).collect();
+            (0..27).any(|i| {
+                let c = (local + Vec3::new((i % 3 - 1) as f32, (i / 3 % 3 - 1) as f32, (i / 9 - 1) as f32)).floor();
+                c.cmpge(Vec3::ZERO).all() && cells.contains(&c.to_array().map(|a| a as u16))
+            })
+        })
+        .map(|(e, ..)| e);
+    if let Some(holding) = holding.filter(|holding| !hinged_beyond(world, obj, *holding))
+        && let Some(joint) = world.get_mut::<crate::physics::Joint>(obj)
+    {
+        joint.connected = Some(holding);
+    }
+}
+
+/// Whether hinging `piece` onto `holder` would close a loop: `holder` is
+/// hinged, through others or at once, onto `piece`.
+fn hinged_beyond(world: &World, piece: Entity, holder: Entity) -> bool {
+    let mut at = Some(holder);
+    for _ in 0..64 {
+        match at {
+            Some(e) if e == piece => return true,
+            Some(e) => at = world.get::<crate::physics::Joint>(e).and_then(|joint| joint.connected),
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Hinges each piece hinged to the world at a point the new piece `obj`
+/// holds onto `obj` instead: what it broke from has come loose since.
+fn rehinge_onto(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: Vec3) {
+    let cells: std::collections::HashSet<[u16; 3]> = piece.voxels.iter().map(|(c, _)| *c).collect();
+    let hinged: Vec<(Entity, Vec3)> = world
+        .query_ref::<(Entity, &PieceHinge, &crate::physics::Joint, &Transform)>()
+        .into_iter()
+        .filter(|(e, _, joint, _)| *e != obj && joint.connected.is_none())
+        .map(|(e, hinge, _, t)| (e, t.position + t.rotation * hinge.anchor))
+        .collect();
+    for (other, point) in hinged {
+        let local = (point - corner) / piece.voxel - piece.low.as_vec3();
+        let near = (0..27).any(|i| {
+            let c = (local + Vec3::new((i % 3 - 1) as f32, (i / 3 % 3 - 1) as f32, (i / 9 - 1) as f32)).floor();
+            c.cmpge(Vec3::ZERO).all() && cells.contains(&c.to_array().map(|a| a as u16))
+        });
+        if near
+            && !hinged_beyond(world, other, obj)
+            && let Some(joint) = world.get_mut::<crate::physics::Joint>(other)
+        {
+            joint.connected = Some(obj);
+        }
+    }
+}
+
+/// Bends the hinged pieces whose weight turns them harder than their hinge
+/// holds, a little each step, and snaps those bent too far.
+fn bend(world: &mut World, dt: f32) {
+    let hinged: Vec<(Entity, PieceHinge, f32, Vec3, Quat, PieceFall, Option<Entity>)> = world
+        .query_ref::<(Entity, &PieceHinge, &VoxelPieceBody, &Transform, &crate::physics::Joint)>()
+        .into_iter()
+        .map(|(e, hinge, body, t, joint)| {
+            (e, *hinge, body.piece.mass, t.position, t.rotation, body.fall, joint.connected)
+        })
+        .collect();
+    // Hinged onto a piece stamped back or taken away since: onto where it lay, the world.
+    for &(entity, .., connected) in &hinged {
+        if connected.is_some_and(|holder| !world.is_alive(holder))
+            && let Some(joint) = world.get_mut::<crate::physics::Joint>(entity)
+        {
+            joint.connected = None;
+        }
+    }
+    for &(entity, hinge, _, position, rotation, fall, _) in &hinged {
+        if fall != PieceFall::Falling {
+            continue;
+        }
+        let point = position + rotation * hinge.anchor;
+        // Its weight about its hinge, with the weight of every piece hinged on beyond it.
+        let (mut turning, mut hanging) = (0.0, 0.0);
+        let mut beyond = vec![entity];
+        let mut at = 0;
+        while at < beyond.len() && beyond.len() <= hinged.len() {
+            let piece = beyond[at];
+            at += 1;
+            if let Some(&(_, _, mass, middle, ..)) = hinged.iter().find(|h| h.0 == piece) {
+                turning += mass * 9.81 * ((middle - point) * Vec3::new(1.0, 0.0, 1.0)).length();
+                hanging += mass * 9.81;
+            }
+            let more: Vec<Entity> =
+                hinged.iter().filter(|h| h.6 == Some(piece) && !beyond.contains(&h.0)).map(|h| h.0).collect();
+            beyond.extend(more);
+        }
+        let bent = 2.0 * rotation.w.abs().min(1.0).acos().to_degrees();
+        if bent > GIVE || hanging > hinge.bears {
+            // Bent too far, or pulled harder than it holds hanging: it tears off.
+            world.remove::<crate::physics::Joint>(entity);
+            world.remove::<PieceHinge>(entity);
+            raise_dust(world, std::iter::once(point));
+            continue;
+        }
+        let bending = turning > hinge.holds;
+        // Bending, it may turn a little either way, and its weight turns it down; held, hardly at all.
+        let step = BEND_RATE * dt;
+        let limits = if bending { [-step, step] } else { [-HOLD_STILL, HOLD_STILL] };
+        // A joint made again where its piece is now: bending, each step lets it turn a little further.
+        if (bending || hinge.bending)
+            && let Some(joint) = world.get_mut::<crate::physics::Joint>(entity)
+        {
+            joint.limits = Some(limits);
+        }
+        if let Some(kept) = world.get_mut::<PieceHinge>(entity) {
+            kept.bending = bending;
+            kept.unbent = if bending { 0.0 } else { kept.unbent + dt };
+        }
+    }
+    // Settled where it and every piece hinged beyond it has not bent for a second.
+    for &(entity, ..) in &hinged {
+        let mut beyond = vec![entity];
+        let mut at = 0;
+        let mut quiet = true;
+        while at < beyond.len() && beyond.len() <= hinged.len() {
+            let piece = beyond[at];
+            at += 1;
+            quiet &= world.get::<PieceHinge>(piece).is_none_or(|h| h.unbent >= 1.0);
+            let more: Vec<Entity> =
+                hinged.iter().filter(|h| h.6 == Some(piece) && !beyond.contains(&h.0)).map(|h| h.0).collect();
+            beyond.extend(more);
+        }
+        if let Some(kept) = world.get_mut::<PieceHinge>(entity) {
+            kept.settled = quiet;
+        }
+    }
 }
 
 fn felled(obj: Option<Entity>, place: Vec3, piece: &VoxelPiece) -> FelledPiece {
@@ -380,7 +609,7 @@ pub fn step(world: &mut World, dt: f32, events: &[PhysicsEvent]) {
                     collapse.rounds.push_back((clock + ROUND_GAP * (k + 1) as f32, round, job.clone()));
                 }
                 let loose = settled.loosened;
-                loosen(world, entity, &loose.dig, loose.pieces, &loose.crumbs, &job, true);
+                loosen(world, entity, &loose.dig, loose.pieces, &loose.crumbs, &[], &job, true);
             }
             let next = world
                 .get_mut::<VoxelCollapse>(entity)
@@ -400,9 +629,11 @@ pub fn step(world: &mut World, dt: f32, events: &[PhysicsEvent]) {
             due
         };
         for (round, job) in due {
-            loosen(world, entity, &round.dig, round.pieces, &round.crumbs, &job, false);
+            loosen(world, entity, &round.dig, round.pieces, &round.crumbs, &round.hinges, &job, false);
         }
     }
+    bend(world, dt);
+    crate::voxel_ropes::tend(world, dt);
     hits(world, dt, events);
     keep_to_most(world);
     settle_dust(world, dt);
@@ -417,6 +648,7 @@ fn hits(world: &mut World, dt: f32, events: &[PhysicsEvent]) {
         .into_iter()
         .filter(|(_, body, _)| body.built && body.fall == PieceFall::Falling)
         .map(|(e, body, t)| (e, body.clone(), t.position))
+        .filter(|(e, ..)| world.get::<crate::physics::Joint>(*e).is_none() && world.get::<crate::physics::MoreJoints>(*e).is_none())
         .collect();
     let mut blasts: Vec<(Entity, Vec3, f32)> = Vec::new();
     let mut speeds: Vec<(Entity, Vec3)> = Vec::new();

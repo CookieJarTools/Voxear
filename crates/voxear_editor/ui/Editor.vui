@@ -15,11 +15,18 @@
                     <TextField name="command" class="command-field" placeholder="Search or run a command" />
                     <Label class="kbd">Ctrl K</Label>
                 </Panel>
+                <!-- Saves the open scenes, as Ctrl+S does; lit while there are unsaved changes. -->
+                <Button name="save" class="icon-button save-button"><Icon icon="save" /></Button>
             </Panel>
             <Panel class="play">
                 <Button name="play" class="icon-button play-button"><Icon icon="play" /></Button>
                 <Button name="pause" class="icon-button"><Icon icon="pause" /></Button>
                 <Button name="step" class="icon-button"><Icon icon="step" /></Button>
+                <!-- Beside the buttons while Play waits for the scripts to build. -->
+                <Panel name="play-building" class="play-building">
+                    <Panel class="play-building-dot" />
+                    <Label>Building scripts…</Label>
+                </Panel>
                 <!-- Offline, or networked as a host or a server's player, with test players' windows. -->
                 <Button name="multiplayer" class="layouts-button multiplayer-button"><Icon icon="globe" /><Label name="multiplayer-label">Offline</Label><Icon icon="chevron-down" class="layouts-arrow" /></Button>
             </Panel>
@@ -48,7 +55,14 @@
                 </DockPanel>
                 <DockPanel id="scene" title="Scene" icon="cube" name="scene-panel" />
                 <DockPanel id="game" title="Game" icon="play">
+                    <Panel class="panel-actions">
+                        <Button name="game-stats-button" class="header-button">Stats</Button>
+                        <Button name="game-gizmos" class="header-button">Gizmos</Button>
+                        <Button name="game-maximize" class="icon-button"><Icon icon="maximize" /></Button>
+                    </Panel>
                     <Panel name="game-viewport" class="viewport">
+                        <Panel name="game-handles" class="handles" />
+                        <Panel name="game-stats" class="overlay view-stats" />
                         <Label name="game-empty" class="placeholder">No camera renders this level.</Label>
                     </Panel>
                 </DockPanel>
@@ -74,6 +88,9 @@
                 <DockPanel id="model" title="Model" icon="box" class="dock-content">
                     <Panel name="model-panel" class="fill model-panel" />
                 </DockPanel>
+                <DockPanel id="tests" title="Tests" icon="check" class="dock-content">
+                    <Panel name="tests-panel" class="fill tests-panel" />
+                </DockPanel>
                 <DockPanel id="memory" title="Memory" class="dock-content">
                     <Panel name="memory-panel" class="fill frame-debugger-panel" />
                 </DockPanel>
@@ -95,7 +112,6 @@
                 <DockPanel id="inspector" title="Inspector">
                     <Panel class="panel-actions">
                         <Button name="inspector-lock" class="icon-button inspector-lock"><Icon icon="lock" /></Button>
-                        <Button name="inspector-mode" class="icon-button inspector-mode"><Icon icon="more" /></Button>
                     </Panel>
                     <ScrollView name="inspector" class="fill inspector" />
                 </DockPanel>

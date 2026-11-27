@@ -121,11 +121,23 @@ pub struct Player {
     /// The window's size, when windowed.
     pub width: u32,
     pub height: u32,
+    /// Whether the game has the stats panel players can see: empty or
+    /// `off` for none, `key` shown and hidden with F1, `shown` shown from
+    /// the start. A development build has it on F1 whatever this says.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stats: String,
 }
 
 impl Default for Player {
     fn default() -> Self {
-        Self { product_name: None, company_name: None, window: "windowed".into(), width: 1600, height: 900 }
+        Self {
+            product_name: None,
+            company_name: None,
+            window: "windowed".into(),
+            width: 1600,
+            height: 900,
+            stats: String::new(),
+        }
     }
 }
 
@@ -443,11 +455,13 @@ mod tests {
         assert!(development.development.enabled, "its own setting");
         assert_eq!((development.platform(), development.player.height), ("linux-x64", 900), "and its base's");
 
-        let demo = "format = 1\nbase = \"Linux Development\"\n[player]\nwidth = 1280\nproduct_name = \"Demo\"\n";
+        assert_eq!(release.player.stats, "", "no stats panel for players unless asked");
+        let demo = "format = 1\nbase = \"Linux Development\"\n[player]\nwidth = 1280\nproduct_name = \"Demo\"\nstats = \"key\"\n";
         std::fs::write(profile_path(dir.path(), "Demo"), demo).unwrap();
         let demo = load_profile(dir.path(), "Demo").unwrap();
         assert_eq!((demo.player.width, demo.player.height), (1280, 900), "one player setting changed, the rest kept");
         assert_eq!(demo.player.product_name.as_deref(), Some("Demo"));
+        assert_eq!(demo.player.stats, "key", "the stats panel on F1 for its players");
         assert!(demo.development.enabled, "through two bases");
         assert_eq!(demo.output_dir(dir.path(), "Demo"), dir.path().join("Builds/Demo"));
     }

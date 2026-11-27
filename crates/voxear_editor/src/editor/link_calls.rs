@@ -254,6 +254,8 @@ impl Editor {
             "objs.list" => self.objs_list(args),
             "obj.get" => self.obj_get(args),
             "inspector.mode" => self.inspector_mode(args),
+            "tests.list" => self.tests_list(),
+            "tests.run" => self.tests_run(args),
             "inspector.debug" => self.inspector_debug(args, renderer),
             "components" => done(self.components_json()),
             "kinds" => done(kinds_json(&self.game.project.modules())),
@@ -310,6 +312,8 @@ impl Editor {
             "voxels.dig" | "voxels.place" | "voxels.restore" => self.voxels_set(call, args),
             "voxels.cut" => self.voxels_cut(args),
             "voxels.blast" => self.voxels_blast(args),
+            "voxels.rope" => self.voxels_rope(args, renderer),
+            "voxels.cut_rope" => self.voxels_cut_rope(args),
             "voxels.settled" => self.voxels_settled(),
             "voxel_prints.make" => self.voxel_prints_make(args),
             "voxel_prints.info" => self.voxel_prints_info(args),
@@ -963,6 +967,49 @@ impl Editor {
             })
         });
         json!({ "found": listed.collect::<Vec<_>>() })
+    }
+
+    /// The tests and how each last came out (see `tests.list`).
+    fn tests_list(&mut self) -> Called {
+        use crate::tests_panel::Outcome;
+        let (outcomes, running) = self.test_outcomes();
+        let tests: Vec<Json> = outcomes
+            .into_iter()
+            .map(|(test, outcome)| {
+                let (said, ms, message) = match outcome {
+                    Outcome::NotRun => ("not run", None, None),
+                    Outcome::Waiting => ("waiting", None, None),
+                    Outcome::Passed { ms } => ("passed", Some(ms), None),
+                    Outcome::Failed { message, ms } => ("failed", Some(ms), Some(message)),
+                };
+                json!({
+                    "title": test.title, "category": test.category, "order": test.order,
+                    "type": test.type_name, "method": test.method,
+                    "outcome": said, "ms": ms, "message": message,
+                })
+            })
+            .collect();
+        done(json!({ "tests": tests, "running": running }))
+    }
+
+    /// Asks for tests to run (see `tests.run`).
+    fn tests_run(&mut self, args: &Json) -> Called {
+        let (category, named) = (opt_text(args, "category"), opt_text(args, "test"));
+        let tests: Vec<(String, String)> = self
+            .inspector
+            .types()
+            .tests
+            .iter()
+            .filter(|t| category.as_deref().is_none_or(|c| t.category.eq_ignore_ascii_case(c)))
+            .filter(|t| named.as_deref().is_none_or(|n| t.title == n || t.method == n))
+            .map(|t| (t.type_name.clone(), t.method.clone()))
+            .collect();
+        if tests.is_empty() {
+            return Err(bad("no test is called that, or in that category; tests.list lists them".to_string()));
+        }
+        let queued = tests.len();
+        self.run_tests(Some(tests));
+        done(json!({ "queued": queued }))
     }
 
     /// An Inspector's mode, set where `mode` is given (see `inspector.mode`).
@@ -2634,6 +2681,36 @@ impl Editor {
             })
             .collect();
         done(json!({ "reached": reached, "dug": dug, "pieces": pieces, "broken": broken, "rounds": rounds }))
+    }
+
+    fn voxels_rope(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        let tied = Vec3::from_array(opt_vector(args, "tied")?.ok_or_else(|| bad("`tied` is missing"))?);
+        let holds = Vec3::from_array(opt_vector(args, "holds")?.ok_or_else(|| bad("`holds` is missing"))?);
+        let number = |name: &str| args.get(name).and_then(Json::as_f64).map_or(0.0, |n| n as f32).max(0.0);
+        let rope = voxear_engine::voxel_ropes::VoxelRope {
+            hangs: (holds - tied).to_array(),
+            length: number("length"),
+            strength: number("strength"),
+        };
+        let empty = NEW_OBJS.iter().position(|(label, ..)| label.eq_ignore_ascii_case("Empty"));
+        let empty = empty.ok_or_else(|| refuse(ErrorKind::WrongValue, "no Empty kind of New Object"))?;
+        let scene = self.scene_for_new_objs();
+        let made = objs::create(&mut self.game, Some(renderer), empty, None, scene, tied).map_err(failed)?;
+        let world = &mut self.game.engine.world;
+        world.insert(made, Name(opt_text(args, "name").unwrap_or("Rope").to_string()));
+        world.insert(made, rope);
+        self.record(Edit::Exists { root: made, taken: None });
+        self.shown_again();
+        done(json!({ "obj": obj_ref(&self.game, made), "length": rope.long() }))
+    }
+
+    fn voxels_cut_rope(&mut self, args: &Json) -> Called {
+        let obj = link::resolve_obj(&self.game, need(args, "obj")?)?;
+        if self.game.engine.world.get::<voxear_engine::voxel_ropes::VoxelRope>(obj).is_none() {
+            return Err(refuse(ErrorKind::WrongValue, "the Obj has no Voxel Rope"));
+        }
+        let cut = voxear_engine::voxel_ropes::cut(&mut self.game.engine.world, obj);
+        done(json!({ "cut": cut }))
     }
 
     fn voxels_settled(&mut self) -> Called {

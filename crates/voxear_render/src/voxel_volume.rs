@@ -45,13 +45,16 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Bindless, Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 
-pub use changes::{CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelFelledTree, VoxelChanges, VoxelKind, VoxelSet};
+pub use changes::{
+    CutColumns as VoxelCutColumns, FULL as UNCUT, Felled as VoxelFelledTree, REGION_BRICKS as VOXEL_REGION_BRICKS, VoxelChanges,
+    VoxelDelta, VoxelKind, VoxelSet,
+};
 pub use fell::{VoxelCut, VoxelCutDone, VoxelPiece, cut as voxel_cut, stamp as voxel_stamp, tree_trunks as voxel_tree_trunks};
 pub use collapse::{
     CRUMBS as VOXEL_CRUMBS, VoxelAnchor, VoxelBlast, VoxelBlastDone, VoxelLoosened, VoxelSettled, VoxelStuff,
     blast as voxel_blast, blast_dig as voxel_blast_dig, dug_between as voxel_dug_between, loosen as voxel_loosen, settle as voxel_settle,
 };
-pub use strain::{JoinLoad as VoxelJoinLoad, VoxelRound, VoxelStrain, VoxelStrainDone, VoxelStrainMemory};
+pub use strain::{JoinLoad as VoxelJoinLoad, VoxelHinge, VoxelRound, VoxelStrain, VoxelStrainDone, VoxelStrainMemory};
 pub use edit::{PAVING_COLORS, VoxelEdit, VoxelHeld, VoxelMaterial, VoxelPrinted, VoxelShape};
 pub use ground::{GROUND_COLORS, VoxelGround};
 pub use growth::{MOST_COVER_KINDS, areas_allow as voxel_areas_allow};
@@ -754,6 +757,7 @@ pub(crate) struct GpuVoxelVolumes {
     lamp_mask: u32,
     sun_map_on: u32,
     sun_map: u64,
+    behind: u64,
     volumes: [GpuVoxelVolume; MAX_VOXEL_VOLUMES],
 }
 
@@ -1109,6 +1113,7 @@ pub(crate) fn volumes_record(drawn: &[(GpuVoxelVolume, Vec3)], offset: Vec3) -> 
         lamp_mask: crate::NO_TEXTURE,
         sun_map_on: 0,
         sun_map: 0,
+        behind: 0,
         volumes: [GpuVoxelVolume::default(); MAX_VOXEL_VOLUMES],
     };
     let mut drawn: Vec<_> = drawn.iter().take(MAX_VOXEL_VOLUMES).collect();
@@ -1150,6 +1155,8 @@ pub(crate) fn gather(
     // The sun map after them.
     volumes.sun_map_on = u32::from(seen.is_some());
     volumes.sun_map = seen.map_or(0, |seen| seen.address + pixels * 32);
+    // How far off what is opaque behind each pixel's glass is, after the sun map.
+    volumes.behind = seen.map_or(0, |seen| seen.address + pixels * 32 + SUN_MAP_BYTES);
     if let Some(light) = light {
         volumes.light = light.light_address;
         volumes.light_cells = light.cells_address;
@@ -1312,9 +1319,11 @@ pub(crate) struct ViewVoxels {
 }
 
 /// The bytes a view keeps of what its depth pass met, and the glass it
-/// passed through on the way, for a picture `size` pixels; and its sun map.
+/// passed through on the way, for a picture `size` pixels; its sun map; and
+/// how far off what is opaque behind each pixel's glass is.
 pub(crate) fn seen_bytes(size: [u32; 2]) -> u64 {
-    u64::from(size[0]) * u64::from(size[1]) * 16 * 2 + SUN_MAP_BYTES
+    let pixels = u64::from(size[0]) * u64::from(size[1]);
+    pixels * 16 * 2 + SUN_MAP_BYTES + pixels * 4
 }
 
 /// A volume's sectors, bricks, materials and palette in one buffer on the GPU.
@@ -1374,7 +1383,7 @@ mod tests {
     #[test]
     fn the_gpu_records_are_laid_out_as_the_shaders_read_them() {
         assert_eq!(size_of::<GpuVoxelVolume>(), 160);
-        assert_eq!(size_of::<GpuVoxelVolumes>(), 120 + 160 * MAX_VOXEL_VOLUMES);
+        assert_eq!(size_of::<GpuVoxelVolumes>(), 128 + 160 * MAX_VOXEL_VOLUMES);
     }
 
     #[test]
@@ -1516,14 +1525,16 @@ pub(crate) fn record_shadows(
 ) {
     let Some((sun, lamps)) = view.shadow else { return };
     let push = Push { textures: [fg.texture(depth).0, fg.texture(surface).0, 0, 0], ..push };
-    let mut reads: Vec<_> = view.pools.iter().map(|&pool| (pool, BufferAccess::ShaderRead)).collect();
-    reads.extend(view.seen.map(|seen| (seen, BufferAccess::ShaderRead)));
+    let reads: Vec<_> = view.pools.iter().map(|&pool| (pool, BufferAccess::ShaderRead)).collect();
     // The sun's, then the lamps': apart, so the sun's pass carries nothing of the lamps' walks where there are none.
-    for (name, pipeline, target) in [
-        ("Voxel shadows", pipelines.voxel_shadows, sun),
-        ("Voxel lamp shadows", pipelines.voxel_lamp_shadows, lamps),
+    // The sun's keeps how far off what is opaque behind each pixel's glass is, after what the depth pass met.
+    for (name, pipeline, target, seen) in [
+        ("Voxel shadows", pipelines.voxel_shadows, sun, BufferAccess::FragmentWrite),
+        ("Voxel lamp shadows", pipelines.voxel_lamp_shadows, lamps, BufferAccess::ShaderRead),
     ] {
         let images = [(depth, ImageAccess::Sampled), (surface, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+        let mut reads = reads.clone();
+        reads.extend(view.seen.map(|buffer| (buffer, seen)));
         fg.add_pass(name, &images, &reads, move |ctx| {
             let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
             let color = [attachment(ctx.view(target), layout, None)];

@@ -399,6 +399,21 @@ impl Editor {
                 maximize = Some(view.panel.clone());
             }
         }
+        // The Game view's Gizmos and full screen, as a Scene view's.
+        if self.ui.clicked(self.nodes.game_gizmos) {
+            self.memory.settings.game_gizmos = !self.memory.settings.game_gizmos;
+            changed = true;
+        }
+        self.ui.set_checked(self.nodes.game_gizmos, self.memory.settings.game_gizmos);
+        if self.ui.clicked(self.nodes.game_stats_button) {
+            self.memory.settings.game_stats = !self.memory.settings.game_stats;
+            changed = true;
+        }
+        self.ui.set_checked(self.nodes.game_stats_button, self.memory.settings.game_stats);
+        self.ui.set_visible(self.nodes.game_stats, self.memory.settings.game_stats);
+        if self.ui.clicked(self.nodes.game_maximize) {
+            maximize = Some("game".to_string());
+        }
         if let Some(panel) = maximize {
             self.toggle_maximized(&panel);
         }
@@ -414,6 +429,7 @@ impl Editor {
         for view in std::iter::once(&self.scene).chain(&self.scene_views) {
             self.ui.set_checked(view.maximize, maximized);
         }
+        self.ui.set_checked(self.nodes.game_maximize, maximized);
         changed
     }
 
@@ -453,7 +469,7 @@ impl Editor {
             if ui.segment(view.tool) != tool {
                 ui.set_segment(view.tool, tool);
             }
-            ui.set_visible(view.stats, first && settings.show_stats);
+            ui.set_visible(view.stats, settings.show_stats);
             ui.set_visible(view.view_gizmo, settings.show_axis_gizmo);
             ui.set_checked(view.gizmos_button, view.show_gizmos);
             if ui.selected_option(view.shading_menu) != view.shading {
@@ -494,6 +510,27 @@ impl Editor {
             shapes.extend(tools.shapes(world, renderer, &camera, selected));
             ui.set_shapes(view.handles, shapes);
         }
+    }
+
+    /// The Game view's gizmos, while its Gizmos button is on: the lights',
+    /// cameras' and Audio Sources' markers and icons, as a Scene view draws
+    /// them, with none of the tools' handles.
+    pub(super) fn draw_game_gizmos(&mut self) {
+        let viewport = self.nodes.game_viewport;
+        let shown = self.memory.settings.game_gizmos && self.shown(viewport);
+        let camera = self.game_camera().filter(|_| shown);
+        let world = &self.game.engine.world;
+        let camera = camera.and_then(|camera| ViewCamera::new(world, camera, self.ui.rect(viewport)));
+        let Some(camera) = camera else {
+            self.ui.set_shapes(self.nodes.game_handles, Vec::new());
+            return;
+        };
+        let (markers, icons) = (self.markers(true), self.gizmo_icons());
+        let playing = |entity| self.game.audio.is_source_playing(world, entity);
+        let selected = self.selection;
+        let mut shapes = gizmos::shapes(world, &camera, selected, markers, &playing);
+        shapes.extend(super::scene_gizmos::icon_shapes(&icons, &camera, selected));
+        self.ui.set_shapes(self.nodes.game_handles, shapes);
     }
 
     /// Turns each Scene view's axis gizmo with its camera: each world axis

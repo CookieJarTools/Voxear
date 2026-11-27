@@ -11,6 +11,11 @@ use winit::{
 /// Pixels the wheel scrolls per notch.
 const NOTCH: f32 = 40.0;
 
+thread_local! {
+    /// Whether Alt is held, as the last modifiers said: Control with Alt is AltGr on some layouts, which types.
+    static ALT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Hands a window event to `ui`. Returns whether the UI used it, so the
 /// game can leave it alone: a click or wheel over UI, or a key while a text
 /// field has focus.
@@ -42,15 +47,18 @@ pub fn handle(ui: &mut Ui, event: &WindowEvent) -> bool {
         }
         WindowEvent::ModifiersChanged(modifiers) => {
             let state = modifiers.state();
+            ALT.set(state.alt_key());
             // Command on macOS does what Control does elsewhere.
             ui.set_modifiers(Modifiers { shift: state.shift_key(), control: state.control_key() || state.super_key() });
             false
         }
         WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
             let used = key(&event.logical_key).is_some_and(|key| ui.key_down(key));
-            // With Control held the text is a shortcut's control code, not something typed.
-            let shortcut =
-                ui.wants_keyboard() && event.text.as_deref().is_some_and(|t| t.chars().all(char::is_control));
+            // With Control (or Command) held a key is a shortcut, not typing: some systems send its letter as
+            // text too, which would replace what Ctrl+A selected with an "a".
+            let shortcut = ui.wants_keyboard()
+                && ((ui.modifiers().control && !ALT.get())
+                    || event.text.as_deref().is_some_and(|t| t.chars().all(char::is_control)));
             let typed = !shortcut && event.text.as_deref().is_some_and(|text| ui.text_input(text));
             used || typed
         }

@@ -45,6 +45,13 @@ fn open_logging(log: LogCapture) -> Option<(Renderer, voxear_editor::Editor)> {
     Some((renderer, editor))
 }
 
+/// The name on a Project tile, in the box that cuts it at the right.
+fn tile_name(ui: &Ui, tile: NodeId) -> String {
+    let mut names = Vec::new();
+    with_class(ui, tile, "tile-name", &mut names);
+    names.first().map(|&name| ui.text(name)).unwrap_or_default()
+}
+
 #[test]
 fn the_inspector_edits_the_selected_obj() {
     let Some((mut renderer, mut editor)) = open() else { return };
@@ -92,7 +99,7 @@ fn the_project_shows_folders_as_tiles_and_opens_them() {
     let mut tiles = Vec::new();
     with_class(&editor.ui, root, "tile", &mut tiles);
     let ui = &editor.ui;
-    let models = tiles.into_iter().find(|&tile| ui.is_visible(tile) && ui.text(ui.children(tile)[1]) == "Models");
+    let models = tiles.into_iter().find(|&tile| ui.is_visible(tile) && tile_name(ui, tile) == "Models");
     let [x, y, w, h] = ui.rect(models.expect("a tile for the Models folder"));
     let ui = &mut editor.ui;
     ui.pointer_move(x + w / 2.0, y + h / 2.0);
@@ -114,7 +121,7 @@ fn a_selected_script_shows_its_code() {
     let tile_named = |editor: &voxear_editor::Editor, name: &str| {
         let (ui, mut tiles) = (&editor.ui, Vec::new());
         with_class(ui, ui.root(), "tile", &mut tiles);
-        tiles.into_iter().find(|&tile| ui.is_visible(tile) && ui.text(ui.children(tile)[1]).starts_with(name))
+        tiles.into_iter().find(|&tile| ui.is_visible(tile) && tile_name(ui, tile).starts_with(name))
     };
     let press = |editor: &mut voxear_editor::Editor, tile: NodeId, times: usize| {
         let [x, y, w, h] = editor.ui.rect(tile);
@@ -538,8 +545,15 @@ fn edits_undo_redo_and_save_to_the_scene_file() {
     editor.redo(&mut renderer);
     assert_eq!(x(&editor), 7.25, "and redo makes it again");
 
-    editor.save();
+    // The top bar's Save button, lit while there is something to save, saves.
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    let save = editor.ui.find(editor.ui.root(), "save").expect("a Save button beside the search");
+    assert!(editor.ui.has_class(save, "unsaved"));
+    click(&mut editor.ui, save);
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     assert!(!editor.has_unsaved_changes(), "saved");
+    assert!(!editor.ui.has_class(save, "unsaved"));
     let scenes = ["Scenes/Environment.scene", "Scenes/Day.scene"]
         .map(|p| voxear_engine::scene_file::read(&dir.path().join(p)).unwrap());
     let saved =
@@ -1103,7 +1117,7 @@ fn drag(ui: &mut Ui, from: NodeId, to: NodeId) {
 fn tile(ui: &Ui, name: &str) -> Option<NodeId> {
     let mut tiles = Vec::new();
     with_class(ui, ui.root(), "tile", &mut tiles);
-    tiles.into_iter().find(|&t| ui.is_visible(t) && ui.children(t).get(1).is_some_and(|&n| ui.text(n) == name))
+    tiles.into_iter().find(|&t| ui.is_visible(t) && tile_name(ui, t) == name)
 }
 
 #[test]
@@ -1206,7 +1220,7 @@ fn a_model_opens_out_to_its_parts_and_a_field_takes_one() {
     let names: Vec<String> = parts
         .into_iter()
         .filter(|&part| editor.ui.is_visible(part) && editor.ui.has_class(part, "tile"))
-        .map(|part| editor.ui.text(editor.ui.children(part)[1]))
+        .map(|part| tile_name(&editor.ui, part))
         .collect();
     assert!(
         names.len() >= 2 && names.last().map(String::as_str) == Some("Checker"),
@@ -1583,7 +1597,7 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.settings().snap, 0.5);
 
-    // The palette flips a toggle, and remembers that it ran it.
+    // The palette takes you to a toggle, in Preferences, marked, and remembers that it ran it.
     let field = editor.ui.find(root, "command").unwrap();
     editor.ui.focus(field);
     editor.ui.text_input("show stats");
@@ -1591,8 +1605,9 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     assert_eq!(palette_results(&editor.ui).first().map(String::as_str), Some("Show stats"));
     editor.palette_key(voxear_editor::PaletteKey::Enter);
     frame(&mut editor, &mut renderer);
-    let stats = editor.ui.find(root, "scene-stats").expect("the stats chip");
-    assert!(!editor.settings().show_stats && !editor.ui.is_visible(stats), "the stats chip goes");
+    frame(&mut editor, &mut renderer);
+    assert!(editor.settings().show_stats, "left as it was, to change where it is");
+    assert_eq!(found_setting(&editor.ui).as_deref(), Some("Show stats"), "shown and marked");
 
     // A number opens Preferences at it, to type.
     editor.ui.focus(field);
@@ -1614,12 +1629,45 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     // Opened again, all of it is as it was left, and the palette leads with what ran last.
     let mut editor = open(&mut renderer);
     let settings = editor.settings();
-    assert!((settings.snap, settings.show_stats, settings.fly_speed) == (0.5, false, 12.0), "{settings:?}");
+    assert!((settings.snap, settings.show_stats, settings.fly_speed) == (0.5, true, 12.0), "{settings:?}");
     let field = editor.ui.find(editor.ui.root(), "command").unwrap();
     editor.ui.focus(field);
     frame(&mut editor, &mut renderer);
     let results = palette_results(&editor.ui);
     assert_eq!(results[..2], ["Fly speed".to_string(), "Show stats".to_string()], "most recent first: {results:?}");
+}
+
+/// The setting a search marked, by its label, while it shows on screen inside its window's scrolled view.
+fn found_setting(ui: &Ui) -> Option<String> {
+    let mut found = Vec::new();
+    with_class(ui, ui.root(), "found", &mut found);
+    let row = found.into_iter().find(|&row| shown(ui, row))?;
+    // On screen: inside what scrolls it, not scrolled past.
+    let view = std::iter::successors(ui.parent(row), |&n| ui.parent(n)).find(|&n| ui.has_class(n, "settings-scroll"));
+    let [_, y, _, h] = ui.rect(row);
+    if let Some(view) = view {
+        let [_, top, _, height] = ui.rect(view);
+        assert!(y >= top - 0.5 && y + h <= top + height + 0.5, "the marked row is scrolled into view");
+    }
+    texts_in(ui, row).into_iter().next()
+}
+
+#[test]
+fn every_palette_result_takes_you_to_the_thing() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    // A Project Setting in an Advanced foldout, as the Lighting share is.
+    editor.ui.focus(field);
+    editor.ui.text_input("lighting share");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(palette_results(&editor.ui).first().map(String::as_str), Some("Lighting share"));
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let settings = editor.ui.find(editor.ui.root(), "project-settings-panel").unwrap();
+    assert!(shown(&editor.ui, settings), "Project Settings open");
+    assert_eq!(found_setting(&editor.ui).as_deref(), Some("Lighting share"));
 }
 
 #[test]
@@ -1812,7 +1860,7 @@ fn pinged_names(ui: &Ui) -> Vec<String> {
     let mut lit = Vec::new();
     with_class(ui, ui.root(), "pinged", &mut lit);
     let name = |node: NodeId| {
-        let part = ui.children(node).into_iter().find(|&c| ui.has_class(c, "row-name") || ui.has_class(c, "tile-name"));
+        let part = first_with(ui, node, "row-name").or_else(|| first_with(ui, node, "tile-name"));
         part.map(|part| ui.text(part))
     };
     lit.into_iter().filter(|&node| ui.is_visible(node)).filter_map(name).collect()
@@ -2028,6 +2076,190 @@ fn dock_tab(ui: &Ui, title: &str) -> Option<NodeId> {
     // A tab with an icon has its title in a label beside it.
     let says = |tab: NodeId| ui.text(tab) == title || ui.children(tab).iter().any(|&part| ui.text(part) == title);
     tabs.into_iter().find(|&tab| ui.is_visible(tab) && says(tab))
+}
+
+/// Whether a row of buttons is a Light's types: icons alone, the first the sun's.
+fn light_types(ui: &Ui, buttons: NodeId) -> bool {
+    let first = ui.children(buttons).first().copied();
+    first.is_some_and(|segment| ui.children(segment).iter().any(|&part| ui.icon_name(part) == Some("light")))
+}
+
+#[test]
+fn a_mesh_renderer_shows_its_mesh_and_material_large_side_by_side() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    for _ in 0..20 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "mesh-card.png");
+    let card = first_with(&editor.ui, editor.ui.root(), "mesh-card").expect("the mesh and material, large");
+    assert_eq!(texts_in(&editor.ui, card), ["Mesh", "Material"]);
+    let mut images = Vec::new();
+    with_class(&editor.ui, card, "mesh-card-image", &mut images);
+    assert_eq!(images.len(), 2);
+}
+
+#[test]
+fn a_light_shows_its_type_as_buttons_a_picture_of_it_and_its_rows_under_headings() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let sun = obj(&editor, "Sun").unwrap();
+    editor.select(Some(sun));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "light-sun.png");
+    let root = editor.ui.root();
+    let card = first_with(&editor.ui, root, "light-card").expect("a picture of the light");
+    let texts = texts_in(&editor.ui, card);
+    assert!(texts[0].starts_with("Sun · ") && texts[0].contains("° "), "{texts:?}");
+    assert!(!editor.ui.shapes(first_with(&editor.ui, card, "light-card-picture").unwrap()).is_empty(), "drawn");
+    let mut titles = Vec::new();
+    with_class(&editor.ui, root, "attr-title", &mut titles);
+    let titles: Vec<String> = titles.into_iter().filter(|&t| shown(&editor.ui, t)).map(|t| editor.ui.text(t)).collect();
+    assert_eq!(titles, ["Light", "Shape", "Shadows", "Baking"]);
+    // The type is a row of buttons with icons; picking one changes it.
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, root, "attr-buttons", &mut buttons);
+    let types = buttons.into_iter().find(|&b| light_types(&editor.ui, b)).unwrap();
+    let segments = editor.ui.children(types);
+    assert_eq!(segments.len(), 6);
+    assert!(editor.ui.children(segments[1]).iter().any(|&p| editor.ui.icon_name(p) == Some("bulb")));
+    let lamp = obj(&editor, "Lamp").unwrap();
+    editor.select(Some(lamp));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "light-lamp.png");
+    let card = first_with(&editor.ui, editor.ui.root(), "light-card").unwrap();
+    let kind = editor.game.engine.world.get::<voxear_render::Light>(lamp).unwrap().kind;
+    assert!(kind != voxear_render::LightKind::Directional);
+    assert!(texts_in(&editor.ui, card)[0].ends_with(" m"), "a local light says how far it reaches");
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "attr-buttons", &mut buttons);
+    let types = buttons.into_iter().find(|&b| light_types(&editor.ui, b)).unwrap();
+    let spot = editor.ui.children(types)[2];
+    click(&mut editor.ui, spot);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let light = editor.game.engine.world.get::<voxear_render::Light>(lamp).unwrap();
+    assert_eq!(light.kind, voxear_render::LightKind::Spot, "picked from its button");
+    shot(&mut renderer, "light-spot.png");
+    assert!(prop_row(&editor.ui, "Outer angle").is_some(), "a spot light's own rows show");
+}
+
+/// The Project panel's tile or row showing `name`.
+fn project_entry(ui: &Ui, name: &str) -> Option<NodeId> {
+    let files = ui.find(ui.root(), "project-files")?;
+    let mut found = Vec::new();
+    with_class(ui, files, "tile", &mut found);
+    with_class(ui, files, "list-row", &mut found);
+    found.into_iter().filter(|&n| shown(ui, n)).find(|&n| texts_in(ui, n).first().is_some_and(|t| t == name))
+}
+
+/// The Project folder tree's row showing `name`.
+fn project_folder_row(ui: &Ui, name: &str) -> Option<NodeId> {
+    let tree = ui.find(ui.root(), "project-folders")?;
+    let mut rows = Vec::new();
+    with_class(ui, tree, "list-row", &mut rows);
+    rows.into_iter().filter(|&n| shown(ui, n)).find(|&n| texts_in(ui, n).iter().any(|t| t == name))
+}
+
+#[test]
+fn project_folders_take_colours_and_favourites_list_what_was_added() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let open = |renderer: &mut Renderer| {
+        let project = Project::open(dir.path()).unwrap();
+        let mut editor = voxear_editor::Editor::open(project, renderer, LogCapture::default()).unwrap();
+        frame(&mut editor, renderer);
+        frame(&mut editor, renderer);
+        editor
+    };
+    let mut editor = open(&mut renderer);
+    // Scenes, a folder at the project's top: coloured green, and a favourite.
+    let scenes = project_entry(&editor.ui, "Scenes").expect("the Scenes folder shows");
+    context_click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Folder Colour…").expect("a folder can be coloured");
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Green").expect("the colours offered");
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    let scenes = project_entry(&editor.ui, "Scenes").unwrap();
+    assert!(first_with(&editor.ui, scenes, "folder-green").is_some(), "its icon is green");
+    context_click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Add to Favourites").unwrap();
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "project-marks.png");
+    drop(editor);
+
+    // Opened again, both are kept; Favourites, at the top of the tree, lists the folder.
+    let mut editor = open(&mut renderer);
+    let favourites = project_folder_row(&editor.ui, "Favourites").expect("Favourites at the top of the tree");
+    let top = project_folder_row(&editor.ui, "Hello").unwrap();
+    assert!(editor.ui.rect(favourites)[1] < editor.ui.rect(top)[1], "above the project's folder");
+    click(&mut editor.ui, favourites);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let scenes = project_entry(&editor.ui, "Scenes").expect("the favourite listed");
+    assert!(first_with(&editor.ui, scenes, "folder-green").is_some(), "still green");
+    context_click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Remove from Favourites").unwrap();
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(project_entry(&editor.ui, "Scenes").is_none(), "gone from Favourites");
+}
+
+#[test]
+fn the_game_view_goes_full_screen_and_draws_gizmos_from_its_title_bar() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.show_dock_panel(dock, "game");
+    frame(&mut editor, &mut renderer);
+    let maximize = editor.ui.find(editor.ui.root(), "game-maximize").expect("a full screen button");
+    let gizmos = editor.ui.find(editor.ui.root(), "game-gizmos").expect("a Gizmos button");
+    assert!(shown(&editor.ui, maximize) && shown(&editor.ui, gizmos));
+    assert!(!editor.settings().game_gizmos, "off to start with");
+    click(&mut editor.ui, gizmos);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.settings().game_gizmos && editor.ui.is_checked(gizmos));
+    let handles = editor.ui.find(editor.ui.root(), "game-handles").unwrap();
+    assert!(!editor.ui.shapes(handles).is_empty(), "Hello's camera and light drawn in the Game view");
+    // Its Stats button shows the frame's numbers over it, as the Scene view has them.
+    let stats_button = editor.ui.find(editor.ui.root(), "game-stats-button").expect("a Stats button");
+    click(&mut editor.ui, stats_button);
+    for _ in 0..40 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.settings().game_stats);
+    let stats = editor.ui.find(editor.ui.root(), "game-stats").unwrap();
+    assert!(shown(&editor.ui, stats), "shown over the Game view");
+    let texts = texts_in(&editor.ui, stats);
+    assert_eq!(texts.iter().step_by(2).map(String::as_str).collect::<Vec<_>>(), ["FPS", "Frame", "GPU", "Memory", "Draws", "Shadows", "Objs", "Culled"]);
+    assert!(texts[7].ends_with(" MB") || texts[7] == "–", "{texts:?}");
+    shot(&mut renderer, "game-stats.png");
+    click(&mut editor.ui, maximize);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let open: Vec<String> = editor.ui.dock_panels(dock).into_iter().filter(|(.., o)| *o).map(|(id, ..)| id).collect();
+    assert_eq!(open, ["game"], "the Game view has the dock alone");
+    assert!(editor.ui.is_checked(maximize));
+    click(&mut editor.ui, maximize);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.dock_panels(dock).iter().filter(|(.., o)| *o).count() > 1, "the layout back");
 }
 
 #[test]
@@ -2405,6 +2637,9 @@ fn the_project_panel_shows_assets_and_makes_renames_and_deletes_files() {
     // A new material from the menu, named in the rename bar.
     context_click(&mut editor.ui, day);
     frame(&mut editor, &mut renderer);
+    // A long menu in a small window: scrolled to, as the wheel does.
+    let new = menu_item(&editor.ui, "New Material").expect("the menu makes materials");
+    scroll_to(&mut editor, &mut renderer, new);
     let new = menu_item(&editor.ui, "New Material").expect("the menu makes materials");
     click(&mut editor.ui, new);
     frame(&mut editor, &mut renderer);
@@ -4302,6 +4537,41 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     let texts: Vec<Vec<String>> = rows.iter().map(|&row| texts_in(&editor.ui, row)).collect();
     assert!(texts.contains(&vec!["Space".to_string(), "Keyboard".to_string()]), "{texts:?}");
     assert!(rows.iter().any(|&row| editor.ui.has_class(row, "odd")));
+    // A line runs down beside a binding, under its action's icon.
+    let space =
+        rows.iter().copied().find(|&row| texts_in(&editor.ui, row).first().is_some_and(|t| t == "Space")).unwrap();
+    let mut guides = Vec::new();
+    with_class(&editor.ui, space, "input-row-guide", &mut guides);
+    assert_eq!(guides.iter().filter(|&&g| editor.ui.is_visible(g)).count(), 1, "one level in");
+    // An action's arrow folds its bindings away, and opens them again.
+    let listed = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "input-row", &mut rows);
+        rows.into_iter()
+            .filter(|&r| shown(&editor.ui, r))
+            .filter_map(|r| texts_in(&editor.ui, r).into_iter().next())
+            .collect::<Vec<_>>()
+    };
+    let jump =
+        rows.iter().copied().find(|&row| texts_in(&editor.ui, row).first().is_some_and(|t| t == "Jump")).unwrap();
+    let fold = first_with(&editor.ui, jump, "input-row-fold").expect("an action has a fold arrow");
+    click(&mut editor.ui, fold);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let folded = listed(&editor);
+    assert!(folded.contains(&"Jump".to_string()) && !folded.contains(&"Space".to_string()), "{folded:?}");
+    let jump = {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "input-row", &mut rows);
+        rows.into_iter()
+            .find(|&r| shown(&editor.ui, r) && texts_in(&editor.ui, r).first().is_some_and(|t| t == "Jump"))
+            .unwrap()
+    };
+    let fold = first_with(&editor.ui, jump, "input-row-fold").unwrap();
+    click(&mut editor.ui, fold);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(listed(&editor).contains(&"Space".to_string()), "open again");
     // The key maps are its Layout.
     editor.ui.set_segment(view, 1);
     for _ in 0..3 {
@@ -6279,7 +6549,7 @@ fn hierarchies_and_project_panels_open_more_than_once() {
     let mut tiles = Vec::new();
     with_class(&editor.ui, files[1], "tile", &mut tiles);
     let models =
-        tiles.into_iter().find(|&t| editor.ui.is_visible(t) && editor.ui.text(editor.ui.children(t)[1]) == "Models");
+        tiles.into_iter().find(|&t| editor.ui.is_visible(t) && tile_name(&editor.ui, t) == "Models");
     let [x, y, w, h] = editor.ui.rect(models.expect("the second shows the project's folders"));
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
     for _ in 0..2 {

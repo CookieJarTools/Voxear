@@ -200,7 +200,12 @@ internal static unsafe class EntryPoints
 		*written = 0;
 		try
 		{
-			if (!GuideChecks.Run(Native.Utf8(type, typeLength), Native.Utf8(method, methodLength), out var passed, out var failure))
+			var (typeName, methodName) = (Native.Utf8(type, typeLength), Native.Utf8(method, methodLength));
+			// A [Test] is run as a check is, failing with what its Assert said or what it threw.
+			var passed = false;
+			var failure = string.Empty;
+			if (!TestRunner.Run(typeName, methodName, GameScripts.Assemblies, out passed, out failure)
+				&& !GuideChecks.Run(typeName, methodName, out passed, out failure))
 			{
 				return 2;
 			}

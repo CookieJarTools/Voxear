@@ -2241,6 +2241,8 @@ struct VoxelVolumes
     uint lampMask;
     uint sunMapOn;
     float* sunMap;
+    // Where `glass` was kept this frame, how far off in metres what is opaque behind it is (voxelShadowFragment).
+    float* behind;
     VoxelVolume volumes[MAX_VOXEL_VOLUMES];
 };
 

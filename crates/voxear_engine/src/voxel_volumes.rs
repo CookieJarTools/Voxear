@@ -812,12 +812,32 @@ pub(crate) fn register() {
         let reach = Vec3::splat(radius.max(0.0));
         let at = Vec3::from(at);
         let carve = fill == -1;
+        // On a player's machine, the server is asked.
+        if crate::voxel_sync::asks(world) {
+            let Some(fill) = material_from_script(fill) else { return -1 };
+            let data = VoxelEditData::ball(at.to_array(), radius.max(0.0), fill);
+            crate::voxel_sync::ask(world, &crate::voxel_sync::VoxelAsk::Shape(data));
+            return reached_by(world, at - reach, at + reach, None).len() as i32;
+        }
         settling(world, carve, at - reach, at + reach, |world| from_script(world, at.to_array(), radius, fill))
+    });
+    voxear_scripting::set_voxel_ropes(|world, act, n, obj| match act {
+        0 => {
+            let (tied, holds) = (Vec3::new(n[0], n[1], n[2]), Vec3::new(n[3], n[4], n[5]));
+            Some(crate::voxel_ropes::hang(world, tied, holds, n[6], n[7]))
+        }
+        _ => obj.filter(|obj| crate::voxel_ropes::cut(world, *obj)),
     });
     voxear_scripting::set_voxel_blasts(|world, at, radius, pieces, throw| {
         use crate::voxel_collapse::{BlastOptions, blast};
         use crate::voxel_felling::CutPieces;
         let pieces = if pieces == 1 { CutPieces::Gone } else { CutPieces::Fall };
+        if crate::voxel_sync::asks(world) {
+            let at = Vec3::from(at);
+            let reach = Vec3::splat(radius.max(0.0));
+            crate::voxel_sync::ask(world, &crate::voxel_sync::VoxelAsk::Blast { at, radius, pieces, throw });
+            return [reached_by(world, at - reach, at + reach, None).len() as i32, 0];
+        }
         let done = blast(world, Vec3::from(at), radius, BlastOptions { pieces, throw, ..BlastOptions::default() }, None);
         [done.reached, done.dug].map(|n| n.min(i32::MAX as usize) as i32)
     });
@@ -833,10 +853,33 @@ pub(crate) fn register() {
     voxear_scripting::set_voxel_shapes(|world, request| {
         let carve = request.fill == -1;
         let (low, high) = request_reach(request);
+        if crate::voxel_sync::asks(world) {
+            let Some(data) = shape_of_script(request) else { return -1 };
+            crate::voxel_sync::ask(world, &crate::voxel_sync::VoxelAsk::Shape(data));
+            return reached_by(world, low, high, None).len() as i32;
+        }
         settling(world, carve, low, high, |world| shape_from_script(world, request))
     });
     voxear_scripting::set_voxel_sets(|world, points, to, tint| {
         let points: Vec<Vec3> = points.iter().map(|p| Vec3::from(*p)).collect();
+        if crate::voxel_sync::asks(world) {
+            use crate::voxel_sync::VoxelAsk;
+            let ask = match to {
+                -2 => VoxelAsk::Restore { points },
+                to => match material_from_script(to) {
+                    Some(material) => {
+                        VoxelAsk::Set { points, to: material.map(|material| VoxelKind { material, tint }) }
+                    }
+                    None => return -1,
+                },
+            };
+            let count = match &ask {
+                VoxelAsk::Set { points, .. } | VoxelAsk::Restore { points } => points.len() as i32,
+                _ => 0,
+            };
+            crate::voxel_sync::ask(world, &ask);
+            return count;
+        }
         match to {
             -2 => {
                 unset_voxels(world, &points, None);
@@ -897,6 +940,16 @@ pub(crate) fn register() {
                 _ => None,
             },
         };
+        if crate::voxel_sync::asks(world) {
+            let ask = crate::voxel_sync::VoxelAsk::Cut {
+                cut,
+                toward: options.toward,
+                pieces: options.pieces,
+                rest: options.rest,
+            };
+            crate::voxel_sync::ask(world, &ask);
+            return ([1, 0, 0, 0], Vec::new(), Vec::new());
+        }
         let done = crate::voxel_felling::cut(world, &cut, options, None);
         let counts = [done.reached, done.columns, done.voxels, done.pieces.len()].map(|n| n.min(i32::MAX as usize) as i32);
         (counts, done.pieces.iter().map(script_piece).collect(), done.mown.iter().map(|at| at.to_array()).collect())
@@ -956,6 +1009,38 @@ fn request_reach(request: &voxear_scripting::VoxelShapeRequest) -> (Vec3, Vec3) 
         high = high.max(Vec3::new(p[0], request.high.max(at.y) + far, p[1]));
     }
     (low, high)
+}
+
+/// Makes what a player asked of the endless volumes on the server, as the
+/// server's own scripts would (see `voxel_sync`).
+pub(crate) fn make_ask(content: &mut Content, world: &mut World, ask: &crate::voxel_sync::VoxelAsk) {
+    use crate::voxel_collapse::{BlastOptions, blast};
+    use crate::voxel_felling::CutOptions;
+    use crate::voxel_sync::VoxelAsk;
+    match ask {
+        VoxelAsk::Shape(data) => {
+            let reach = data.shaped().reach();
+            settling(world, data.fill.is_none(), reach.0, reach.1, |world| shape_edit(world, data, None));
+        }
+        VoxelAsk::Print(data) => {
+            if print_as(content, world, data, None).is_none() {
+                tracing::warn!("a player asked to print {:?}, which is not a Voxel Print here", data.print);
+            }
+        }
+        VoxelAsk::Set { points, to } => {
+            let (low, high) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(l, h), p| (l.min(*p), h.max(*p)));
+            settling(world, to.is_none(), low, high, |world| set_voxels(world, points, *to, None));
+        }
+        VoxelAsk::Restore { points } => unset_voxels(world, points, None),
+        VoxelAsk::Cut { cut, toward, pieces, rest } => {
+            let options = CutOptions { toward: *toward, pieces: *pieces, rest: *rest };
+            crate::voxel_felling::cut(world, cut, options, None);
+        }
+        VoxelAsk::Blast { at, radius, pieces, throw } => {
+            let options = BlastOptions { pieces: *pieces, throw: *throw, ..BlastOptions::default() };
+            blast(world, *at, *radius, options, None);
+        }
+    }
 }
 
 /// A felled piece as scripts read it.
@@ -1178,16 +1263,25 @@ fn material_from_script(number: i32) -> Option<Option<VoxelMaterial>> {
 /// A script's shaped edit (`Voxels.Box` and the rest): how many volumes it
 /// reached, or -1 for a shape or a ground there is none of.
 fn shape_from_script(world: &mut World, request: &voxear_scripting::VoxelShapeRequest) -> i32 {
-    let Some(fill) = material_from_script(request.fill) else { return -1 };
+    match shape_of_script(request) {
+        Some(data) => shape_edit(world, &data, None) as i32,
+        None => -1,
+    }
+}
+
+/// A script's shaped edit as a scene writes it, placed in the world: none
+/// for a shape or a ground there is none of.
+fn shape_of_script(request: &voxear_scripting::VoxelShapeRequest) -> Option<VoxelEditData> {
+    let fill = material_from_script(request.fill)?;
     let shape = match request.shape {
         0 => VoxelEditShape::Ball,
         1 => VoxelEditShape::Box,
         2 => VoxelEditShape::Ramp,
         3 => VoxelEditShape::Area,
         4 => VoxelEditShape::Cover,
-        _ => return -1,
+        _ => return None,
     };
-    let data = VoxelEditData {
+    Some(VoxelEditData {
         shape,
         at: request.at,
         radius: request.radius.max(0.0),
@@ -1201,8 +1295,7 @@ fn shape_from_script(world: &mut World, request: &voxear_scripting::VoxelShapeRe
         tint: request.tint,
         clear: request.clear.max(0.0),
         ..VoxelEditData::default()
-    };
-    shape_edit(world, &data, None) as i32
+    })
 }
 
 /// Carves a ball of `radius` metres round `at` in the world out of every
@@ -1245,6 +1338,13 @@ fn reached_by(world: &World, low: Vec3, high: Vec3, only: Option<Entity>) -> Vec
             inside.then_some((entity, corner))
         })
         .collect()
+}
+
+/// Keeps `edit` in `entity`'s volume after what was changed in it before,
+/// and `data` in what its scene writes: as an edit the server made comes
+/// to a player's machine.
+pub(crate) fn keep_edit(world: &mut World, entity: Entity, edit: VoxelEdit, data: VoxelEditData) {
+    keep(world, entity, edit, data);
 }
 
 /// Keeps `edit` in `entity`'s volume after what was changed in it before,
@@ -1307,6 +1407,19 @@ pub(crate) fn print_from_scripts(content: &mut Content, world: &mut World) {
             tint: request.tint,
             ..VoxelEditData::printed(request.print.clone(), request.at, request.rotation)
         };
+        // On a player's machine, the server is asked, by the print's GUID.
+        if crate::voxel_sync::asks(world) {
+            match content.voxel_print(&request.print) {
+                Some((guid, _)) => {
+                    let data = VoxelEditData { print: Some(guid.to_string()), ..data };
+                    crate::voxel_sync::ask(world, &crate::voxel_sync::VoxelAsk::Print(data));
+                }
+                None => {
+                    tracing::error!(target: "script", "Voxels.Print: {} is not a Voxel Print in the project", request.print)
+                }
+            }
+            continue;
+        }
         if print_as(content, world, &data, None).is_none() {
             tracing::error!(target: "script", "Voxels.Print: {} is not a Voxel Print in the project", request.print);
         }

@@ -18,6 +18,7 @@ voxear_terrain.workspace = true
 voxear_nav.workspace = true
 voxear_rhi.workspace = true
 voxear_render.workspace = true
+zstd.workspace = true
 voxear_ui.workspace = true
 arboard.workspace = true
 voxear_scripting.workspace = true

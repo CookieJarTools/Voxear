@@ -4183,6 +4183,7 @@ dependencies = [
  "voxear_ui",
  "voxear_voxshade",
  "winit",
+ "zstd",
 ]
 
 [[package]]

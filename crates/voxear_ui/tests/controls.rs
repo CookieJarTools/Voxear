@@ -158,6 +158,16 @@ fn trees_open_and_close_and_keep_their_selection() {
     let file = ui.children(rows[1])[2];
     assert!(ui.rect(file)[0] > ui.rect(ui.children(rows[0])[2])[0], "files indent under their folder");
     assert!(ui.has_class(ui.children(rows[0])[1], "expanded"));
+    // A line down each file's indent, under its folder's arrow; none beside the folder.
+    let guides = |row: NodeId| ui.children(ui.children(row)[0]);
+    assert!(guides(rows[0]).is_empty());
+    let line = guides(rows[1]);
+    assert_eq!(line.len(), 1, "one level in");
+    assert!(ui.has_class(line[0], "tree-guide"));
+    let [lx, ly, lw, lh] = ui.rect(line[0]);
+    let [ax, _, aw, _] = ui.rect(ui.children(rows[0])[1]);
+    assert!((lx + lw / 2.0 - (ax + aw / 2.0)).abs() <= 1.0, "under the folder's arrow: {lx} {lw} {ax} {aw}");
+    assert!(lw <= 1.5 && (lh - 20.0).abs() < 0.5 && (ly - ui.rect(rows[1])[1]).abs() < 0.5, "the row's height");
 
     ui.set_expanded(tree, 1, false);
     ui.frame(WIDTH, HEIGHT, 1.0);

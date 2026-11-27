@@ -16,6 +16,7 @@
     --vx-field-line: #2e3036;
     --vx-hover: #232428;
     --vx-selected: #2d3039;
+    --vx-button-hover: #33363f;
     --vx-seg-on: #393c45;
     --vx-text: #eceded;
     --vx-text-2: #c8ccd1;
@@ -56,8 +57,9 @@ Button {
     transition: background-color var(--vx-fade), border-color var(--vx-fade), color var(--vx-fade);
 }
 
+/* Plainly lighter under the pointer, so it shows which one a click presses. */
 Button:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
     border-color: var(--vx-line-2);
 }
 
@@ -96,7 +98,7 @@ Button:focus-visible {
 }
 
 .icon-button:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
     border-color: transparent;
     color: var(--vx-text);
 }
@@ -308,6 +310,11 @@ Foldout:focus-visible .foldout-title {
 
 .tree-row {
     padding-left: 2px;
+}
+
+/* A faint line down the indent under each item a row is inside. */
+.tree-guide {
+    background-color: var(--vx-line-2);
 }
 
 .tree-arrow {

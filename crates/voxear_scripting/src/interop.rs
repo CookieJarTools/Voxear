@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 104;
+pub(crate) const API_VERSION: u32 = 105;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -704,6 +704,9 @@ pub(crate) struct NativeApi {
     /// loose falling (`pieces` 0) or taken away (1), thrown at `throw` metres a second; the volumes and voxels in
     /// `done`, and how many volumes it reached, or -1.
     pub voxel_blast: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, pieces: i32, throw: f32, done: *mut [i32; 2]) -> i32,
+    /// `Voxels.Hang` (`act` 0, where it is tied and what it holds, its length and strength in `numbers`) and
+    /// `Voxels.CutRope` (1, `obj`): the rope's Obj, or 0.
+    pub voxel_rope: unsafe extern "C" fn(act: i32, numbers: *const [f32; 8], obj: u64) -> u64,
 }
 
 /// What scripts asked of shader packs, for the engine to do after the frame.
@@ -2467,6 +2470,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         voxel_felling: crate::voxels::voxel_felling,
         voxel_raycast_meeting: crate::voxels::voxel_raycast_meeting,
         voxel_blast: crate::voxels::voxel_blast,
+        voxel_rope: crate::voxels::voxel_rope,
     }
 }
 

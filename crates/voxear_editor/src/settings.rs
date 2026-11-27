@@ -406,6 +406,14 @@ pub const PREFERENCES: &[Setting] = &[
          While editing, the same for a selected camera. Off, the Scene view culls from its own camera. On by default.",
     ),
     Setting::new(
+        ("Scene View", "Overlays"),
+        "game_stats",
+        "Stats in the Game view",
+        Kind::Toggle,
+        "The frame's numbers over the Game view, as over the Scene view: its frame rate and times, memory, draws \
+         and Objs. Its Stats button turns them on and off. Off by default.",
+    ),
+    Setting::new(
         ("Scene View", "Gizmos"),
         "game_gizmos",
         "Gizmos in the Game view",
@@ -511,6 +519,8 @@ pub struct Settings {
     pub game_culling: bool,
     /// The Game view draws gizmos too, with its Gizmos button.
     pub game_gizmos: bool,
+    /// The Game view shows the frame's numbers, with its Stats button.
+    pub game_stats: bool,
     pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
@@ -609,6 +619,7 @@ impl Default for Settings {
             area_gizmos: true,
             game_culling: true,
             game_gizmos: false,
+            game_stats: false,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,
@@ -667,6 +678,7 @@ impl Settings {
             "area_gizmos" => json!(self.area_gizmos),
             "game_culling" => json!(self.game_culling),
             "game_gizmos" => json!(self.game_gizmos),
+            "game_stats" => json!(self.game_stats),
             "scene_shading" => json!(SHADING.get(self.scene_shading).map_or("Lit", |(label, _)| *label)),
             "prefab_parts" => json!(self.prefab_parts),
             "start_paused" => json!(self.start_paused),
@@ -724,6 +736,7 @@ impl Settings {
             "area_gizmos" => self.area_gizmos = on,
             "game_culling" => self.game_culling = on,
             "game_gizmos" => self.game_gizmos = on,
+            "game_stats" => self.game_stats = on,
             "scene_shading" => self.scene_shading = at(SHADING).unwrap_or(0),
             "prefab_parts" => self.prefab_parts = on,
             "tools_may_change" => self.tools_may_change = on,

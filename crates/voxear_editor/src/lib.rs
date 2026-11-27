@@ -152,6 +152,7 @@ mod starter_blocks;
 mod starter_dungeon;
 mod starter_trees;
 mod strings_inspector;
+mod view_stats;
 #[cfg(target_os = "linux")]
 mod wayland_drops;
 mod window;

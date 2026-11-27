@@ -2214,6 +2214,19 @@ fn the_game_view_goes_full_screen_and_draws_gizmos_from_its_title_bar() {
     assert!(editor.settings().game_gizmos && editor.ui.is_checked(gizmos));
     let handles = editor.ui.find(editor.ui.root(), "game-handles").unwrap();
     assert!(!editor.ui.shapes(handles).is_empty(), "Hello's camera and light drawn in the Game view");
+    // Its Stats button shows the frame's numbers over it, as the Scene view has them.
+    let stats_button = editor.ui.find(editor.ui.root(), "game-stats-button").expect("a Stats button");
+    click(&mut editor.ui, stats_button);
+    for _ in 0..40 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.settings().game_stats);
+    let stats = editor.ui.find(editor.ui.root(), "game-stats").unwrap();
+    assert!(shown(&editor.ui, stats), "shown over the Game view");
+    let texts = texts_in(&editor.ui, stats);
+    assert_eq!(texts.iter().step_by(2).map(String::as_str).collect::<Vec<_>>(), ["FPS", "Frame", "GPU", "Memory", "Draws", "Shadows", "Objs", "Culled"]);
+    assert!(texts[7].ends_with(" MB") || texts[7] == "–", "{texts:?}");
+    shot(&mut renderer, "game-stats.png");
     click(&mut editor.ui, maximize);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);

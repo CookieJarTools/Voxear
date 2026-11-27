@@ -175,6 +175,9 @@ struct Nodes {
     /// The Game view's Gizmos button, and what its gizmos are drawn on.
     game_gizmos: NodeId,
     game_handles: NodeId,
+    /// The Game view's Stats button, and the frame's numbers it shows (see `view_stats`).
+    game_stats_button: NodeId,
+    game_stats: NodeId,
     /// The first Inspector's padlock.
     inspector_lock: NodeId,
     command: NodeId,
@@ -601,6 +604,8 @@ impl Editor {
             game_maximize: find(&ui, "game-maximize"),
             game_gizmos: find(&ui, "game-gizmos"),
             game_handles: find(&ui, "game-handles"),
+            game_stats_button: find(&ui, "game-stats-button"),
+            game_stats: find(&ui, "game-stats"),
             inspector_lock: find(&ui, "inspector-lock"),
             command: find(&ui, "command"),
             status_left: find(&ui, "status-left"),
@@ -3554,11 +3559,12 @@ impl Editor {
         self.ui.set_text(self.nodes.status_memory, &memory);
         let stats = renderer.stats();
         let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
-        let drawn = stats.drawn_early + stats.drawn_late;
-        let chip = format!("{} objs   {drawn} draws   {gpu_ms:.2} ms GPU", stats.instances);
-        let first = self.all_scene_views().find(|view| view.panel == scene_views::FIRST).map(|view| view.stats);
-        if let Some(stats) = first {
-            self.ui.set_text(stats, &chip);
+        let numbers = crate::view_stats::numbers(fps, gpu_ms, profiler::resident_megabytes(), &stats);
+        let panels: Vec<NodeId> = self.all_scene_views().map(|view| view.stats).collect();
+        for panel in panels.into_iter().chain([self.nodes.game_stats]) {
+            if self.ui.is_visible(panel) {
+                crate::view_stats::show(&mut self.ui, panel, &numbers);
+            }
         }
     }
 }

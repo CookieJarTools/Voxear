@@ -405,6 +405,12 @@ impl Editor {
             changed = true;
         }
         self.ui.set_checked(self.nodes.game_gizmos, self.memory.settings.game_gizmos);
+        if self.ui.clicked(self.nodes.game_stats_button) {
+            self.memory.settings.game_stats = !self.memory.settings.game_stats;
+            changed = true;
+        }
+        self.ui.set_checked(self.nodes.game_stats_button, self.memory.settings.game_stats);
+        self.ui.set_visible(self.nodes.game_stats, self.memory.settings.game_stats);
         if self.ui.clicked(self.nodes.game_maximize) {
             maximize = Some("game".to_string());
         }
@@ -463,7 +469,7 @@ impl Editor {
             if ui.segment(view.tool) != tool {
                 ui.set_segment(view.tool, tool);
             }
-            ui.set_visible(view.stats, first && settings.show_stats);
+            ui.set_visible(view.stats, settings.show_stats);
             ui.set_visible(view.view_gizmo, settings.show_axis_gizmo);
             ui.set_checked(view.gizmos_button, view.show_gizmos);
             if ui.selected_option(view.shading_menu) != view.shading {

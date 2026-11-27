@@ -52,7 +52,8 @@
             <Slider name="particle-scrub" class="particle-scrub" min="0" max="1" value="0" />
             <Label name="particle-time" class="particle-time">0.00 s</Label>
         </Panel>
-        <Label name="scene-stats" class="overlay chip" />
+        <!-- The frame's numbers, with Show stats on (see `view_stats`). -->
+        <Panel name="scene-stats" class="overlay view-stats" />
         <Panel name="view-gizmo" class="overlay gizmo-box">
             <Panel name="gizmo" class="gizmo" />
             <Label class="projection">Persp</Label>

@@ -1257,6 +1257,29 @@
     background-color: var(--vx-button-hover);
 }
 
+/* The frame's numbers over a Scene view or the Game view: names and numbers, two pairs to a row. */
+.view-stats {
+    left: 8px;
+    bottom: 8px;
+    display: grid;
+    grid-template-columns: auto auto auto auto;
+    column-gap: 8px;
+    row-gap: 1px;
+    padding: 6px 10px;
+    font-size: 11px;
+}
+
+.view-stats-name {
+    color: var(--vx-muted);
+}
+
+.view-stats-value {
+    font-family: mono;
+    color: var(--vx-text);
+    text-align: right;
+    margin-right: 6px;
+}
+
 .chip {
     left: 8px;
     bottom: 8px;

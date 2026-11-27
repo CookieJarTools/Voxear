@@ -100,6 +100,9 @@ pub struct PlayerSettings {
     pub fullscreen: bool,
     pub width: u32,
     pub height: u32,
+    /// The stats panel, as the build profile's `[player] stats` says.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stats: String,
     /// What built it: the engine's version, the profile, and the project's
     /// git commit, when it has one.
     pub engine: String,
@@ -422,7 +425,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         size: (settings.width, settings.height),
         fullscreen: settings.fullscreen,
         frames: args.frames,
-        stats: false,
+        stats: settings.stats == "shown",
+        stats_key: matches!(settings.stats.as_str(), "key" | "shown"),
         tools: settings.development,
         console: settings.development.then(|| data.to_path_buf()),
     };

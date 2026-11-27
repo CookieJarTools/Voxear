@@ -38,7 +38,7 @@ use voxear_terrain::blocks::{
 
 use crate::{
     physics::VoxelSolids,
-    voxel_ways::{VoxelWay, VoxelWays},
+    voxel_ways::{VoxelWalker, VoxelWay, VoxelWays},
 };
 
 /// How large a cell is, in metres, near enough: a whole number of voxels.
@@ -62,7 +62,6 @@ const MOST_UP: i32 = 12;
 /// keep that much further from walls and trunks than a cell's middle does.
 const CLEAR: f32 = 0.25;
 /// How far a step up and a drop may go, in metres, for what walks there.
-const STEP: f32 = 0.45;
 const DROP: f32 = 2.0;
 /// The most places a search looks at, and how many chunks of a long way
 /// are found place by place before the rest is found as it is walked.
@@ -73,10 +72,12 @@ fn faces() -> Arc<[BlockFaces]> {
     Arc::from([BlockFaces::new(0, 0, 0), BlockFaces::new(0, 0, 0), BlockFaces::water(0)].as_slice())
 }
 
-/// A column of chunks made: its cells' chunks, by key.
+/// A column of chunks made: its cells' chunks, by key, and the lowest chunk
+/// it was made from.
 struct Made {
     column: [i32; 2],
     chunks: Vec<([i32; 3], Chunk)>,
+    lowest: i32,
 }
 
 /// One endless volume's navigation.
@@ -93,8 +94,12 @@ struct Ground {
     blocks: BlockMap,
     shared: Arc<BlockMap>,
     builder: BlockNavBuilder,
-    /// The chunks each column made holds, and when it was last wanted.
-    columns: HashMap<[i32; 2], (Vec<[i32; 3]>, Instant)>,
+    /// The chunks each column made holds, when it was last wanted, and the
+    /// lowest chunk it was made from.
+    columns: HashMap<[i32; 2], (Vec<[i32; 3]>, Instant, i32)>,
+    /// How deep each column is wanted made, as a chunk: for what walks under
+    /// its ground, as in a cave, and where it is going.
+    deep: HashMap<[i32; 2], i32>,
     making: HashSet<[i32; 2]>,
     /// Columns to make again, for a change, as soon as they can be.
     stale: HashSet<[i32; 2]>,
@@ -128,6 +133,7 @@ impl Ground {
             shared: Arc::new(BlockMap::default()),
             builder: BlockNavBuilder::new(&walkers),
             columns: HashMap::new(),
+            deep: HashMap::new(),
             making: HashSet::new(),
             stale: HashSet::new(),
             asked: HashSet::new(),
@@ -161,9 +167,21 @@ impl Ground {
         Vec3::new(x, y, z)
     }
 
-    /// The walker something `height` metres tall and `radius` round is.
-    fn walker(&self, height: f32, radius: f32) -> Walker {
-        walker_of(height, radius, self.size)
+    /// The chunk height `y` in the world is in, counted up from the
+    /// volume's floor.
+    fn chunk_y(&self, y: f32) -> i32 {
+        ((y - self.corner.y) / self.side()).floor() as i32
+    }
+
+    /// Wants column `column` made down to the chunk under the one height
+    /// `y` is in, made again where it was made less deep.
+    fn want_down_to(&mut self, column: [i32; 2], y: f32) {
+        let below = self.chunk_y(y) - 1;
+        let deep = self.deep.entry(column).or_insert(below);
+        *deep = (*deep).min(below);
+        if self.columns.get(&column).is_some_and(|(.., lowest)| *lowest > below) {
+            self.stale.insert(column);
+        }
     }
 
     fn local(&self, at: Vec3, walker: Walker) -> [f32; 3] {
@@ -184,10 +202,10 @@ impl Ground {
             self.stale.remove(column);
             self.making.insert(*column);
             let (solids, volume, sent) = (self.solids.clone(), self.volume.clone(), self.sent.clone());
-            let (cell, corner, column) = (self.cell, self.corner, *column);
+            let (cell, corner, column, deep) = (self.cell, self.corner, *column, self.deep.get(column).copied());
             std::thread::spawn(move || {
-                let chunks = cells_of(&*solids, &volume, corner, cell, column);
-                let _ = sent.send(Made { column, chunks });
+                let (chunks, lowest) = cells_of(&*solids, &volume, corner, cell, column, deep);
+                let _ = sent.send(Made { column, chunks, lowest });
             });
         }
     }
@@ -198,7 +216,7 @@ impl Ground {
         let mut changed = false;
         while let Ok(made) = self.taken.try_recv() {
             self.making.remove(&made.column);
-            let old = self.columns.remove(&made.column).map(|(keys, _)| keys).unwrap_or_default();
+            let old = self.columns.remove(&made.column).map(|(keys, ..)| keys).unwrap_or_default();
             for key in old {
                 self.blocks.put_chunk(key, Chunk::filled(AIR));
             }
@@ -206,7 +224,7 @@ impl Ground {
             for (key, chunk) in made.chunks {
                 self.blocks.put_chunk(key, chunk);
             }
-            self.columns.insert(made.column, (keys, now));
+            self.columns.insert(made.column, (keys, now, made.lowest));
             changed = true;
         }
         changed
@@ -223,14 +241,15 @@ impl Ground {
         let gone: Vec<[i32; 2]> = self
             .columns
             .iter()
-            .filter(|(column, (_, wanted))| now.duration_since(*wanted) > UNUSED && far(**column))
+            .filter(|(column, (_, wanted, _))| now.duration_since(*wanted) > UNUSED && far(**column))
             .map(|(column, _)| *column)
             .collect();
         for column in &gone {
-            for key in self.columns.remove(column).map(|(keys, _)| keys).unwrap_or_default() {
+            for key in self.columns.remove(column).map(|(keys, ..)| keys).unwrap_or_default() {
                 self.blocks.put_chunk(key, Chunk::filled(AIR));
             }
             self.asked.remove(column);
+            self.deep.remove(column);
         }
         !gone.is_empty()
     }
@@ -256,8 +275,8 @@ impl Ground {
 /// wide it is: a walker of more stands only where every column under it is
 /// within half a cell of the others, which ground of small voxels sloping
 /// at all seldom is. What is solid is made [`CLEAR`] wider instead.
-fn walker_of(height: f32, _radius: f32, size: f32) -> Walker {
-    Walker::of(height, STEP, DROP, size)
+fn walker_of(height: f32, step: f32, size: f32) -> Walker {
+    Walker::of(height, step, DROP, size)
 }
 
 /// The walkers a volume's cells `size` metres a side gather their places
@@ -266,10 +285,10 @@ fn walker_of(height: f32, _radius: f32, size: f32) -> Walker {
 fn walkers(world: &World, size: f32) -> Vec<Walker> {
     let mut walkers: Vec<Walker> = (0..crate::navigation::AGENT_TYPES)
         .map(|slot| crate::navigation::agent_type(world, slot as u8))
-        .map(|kind| walker_of(kind.height, kind.radius, size).class())
+        .map(|kind| walker_of(kind.height, kind.step, size).class())
         .collect();
-    walkers
-        .extend([(1.8, 0.35), (1.0, 0.3), (2.5, 0.5)].map(|(height, radius)| walker_of(height, radius, size).class()));
+    let step = crate::navigation::agent_type(world, 0).step;
+    walkers.extend([1.8, 1.0, 2.5].map(|height| walker_of(height, step, size).class()));
     let mut kept: Vec<Walker> = Vec::new();
     for walker in walkers {
         if !kept.contains(&walker) {
@@ -289,7 +308,8 @@ fn cells_of(
     corner: Vec3,
     cell: i32,
     column: [i32; 2],
-) -> Vec<([i32; 3], Chunk)> {
+    deep: Option<i32>,
+) -> (Vec<([i32; 3], Chunk)>, i32) {
     let side = CHUNK as i32 * cell;
     let (x0, z0) = (column[0] * side, column[1] * side);
     let voxel = solids.voxel();
@@ -298,7 +318,9 @@ fn cells_of(
         Some(found) => found.0.heights([x0, z0], [side, side]),
         None => vec![0; (side * side) as usize],
     };
-    let (Some(&lowest), Some(&highest)) = (heights.iter().min(), heights.iter().max()) else { return Vec::new() };
+    let (Some(&lowest), Some(&highest)) = (heights.iter().min(), heights.iter().max()) else {
+        return (Vec::new(), 0);
+    };
     // Where water stands over each column of cells, in cells from the volume's floor.
     let cells = CHUNK as i32;
     let size = cell as f32 * voxel;
@@ -329,8 +351,10 @@ fn cells_of(
     let wide = side + 2 * margin;
     let mut solid = vec![false; (wide * side * wide) as usize];
     let mut chunks = Vec::new();
+    // From under the lowest ground, or deeper where something walks or goes under it.
     let first = lowest.div_euclid(side) - 1;
-    let mut ky = first.max(-1);
+    let start = deep.map_or(first, |deep| deep.min(first)).max(-1);
+    let mut ky = start;
     while ky <= first + MOST_UP && ky * side < tall {
         solids.fill([x0 - margin, ky * side, z0 - margin], [wide, side, wide], &mut solid);
         let mut chunk = Chunk::filled(AIR);
@@ -367,7 +391,7 @@ fn cells_of(
         }
         ky += 1;
     }
-    chunks
+    (chunks, start)
 }
 
 /// Every endless volume's navigation, by its Obj.
@@ -386,36 +410,58 @@ pub struct VoxelNavigation(Arc<Mutex<Grounds>>);
 impl VoxelWays for Finder {
     fn way(
         &self,
-        _: &World,
+        world: &World,
         dimension: DimensionId,
         from: Vec3,
         to: Vec3,
-        height: f32,
-        radius: f32,
+        walking: &VoxelWalker,
     ) -> Option<VoxelWay> {
-        let straight = Some(VoxelWay { corners: vec![from, to], complete: true });
+        let straight = Some(VoxelWay::straight(vec![from, to], true));
+        let kind = crate::navigation::agent_type(world, walking.agent_type);
         let (nav, ask, ground) = {
             let mut grounds = self.0.lock().ok()?;
             let ground = grounds.grounds.values_mut().find(|ground| ground.dimension == dimension)?;
-            // The cells along the way, made from now on.
+            let (corner, size) = (ground.corner, ground.size);
+            let jump = if walking.jumps { voxear_nav::blocks::walking::MOST_JUMP } else { 0 };
+            let walker = walker_of(walking.height, kind.step.max(0.05), size)
+                .with(walking.swims, false, jump)
+                .climbing(walking.climbs);
+            // Its Nav Links, Portals within the dimension among them, and the ground they lead to, made from now
+            // on as the way's own.
+            let links =
+                crate::navigation::heeded(&crate::navigation::links(world, corner, size, dimension), walking.layer);
+            // The cells along the way, made from now on, as deep as either end.
+            let deepest = from.y.min(to.y);
             let flat = Vec3::new(to.x - from.x, 0.0, to.z - from.z);
             let steps = (flat.length().min(ALONG) / (ground.side() * 0.5)).ceil() as usize;
             let direction = flat.normalize_or_zero();
-            for step in 0..=steps {
-                let at = from + direction * (step as f32 * ground.side() * 0.5);
-                let column = ground.column_of(at);
-                ground.asked.insert(column);
+            let mut columns: Vec<([i32; 2], f32)> = (0..=steps)
+                .map(|step| (ground.column_of(from + direction * (step as f32 * ground.side() * 0.5)), deepest))
+                .collect();
+            columns.extend(ground.columns_round(to, ground.side() * 0.5).into_iter().map(|column| (column, to.y)));
+            let world_at = |at: [f32; 3]| corner + Vec3::from_array(at) * size;
+            for link in &links {
+                for end in [world_at(link.from), world_at(link.to)] {
+                    if (end - from).length() <= ALONG {
+                        columns.push((ground.column_of(end), end.y));
+                    }
+                }
             }
-            ground.asked.extend(ground.columns_round(to, ground.side() * 0.5));
-            let walker = ground.walker(height, radius);
-            let mut ask = PathAsk::new(
-                ground.local(from + Vec3::Y * 0.1 * ground.size, walker),
-                ground.local(to, walker),
-                walker,
-            );
+            for (column, y) in columns {
+                ground.asked.insert(column);
+                ground.want_down_to(column, y);
+            }
+            let mut ask =
+                PathAsk::new(ground.local(from + Vec3::Y * 0.1 * size, walker), ground.local(to, walker), walker);
             (ask.most, ask.refine) = (LOOKED, Some(REFINED));
-            (ask.across, ask.reach) = (2.0 / ground.size, 3.0 / ground.size);
-            (ground.builder.nav().clone(), ask, (ground.corner, ground.size, walker))
+            (ask.across, ask.reach) = (2.0 / size, 3.0 / size);
+            // What each kind of ground costs it, the Nav Areas and Obstacles over the cells, and its links.
+            ask.costs = kind.costs;
+            ask.boxes = crate::navigation::area_boxes(world, corner, size, dimension);
+            let obstacles = crate::nav_obstacle::block_boxes(world, corner, size, dimension);
+            ask.boxes.extend(crate::nav_obstacle::for_walker(&obstacles, walker));
+            ask.links = links;
+            (ground.builder.nav().clone(), ask, (corner, size, walker))
         };
         let found = find_path(&nav, &ask);
         let (corner, size, walker) = ground;
@@ -428,13 +474,18 @@ impl VoxelWays for Finder {
             PathStatus::None => straight,
             status => {
                 let mut corners: Vec<Vec3> = found.corners.iter().map(|at| world(*at)).collect();
+                let (mut jumps, mut links) = (found.jumps, found.links);
                 if let Some(first) = corners.first_mut() {
                     *first = from;
                 }
                 if corners.len() < 2 {
                     corners.push(to);
+                    jumps.push(false);
+                    links.push(None);
                 }
-                Some(VoxelWay { corners, complete: status == PathStatus::Complete })
+                jumps.resize(corners.len(), false);
+                links.resize(corners.len(), None);
+                Some(VoxelWay { corners, complete: status == PathStatus::Complete, jumps, links })
             }
         }
     }
@@ -540,8 +591,14 @@ pub fn update(world: &mut World) {
         let near: Vec<Vec3> =
             walking.iter().filter(|(_, dimension)| *dimension == ground.dimension).map(|(at, _)| *at).collect();
         let mut changed = ground.take(now);
-        // What is wanted: round each agent, then along the ways asked for; nearest first.
-        let mut wanted: Vec<[i32; 2]> = near.iter().flat_map(|at| ground.columns_round(*at, AROUND)).collect();
+        // What is wanted: round each agent, as deep as it stands, then along the ways asked for; nearest first.
+        let mut wanted: Vec<[i32; 2]> = Vec::new();
+        for at in &near {
+            for column in ground.columns_round(*at, AROUND) {
+                ground.want_down_to(column, at.y);
+                wanted.push(column);
+            }
+        }
         wanted.extend(ground.asked.iter().copied());
         let distance = |column: &[i32; 2]| {
             let middle = ground.middle_of(*column, 0.0);
@@ -550,7 +607,7 @@ pub fn update(world: &mut World) {
         wanted.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
         wanted.dedup();
         for column in &wanted {
-            if let Some((_, used)) = ground.columns.get_mut(column) {
+            if let Some((_, used, _)) = ground.columns.get_mut(column) {
                 *used = now;
             }
         }
@@ -628,7 +685,9 @@ mod tests {
         crate::voxel_volumes::sync_colliders(world);
         assert!(settle(world, Duration::from_secs(120)), "the cells are made");
         let dimension = voxear_scene::DimensionId::LEVEL;
-        crate::voxel_ways::finder(world).way(world, dimension, from, to, 1.8, 0.35).expect("a way")
+        crate::voxel_ways::finder(world)
+            .way(world, dimension, from, to, &VoxelWalker::of_size(1.8, 0.35))
+            .expect("a way")
     }
 
     /// Whether the way's corners cross the wall at X 8 between Z `least` and `most`, in the volume.
@@ -692,6 +751,129 @@ mod tests {
         assert!(off > 1.2, "round the pit: {:?}", found.corners);
     }
 
+    /// The way from `from` to `to` for `walker`, once the cells round an agent at `from` are made.
+    fn way_for(world: &mut World, from: Vec3, to: Vec3, walker: &VoxelWalker) -> VoxelWay {
+        crate::voxel_volumes::sync_colliders(world);
+        let dimension = voxear_scene::DimensionId::LEVEL;
+        // Asked once for its cells along the way, then again once they are made.
+        let _ = crate::voxel_ways::finder(world).way(world, dimension, from, to, walker);
+        assert!(settle(world, Duration::from_secs(120)), "the cells are made");
+        crate::voxel_ways::finder(world).way(world, dimension, from, to, walker).expect("a way")
+    }
+
+    fn walker_at(world: &mut World, at: Vec3) {
+        let walker = world.spawn((Transform::from_position(at),));
+        world.insert(walker, crate::nav_agent::NavAgent::default());
+    }
+
+    #[test]
+    fn a_way_through_a_cave_under_the_ground_goes_round_its_bend() {
+        // Ground 20 m deep, and an L of tunnel under it, 2.5 m tall and wide: 10 m along X, then 10 m along Z.
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let ground = VoxelGround { height: 20.0, hills: 0.0, ..VoxelGround::default() };
+        let tunnel = |at: Vec3, size: Vec3| VoxelEdit::boxed(at, size, Quat::IDENTITY, None);
+        let volume = VoxelVolume {
+            endless: true,
+            size: Vec3::new(16.0, 32.0, 16.0),
+            ground: Some(ground),
+            edits: Arc::new(vec![
+                tunnel(Vec3::new(5.0, 8.0, 0.0), Vec3::new(12.5, 2.5, 2.5)),
+                tunnel(Vec3::new(10.0, 8.0, 5.0), Vec3::new(2.5, 2.5, 12.5)),
+            ]),
+            ..VoxelVolume::default()
+        };
+        let corner = Vec3::new(4.0, -10.0, -3.0);
+        let obj = world.spawn((Transform::from_position(corner),));
+        world.insert(obj, volume);
+        let (from, to) = (corner + Vec3::new(0.5, 8.0, 0.0), corner + Vec3::new(10.0, 8.0, 10.0));
+        walker_at(&mut world, from);
+        let found = way_for(&mut world, from, to, &VoxelWalker::of_size(1.8, 0.35));
+        assert!(found.complete, "through the cave: {found:?}");
+        // Round the bend, never through the rock between the two ends.
+        let bend = found.corners.iter().any(|at| (at.x - corner.x - 10.0).abs() < 1.5 && (at.z - corner.z).abs() < 1.5);
+        assert!(bend, "by the bend: {:?}", found.corners);
+        assert!(
+            found.corners.iter().all(|at| (at.y - corner.y - 8.0).abs() < 0.6),
+            "on the cave's floor: {:?}",
+            found.corners
+        );
+    }
+
+    #[test]
+    fn a_nav_link_over_a_wall_too_long_to_go_round_is_taken() {
+        // A wall 200 m long across the way, and a ladder over it.
+        let corner = Vec3::new(0.0, 0.0, 0.0);
+        let (mut world, obj) = walled(corner);
+        let wall = VoxelEdit::boxed(
+            Vec3::new(8.0, 2.9, 4.0),
+            Vec3::new(0.5, 3.6, 200.0),
+            Quat::IDENTITY,
+            Some(VoxelMaterial::Rock),
+        );
+        let mut volume = world.get::<VoxelVolume>(obj).unwrap().clone();
+        volume.edits = Arc::new(vec![wall]);
+        world.insert(obj, volume);
+        let (from, to) = (top(&world, obj, corner, 4.0, 4.0), top(&world, obj, corner, 12.0, 4.0));
+        walker_at(&mut world, from);
+        let walker = VoxelWalker { climbs: true, ..VoxelWalker::of_size(1.8, 0.35) };
+        let blocked = way_for(&mut world, from, to, &walker);
+        assert!(!blocked.complete, "no way round: {blocked:?}");
+        let ladder = world.spawn((Transform::from_position(top(&world, obj, corner, 7.2, 2.0)),));
+        let link = crate::navigation::NavLink {
+            end: [1.6, 0.0, 0.0],
+            kind: crate::navigation::NavLinkKind::Climb,
+            ..Default::default()
+        };
+        world.insert(ladder, link);
+        let found = way_for(&mut world, from, to, &walker);
+        assert!(found.complete, "over the ladder: {found:?}");
+        assert!(found.links.iter().any(Option::is_some), "a corner reached by the link: {found:?}");
+    }
+
+    #[test]
+    fn what_swims_goes_out_over_the_sea_and_what_walks_stops_at_its_shore() {
+        use voxear_render::VoxelGenerator;
+        let hills = voxear_terrain::generate::starters().into_iter().find(|s| s.name == "Archipelago").unwrap();
+        let hills = Arc::new(hills.world(7, 1.0));
+        let floor = hills.sea_level() - 120.0;
+        let volume = VoxelVolume {
+            endless: true,
+            size: Vec3::new(16.0, 320.0, 16.0),
+            sea: true,
+            generator: Some(VoxelGenerator { world: hills, floor, at: [0.0, 0.0], biomes: None }),
+            ..VoxelVolume::default()
+        };
+        let sea = volume.sea_height(Vec3::ZERO).expect("a sea");
+        // A shore: walking along from deep water, the first dry land, with water over 1.5 m deep within 25 m behind.
+        let ground = |x: f32, z: f32| voxear_render::voxel_ground_at(&volume, x, z).map(|(y, _)| y);
+        let mut deep_at = None;
+        let mut shore = None;
+        for x in 0..600 {
+            let x = x as f32;
+            let Some(y) = ground(x, 0.0) else { continue };
+            if y < sea - 1.5 {
+                deep_at = Some(x);
+            } else if y > sea + 0.3
+                && let Some(deep) = deep_at.filter(|deep| x - deep < 25.0)
+            {
+                shore = Some((Vec3::new(x + 1.0, ground(x + 1.0, 0.0).unwrap_or(y), 0.0), Vec3::new(deep, sea, 0.0)));
+                break;
+            }
+        }
+        let (land, out) = shore.expect("a shore among the islands");
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let obj = world.spawn((Transform::default(),));
+        world.insert(obj, volume);
+        walker_at(&mut world, land);
+        let walks = way_for(&mut world, land, out, &VoxelWalker::of_size(1.8, 0.35));
+        let swims = way_for(&mut world, land, out, &VoxelWalker { swims: true, ..VoxelWalker::of_size(1.8, 0.35) });
+        let end = |way: &VoxelWay| *way.corners.last().unwrap();
+        assert!(swims.complete && (end(&swims) - out).length() < 2.5, "out over the sea: {swims:?}");
+        assert!(!walks.complete && (end(&walks) - out).length() > 5.0, "stops at the shore: {walks:?}");
+    }
+
     /// What a column of cells costs to make, and a way across a few of them
     /// to find: run by hand, `--ignored --nocapture`.
     #[test]
@@ -724,7 +906,7 @@ mod tests {
             let mut took = Vec::new();
             for column in [[0, 0], [1, 0], [0, 1], [1, 1]] {
                 let started = Instant::now();
-                let chunks = cells_of(&*solids, &volume, Vec3::ZERO, 4, column);
+                let (chunks, _) = cells_of(&*solids, &volume, Vec3::ZERO, 4, column, None);
                 took.push((started.elapsed(), chunks.len()));
             }
             let high = |x: f32, z: f32| {
@@ -743,7 +925,7 @@ mod tests {
             let to = high(20.0, 22.0);
             let finder = crate::voxel_ways::finder(&world);
             let started = Instant::now();
-            let way = finder.way(&world, voxear_scene::DimensionId::LEVEL, from, to, 1.8, 0.35);
+            let way = finder.way(&world, voxear_scene::DimensionId::LEVEL, from, to, &VoxelWalker::of_size(1.8, 0.35));
             let found = started.elapsed();
             println!(
                 "{name}: columns {took:?}; {columns} round an agent in {settled:?}; a way of 25 m in {found:?}: {way:?}"

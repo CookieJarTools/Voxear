@@ -218,7 +218,9 @@ fn way(game: &mut Game, from: Vec3, to: Vec3) -> Vec<[i32; 3]> {
         voxear_engine::voxel_nav::settle(world, Duration::from_secs(60));
     }
     let dimension = voxear_scene::DimensionId::LEVEL;
-    let found = voxear_engine::voxel_ways::finder(world).way(world, dimension, from, to, 1.8, 0.35).expect("a way");
+    let found = voxear_engine::voxel_ways::finder(world)
+        .way(world, dimension, from, to, &voxear_engine::voxel_ways::VoxelWalker::of_size(1.8, 0.35))
+        .expect("a way");
     world.despawn(walker);
     found.corners.iter().map(|c| (*c * 16.0).round().as_ivec3().to_array()).collect()
 }

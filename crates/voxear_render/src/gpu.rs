@@ -1788,7 +1788,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
+        let post = 16 * 23 + 16 * crate::looks::LOOK_VALUES;
         // The meshlet capacities and flags, the glass shadow's two words, and the two-sided capacity padded out.
         let meshlets = 16 + 16;
         let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>() + 16;

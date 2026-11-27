@@ -199,6 +199,48 @@ fn a_volume_changed_is_made_again_and_one_taken_away_is_drawn_no_more() {
     assert_eq!(renderer.stats().voxels.volumes, 0);
 }
 
+#[test]
+fn a_volume_in_another_dimension_is_drawn_only_where_the_camera_sees_that_dimension() {
+    use voxear_scene::{DimensionId, InDimension};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = field(false);
+    let volume = world.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap().0;
+    let camera = world.query_ref::<(voxear_ecs::Entity, &Camera)>().into_iter().next().unwrap().0;
+    // The volume in a dimension of its own, the camera in the level's: nothing of it shows.
+    world.insert(volume, InDimension(DimensionId(1)));
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("voxel field in another dimension.png", &pixels);
+    let (px, py) = from_above(20.0, 3.0, 12.0);
+    let [r, g, b] = rgb_at(&pixels, px, py);
+    assert!(!(g > r + 20 && g > b + 20), "another dimension's ground is not drawn: {r} {g} {b}");
+    // The camera gone into its dimension: it is drawn there, though lit only by that dimension's sky, the sun
+    // being the level's.
+    world.insert(camera, InDimension(DimensionId(1)));
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("voxel field seen in its dimension.png", &pixels);
+    let [r, g, b] = rgb_at(&pixels, px, py);
+    assert!(g > r + 20 && g > b + 20, "its ground is drawn: {r} {g} {b}");
+}
+
+#[test]
+fn floating_rocks_hang_over_an_endless_volume_round_the_camera() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = ground_from_above(true, 8.0, 8.0);
+    let volume = world.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap().0;
+    render(&mut renderer, &world, 1);
+    let without = renderer.stats().voxels;
+    let rocks = voxear_render::VoxelRocks { spacing: 30.0, how_often: 1.0, size: [3.0, 6.0], most: 12, ..Default::default() };
+    world.get_mut::<VoxelVolume>(volume).unwrap().rocks = Some(rocks);
+    render(&mut renderer, &world, 2);
+    let with = renderer.stats().voxels;
+    assert_eq!(with.volumes, without.volumes + 12, "the twelve that matter most are drawn: {with:?}");
+    assert!(with.bytes > without.bytes, "{with:?} against {without:?}");
+    // Taken off again, they go.
+    world.get_mut::<VoxelVolume>(volume).unwrap().rocks = None;
+    render(&mut renderer, &world, 2);
+    assert_eq!(renderer.stats().voxels.volumes, without.volumes);
+}
+
 /// Ground with grass and flowers seen straight down from 12 m over `(x, z)`,
 /// on a volume at the world's middle: endless, or 16 m square.
 fn ground_from_above(endless: bool, x: f32, z: f32) -> World {

@@ -1047,6 +1047,21 @@ impl VoxelVolumes {
                 frames.retire(Retired::Buffer(resident.buffer));
             }
         }
+        let finished: Vec<(Entity, [i32; 2])> = self
+            .rocks
+            .iter()
+            .filter(|(key, made)| key.0 == entity && matches!(made, RockMade::Making(_, job) if job.is_finished()))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in finished {
+            let Some(RockMade::Making(rock, job)) = self.rocks.remove(&key) else { continue };
+            let (made, packed, palette, ground) = job.join().map_err(|_| anyhow::anyhow!("making a floating rock failed"))?;
+            let resident = upload(gpu, &made, &packed, &palette)?;
+            tracing::debug!("floating rock {:?}, {:.0} m across, made: {} bricks", key.1, rock.size, resident.bricks);
+            self.rocks.insert(key, RockMade::Made(rock, resident, made.size, ground));
+        }
+        // Those still to make started after those made are brought up, so a wait for every volume to be made
+        // never finds none being made between one batch and the next.
         let mut making = self.rocks.values().filter(|made| matches!(made, RockMade::Making(..))).count();
         for rock in &wanted {
             if making >= ROCKS_MAKING || self.rocks.contains_key(&(entity, rock.cell)) {
@@ -1060,19 +1075,6 @@ impl VoxelVolumes {
             })?;
             self.rocks.insert((entity, rock.cell), RockMade::Making(rock, job));
             making += 1;
-        }
-        let finished: Vec<(Entity, [i32; 2])> = self
-            .rocks
-            .iter()
-            .filter(|(key, made)| key.0 == entity && matches!(made, RockMade::Making(_, job) if job.is_finished()))
-            .map(|(key, _)| *key)
-            .collect();
-        for key in finished {
-            let Some(RockMade::Making(rock, job)) = self.rocks.remove(&key) else { continue };
-            let (made, packed, palette, ground) = job.join().map_err(|_| anyhow::anyhow!("making a floating rock failed"))?;
-            let resident = upload(gpu, &made, &packed, &palette)?;
-            tracing::debug!("floating rock {:?}, {:.0} m across, made: {} bricks", key.1, rock.size, resident.bricks);
-            self.rocks.insert(key, RockMade::Made(rock, resident, made.size, ground));
         }
         for rock in &wanted {
             if let Some(RockMade::Made(rock, resident, extent, ground)) = self.rocks.get(&(entity, rock.cell)) {

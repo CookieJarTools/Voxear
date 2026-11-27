@@ -146,6 +146,8 @@ What players change in a dimension is kept apart from the level's changes and fr
 
 See [[Saving the Game]] for saving the scene.
 
+[[An Abyss]] makes a dimension unlike the level: its own endless [[Voxel Volumes|Voxel Volume]] ground, rocks hanging in its air, its own look and sound.
+
 ## Not done yet
 
 - In play mode, a Scene view starts in the level's dimension, whichever it showed while editing.

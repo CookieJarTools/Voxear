@@ -6682,6 +6682,7 @@ fn set_voxel_volume(world: &mut World, entity: Entity, prop: &Prop, value: Value
         volume.water = data.water;
         volume.felled = data.felled;
         volume.regrow = data.regrow;
+        volume.rocks = data.rocks.filter(|_| data.endless);
         if let Some(generator) = &mut volume.generator {
             generator.at = data.generator_at;
             generator.floor = data.generator_floor.unwrap_or(generator.floor);
@@ -7497,6 +7498,16 @@ mod tests {
         assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelRegrow, Value::Number(120.0)));
         let made = world.get::<voxear_render::VoxelVolume>(volume).unwrap();
         assert_eq!((made.felled, made.regrow), (voxear_render::VoxelFelled::Stamped, 120.0));
+        // Floating rocks: off until turned on, then their rows show and each changes the rocks drawn.
+        assert!(shown.contains(&Prop::VoxelRocks) && !shown.contains(&Prop::VoxelRockSize), "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelRocks, Value::Toggle(true)));
+        let shown = props(&world, volume, &Part::VoxelVolume, &types);
+        assert!(shown.contains(&Prop::VoxelRockSize) && shown.contains(&Prop::VoxelMostRocks), "{shown:?}");
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelRockSize, Value::Vector(vec![5.0, 90.0])));
+        assert!(set_voxel_volume(&mut world, volume, &Prop::VoxelMostRocks, Value::Whole(400)));
+        let rocks = world.get::<voxear_render::VoxelVolume>(volume).unwrap().rocks.expect("rocks");
+        assert_eq!((rocks.size, rocks.most), ([5.0, 90.0], voxear_render::MOST_ROCKS as u32));
+        assert_eq!(Prop::VoxelRockSize.lock_key(), "rock_size");
         // Its trees: a row of a plant and how many to a hectare for each kind, then one to add another.
         assert!(shown.contains(&Prop::VoxelTreeAdd) && !shown.contains(&Prop::VoxelTreePlant(0)), "{shown:?}");
         let oaks =

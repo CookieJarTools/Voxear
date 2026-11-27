@@ -4767,6 +4767,10 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   - The GI's rays, and the sun's from what they meet, take the colour of glass of voxels they pass (2.70 → 2.80 ms).
   - Glass is drawn up to four panes deep, a pane kept whole and what is seen through it kept, and glass is drawn over
     the sky. The glass pass 0.165 → 0.30 ms on the street.
+  - Light through foliage: leaves, grass and flowers of voxels take the sun through the foliage between, so crowns
+    glow against the sun and are softly lit inside. Glass is a body: thicker is cloudier, and milky crystal glows on its
+    sunlit side. Lone black pixels on flat walls, a depth rounding between two passes, are gone. On the street the
+    glass pass 0.30 → 1.03 ms, voxel shadows 2.51 → 3.45 ms.
 - **Ground hundreds of metres tall (2026-11-26).** An endless Voxel Volume may be 256 sectors tall, 1,024 m at 16
   voxels a metre, in place of 64 m, so a world of mountains such as the Realm (54 m under its sea to 655 m) is shown
   whole. Each 4 m column keeps only a band of 24 sectors round its own ground, and the walk stops at the highest

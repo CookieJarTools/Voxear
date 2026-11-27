@@ -1286,13 +1286,41 @@ Since, the same day:
     against the sky never showed. The glass pass is now after the sky.
   Street, least of 60, three runs: the glass pass 0.165 → 0.30 ms, the voxels' shadows 2.45 → 2.51 ms; the frame
   about 0.1–0.2 ms more, within what another session on the GPU moved it.
+- **Lone black pixels on flat walls, found.** About 1,500 in a 640 × 360 view of the lit stone room: neither the
+  walk nor the light. The depth pass and the lit pass work the same depth out by the same sum in two shaders compiled
+  apart, which the GPU can round a step or two apart; the lit pass, tested nearer or equal, then lost to its own depth
+  pass. It now writes its depth 16 steps of the float nearer (`voxelLitDepth`), some 15 µm at 10 m.
+- **Light through foliage**, as a random walk in the leaves would scatter it, done the way the shadows are: the
+  voxels' shadows pass, for a pixel of foliage (a brick of leaves, or of grass and flowers), walks towards the sun
+  through foliage voxel by voxel, counting them (`throughFoliage` on `voxelTrace`), stopped only by what isn't foliage
+  or past ten; the mask's red is 0.6 to the power of the count. The lit pass adds, on the sides the sun doesn't light
+  and more looking towards the sun, the voxel's colour times that light, deepened by its colour once for each voxel
+  passed (`voxelFoliageScatter`); the face's own sunlight stays as it was, straight only where nothing was between.
+  It fades with distance, leaves from 32 to 64 m, grass and flowers from 12 to 24 m: taken everywhere, it brightened
+  a far meadow by two thirds and a far wood by a third, while coarser rings hold their grass in bricks with the
+  ground, which can't be told for foliage, and their leaf voxels, each as large as a few of full detail's, fill a
+  crown so densely that counting the light through in metres darkened them further; the tones at the rings' edge
+  parted either way. Against the low sun a wood's foliage went from 0.57 to 0.73 as bright as seen with the sun
+  behind. Fixed-size volumes built on the CPU now mark bricks of their ground's grass and flowers alone as the GPU
+  does (`pack_with_grass`), so their grass takes it too, and leans in the wind.
+- **Glass as a body.** A pane is measured from where the ray goes in to where it leaves (`glassOut`, from the same
+  walk that finds the next pane); a quarter metre hides as much as its colour is solid, so the density is
+  −4 ln(see/16) a metre. Up to four places along the ray inside, one for each two voxels, jittered per pixel and frame,
+  each walk towards the sun through the glass for how much of the sun gets there; what each stretch scatters, every
+  way and more towards the sun, is let out by the glass before it. A cube of milky crystal (7 of 16 see-through) seen
+  side-on to the sun is 520 bright at its sunlit edge to 310 at the other; on master 303 and 300. What is behind
+  takes its colour, the thicker the more (transmission `through^(1 + 1.5 (1 − hue))` per colour), in a first pass with
+  the filter blend (`Glass through (voxels)`); the second adds the glass's light. Scalar blending alone left the sky
+  behind a red pane bluish white.
+- **Cost**, the street of houses at 1080p, least of 60 frames: the frame from 9.16 to 10.31 ms with post off,
+  14.07 to 14.97 with the GI; glass 0.30 to 1.03 ms (its samples and two passes), voxel shadows 2.51 to 3.45 ms (the
+  walk through foliage); the opaque pass unchanged at 1.1 ms.
 
 Not done:
 
 - **Glass**: past four panes in a pixel, what is behind shows untinted.
-- **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
-  commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
-  walk's, not the light's.
+- **A black line along the far horizon** of a volume of flat ground, behind everything, seen from a metre or two up
+  (`crystals` in the tests); there on master as well.
 
 ## Stage 5, distance in rings (2026-11-26)
 

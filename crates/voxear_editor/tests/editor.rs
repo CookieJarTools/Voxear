@@ -2126,6 +2126,78 @@ fn a_light_shows_its_type_as_buttons_a_picture_of_it_and_its_rows_under_headings
     assert!(prop_row(&editor.ui, "Outer angle").is_some(), "a spot light's own rows show");
 }
 
+/// The Project panel's tile or row showing `name`.
+fn project_entry(ui: &Ui, name: &str) -> Option<NodeId> {
+    let files = ui.find(ui.root(), "project-files")?;
+    let mut found = Vec::new();
+    with_class(ui, files, "tile", &mut found);
+    with_class(ui, files, "list-row", &mut found);
+    found.into_iter().filter(|&n| shown(ui, n)).find(|&n| texts_in(ui, n).first().is_some_and(|t| t == name))
+}
+
+/// The Project folder tree's row showing `name`.
+fn project_folder_row(ui: &Ui, name: &str) -> Option<NodeId> {
+    let tree = ui.find(ui.root(), "project-folders")?;
+    let mut rows = Vec::new();
+    with_class(ui, tree, "list-row", &mut rows);
+    rows.into_iter().filter(|&n| shown(ui, n)).find(|&n| texts_in(ui, n).iter().any(|t| t == name))
+}
+
+#[test]
+fn project_folders_take_colours_and_favourites_list_what_was_added() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let open = |renderer: &mut Renderer| {
+        let project = Project::open(dir.path()).unwrap();
+        let mut editor = voxear_editor::Editor::open(project, renderer, LogCapture::default()).unwrap();
+        frame(&mut editor, renderer);
+        frame(&mut editor, renderer);
+        editor
+    };
+    let mut editor = open(&mut renderer);
+    // Scenes, a folder at the project's top: coloured green, and a favourite.
+    let scenes = project_entry(&editor.ui, "Scenes").expect("the Scenes folder shows");
+    context_click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Folder Colour…").expect("a folder can be coloured");
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Green").expect("the colours offered");
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    let scenes = project_entry(&editor.ui, "Scenes").unwrap();
+    assert!(first_with(&editor.ui, scenes, "folder-green").is_some(), "its icon is green");
+    context_click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Add to Favourites").unwrap();
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "project-marks.png");
+    drop(editor);
+
+    // Opened again, both are kept; Favourites, at the top of the tree, lists the folder.
+    let mut editor = open(&mut renderer);
+    let favourites = project_folder_row(&editor.ui, "Favourites").expect("Favourites at the top of the tree");
+    let top = project_folder_row(&editor.ui, "Hello").unwrap();
+    assert!(editor.ui.rect(favourites)[1] < editor.ui.rect(top)[1], "above the project's folder");
+    click(&mut editor.ui, favourites);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let scenes = project_entry(&editor.ui, "Scenes").expect("the favourite listed");
+    assert!(first_with(&editor.ui, scenes, "folder-green").is_some(), "still green");
+    context_click(&mut editor.ui, scenes);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "Remove from Favourites").unwrap();
+    click(&mut editor.ui, item);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(project_entry(&editor.ui, "Scenes").is_none(), "gone from Favourites");
+}
+
 #[test]
 fn the_game_view_goes_full_screen_and_draws_gizmos_from_its_title_bar() {
     let Some((mut renderer, mut editor)) = open() else { return };

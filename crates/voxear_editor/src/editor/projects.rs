@@ -71,6 +71,7 @@ impl Editor {
         if let Some(size) = self.memory.tile_size {
             project.set_tile_size(&mut self.ui, size);
         }
+        project.set_marks(&mut self.ui, &self.memory.project_marks);
         self.extra_projects.push(ExtraProject { panel: panel.to_string(), project });
     }
 
@@ -118,6 +119,13 @@ impl Editor {
         let taken = |source: DragSource| self.dragged_obj(&source).is_some() || self.dragged_project_entry(&source).is_some();
         let take = self.ui.dragging().is_some_and(taken);
         self.project.take_drops(&mut self.ui, take);
+        // Folders coloured and favourites, kept for the project, and shown in every Project panel.
+        if self.project.take_marks_changed() {
+            self.memory.project_marks = self.project.marks();
+            self.memory.save();
+        } else {
+            self.project.set_marks(&mut self.ui, &self.memory.project_marks);
+        }
         // The tile size is remembered once the slider is let go.
         let size = self.project.tile_size(&self.ui);
         if self.memory.tile_size != Some(size) && !self.project.resizing(&self.ui) {

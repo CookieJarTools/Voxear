@@ -883,6 +883,8 @@ pub struct Memory {
     /// How big the Project panel's tiles are, as its slider was left, from
     /// 0 for rows to 1; `None` for the starting size.
     pub tile_size: Option<f32>,
+    /// The Project panel's coloured folders and favourites.
+    pub project_marks: crate::project_view::ProjectMarks,
     /// The blocks the brush last built with, by GUID, most recent first:
     /// the order a picker of blocks offers them in.
     pub recent_blocks: Vec<String>,

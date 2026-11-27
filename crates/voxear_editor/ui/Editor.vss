@@ -998,6 +998,18 @@
     color: var(--vx-muted);
 }
 
+/* A Project folder's colour, picked from its menu, on its icon in the tree, its tile and its row; and the
+   Favourites star at the top of the tree. */
+.folder-red { color: #e5534b; }
+.folder-orange { color: #e8955a; }
+.folder-yellow { color: #e2b340; }
+.folder-green { color: #4cb782; }
+.folder-teal { color: #3fb5b0; }
+.folder-blue { color: #5e8bf0; }
+.folder-purple { color: #9a7cf0; }
+.folder-pink { color: #e06bb0; }
+.favourites-icon { color: var(--vx-warning); }
+
 /* Each kind of row's icon in a colour of its own, so the tree reads at a glance: scenes amber, Objs blue, meshes
    and models green, cameras light blue, lights yellow, sounds the accent. */
 .row-icon.kind-scene {

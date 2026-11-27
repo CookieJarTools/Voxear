@@ -669,6 +669,7 @@ impl Editor {
         if let Some(size) = memory.tile_size {
             project.set_tile_size(&mut ui, size);
         }
+        project.set_marks(&mut ui, &memory.project_marks);
         ui.set_tooltip(nodes.save, "Save", Some("Ctrl+S"));
         let console_panel = find(&ui, "console-panel");
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);

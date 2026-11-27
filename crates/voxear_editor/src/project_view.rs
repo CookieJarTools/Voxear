@@ -34,6 +34,11 @@
 //! A part can be dragged onto a field that takes one, as a mesh onto a Mesh
 //! Renderer's Mesh. With the setting on, a prefab opens out to its Objs.
 //!
+//! Folders can be coloured, from Folder Colour in their menu, and any file
+//! or folder added to Favourites, which sits at the top of the tree and
+//! lists them wherever they are, to find them again quickly. The editor
+//! keeps both for the project (see [`ProjectMarks`]).
+//!
 //! Below the project's folder in the tree, as in Unity's Project window, a
 //! Packages section has a folder for each of the project's packages, under
 //! its title, with its assets and scripts, by `Packages/<name>/…` paths. Their
@@ -53,6 +58,42 @@ use voxear_assets::{Access, AssetDb, AssetKind, Mount, Mounts, PACKAGES_FOLDER};
 use voxear_ui::{DragSource, ImageRef, ListItems, MenuItem, NodeId, Style, TreeItems, Ui};
 
 use crate::project_files::{self, NewFile};
+
+/// The colours a folder can be given, by name, with the class that colours
+/// its icon; the first leaves it as it is.
+pub const FOLDER_COLOURS: [(&str, &str); 9] = [
+    ("None", ""),
+    ("Red", "folder-red"),
+    ("Orange", "folder-orange"),
+    ("Yellow", "folder-yellow"),
+    ("Green", "folder-green"),
+    ("Teal", "folder-teal"),
+    ("Blue", "folder-blue"),
+    ("Purple", "folder-purple"),
+    ("Pink", "folder-pink"),
+];
+
+/// What the Project panel marks: each coloured folder's colour, by its
+/// path and the colour's name (see [`FOLDER_COLOURS`]), and the favourite
+/// files and folders by path, in the order they were added.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ProjectMarks {
+    pub folder_colours: std::collections::BTreeMap<String, String>,
+    pub favourites: Vec<String>,
+}
+
+impl ProjectMarks {
+    /// The class that colours the folder at `path`'s icon, if it is coloured.
+    fn colour_class(&self, path: &str) -> Option<&'static str> {
+        let name = self.folder_colours.get(path)?;
+        FOLDER_COLOURS.iter().find(|(known, _)| known == name).map(|(_, class)| *class).filter(|c| !c.is_empty())
+    }
+}
+
+/// What the Favourites section is kept at among the folders, by a path no
+/// folder can have.
+const FAVOURITES_PATH: &str = ":favourites";
 
 /// An item of the project, as the panel tells the editor about it.
 #[derive(Clone, Debug, PartialEq)]
@@ -142,6 +183,8 @@ enum MenuAction {
     Rename,
     Duplicate,
     Delete,
+    Favourite,
+    FolderColour,
     Import,
     OpenFab,
     New(NewFile),
@@ -252,6 +295,9 @@ struct Contents {
     /// has packages, and each package's folder in it by the package's name.
     packages: Option<usize>,
     package_folders: HashMap<String, usize>,
+    /// The Favourites section at the top of the tree, and what is marked.
+    favourites: usize,
+    marks: ProjectMarks,
 }
 
 impl Contents {
@@ -310,6 +356,7 @@ impl Contents {
             Entry::Folder(_) | Entry::Part(..) => None,
         };
         ui.set_icon(parts[0], self.icon(entry));
+        self.colour_icon(ui, parts[0], entry);
         ui.set_visible(parts[0], preview.is_none());
         ui.set_image(parts[1], preview);
         ui.set_visible(parts[1], preview.is_some());
@@ -339,6 +386,9 @@ impl Contents {
     /// What `folder` shows: its folders, then its files, each opened out
     /// one followed by its parts.
     fn list(&self, folder: usize) -> Vec<Entry> {
+        if folder == self.favourites {
+            return self.marks.favourites.iter().filter_map(|path| self.entry_at(path)).collect();
+        }
         let at = &self.folders[folder];
         let mut listing: Vec<Entry> = at.folders.iter().map(|&f| Entry::Folder(f)).collect();
         for &file in &at.files {
@@ -350,6 +400,32 @@ impl Contents {
             }
         }
         listing
+    }
+
+    /// The file or folder at a path, from the project's folder.
+    fn entry_at(&self, path: &str) -> Option<Entry> {
+        let file = self.files.iter().position(|f| f.path == path).map(Entry::File);
+        file.or_else(|| self.folders.iter().position(|f| f.path == path && !path.is_empty()).map(Entry::Folder))
+    }
+
+    /// The project path a file or folder is marked by.
+    fn mark_path(&self, entry: Entry) -> Option<&str> {
+        match entry {
+            Entry::Folder(folder) if folder != self.favourites => Some(&self.folders[folder].path),
+            Entry::File(file) => Some(&self.files[file].path),
+            _ => None,
+        }
+    }
+
+    /// Colours a folder's icon as it is marked, or a file's not at all.
+    fn colour_icon(&self, ui: &mut Ui, icon: NodeId, entry: Entry) {
+        let class = match entry {
+            Entry::Folder(folder) => self.marks.colour_class(&self.folders[folder].path),
+            _ => None,
+        };
+        for (_, known) in FOLDER_COLOURS.iter().skip(1) {
+            ui.set_class(icon, known, class == Some(*known));
+        }
     }
 
     /// What an entry is, as the Inspector shows it: a part shows the file
@@ -469,7 +545,11 @@ impl TreeItems for FolderItems {
     fn children(&self, parent: Option<u64>) -> Vec<u64> {
         match parent {
             // The project's folder, and the Packages section after it, as in Unity's Project window.
-            None => std::iter::once(0).chain(self.0.borrow().packages.map(|p| p as u64)).collect(),
+            // Favourites first, as Unity's Project window has them.
+            None => {
+                let contents = self.0.borrow();
+                [contents.favourites, 0].into_iter().chain(contents.packages).map(|f| f as u64).collect()
+            }
             Some(parent) => self.0.borrow().folders[parent as usize].folders.iter().map(|&f| f as u64).collect(),
         }
     }
@@ -489,7 +569,13 @@ impl TreeItems for FolderItems {
 
     fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
         let parts = ui.children(row);
-        ui.set_text(parts[1], &self.0.borrow().folders[item as usize].name);
+        let contents = self.0.borrow();
+        let favourites = item as usize == contents.favourites;
+        ui.set_icon(parts[0], if favourites { "star" } else { "folder" });
+        ui.set_class(parts[0], "favourites-icon", favourites);
+        contents.colour_icon(ui, parts[0], Entry::Folder(item as usize));
+        ui.set_text(parts[1], &contents.folders[item as usize].name);
+        drop(contents);
         if let Some(slot) = self.1.borrow_mut().iter_mut().find(|(node, _)| *node == row) {
             slot.1 = item;
         }
@@ -619,6 +705,10 @@ pub struct ProjectView {
     /// The open context menu: what it was opened on (nothing for the open
     /// folder), and what each of its items does.
     menu: Option<(NodeId, Option<Entry>, Vec<Option<MenuAction>>)>,
+    /// The open menu of colours for a folder: what it opened on, and the folder's path.
+    colour_menu: Option<(NodeId, String)>,
+    /// Whether the marks changed here since the editor last took them.
+    marks_changed: bool,
     /// How many seconds the pinged entry stays lit.
     ping_left: f32,
     /// The slider for how big the tiles are, the smallest being rows.
@@ -668,6 +758,8 @@ impl ProjectView {
             renaming: None,
             focus_rename: false,
             menu: None,
+            colour_menu: None,
+            marks_changed: false,
             ping_left: 0.0,
             lock,
             locked: false,
@@ -772,6 +864,8 @@ impl ProjectView {
             }
         }
         self.open_menus(ui);
+        // Before the context menu, whose pick of Folder Colour… opens it with the same owner this frame.
+        self.colour_choice(ui);
         events.extend(self.menu_choice(ui));
         if let Some((source, folder)) = self.dropped(ui) {
             events.push(ProjectEvent::Dropped { source, folder });
@@ -871,6 +965,7 @@ impl ProjectView {
             contents.opened = std::mem::take(&mut kept.opened);
             contents.parts = std::mem::take(&mut kept.parts);
             contents.prefab_parts = kept.prefab_parts;
+            contents.marks = std::mem::take(&mut kept.marks);
         }
         *self.contents.borrow_mut() = contents;
         let folder = self.contents.borrow().folders.iter().position(|f| f.path == open).unwrap_or(0);
@@ -1061,6 +1156,18 @@ impl ProjectView {
             add(MenuItem::new("Show in Files"), Some(MenuAction::Reveal));
             add(MenuItem::new("Copy Path"), Some(MenuAction::CopyPath));
             add(MenuItem::separator(), None);
+            let contents = self.contents.borrow();
+            if let Some(path) = contents.mark_path(entry) {
+                let liked = contents.marks.favourites.iter().any(|f| f == path);
+                let label = if liked { "Remove from Favourites" } else { "Add to Favourites" };
+                let folder = matches!(entry, Entry::Folder(_));
+                drop(contents);
+                add(MenuItem::new(label), Some(MenuAction::Favourite));
+                if folder && !is_root {
+                    add(MenuItem::new("Folder Colour…"), Some(MenuAction::FolderColour));
+                }
+                add(MenuItem::separator(), None);
+            }
             add(MenuItem::new("Rename").enabled(!is_root && !fixed), Some(MenuAction::Rename));
             add(MenuItem::new("Duplicate").enabled(duplicates && !fixed), Some(MenuAction::Duplicate));
             add(MenuItem::new("Delete").enabled(!is_root && !fixed), Some(MenuAction::Delete));
@@ -1099,10 +1206,71 @@ impl ProjectView {
         self.menu = Some((owner, entry, actions));
     }
 
+    /// Colours a folder as its menu of colours picked.
+    fn colour_choice(&mut self, ui: &mut Ui) {
+        let Some((owner, path)) = self.colour_menu.clone() else { return };
+        let Some(choice) = ui.menu_choice(owner) else {
+            if !ui.is_menu_open(owner) {
+                self.colour_menu = None;
+            }
+            return;
+        };
+        self.colour_menu = None;
+        {
+            let mut contents = self.contents.borrow_mut();
+            let colours = &mut contents.marks.folder_colours;
+            match FOLDER_COLOURS.get(choice) {
+                Some((name, class)) if !class.is_empty() => {
+                    colours.insert(path, name.to_string());
+                }
+                _ => {
+                    colours.remove(&path);
+                }
+            }
+        }
+        self.marks_shown(ui);
+    }
+
+    /// Shows the marks again, and notes they changed for the editor to keep.
+    fn marks_shown(&mut self, ui: &mut Ui) {
+        self.marks_changed = true;
+        self.show_marks(ui);
+    }
+
+    fn show_marks(&mut self, ui: &mut Ui) {
+        ui.refresh_list(self.folder_tree);
+        if self.open == self.contents.borrow().favourites {
+            self.relist(ui);
+        } else {
+            ui.refresh_list(self.files);
+        }
+    }
+
+    /// The folders' colours and the favourites.
+    pub fn marks(&self) -> ProjectMarks {
+        self.contents.borrow().marks.clone()
+    }
+
+    /// Colours folders and lists favourites as the editor kept them.
+    pub fn set_marks(&mut self, ui: &mut Ui, marks: &ProjectMarks) {
+        if self.contents.borrow().marks == *marks {
+            return;
+        }
+        self.contents.borrow_mut().marks = marks.clone();
+        self.show_marks(ui);
+    }
+
+    /// Whether folders were coloured or favourites changed here since the
+    /// last call, for the editor to keep.
+    pub fn take_marks_changed(&mut self) -> bool {
+        std::mem::take(&mut self.marks_changed)
+    }
+
     /// Does what was chosen in a context menu.
     fn menu_choice(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
         let Some((owner, entry, actions)) = self.menu.as_ref() else { return Vec::new() };
-        let Some(choice) = ui.menu_choice(*owner) else { return Vec::new() };
+        let owner = *owner;
+        let Some(choice) = ui.menu_choice(owner) else { return Vec::new() };
         let (entry, action) = (*entry, actions.get(choice).copied().flatten());
         self.menu = None;
         // Nothing chosen on an item means the open folder.
@@ -1123,6 +1291,33 @@ impl ProjectView {
             },
             MenuAction::OpenAdditively => vec![ProjectEvent::OpenAdditively(item)],
             MenuAction::MakeVoxelPrint => vec![ProjectEvent::MakeVoxelPrint(item.path.clone())],
+            MenuAction::Favourite => {
+                let mut contents = self.contents.borrow_mut();
+                let Some(path) = entry.and_then(|entry| contents.mark_path(entry).map(str::to_string)) else {
+                    return Vec::new();
+                };
+                let favourites = &mut contents.marks.favourites;
+                match favourites.iter().position(|f| *f == path) {
+                    Some(at) => {
+                        favourites.remove(at);
+                    }
+                    None => favourites.push(path),
+                }
+                drop(contents);
+                self.marks_shown(ui);
+                Vec::new()
+            }
+            MenuAction::FolderColour => {
+                let now = self.contents.borrow().marks.folder_colours.get(&item.path).cloned();
+                let items: Vec<MenuItem> = FOLDER_COLOURS
+                    .iter()
+                    .map(|(name, _)| MenuItem::new(name).checked(now.as_deref().unwrap_or("None") == *name))
+                    .collect();
+                let at = ui.pointer_position().unwrap_or_default();
+                ui.open_menu(owner, at, &items);
+                self.colour_menu = Some((owner, item.path.clone()));
+                Vec::new()
+            }
             MenuAction::Reveal => {
                 let shown = if item.kind == ItemKind::Folder { item.path.as_str() } else { parent(&item.path) };
                 let folder = self.mounts.file(shown);
@@ -1511,6 +1706,8 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         arrows: Vec::new(),
         packages: None,
         package_folders: HashMap::new(),
+        favourites: 0,
+        marks: ProjectMarks::default(),
     };
     let mounts = db.mounts();
     // Folder packages kept in the project's folder show in the Packages section, not twice.
@@ -1528,6 +1725,16 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
     let mut folders = Vec::new();
     scripts(root, root, &mut paths, &mut folders, &skip);
     fill(&mut contents, 0, folders, paths, |path| root.join(path));
+    contents.folders.push(Folder {
+        name: "Favourites".to_string(),
+        path: FAVOURITES_PATH.to_string(),
+        parent: None,
+        folders: Vec::new(),
+        files: Vec::new(),
+        read_only: true,
+        fixed: true,
+    });
+    contents.favourites = contents.folders.len() - 1;
 
     let mut packages = mounts.packages().to_vec();
     if packages.is_empty() {

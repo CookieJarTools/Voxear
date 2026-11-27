@@ -245,6 +245,8 @@ struct Nodes {
     status_dot: NodeId,
     /// Beside the play buttons while Play waits for the scripts to build.
     play_building: NodeId,
+    /// The top bar's Save button.
+    save: NodeId,
 }
 
 /// What a shortcut asks of the editor, done in the next frame.
@@ -646,6 +648,7 @@ impl Editor {
             debug_texts: find(&ui, "debug-texts"),
             status_dot: find(&ui, "status-dot"),
             play_building: find(&ui, "play-building"),
+            save: find(&ui, "save"),
         };
         let branch = git_branch(&root);
         let branch_name = find(&ui, "status-branch-name");
@@ -666,6 +669,7 @@ impl Editor {
         if let Some(size) = memory.tile_size {
             project.set_tile_size(&mut ui, size);
         }
+        ui.set_tooltip(nodes.save, "Save", Some("Ctrl+S"));
         let console_panel = find(&ui, "console-panel");
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
@@ -3527,6 +3531,10 @@ impl Editor {
             || self.lighting_bake.is_some();
         self.ui.set_class(self.nodes.status_dot, "busy", busy);
         self.ui.set_visible(self.nodes.play_building, self.play.is_building());
+        self.ui.set_class(self.nodes.save, "unsaved", self.unsaved && !self.is_playing());
+        if self.ui.clicked(self.nodes.save) {
+            self.commands.push(Command::Save);
+        }
         self.status.0 += 1;
         self.status.1 += delta;
         if self.status.1 < STATUS_INTERVAL && self.status.0 > 1 {

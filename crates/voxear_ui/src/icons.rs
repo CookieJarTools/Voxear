@@ -56,6 +56,7 @@ pub const NAMES: &[&str] = &[
     "camera",
     "light",
     "bulb",
+    "save",
     "spot-light",
     "rect-light",
     "disc-light",
@@ -192,6 +193,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
              M14.2 18.5a1.1 1.1 0 1 0 2.2 0a1.1 1.1 0 1 0-2.2 0Z",
             FILL,
         )],
+        // A disk with its label and shutter, for saving.
+        "save" => &[("M5 4h11.5L20 7.5V20H4V5ZM8 4v5h7V4M7.5 20v-6h9v6", STROKE)],
         // A bulb on its cap, for a point light.
         "bulb" => &[(
             "M9 17.5h6M10 20.5h4M8.7 14.3A6 6 0 1 1 15.3 14.3C14.5 15 14.5 16 14.5 17.5h-5c0-1.5 0-2.5-.8-3.2Z",

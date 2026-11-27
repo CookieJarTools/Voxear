@@ -609,6 +609,11 @@
     animation: busy-pulse 700ms ease-in-out infinite alternate;
 }
 
+/* The top bar's Save button, beside the search: the accent while there is something to save. */
+.save-button.unsaved {
+    color: var(--vx-accent);
+}
+
 /* As wide as what it says, and quiet as the icons beside it. */
 .multiplayer-button {
     height: 22px;

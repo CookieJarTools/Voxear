@@ -538,8 +538,15 @@ fn edits_undo_redo_and_save_to_the_scene_file() {
     editor.redo(&mut renderer);
     assert_eq!(x(&editor), 7.25, "and redo makes it again");
 
-    editor.save();
+    // The top bar's Save button, lit while there is something to save, saves.
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    let save = editor.ui.find(editor.ui.root(), "save").expect("a Save button beside the search");
+    assert!(editor.ui.has_class(save, "unsaved"));
+    click(&mut editor.ui, save);
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
+    editor.update(&mut renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
     assert!(!editor.has_unsaved_changes(), "saved");
+    assert!(!editor.ui.has_class(save, "unsaved"));
     let scenes = ["Scenes/Environment.scene", "Scenes/Day.scene"]
         .map(|p| voxear_engine::scene_file::read(&dir.path().join(p)).unwrap());
     let saved =

@@ -81,6 +81,9 @@ const BRICK_BYTES: u64 = 80;
 /// How many voxel columns a column's heights and its tops are kept for a
 /// side: a border of four, and of two.
 const SIDE: u64 = 72;
+/// How many of the columns four apart that a Volume's spread program runs
+/// at a job's columns and their border reach, a side (`SPREAD_SIDE`).
+const SPREAD_SIDE: u64 = (SIDE - 1) / 4 + 2;
 const TOPS: u64 = 68;
 const COUNTERS: u64 = 4;
 /// The most trees placed round a column, and the numbers each takes: a
@@ -212,6 +215,8 @@ struct GpuWorldMake {
     rivers: u64,
     growth: u64,
     finds: u64,
+    spread: u64,
+    spread_grid: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -253,6 +258,11 @@ struct GpuWorldMake {
     /// kept (`felledAt`, `cutLeft`): none past the last word.
     felled_at: u32,
     cuts_at: u32,
+    /// How many words the spread program has, how many numbers it makes and
+    /// the slots it leaves them in (`spreadWords` and on).
+    spread_words: u32,
+    spread_count: u32,
+    spread_slots: [u32; MOST_CARRIED],
     jobs: [GpuWorldJob; MAX_JOBS],
 }
 
@@ -290,6 +300,10 @@ pub(crate) struct Endless {
     /// has one.
     program: Option<(Buffer, GpuProgram)>,
     volume: Option<(Buffer, Buffer)>,
+    /// What its Volume's spread program makes at every fourth column of
+    /// each job's, where it has one (`spreadGrid`): the program is in
+    /// `program`'s buffer.
+    spread: Option<Buffer>,
     /// Its trees' kinds and plants, where it has trees, with how many kinds
     /// and how far the furthest reaches across from its trunk, in metres;
     /// the trees placed round each column being made, and room for what the
@@ -502,12 +516,23 @@ fn volume_fields(make: &mut GpuWorldMake, cells: &GpuVolume, voxel: f32) {
     let voxels = |metres: f32| if metres.is_finite() { (metres / voxel).clamp(0.0, 1.0e6) } else { 1.0e6 };
     make.reach = voxels(cells.reach);
     make.depth = voxels(cells.depth);
+    if let Some(spread) = &cells.spread {
+        make.spread_words = spread.words.len() as u32;
+        make.spread_count = spread.slots.len().min(MOST_CARRIED) as u32;
+        for (slot, &made) in make.spread_slots.iter_mut().zip(&spread.slots) {
+            *slot = made;
+        }
+    }
 }
 
 /// A program's words in a buffer the GPU reads, what its steps read beside
-/// their own numbers (painted maps) after them.
+/// their own numbers (painted maps) after them; its Volume's spread
+/// program's words before them, where it has one, which reads them too
+/// (`GpuSpread`): the program starts [`spread_words`] words in.
 fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
-    let words = [program.words.as_slice(), program.data.as_slice()].concat();
+    let spread =
+        program.volume.as_ref().and_then(|cells| cells.spread.as_ref()).map_or(&[][..], |spread| &spread.words);
+    let words = [spread, program.words.as_slice(), program.data.as_slice()].concat();
     let buffer = gpu.create_buffer(
         "voxel world program",
         (words.len() as u64 * 4).max(16),
@@ -520,6 +545,12 @@ fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
         gpu.upload_buffer(&buffer, (i * (64 << 20)) as u64, piece)?;
     }
     Ok(buffer)
+}
+
+/// How many words of a program's buffer its Volume's spread program takes,
+/// before the program's own.
+fn spread_words(program: &GpuProgram) -> u64 {
+    program.volume.as_ref().and_then(|cells| cells.spread.as_ref()).map_or(0, |spread| spread.words.len() as u64)
 }
 
 /// How many sectors of each column a window keeps entries for.
@@ -907,7 +938,7 @@ fn laid_finds(
 fn program_buffers(
     gpu: &Gpu,
     program: Option<GpuProgram>,
-) -> Result<(Option<(Buffer, GpuProgram)>, Option<(Buffer, Buffer)>)> {
+) -> Result<(Option<(Buffer, GpuProgram)>, Option<(Buffer, Buffer)>, Option<Buffer>)> {
     let caves = match program.as_ref().and_then(|made| made.volume.as_ref()) {
         Some(cells) => {
             let words = program_buffer(gpu, &GpuProgram { words: cells.words.clone(), ..GpuProgram::default() })?;
@@ -924,11 +955,26 @@ fn program_buffers(
         }
         None => None,
     };
+    let spread = match program.as_ref().and_then(|made| made.volume.as_ref()).and_then(|cells| cells.spread.as_ref()) {
+        Some(spread) if caves.is_some() => {
+            let count = (spread.slots.len() as u64).max(1);
+            let grid = gpu.create_buffer(
+                "voxel world spread",
+                MAX_JOBS as u64 * (SPREAD_SIDE * SPREAD_SIDE) as u64 * count * 4,
+                vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                MemoryLocation::GpuOnly,
+            )?;
+            Some(grid)
+        }
+        _ => None,
+    };
     let program = match program {
         Some(program) => Some((program_buffer(gpu, &program)?, program)),
         None => None,
     };
-    Ok((program, caves))
+    Ok((program, caves, spread))
 }
 
 impl Endless {
@@ -966,7 +1012,7 @@ impl Endless {
         let column_grounds = make("column grounds", jobs * TOPS * TOPS * 4, none)?;
         let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
         let program = gpu_program_of(volume);
-        let (program, caves) = program_buffers(gpu, program)?;
+        let (program, caves, spread) = program_buffers(gpu, program)?;
         let coarser = fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
         let room = room_of(
             program.as_ref().map(|(_, program)| program),
@@ -1060,6 +1106,7 @@ impl Endless {
             grounds,
             program,
             volume: caves,
+            spread,
             forest,
             biomes,
             growth,
@@ -1446,7 +1493,7 @@ impl Endless {
         if plants_of(volume) != plants_of(&self.from) {
             return Ok(None);
         }
-        let (program, caves) = program_buffers(gpu, program)?;
+        let (program, caves, spread) = program_buffers(gpu, program)?;
         let (colours, forest, _, biomes) = forest_buffers(gpu, volume, false)?;
         // The prints' and tints' colours placed again after the ground's and the trees', with every column made over.
         self.base_colours = colours.len();
@@ -1461,6 +1508,7 @@ impl Endless {
         gone.extend(
             std::mem::replace(&mut self.volume, caves).into_iter().flat_map(|(words, carried)| [words, carried]),
         );
+        gone.extend(std::mem::replace(&mut self.spread, spread));
         gone.push(std::mem::replace(&mut self.palette, palette));
         gone.push(std::mem::replace(&mut self.growth, growth_buffer(gpu, volume)?));
         gone.extend(std::mem::replace(&mut self.forest, forest).map(|(buffer, _, _)| buffer));
@@ -1550,9 +1598,13 @@ impl Endless {
         wanted.sort_unstable_by_key(|(distance, _)| *distance);
         self.jobs.clear();
         // A Volume's column is made through the band of sectors it keeps, which a volume hundreds of metres tall keeps
-        // three times as deep: as many fewer columns a frame, so no pass making them runs long enough for the GPU to
-        // give up waiting on it.
-        let volume_jobs = (MAX_VOLUME_JOBS * 8 / layers_of(self.tall) as usize).clamp(1, MAX_VOLUME_JOBS);
+        // three times as deep: as many fewer columns a frame, so the frames stay light. While loading, nothing is drawn
+        // to keep light: as many as any volume makes, whose pass takes tens of milliseconds at most, the Realm's ground
+        // round a still camera in under half the time.
+        let volume_jobs = match loading {
+            true => MAX_JOBS,
+            false => (MAX_VOLUME_JOBS * 8 / layers_of(self.tall) as usize).clamp(1, MAX_VOLUME_JOBS),
+        };
         let most = match (self.volume.is_some(), self.forest.is_some()) {
             (true, _) => volume_jobs,
             (false, true) => MAX_TREE_JOBS,
@@ -1812,8 +1864,12 @@ impl Endless {
         let generator = self.from.generator.as_ref();
         let no_program = GpuProgram::default();
         let (program, words) = match &self.program {
-            Some((buffer, program)) => (buffer.address, program),
+            Some((buffer, program)) => (buffer.address + spread_words(program) * 4, program),
             None => (0, &no_program),
+        };
+        let spread = match (&self.program, &self.spread) {
+            (Some((buffer, _)), Some(_)) => buffer.address,
+            _ => 0,
         };
         let make = GpuWorldMake {
             table: self.table.address,
@@ -1851,6 +1907,11 @@ impl Endless {
             sea_level: generator.map_or(0.0, |generator| generator.world.sea_level()),
             volume: self.volume.as_ref().map_or(0, |(words, _)| words.address),
             carried: self.volume.as_ref().map_or(0, |(_, carried)| carried.address),
+            spread,
+            spread_grid: self.spread.as_ref().map_or(0, |grid| grid.address),
+            spread_words: 0,
+            spread_count: 0,
+            spread_slots: [0; MOST_CARRIED],
             volume_words: 0,
             density_slot: 0,
             carried_count: 0,
@@ -1949,6 +2010,9 @@ impl Recording {
             bindless.push(gpu, cmd, &push);
             device.cmd_dispatch(cmd, groups[0], groups[1], groups[2]);
         };
+        // What the Volume's columns read between columns apart first, at every fourth column.
+        run(pipelines.voxel_world_spread, [((SPREAD_SIDE * SPREAD_SIDE) as u32).div_ceil(64), jobs, 1]);
+        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         run(pipelines.voxel_world_columns, [((SIDE * SIDE) as u32).div_ceil(64), jobs, 1]);
         // The edits that reach each column before its trees, whose feet they may take away.
         run(pipelines.voxel_world_edits, [1, jobs, 1]);
@@ -2029,6 +2093,7 @@ impl Endless {
         all.push(self.job_edits);
         all.extend(self.program.map(|(buffer, _)| buffer));
         all.extend(self.volume.into_iter().flat_map(|(words, carried)| [words, carried]));
+        all.extend(self.spread);
         all.extend(self.makes);
         all.extend(self.rivers.map(|rivers| rivers.table));
         all.extend(self.finds.map(|finds| finds.table));
@@ -2157,7 +2222,7 @@ pub(crate) fn generated_at(
     let record =
         gpu.create_buffer("generator record", size_of::<GpuWorldMake>() as u64, usage, MemoryLocation::CpuToGpu)?;
     let mut make: GpuWorldMake = bytemuck::Zeroable::zeroed();
-    make.program = code.address;
+    make.program = code.address + spread_words(&program) * 4;
     make.program_words = program.words.len() as u32;
     make.outs = [program.height, program.warmth, program.wetness, program.rock];
     make.candidates = asked.address;
@@ -2179,6 +2244,7 @@ pub(crate) fn generated_at(
     if let (Some(volume), Some(words)) = (&program.volume, &cells) {
         make.volume = words.address;
         volume_fields(&mut make, volume, size);
+        make.spread = if volume.spread.is_some() { code.address } else { 0 };
     }
     // What the generator's nodes find over every place asked about.
     let found = match program.finds.is_empty() || places.is_empty() {

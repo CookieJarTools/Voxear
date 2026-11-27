@@ -181,6 +181,11 @@ struct WorldMake
     // What the generator's nodes found on the CPU, its spires and bridges, round the window (src/voxel_volume/finds.rs,
     // findAt): none where it has none.
     uint* finds;
+    // The program that makes what a Volume's columns carry up that is read between columns four apart, and what it
+    // made at every fourth column of each job's columns (voxelWorldSpread). Its words come just before `program`'s,
+    // whose data it reads too (GpuSpread).
+    uint* spread;
+    uint* spreadGrid;
     float height;
     float hills;
     float hillSpacing;
@@ -235,6 +240,11 @@ struct WorldMake
     // Where among the edits' words the trees felled and the grass cut are kept (felledCut, cutLeft): NO_TABLE for none.
     uint felledAt;
     uint cutsAt;
+    // How many words the spread program has (none without one), how many numbers it makes and the slots it leaves
+    // them in.
+    uint spreadWords;
+    uint spreadCount;
+    uint4 spreadSlots[3];
     WorldJob jobs[MAX_JOBS];
 };
 
@@ -567,8 +577,17 @@ float densityAt(WorldMake* make, uint job, int x, int y, int z)
     return densityWith(make, int3(corner.x + x, y, corner.y + z), carriedOf(make, job, x, z));
 }
 
+// A carried number made by the spread program and read between columns (BETWEEN_ROW in generate/gpu.rs), its place
+// among the numbers that program makes in the bits under it.
+static const uint BETWEEN_ROW = 0x80000000u;
+// How many voxel columns apart the spread program is run, each way, as a world of blocks does (Volume::carried_grid).
+static const int SPREAD_APART = 4;
+// How many columns of the spread program a job's columns and their border reach, each way: from the job's first
+// column with its border to the first past its last.
+static const int SPREAD_SIDE = (SIDE - 1) / SPREAD_APART + 2;
+
 // The generator's program run at voxel column (x, z) of the world: its height, climate and rock, and what the
-// column carries up to its Volume's cells, kept in `carried`.
+// column carries up to its Volume's cells, kept in `carried`: what is read between columns apart (carriedBetween).
 Generated runColumn(WorldMake* make, int x, int z, uint* carried)
 {
     float v = make->voxel;
@@ -586,9 +605,122 @@ Generated runColumn(WorldMake* make, int x, int z, uint* carried)
     made.rock = outs.w < GENERATOR_SLOTS ? slots[outs.w] : 0.0;
     for (uint c = 0; c < make->carriedCount; c++)
     {
-        carried[c] = asuint(slots[min(make->carriedSlots[c >> 2][c & 3u], GENERATOR_SLOTS - 1)]);
+        uint slot = make->carriedSlots[c >> 2][c & 3u];
+        if ((slot & BETWEEN_ROW) == 0u)
+        {
+            carried[c] = asuint(slots[min(slot, GENERATOR_SLOTS - 1)]);
+        }
     }
     return made;
+}
+
+// How many numbers the spread program may make: as many as a column may carry up.
+static const uint MOST_SPREAD = 12;
+
+// The spread program run at voxel column (x, z) of the world: what it makes, `spreadCount` numbers.
+void runSpread(WorldMake* make, int x, int z, out float made[MOST_SPREAD])
+{
+    float v = make->voxel;
+    float slots[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        slots[s] = 0.0;
+    }
+    runSteps(make->spread, make->spreadWords, (float(x) + 0.5) * v + make->atX, 0.0, (float(z) + 0.5) * v + make->atZ, 0.0, make->spread, make->finds, slots);
+    for (uint k = 0; k < MOST_SPREAD; k++)
+    {
+        made[k] = k < make->spreadCount ? slots[min(make->spreadSlots[k >> 2][k & 3u], GENERATOR_SLOTS - 1)] : 0.0;
+    }
+}
+
+// The column at or before `v` of those SPREAD_APART apart, counted in them.
+int spreadLine(int v)
+{
+    return v >= 0 ? v / SPREAD_APART : -((-v + SPREAD_APART - 1) / SPREAD_APART);
+}
+
+// Read between `low` and `high`, `part` of SPREAD_APART along, as Volume::carried_grid reads them: to the bit.
+float spreadBetween(float low, float high, int part)
+{
+    if (part == 0)
+    {
+        return low;
+    }
+    precise float apart = high - low;
+    precise float along = apart * (float(part) / float(SPREAD_APART));
+    precise float read = low + along;
+    return read;
+}
+
+// The numbers carried up that are read between columns apart, for voxel column (x, z) of the world, into `carried`:
+// from what the spread program made at the four columns round it, each number's at the column at or before it each
+// way, then the next along x, the next along z, and the one past both.
+void carriedBetween(WorldMake* make, int x, int z, uint* carried, float4 corners[MOST_SPREAD])
+{
+    int partX = x - spreadLine(x) * SPREAD_APART;
+    int partZ = z - spreadLine(z) * SPREAD_APART;
+    for (uint c = 0; c < make->carriedCount; c++)
+    {
+        uint slot = make->carriedSlots[c >> 2][c & 3u];
+        if ((slot & BETWEEN_ROW) == 0u)
+        {
+            continue;
+        }
+        float4 corner = corners[min(slot & ~BETWEEN_ROW, MOST_SPREAD - 1)];
+        float a = spreadBetween(corner.x, corner.y, partX);
+        float b = partZ == 0 ? a : spreadBetween(a, spreadBetween(corner.z, corner.w, partX), partZ);
+        carried[c] = asuint(b);
+    }
+}
+
+// The numbers carried up that are read between columns apart, for voxel column (x, z) of the world, into `carried`,
+// the spread program run afresh at the four columns round it: for a column outside a job's, as a tree's foot may be.
+void carriedBetweenAnywhere(WorldMake* make, int x, int z, uint* carried)
+{
+    if (make->spreadWords == 0)
+    {
+        return;
+    }
+    int lineX = spreadLine(x) * SPREAD_APART;
+    int lineZ = spreadLine(z) * SPREAD_APART;
+    float4 corners[MOST_SPREAD];
+    // The four corners in a loop of one run each, not four runs side by side: the program's steps are a large
+    // switch, and every place it is run from is a copy of it in the compiled pass.
+    [loop]
+    for (uint corner = 0; corner < 4; corner++)
+    {
+        float made[MOST_SPREAD];
+        runSpread(make, lineX + int(corner & 1u) * SPREAD_APART, lineZ + int(corner >> 1) * SPREAD_APART, made);
+        for (uint k = 0; k < MOST_SPREAD; k++)
+        {
+            corners[k][corner] = made[k];
+        }
+    }
+    carriedBetween(make, x, z, carried, corners);
+}
+
+// What the spread program made at column (i, j) of a job's grid of them (voxelWorldSpread): number `k`.
+float spreadOf(WorldMake* make, uint job, int i, int j, uint k)
+{
+    return asfloat(make->spreadGrid[(job * uint(SPREAD_SIDE * SPREAD_SIDE) + uint(j * SPREAD_SIDE + i)) * make->spreadCount + k]);
+}
+
+// The numbers carried up that are read between columns apart, for column (x, z) of a job's columns with their
+// border (from 0), into `carried`: from what the spread pass made round it.
+void carriedBetweenOfJob(WorldMake* make, uint job, int x, int z, int2 world, uint* carried)
+{
+    if (make->spreadWords == 0)
+    {
+        return;
+    }
+    int i = x / SPREAD_APART;
+    int j = z / SPREAD_APART;
+    float4 corners[MOST_SPREAD];
+    for (uint k = 0; k < MOST_SPREAD; k++)
+    {
+        corners[k] = k < make->spreadCount ? float4(spreadOf(make, job, i, j, k), spreadOf(make, job, i + 1, j, k), spreadOf(make, job, i, j + 1, k), spreadOf(make, job, i + 1, j + 1, k)) : float4(0.0);
+    }
+    carriedBetween(make, world.x, world.y, carried, corners);
 }
 
 // A height the generator made, in the volume's voxels from its floor.
@@ -1298,6 +1430,29 @@ int lowOf(WorldMake* make, uint job, int x, int z)
     return min(around, h) - 1;
 }
 
+// The spread program run at every fourth column of each job's columns and their border, each way, from the first
+// (whose place in the world is a whole number of SPREAD_APART), for the columns pass to read between.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldSpread(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint job = id.y;
+    if (job >= make->jobCount || id.x >= uint(SPREAD_SIDE * SPREAD_SIDE) || make->spreadWords == 0)
+    {
+        return;
+    }
+    int2 corner = make->jobs[job].column * 64;
+    int x = corner.x - BORDER + int(id.x % SPREAD_SIDE) * SPREAD_APART;
+    int z = corner.y - BORDER + int(id.x / SPREAD_SIDE) * SPREAD_APART;
+    float made[MOST_SPREAD];
+    runSpread(make, x, z, made);
+    for (uint k = 0; k < make->spreadCount; k++)
+    {
+        make->spreadGrid[(job * uint(SPREAD_SIDE * SPREAD_SIDE) + id.x) * make->spreadCount + k] = asuint(made[k]);
+    }
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
@@ -1317,7 +1472,9 @@ void voxelWorldColumns(uint3 id: SV_DispatchThreadID)
         make->grounds[job * SIDE * SIDE + id.x] = 128u + (128u << 8);
         return;
     }
-    Generated made = runColumn(make, x, z, make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount);
+    uint* carried = make->carried + (job * SIDE * SIDE + id.x) * make->carriedCount;
+    Generated made = runColumn(make, x, z, carried);
+    carriedBetweenOfJob(make, job, int(id.x % SIDE), int(id.x / SIDE), int2(x, z), carried);
     // The rivers' cut, laid in from the CPU, over the ground the program made without them.
     make->heights[job * SIDE * SIDE + id.x] = voxelsUp(make, made.height + riverAt(make, x, z).x);
     uint warmth = uint(clamp(round(made.warmth) + 128.0, 0.0, 255.0));
@@ -1567,11 +1724,25 @@ bool grassAt(WorldMake* make, int2 foot, uint* carried, out int h)
         h = heightAt(make, foot.x, foot.y);
         return h >= 0 && h < tall - 1;
     }
-    int east = voxelsUp(make, runColumn(make, foot.x + 2, foot.y, carried).height + riverAt(make, foot.x + 2, foot.y).x);
-    int west = voxelsUp(make, runColumn(make, foot.x - 2, foot.y, carried).height + riverAt(make, foot.x - 2, foot.y).x);
-    int north = voxelsUp(make, runColumn(make, foot.x, foot.y + 2, carried).height + riverAt(make, foot.x, foot.y + 2).x);
-    int south = voxelsUp(make, runColumn(make, foot.x, foot.y - 2, carried).height + riverAt(make, foot.x, foot.y - 2).x);
-    Generated made = runColumn(make, foot.x, foot.y, carried);
+    // The ground two columns east, west, north and south, then at the foot itself, in a loop of one run each: every
+    // place the program is run from is a copy of its steps in the compiled pass.
+    int around[4];
+    Generated made;
+    [loop]
+    for (uint side = 0; side < 5; side++)
+    {
+        int2 at = side == 4u ? foot : foot + int2(side == 0u ? 2 : side == 1u ? -2 : 0, side == 2u ? 2 : side == 3u ? -2 : 0);
+        made = runColumn(make, at.x, at.y, carried);
+        if (side < 4u)
+        {
+            around[side] = voxelsUp(make, made.height + riverAt(make, at.x, at.y).x);
+        }
+    }
+    int east = around[0];
+    int west = around[1];
+    int north = around[2];
+    int south = around[3];
+    carriedBetweenAnywhere(make, foot.x, foot.y, carried);
     float2 river = riverAt(make, foot.x, foot.y);
     h = voxelsUp(make, made.height + river.x);
     if (h < 0 || h >= tall - 1)
@@ -3276,9 +3447,23 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     {
         return;
     }
+    // What is read between columns apart is made at the place itself: exactly, as the CPU's Volume::carried makes it.
+    float spread[GENERATOR_SLOTS];
+    for (uint s = 0; s < GENERATOR_SLOTS; s++)
+    {
+        spread[s] = 0.0;
+    }
+    if (make->spreadWords != 0)
+    {
+        runSteps(make->spread, make->spreadWords, x, 0.0, z, 0.0, make->spread, make->finds, spread);
+    }
     for (uint c = 0; c < make->carriedCount; c++)
     {
-        out[5 + c] = asuint(slots[min(make->carriedSlots[c >> 2][c & 3u], GENERATOR_SLOTS - 1)]);
+        uint slot = make->carriedSlots[c >> 2][c & 3u];
+        bool between = (slot & BETWEEN_ROW) != 0u;
+        uint k = min(slot & ~BETWEEN_ROW, MOST_SPREAD - 1);
+        float made = between ? spread[min(make->spreadSlots[k >> 2][k & 3u], GENERATOR_SLOTS - 1)] : slots[min(slot, GENERATOR_SLOTS - 1)];
+        out[5 + c] = asuint(made);
     }
     float cells[GENERATOR_SLOTS];
     for (uint s = 0; s < GENERATOR_SLOTS; s++)

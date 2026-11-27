@@ -1272,10 +1272,24 @@ Since, the same day:
   glass's colour, and so does the sun's ray from what it met (`ddgiSunThrough` in `ddgi.slang`). Sun through a red
   window bounces dim red round the room, where through clear glass it bounces the floor's green; on master the two
   were the same. The GI's rays' pass 2.70 → 2.80 ms on the street.
+- **Glass several panes deep.** The glass pass draws the depth pass's first glass, then walks on from a quarter of a
+  voxel inside it to the next glass entered from what isn't glass (`fromGlass` on `voxelTrace`), up to four,
+  laying each over those behind it. It stops at what is opaque there: the voxels' shadows pass, which reads the
+  depth anyway, keeps that distance where a pixel has glass (`behind`, after the sun map), so a figure between two
+  windows isn't tinted by the far one. Three faults came out on the way, all older than this:
+  - the world-making pass keeps only voxels with open air beside them, and glass counted as solid, so a pane four
+    voxels thick was two faces a voxel thick with air between, and the stone beside a pane wasn't kept either:
+    see-through voxels now hide nothing beside them (`hidesNear` in voxel_world.slang);
+  - the coarse rays, which take every brick as solid, went through glass bricks since those are walked voxel by
+    voxel, so a pane's middle wasn't drawn: the coarse rays' footprint (`VOXEL_BRICKS_SOLID`) keeps them solid;
+  - the sky was drawn after the voxels' glass where nothing opaque is behind it, which writes no depth: glass
+    against the sky never showed. The glass pass is now after the sky.
+  Street, least of 60, three runs: the glass pass 0.165 → 0.30 ms, the voxels' shadows 2.45 → 2.51 ms; the frame
+  about 0.1–0.2 ms more, within what another session on the GPU moved it.
 
 Not done:
 
-- **Glass**: only the nearest glass in a pixel is drawn.
+- **Glass**: past four panes in a pixel, what is behind shows untinted.
 - **Single black pixels.** A few pixels of a large flat wall of voxels are drawn by neither pass, here as on the
   commit before: about 190 of a 640 × 360 view into a stone room. Unlit before, they were hard to see; they are the
   walk's, not the light's.

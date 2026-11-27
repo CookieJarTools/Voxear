@@ -1140,14 +1140,17 @@ impl Renderer {
             let time = particles::time_of(world, 0.0);
             self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera, time)?;
             // Endless volumes' columns round the camera made now, outside the frames.
-            self.voxels.make_endless_now(&self.gpu, (&self.pipelines, &self.bindless))?;
+            let made_any = self.voxels.make_endless_now(&self.gpu, (&self.pipelines, &self.bindless))?;
             if !self.voxels.making() {
                 break true;
             }
             if started.elapsed() >= limit {
                 break false;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            // Waiting on what the CPU finds round the columns (rivers, spires) rather than spinning.
+            if !made_any {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
         };
         self.voxels.loading = false;
         Ok(made)

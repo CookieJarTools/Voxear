@@ -41,9 +41,11 @@ use super::{
 };
 use crate::pipelines::Pipelines;
 
-/// How many columns are made a frame at most, at most with a Volume, whose
-/// voxels each run its graph, and at most with trees.
-pub(crate) const MAX_JOBS: usize = 16;
+/// How many columns are made a frame at most, as a level loads; and in
+/// play at most without trees or a Volume, with a Volume, whose voxels each
+/// run its graph, and with trees.
+pub(crate) const MAX_JOBS: usize = 32;
+const MAX_PLAIN_JOBS: usize = 16;
 const MAX_VOLUME_JOBS: usize = 4;
 const MAX_TREE_JOBS: usize = 8;
 /// How many bricks a job keeps while its column is made, and how many
@@ -500,10 +502,12 @@ fn program_of(generator: &VoxelGenerator) -> Option<GpuProgram> {
     }
 }
 
-/// Fills a record's Volume fields from `cells`, at `voxel` metres a voxel.
-fn volume_fields(make: &mut GpuWorldMake, cells: &GpuVolume, voxel: f32) {
-    make.volume_words = cells.words.len() as u32;
-    make.density_slot = cells.density;
+/// Fills a record's Volume fields from `cells`, at `voxel` metres a voxel:
+/// for a ring, seen only from afar, its cells' program without its caves.
+fn volume_fields(make: &mut GpuWorldMake, cells: &GpuVolume, voxel: f32, ring: bool) {
+    let (words, density) = cells_of(cells, ring);
+    make.volume_words = words.len() as u32;
+    make.density_slot = density;
     make.carried_count = cells.carried.len() as u32;
     make.span_count = cells.spans.len().min(MOST_SPANS) as u32;
     for (slot, &carried) in make.carried_slots.iter_mut().zip(&cells.carried) {
@@ -522,6 +526,16 @@ fn volume_fields(make: &mut GpuWorldMake, cells: &GpuVolume, voxel: f32) {
         for (slot, &made) in make.spread_slots.iter_mut().zip(&spread.slots) {
             *slot = made;
         }
+    }
+}
+
+/// A Volume's cells' program and the slot it leaves a cell's number in: for
+/// a ring, seen only from afar, the one without its caves, as a world of
+/// blocks' far levels leave them out.
+fn cells_of(cells: &GpuVolume, ring: bool) -> (&[u32], u32) {
+    match (&cells.coarse, ring) {
+        (Some((words, density)), true) => (words, *density),
+        _ => (&cells.words, cells.density),
     }
 }
 
@@ -551,6 +565,14 @@ fn program_buffer(gpu: &Gpu, program: &GpuProgram) -> Result<Buffer> {
 /// before the program's own.
 fn spread_words(program: &GpuProgram) -> u64 {
     program.volume.as_ref().and_then(|cells| cells.spread.as_ref()).map_or(0, |spread| spread.words.len() as u64)
+}
+
+/// How many rows of bricks of a column of bricks may be candidates at
+/// most: a column keeps the band of sectors under its highest
+/// (`voxelWorldCandidates`), and a row more where it starts part way down
+/// one.
+fn candidate_rows(tall: u32) -> u64 {
+    u64::from(layers_of(tall) * 8 + 1)
 }
 
 /// How many sectors of each column a window keeps entries for.
@@ -938,10 +960,12 @@ fn laid_finds(
 fn program_buffers(
     gpu: &Gpu,
     program: Option<GpuProgram>,
+    ring: bool,
 ) -> Result<(Option<(Buffer, GpuProgram)>, Option<(Buffer, Buffer)>, Option<Buffer>)> {
     let caves = match program.as_ref().and_then(|made| made.volume.as_ref()) {
         Some(cells) => {
-            let words = program_buffer(gpu, &GpuProgram { words: cells.words.clone(), ..GpuProgram::default() })?;
+            let words = cells_of(cells, ring).0.to_vec();
+            let words = program_buffer(gpu, &GpuProgram { words, ..GpuProgram::default() })?;
             let count = (cells.carried.len() as u64).max(1);
             let carried = gpu.create_buffer(
                 "voxel world carried",
@@ -1012,8 +1036,8 @@ impl Endless {
         let column_grounds = make("column grounds", jobs * TOPS * TOPS * 4, none)?;
         let grounds = make("grounds", jobs * SIDE * SIDE * 4, none)?;
         let program = gpu_program_of(volume);
-        let (program, caves, spread) = program_buffers(gpu, program)?;
         let coarser = fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
+        let (program, caves, spread) = program_buffers(gpu, program, coarser > 1)?;
         let room = room_of(
             program.as_ref().map(|(_, program)| program),
             &volume.trees,
@@ -1072,7 +1096,7 @@ impl Endless {
         )?;
         let job_edits = make("job edits", jobs * MOST_COLUMN_EDITS * 4, none)?;
         // The candidate bricks, and after them those the coarse pass leaves.
-        let candidates = make("candidates", 2 * jobs * 64 * rows * 4, none)?;
+        let candidates = make("candidates", 2 * jobs * 64 * candidate_rows(tall) * 4, none)?;
         let mut makes = Vec::new();
         for slot in 0..=voxear_rhi::FRAMES_IN_FLIGHT {
             makes.push(gpu.create_buffer(
@@ -1493,7 +1517,7 @@ impl Endless {
         if plants_of(volume) != plants_of(&self.from) {
             return Ok(None);
         }
-        let (program, caves, spread) = program_buffers(gpu, program)?;
+        let (program, caves, spread) = program_buffers(gpu, program, coarser > 1)?;
         let (colours, forest, _, biomes) = forest_buffers(gpu, volume, false)?;
         // The prints' and tints' colours placed again after the ground's and the trees', with every column made over.
         self.base_colours = colours.len();
@@ -1599,16 +1623,12 @@ impl Endless {
         self.jobs.clear();
         // A Volume's column is made through the band of sectors it keeps, which a volume hundreds of metres tall keeps
         // three times as deep: as many fewer columns a frame, so the frames stay light. While loading, nothing is drawn
-        // to keep light: as many as any volume makes, whose pass takes tens of milliseconds at most, the Realm's ground
-        // round a still camera in under half the time.
-        let volume_jobs = match loading {
-            true => MAX_JOBS,
-            false => (MAX_VOLUME_JOBS * 8 / layers_of(self.tall) as usize).clamp(1, MAX_VOLUME_JOBS),
-        };
-        let most = match (self.volume.is_some(), self.forest.is_some()) {
-            (true, _) => volume_jobs,
-            (false, true) => MAX_TREE_JOBS,
-            (false, false) => MAX_JOBS,
+        // to keep light: as many as there is room for, whatever the volume.
+        let most = match (loading, self.volume.is_some(), self.forest.is_some()) {
+            (true, _, _) => MAX_JOBS,
+            (false, true, _) => (MAX_VOLUME_JOBS * 8 / layers_of(self.tall) as usize).clamp(1, MAX_VOLUME_JOBS),
+            (false, false, true) => MAX_TREE_JOBS,
+            (false, false, false) => MAX_PLAIN_JOBS,
         };
         // A ring's columns are as wide as its voxels, so they come into its window as much less often: as many fewer a
         // frame keeps the frames that every ring makes columns on light.
@@ -1651,7 +1671,13 @@ impl Endless {
         let half = (self.window / 2) as f32 * metres;
         let snap = 2.0 / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE) as f32;
         let from = camera - corner;
-        self.outer = self.settled.and_then(|made| {
+        // While loading, nothing is drawn until every ring has made its window: a ring's outer box is then where it
+        // will be once it has, so the ring round it makes nothing under it, which it would never draw.
+        let made = match loading {
+            true => Some(window),
+            false => self.settled,
+        };
+        self.outer = made.and_then(|made| {
             let made = made.map(|edge| edge as f32 * metres);
             let low = |a: f32, b: f32| (a.max(b) / snap).ceil() * snap;
             let high = |a: f32, b: f32| (a.min(b) / snap).floor() * snap;
@@ -1860,7 +1886,6 @@ impl Endless {
         for (job, (column, place)) in jobs.iter_mut().zip(&self.jobs) {
             *job = GpuWorldJob { column: *column, slot: *place, pad: 0 };
         }
-        let rows = u64::from(self.tall * 8);
         let generator = self.from.generator.as_ref();
         let no_program = GpuProgram::default();
         let (program, words) = match &self.program {
@@ -1899,7 +1924,7 @@ impl Endless {
             brick_room: JOB_BRICKS as u32,
             material_room: JOB_MATERIALS as u32,
             job_count: self.jobs.len() as u32,
-            candidate_room: (MAX_JOBS as u64 * 64 * rows) as u32,
+            candidate_room: (MAX_JOBS as u64 * 64 * candidate_rows(self.tall)) as u32,
             program_words: if program == 0 { 0 } else { words.words.len() as u32 },
             outs: [words.height, words.warmth, words.wetness, words.rock],
             floor: generator.map_or(0.0, |generator| generator.floor),
@@ -1954,7 +1979,7 @@ impl Endless {
         let cells = self.program.as_ref().and_then(|(_, program)| program.volume.as_ref());
         if let (Some(cells), Some(_)) = (cells, &self.volume) {
             let voxel = make.voxel;
-            volume_fields(&mut make, cells, voxel);
+            volume_fields(&mut make, cells, voxel, self.fine != self.from.voxels_per_metre);
         }
         let buffer = &self.makes[slot.min(self.makes.len() - 1)];
         buffer.write(0, std::slice::from_ref(&make));
@@ -1982,71 +2007,95 @@ pub(crate) struct Recording {
     tall: u32,
 }
 
+/// How many stages making a frame's columns takes ([`Recording::stage`]).
+pub(crate) const STAGES: usize = 15;
+
 impl Recording {
-    /// Records the passes that make this frame's columns, from the record at
-    /// `make`, into `cmd`: each job's materials cleared, then the passes,
-    /// with what each reads of the last finished between them.
-    pub fn record(&self, gpu: &Gpu, cmd: vk::CommandBuffer, (pipelines, bindless): (&Pipelines, &Bindless), make: u64) {
+    /// How many columns it makes.
+    pub fn job_count(&self) -> usize {
+        self.jobs.len()
+    }
+
+    /// Records stage `stage` of the passes that make this frame's columns,
+    /// from the record at `make`, into `cmd`: each job's materials cleared,
+    /// then the passes in turn.
+    pub(crate) fn stage(
+        &self,
+        gpu: &Gpu,
+        cmd: vk::CommandBuffer,
+        (pipelines, bindless): (&Pipelines, &Bindless),
+        make: u64,
+        stage: usize,
+    ) {
         let device = &gpu.device;
-        let barrier = |dst: vk::PipelineStageFlags2, access: vk::AccessFlags2| {
-            let barrier = vk::MemoryBarrier2::default()
-                .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::ALL_TRANSFER)
-                .src_access_mask(vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::TRANSFER_WRITE)
-                .dst_stage_mask(dst)
-                .dst_access_mask(access);
-            unsafe { device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[barrier])) };
-        };
-        let read_write = vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE;
         let jobs = self.jobs.len() as u32;
-        unsafe {
-            device.cmd_fill_buffer(cmd, self.staging, 0, self.jobs.len() as u64 * JOB_MATERIALS, 0);
-            device.cmd_fill_buffer(cmd, self.slots, 0, vk::WHOLE_SIZE, 0);
-            device.cmd_fill_buffer(cmd, self.counters, 0, vk::WHOLE_SIZE, 0);
-        }
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
         let push = WorldPush { make };
         let run = |pipeline: vk::Pipeline, groups: [u32; 3]| unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
             bindless.push(gpu, cmd, &push);
             device.cmd_dispatch(cmd, groups[0], groups[1], groups[2]);
         };
-        // What the Volume's columns read between columns apart first, at every fourth column.
-        run(pipelines.voxel_world_spread, [((SPREAD_SIDE * SPREAD_SIDE) as u32).div_ceil(64), jobs, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_columns, [((SIDE * SIDE) as u32).div_ceil(64), jobs, 1]);
-        // The edits that reach each column before its trees, whose feet they may take away.
-        run(pipelines.voxel_world_edits, [1, jobs, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_tops, [((TOPS * TOPS) as u32).div_ceil(64), jobs, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_trees, [1, jobs, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_candidates, [1, jobs, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_arguments, [1, 1, 1]);
-        barrier(
-            vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::DRAW_INDIRECT,
-            read_write | vk::AccessFlags2::INDIRECT_COMMAND_READ,
-        );
         let indirect = |pipeline: vk::Pipeline, at: u64| unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
             bindless.push(gpu, cmd, &push);
             device.cmd_dispatch_indirect(cmd, self.counters, (MAX_JOBS as u64 * COUNTERS + at) * 4);
         };
-        indirect(pipelines.voxel_world_coarse, 1);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_brick_arguments, [1, 1, 1]);
-        barrier(
-            vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::DRAW_INDIRECT,
-            read_write | vk::AccessFlags2::INDIRECT_COMMAND_READ,
+        match stage {
+            0 => unsafe {
+                device.cmd_fill_buffer(cmd, self.staging, 0, self.jobs.len() as u64 * JOB_MATERIALS, 0);
+                device.cmd_fill_buffer(cmd, self.slots, 0, vk::WHOLE_SIZE, 0);
+                device.cmd_fill_buffer(cmd, self.counters, 0, vk::WHOLE_SIZE, 0);
+            },
+            // What the Volume's columns read between columns apart first, at every fourth column.
+            1 => run(pipelines.voxel_world_spread, [((SPREAD_SIDE * SPREAD_SIDE) as u32).div_ceil(64), jobs, 1]),
+            2 => {
+                run(pipelines.voxel_world_columns, [((SIDE * SIDE) as u32).div_ceil(64), jobs, 1]);
+                // The edits that reach each column before its trees, whose feet they may take away.
+                run(pipelines.voxel_world_edits, [1, jobs, 1]);
+            }
+            3 => run(pipelines.voxel_world_tops, [((TOPS * TOPS) as u32).div_ceil(64), jobs, 1]),
+            4 => run(pipelines.voxel_world_trees, [1, jobs, 1]),
+            5 => run(pipelines.voxel_world_candidates, [1, jobs, 1]),
+            6 => run(pipelines.voxel_world_arguments, [1, 1, 1]),
+            7 => indirect(pipelines.voxel_world_coarse, 1),
+            8 => run(pipelines.voxel_world_brick_arguments, [1, 1, 1]),
+            // A look through each brick the coarse pass leaves, which keeps those with voxels to work out.
+            9 => indirect(pipelines.voxel_world_look, 5),
+            10 => run(pipelines.voxel_world_kept_arguments, [1, 1, 1]),
+            11 => indirect(pipelines.voxel_world_bricks, 1),
+            12 => run(pipelines.voxel_world_free, [1, 1, 1]),
+            13 => run(pipelines.voxel_world_pack, [1, 1, 1]),
+            _ => run(pipelines.voxel_world_sectors, [layers_of(self.tall), jobs, 1]),
+        }
+    }
+}
+
+/// Records the passes that make this frame's columns of each of `rings`,
+/// each from the record beside it, into `cmd`: a stage of every ring at a
+/// time, with what each reads of the last finished between them, so the
+/// rings' small passes run side by side and not one ring after another.
+pub(crate) fn record_rings(
+    gpu: &Gpu,
+    cmd: vk::CommandBuffer,
+    (pipelines, bindless): (&Pipelines, &Bindless),
+    rings: &[(Recording, u64)],
+) {
+    let barrier = vk::MemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::ALL_TRANSFER)
+        .src_access_mask(vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::TRANSFER_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::DRAW_INDIRECT)
+        .dst_access_mask(
+            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::INDIRECT_COMMAND_READ,
         );
-        indirect(pipelines.voxel_world_bricks, 5);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_free, [1, 1, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_pack, [1, 1, 1]);
-        barrier(vk::PipelineStageFlags2::COMPUTE_SHADER, read_write);
-        run(pipelines.voxel_world_sectors, [layers_of(self.tall), jobs, 1]);
+    for stage in 0..STAGES {
+        for (recording, make) in rings {
+            recording.stage(gpu, cmd, (pipelines, bindless), *make, stage);
+        }
+        if stage + 1 < STAGES {
+            unsafe {
+                gpu.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[barrier]))
+            };
+        }
     }
 }
 
@@ -2243,7 +2292,7 @@ pub(crate) fn generated_at(
     };
     if let (Some(volume), Some(words)) = (&program.volume, &cells) {
         make.volume = words.address;
-        volume_fields(&mut make, volume, size);
+        volume_fields(&mut make, volume, size, false);
         make.spread = if volume.spread.is_some() { code.address } else { 0 };
     }
     // What the generator's nodes find over every place asked about.

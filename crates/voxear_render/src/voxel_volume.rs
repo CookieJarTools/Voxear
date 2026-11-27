@@ -1132,30 +1132,53 @@ impl VoxelVolumes {
 
     fn record_making(&self, fg: &mut FrameGraph<'_>, pipelines: Pipelines, slot: usize) -> Vec<BufferId> {
         let mut pools = Vec::new();
+        let (mut writes, mut rings) = (Vec::new(), Vec::new());
         for made in self.endless.values().flatten() {
             let ids: Vec<BufferId> = made.pools().iter().map(|buffer| fg.import_buffer(buffer)).collect();
             if let Some(make) = made.write(slot) {
-                let writes: Vec<_> = ids.iter().map(|&id| (id, BufferAccess::ComputeWrite)).collect();
-                let recording = made.recording();
-                fg.add_pass("Voxel world making", &[], &writes, move |ctx| {
-                    recording.record(ctx.gpu, ctx.cmd, (&pipelines, ctx.bindless), make);
-                });
+                writes.extend(ids.iter().map(|&id| (id, BufferAccess::ComputeWrite)));
+                rings.push((made.recording(), make));
             }
             pools.extend(ids);
+        }
+        // Every ring's columns in one pass, a stage of each at a time.
+        if !rings.is_empty() {
+            fg.add_pass("Voxel world making", &[], &writes, move |ctx| {
+                endless::record_rings(ctx.gpu, ctx.cmd, (&pipelines, ctx.bindless), &rings);
+            });
         }
         pools
     }
 
     /// Makes what is left to make of the endless volumes round the camera
-    /// now, outside the frames, as a game's loading does.
-    pub fn make_endless_now(&self, gpu: &Gpu, (pipelines, bindless): (&Pipelines, &Bindless)) -> Result<()> {
+    /// now, outside the frames, as a game's loading does: every ring's
+    /// columns in one submission. Gives whether any were made.
+    pub fn make_endless_now(&self, gpu: &Gpu, (pipelines, bindless): (&Pipelines, &Bindless)) -> Result<bool> {
+        let mut rings = Vec::new();
         for made in self.endless.values().flatten() {
             if let Some(make) = made.write(voxear_rhi::FRAMES_IN_FLIGHT) {
-                let recording = made.recording();
-                gpu.immediate(|cmd| recording.record(gpu, cmd, (pipelines, bindless), make))?;
+                rings.push((made.recording(), make));
             }
         }
-        Ok(())
+        let any = rings.iter().any(|(recording, _)| recording.job_count() > 0);
+        if !rings.is_empty() {
+            if std::env::var("DIAG_STAGES").is_ok() {
+                let mut line = Vec::new();
+                for (recording, make) in &rings {
+                    let mut t = Vec::new();
+                    for stage in 0..endless::STAGES {
+                        let started = std::time::Instant::now();
+                        gpu.immediate(|cmd| recording.stage(gpu, cmd, (pipelines, bindless), *make, stage))?;
+                        t.push(format!("{:.2}", started.elapsed().as_secs_f32() * 1000.0));
+                    }
+                    line.push(t.join(","));
+                }
+                eprintln!("DIAG ringstages {}", line.join(" "));
+            } else {
+                gpu.immediate(|cmd| endless::record_rings(gpu, cmd, (pipelines, bindless), &rings))?;
+            }
+        }
+        Ok(any)
     }
 
     /// What `entity`'s endless volume holds on the GPU at each of `cells`

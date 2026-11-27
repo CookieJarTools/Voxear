@@ -4686,7 +4686,10 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   is made sixteen columns a pass while loading (0.28 ms a column), so the Realm's window comes in 29–33 s, not
   100–110; the generator's program runs from one place in each pass, 260 MB less of the GPU for the compiled
   passes. The same picture, crop for crop. The frame's rise is the spires and their shadows in view: 1.2 ms of
-  voxel passes, 11.7 → 12.5–13.6 ms measured side by side.
+  voxel passes, 11.7 → 12.5–13.6 ms measured side by side. Since (later): every number and place a step reads is
+  named where it is read (the Volume's 35 steps a voxel are 8), every ring's passes go in one submission a stage at
+  a time, a look pass keeps the bricks with voxels to work out, rings leave their caves out and make nothing under
+  the ring inside them, and loading makes 32 columns a round: the window in 11.3–13.7 s, the frame as it was.
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.

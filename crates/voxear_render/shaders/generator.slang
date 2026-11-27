@@ -1609,6 +1609,38 @@ struct Generated
     float rock;
 };
 
+// An input that names a leaf where it is read, in place of a slot (LEAF_INPUT in generate/gpu.rs): its operation in
+// bits 24 to 30, and in the bits under them the place of a carried number, or of a number among `data`, what the
+// program's steps read beside their own numbers.
+static const uint LEAF_INPUT = 0x80000000u;
+
+float leafInput(uint from, float x, float y, float z, float size, uint* carried, uint* data)
+{
+    uint op = (from >> 24) & 0x7Fu;
+    uint place = from & 0xFFFFFFu;
+    if (op == OP_X)
+    {
+        return x;
+    }
+    if (op == OP_Z)
+    {
+        return z;
+    }
+    if (op == OP_Y)
+    {
+        return y;
+    }
+    if (op == OP_SIZE)
+    {
+        return size;
+    }
+    if (op == OP_CONSTANT)
+    {
+        return asfloat(data[place]);
+    }
+    return asfloat(carried[place]);
+}
+
 // Runs the `words` words of `program` at (x, y, z), in metres in the generator's world, into `slots`: for a cell, `y`
 // is its middle's height, `size` how large it is and `carried` what its column carries up, as the bits of each.
 // `finds` is the table of what the program's nodes found on the CPU (findAt), or nullptr.
@@ -1622,7 +1654,8 @@ void runSteps(uint* program, uint words, float x, float y, float z, float size, 
         float a[8];
         for (uint i = 0; i < 8; i++)
         {
-            a[i] = i < count ? slots[program[at + 2 + i]] : 0.0;
+            uint from = i < count ? program[at + 2 + i] : 0u;
+            a[i] = i >= count ? 0.0 : (from < LEAF_INPUT ? slots[from] : leafInput(from, x, y, z, size, carried, program + words));
         }
         uint written = program[at + 2 + count];
         uint numbers = program[at + 3 + count];

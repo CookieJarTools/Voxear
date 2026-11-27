@@ -34,7 +34,7 @@
 
 #include "generator.slang"
 
-static const uint MAX_JOBS = 16;
+static const uint MAX_JOBS = 32;
 static const uint ENTRY_WORDS = 53;
 static const uint BRICK_WORDS = 20;
 static const uint EMPTY = 0xFFFFFFFFu;
@@ -2323,10 +2323,15 @@ static const uint TREED = 1u << 30;
 // Where an edit reaches it.
 static const uint EDITED = 1u << 29;
 static const uint MARKS = GROWN | TREED | EDITED;
+// What the look pass found of a Volume through the brick and its border (voxelWorldLook): not all of it solid, and not
+// all of it open.
+static const uint SOME_OPEN = 1u << 28;
+static const uint SOME_SOLID = 1u << 27;
+static const uint FLAGS = MARKS | SOME_OPEN | SOME_SOLID;
 
 uint packCandidate(uint job, uint bx, uint bz, uint row)
 {
-    return job | (bx << 4) | (bz << 7) | (row << 10);
+    return job | (bx << 5) | (bz << 8) | (row << 11);
 }
 
 [shader("compute")]
@@ -2492,8 +2497,8 @@ static const float COARSE_EVEN = 24.0;
 // its border of one: such a brick has no voxel to keep.
 bool evenThrough(WorldMake* make, uint packed)
 {
-    uint job = packed & 15u;
-    int3 brick = int3(int((packed >> 4) & 7u), int((packed & ~MARKS) >> 10), int((packed >> 7) & 7u)) * 8;
+    uint job = packed & 31u;
+    int3 brick = int3(int((packed >> 5) & 7u), int((packed & ~FLAGS) >> 11), int((packed >> 8) & 7u)) * 8;
     int tall = int(make->tall) * 64;
     float even = COARSE_EVEN * make->voxel;
     bool solid = true;
@@ -2516,9 +2521,9 @@ bool treesIn(WorldMake* make, uint packed)
     {
         return false;
     }
-    uint job = packed & 15u;
+    uint job = packed & 31u;
     int2 corner = make->jobs[job].column * 64;
-    int3 low = int3(corner.x, 0, corner.y) + int3(int((packed >> 4) & 7u), int((packed & ~MARKS) >> 10), int((packed >> 7) & 7u)) * 8;
+    int3 low = int3(corner.x, 0, corner.y) + int3(int((packed >> 5) & 7u), int((packed & ~FLAGS) >> 11), int((packed >> 8) & 7u)) * 8;
     int3 high = low + 7;
     for (uint t = 0; t < treeCount(make, job); t++)
     {
@@ -2555,6 +2560,7 @@ void voxelWorldCoarse(uint3 id: SV_DispatchThreadID)
     make->candidates[make->candidateRoom + at] = packed;
 }
 
+// The look pass's groups, one a brick the coarse pass leaves, and the count of those it keeps begun again.
 [shader("compute")]
 [numthreads(1, 1, 1)]
 void voxelWorldBrickArguments(uint3 id: SV_DispatchThreadID)
@@ -2564,6 +2570,75 @@ void voxelWorldBrickArguments(uint3 id: SV_DispatchThreadID)
     make->counters[MAX_JOBS * COUNTERS + 5] = ROW;
     make->counters[MAX_JOBS * COUNTERS + 6] = (count + ROW - 1) / ROW;
     make->counters[MAX_JOBS * COUNTERS + 7] = 1;
+    make->counters[MAX_JOBS * COUNTERS] = 0;
+}
+
+// How far into or out of the ground a brick's look must find every voxel it looks at to take the whole brick as
+// solid or open, in metres.
+static const float VOLUME_EVEN = 0.3;
+
+groupshared uint sharedLook;
+
+// A look at 64 voxels spread through each brick the coarse pass leaves and its border, three voxels apart, a group of
+// 64 a brick: where every one is further into a Volume's ground than VOLUME_EVEN metres, the whole is taken as solid,
+// and where every one is further out of it, as open, without working out the thousand. The Volume's numbers read about
+// as how far a place is from the ground's surface, and a cave or an overhang is wider than the gap between the looks.
+// A brick taken as solid or open with nothing grown, treed or edited in it keeps no voxel and goes no further; the
+// rest go on to the bricks pass, in the first half of the candidates, with what the look found.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void voxelWorldLook(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
+{
+    WorldMake* make = push.make;
+    uint candidate = group.y * ROW + group.x;
+    if (candidate >= make->counters[MAX_JOBS * COUNTERS + 4])
+    {
+        return;
+    }
+    uint packed = make->candidates[make->candidateRoom + candidate];
+    bool volume = hasVolume(make);
+    if (index == 0)
+    {
+        sharedLook = volume ? 0u : 3u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (volume)
+    {
+        uint job = packed & 31u;
+        int3 brick = int3(int((packed >> 5) & 7u), int((packed & ~FLAGS) >> 11), int((packed >> 8) & 7u)) * 8;
+        int tall = int(make->tall) * 64;
+        int3 q = brick + int3(index % 4, (index / 4) % 4, index / 16) * 3 - 1;
+        float d = q.y <= 0 ? 1.0e9 : (q.y < tall ? densityAt(make, job, q.x, q.y, q.z) : -1.0e9);
+        if (d <= VOLUME_EVEN)
+        {
+            InterlockedOr(sharedLook, 1u);
+        }
+        if (d >= -VOLUME_EVEN)
+        {
+            InterlockedOr(sharedLook, 2u);
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    uint look = sharedLook;
+    if (index != 0 || (look != 3u && (packed & MARKS) == 0u))
+    {
+        return;
+    }
+    uint at;
+    InterlockedAdd(make->counters[MAX_JOBS * COUNTERS], 1u, at);
+    make->candidates[at] = packed | ((look & 1u) != 0u ? SOME_OPEN : 0u) | ((look & 2u) != 0u ? SOME_SOLID : 0u);
+}
+
+// The bricks pass's groups, one a brick the look pass keeps.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void voxelWorldKeptArguments(uint3 id: SV_DispatchThreadID)
+{
+    WorldMake* make = push.make;
+    uint count = make->counters[MAX_JOBS * COUNTERS];
+    make->counters[MAX_JOBS * COUNTERS + 1] = ROW;
+    make->counters[MAX_JOBS * COUNTERS + 2] = (count + ROW - 1) / ROW;
+    make->counters[MAX_JOBS * COUNTERS + 3] = 1;
 }
 
 groupshared uint sharedMask[16];
@@ -2588,7 +2663,6 @@ groupshared uint sharedSum[4];
 groupshared uint sharedSolid[32];
 // Which of them are see-through, glass of a print: solid, but hiding nothing behind them.
 groupshared uint sharedClear[32];
-groupshared uint sharedEven;
 groupshared uint sharedSlot;
 groupshared uint sharedOffset;
 groupshared uint sharedCount;
@@ -2601,10 +2675,6 @@ groupshared int sharedCuts[MAX_TREES];
 groupshared uint sharedFelled;
 groupshared uint sharedTreeCount;
 groupshared uint sharedOwn;
-
-// How far into or out of the ground a brick's first look must find every voxel it looks at to take the whole
-// brick as solid or open, in metres.
-static const float VOLUME_EVEN = 0.3;
 
 // Whether the voxel `off` from voxel `l` of the brick is solid, from what the group worked out.
 bool solidNear(int3 l, int3 off)
@@ -2665,7 +2735,7 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
     WorldMake* make = push.make;
     uint candidate = group.y * ROW + group.x;
-    if (candidate >= make->counters[MAX_JOBS * COUNTERS + 4])
+    if (candidate >= make->counters[MAX_JOBS * COUNTERS])
     {
         return;
     }
@@ -2693,7 +2763,6 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     }
     if (index == 0)
     {
-        sharedEven = 0;
         sharedTreeCount = 0;
         sharedFelled = 0;
         sharedOwn = 0;
@@ -2704,11 +2773,11 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         sharedEditCount = 0;
     }
     GroupMemoryBarrierWithGroupSync();
-    uint packed = make->candidates[make->candidateRoom + candidate];
-    uint job = packed & 15u;
-    int bx = int((packed >> 4) & 7u);
-    int bz = int((packed >> 7) & 7u);
-    int row = int((packed & ~MARKS) >> 10);
+    uint packed = make->candidates[candidate];
+    uint job = packed & 31u;
+    int bx = int((packed >> 5) & 7u);
+    int bz = int((packed >> 8) & 7u);
+    int row = int((packed & ~FLAGS) >> 11);
     int3 l = int3(index & 7u, (index >> 3) & 7u, index >> 6);
     int px = bx * 8 + l.x;
     int pz = bz * 8 + l.z;
@@ -2780,30 +2849,8 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     GroupMemoryBarrierWithGroupSync();
     bool edited = editCount > 0;
     bool volume = hasVolume(make);
-    if (volume && !edited)
-    {
-        // First a look at 64 voxels spread through the brick and its border, three voxels apart: where every one is
-        // further into the ground than VOLUME_EVEN metres, the whole is taken as solid, and where every one is
-        // further out of it, as open, without working out the thousand. The Volume's numbers read about as how far
-        // a place is from the ground's surface, and a cave or an overhang is wider than the gap between the looks.
-        if (index < 64)
-        {
-            int3 r = int3(index % 4, (index / 4) % 4, index / 16) * 3 - 1;
-            int3 q = int3(bx * 8, row * 8, bz * 8) + r;
-            float d = q.y <= 0 ? 1.0e9 : (q.y < tall ? densityAt(make, job, q.x, q.y, q.z) : -1.0e9);
-            if (d <= VOLUME_EVEN)
-            {
-                InterlockedOr(sharedEven, 1u);
-            }
-            if (d >= -VOLUME_EVEN)
-            {
-                InterlockedOr(sharedEven, 2u);
-            }
-        }
-        GroupMemoryBarrierWithGroupSync();
-    }
-    // 1: not all solid; 2: not all open.
-    uint even = edited ? 3u : sharedEven;
+    // 1: not all solid; 2: not all open, as the look pass found.
+    uint even = edited ? 3u : ((packed & SOME_OPEN) != 0u ? 1u : 0u) | ((packed & SOME_SOLID) != 0u ? 2u : 0u);
     if (volume && (even & 1u) == 0)
     {
         if (index < 32)
@@ -2821,6 +2868,12 @@ void voxelWorldBricks(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
         for (uint at = index; at < 1000; at += 512)
         {
             int3 r = int3(at % 10, (at / 10) % 10, at / 100) - 1;
+            // Only the brick's voxels and those beside its faces are read (solidNear): not its border's edges.
+            int3 outside = int3(r < 0) + int3(r > 7);
+            if (outside.x + outside.y + outside.z > 1)
+            {
+                continue;
+            }
             int3 q = int3(bx * 8, row * 8, bz * 8) + r;
             bool solid = q.y <= 0
                 || (q.y < tall && (volume ? densityAt(make, job, q.x, q.y, q.z) > 0.0 : q.y <= heightOf(make, job, q.x, q.z)));

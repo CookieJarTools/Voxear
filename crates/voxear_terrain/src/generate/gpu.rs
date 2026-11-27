@@ -245,6 +245,10 @@ pub struct GpuVolume {
     /// none. A carried number it makes is `BETWEEN_ROW` and its place among
     /// what it makes in [`GpuVolume::carried`].
     pub spread: Option<GpuSpread>,
+    /// Its cells' program with its caves left out, as a world of blocks'
+    /// far levels leave them out, and the slot it leaves a cell's number
+    /// in: for ground seen only from afar. Given the same carried numbers.
+    pub coarse: Option<(Vec<u32>, u32)>,
 }
 
 /// The program that makes a Volume's carried numbers read between columns
@@ -259,6 +263,16 @@ pub struct GpuSpread {
     pub steps: u32,
     pub slots: Vec<u32>,
 }
+
+/// Marks a step's input that names what it reads, a leaf, in place of the
+/// slot of a step that works it out: its operation in bits 24 to 30, and in
+/// the bits under them the place of a carried number, or of a number among
+/// what the program's steps read beside their own numbers.
+pub const LEAF_INPUT: u32 = 0x8000_0000;
+const LEAF_PLACE: u32 = 0x00FF_FFFF;
+
+/// What a number named where it is read is known by among what steps read.
+const NUMBER_KEY: u64 = 0xC0DE_0000_0000_0000;
 
 /// Marks a carried number of [`GpuVolume::carried`] made by its spread
 /// program and read between columns, its place among those in the bits
@@ -336,6 +350,7 @@ fn encode(
     steps: &[(GpuStep, Vec<u32>)],
     kept: &[u32],
     data: &mut Data,
+    numbers_in_data: bool,
 ) -> Result<(Vec<u32>, Vec<u32>, u32, Vec<String>), String> {
     // A number or a place read by many steps is worked out again for each, as it costs next to nothing, so it
     // never waits in a slot between them.
@@ -369,12 +384,38 @@ fn encode(
     }
     // Each row's slot by its place among `steps`; a row nothing kept reads is never run.
     let slot_of: Vec<u32> = place.iter().map(|&at| ordered_slots.get(at as usize).copied().unwrap_or(0)).collect();
+    // A place, a cell's height or size or a number its column carries up is named where it is read, not run as a step
+    // of its own: the shader reads it there as it reads a slot (`LEAF_INPUT` in generator.slang).
+    // Where the program has room for what its steps read, a number is named there too.
+    let named: Vec<Option<u32>> = ordered
+        .iter()
+        .enumerate()
+        .map(|(at, (step, inputs))| {
+            let alone = !ordered_kept.contains(&(at as u32))
+                && inputs.is_empty()
+                && step.data.is_none()
+                && step.finds.is_none();
+            let place = match step.op {
+                GpuOp::X | GpuOp::Z | GpuOp::Y | GpuOp::Size => 0,
+                GpuOp::Carried => step.words.first().copied().unwrap_or(0),
+                GpuOp::Constant if numbers_in_data => {
+                    let bits = step.words.first().copied().unwrap_or(0);
+                    data.place(NUMBER_KEY | u64::from(bits), &[bits])
+                }
+                _ => return None,
+            };
+            (alone && place <= LEAF_PLACE).then(|| LEAF_INPUT | ((step.op as u32) << 24) | place)
+        })
+        .collect();
     let mut words = Vec::new();
     let mut left_out = Vec::new();
     for (at, (step, inputs)) in ordered.iter().enumerate() {
+        if named[at].is_some() {
+            continue;
+        }
         words.push(step.op as u32);
         words.push(inputs.len() as u32);
-        words.extend(inputs.iter().map(|&input| ordered_slots[input as usize]));
+        words.extend(inputs.iter().map(|&input| named[input as usize].unwrap_or(ordered_slots[input as usize])));
         words.push(ordered_slots[at]);
         match (&step.data, &step.finds) {
             (Some((key, read)), _) => {
@@ -533,7 +574,13 @@ impl WorldGen {
             };
             let cells = lower(&voxels.cells, 0, given, &mut missing);
             let density = voxels.cells.outputs[0];
-            let made = encode(&cells, &[density], &mut cells_data);
+            let made = encode(&cells, &[density], &mut cells_data, false);
+            // The ground under the caves alone, as a world of blocks' far levels ask about it: for what is seen only
+            // from afar.
+            let coarse = lower(&voxels.coarse, 0, given, &mut missing);
+            let coarse = encode(&coarse, &[voxels.coarse.outputs[0]], &mut cells_data, false)
+                .map(|(words, slot_of, _, _)| (words, slot_of[voxels.coarse.outputs[0] as usize]))
+                .ok();
             if let Err(error) = &made {
                 missing.push(error.clone());
             }
@@ -559,6 +606,7 @@ impl WorldGen {
                         depth: voxels.depth,
                         spans,
                         spread: None,
+                        coarse,
                     },
                 ));
             } else {
@@ -570,7 +618,8 @@ impl WorldGen {
         // Only a Volume that runs reads what its nodes find.
         let finds = if volume.is_some() { cells_data.finds } else { Vec::new() };
         let mut data = Data { finds, ..Data::default() };
-        let (words, slot_of, slots, made_left_out) = encode(&steps, &kept, &mut data).map_err(|error| vec![error])?;
+        let (words, slot_of, slots, made_left_out) =
+            encode(&steps, &kept, &mut data, true).map_err(|error| vec![error])?;
         for what in made_left_out {
             if !left_out.contains(&what) {
                 left_out.push(what);
@@ -586,7 +635,7 @@ impl WorldGen {
             let before = words.len() + data.words.len();
             let starts = data.starts.iter().map(|&(key, start)| (key, start + words.len() as u32)).collect();
             let mut spread_data = Data { words: vec![0; before], starts, finds: data.finds.clone() };
-            match encode(&steps, &made, &mut spread_data) {
+            match encode(&steps, &made, &mut spread_data, true) {
                 Ok((spread_words, slot_of, _, spread_left_out)) => {
                     data.finds = spread_data.finds;
                     data.words.extend_from_slice(&spread_data.words[before..]);

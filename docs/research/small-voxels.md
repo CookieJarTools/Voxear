@@ -1883,3 +1883,43 @@ The Realm's window took 100–110 s round a still camera where it took 10 s befo
 - **Tests** (`tests/net_voxels.rs`): `a_players_own_dig_and_box_show_at_once_and_stay_as_the_server_answers_with_nothing_twice`
   (answered in 6 frames with a little loss and delay; refused by the rules, by a Rust check and by a check run as C#
   runs it), `a_rope_tied_and_cut_by_players_hangs_and_falls_alike_on_every_machine_and_a_late_joiner_sees_it`.
+## Loading the Realm's ground in a third of the time (2026-11-27)
+
+After the steepness was made four columns apart, the Realm's window took 29–33 s round a still camera, against 7 s
+without its Volume. Timed pass by pass, most of it was the generator's programs run voxel by voxel and column by
+column, and the loading loop round them.
+
+- **Each place a program reads is named where it is read.** A step's input names a place, a cell's height or
+  size, a number its column carries up or a constant, where before each was a step of its own, worked out again
+  for each reader (`LEAF_INPUT`). The Volume's program a voxel went from 35 steps to 8 and the height program from
+  478 to about 420: making the window's bricks took 10.5 s of the GPU's time and now takes 5.7. The same numbers
+  come out, so the pictures are the same to the pixel.
+- **One submission a round, the rings side by side.** The loading loop waited on the GPU once for each ring and
+  slept 5 ms each round. Now every ring's passes go in one submission, a stage of every ring at a time with one
+  barrier between, so the rings' small passes (a group a column, a thread for the arguments) run together; it
+  sleeps only when nothing was ready to make. Frames that make columns use the same order.
+- **A look before the bricks pass.** The first look through a brick, at 64 voxels, is a pass of its own with
+  groups of 64; bricks found all solid or all open with nothing grown, treed or edited in them go no further. The
+  bricks pass works out the brick and its faces, 896 voxels, not its border's edges too.
+- **What a ring is made of.** While loading, a ring no longer makes the columns under the ring inside it, which it
+  never draws (it did, as the ring inside had not finished). A ring, seen only from afar, makes its ground without
+  its caves, as a world of blocks' far levels do: some far cave mouths are gone from the summit's view, 2,161 of 2
+  million pixels. While loading, 32 columns a round, not 16; the candidates' room is sized for a column's band of
+  sectors, not the whole volume's height.
+- **Cost on the Realm** (1920×1080, reach 128 m in rings to 2 km; least of 60 frames, the GPU shared with the
+  editor):
+
+  | | Before | After |
+  |---|---|---|
+  | Window made, spires | 29–30 s | 11.3–11.4 s |
+  | Window made, summit | 33 s | 13.7 s |
+  | On the GPU | 2.91 GB | 3.07 GB |
+
+  Nothing drawn changed, and the frame is as it was: the least of 60, 10.4–10.6 ms in the evening's runs. While
+  flying with columns being made, the making pass's median is 7.6 ms a frame and its slowest 13 ms.
+
+  Without its Volume the window takes 7 s. What is left is the Volume's noise (overhangs, tunnels and chambers)
+  voxel by voxel in the finest ring, and the height program in the rings' 13,500 columns. Going on would change
+  what is made: the rings' columns worked out further apart, or the loading ending once what is on the screen is
+  made. Sixty-four columns a round takes 11.2 s but keeps 340 MB more on the GPU.
+

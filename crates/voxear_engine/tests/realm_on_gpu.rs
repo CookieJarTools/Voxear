@@ -172,10 +172,6 @@ fn a_world_of_blocks_ground_generator_says_what_runs_on_the_gpu() {
         let found = voxear_render::voxel_water_at(&volume, corner, Vec3::new(at[0], water[0] - 0.3, at[1]));
         eprintln!("the generator's water at {at:?}: {:.2}; the volume's: {found:?}", water[0]);
     }
-    // Its highest summit drawn by an endless volume whose Obj is far from it, and beside it.
-    if std::env::var("VOXEAR_SUMMIT").is_ok() {
-        summit_far_and_near(ground.clone());
-    }
     eprintln!("has rivers: {}", ground.has_rivers());
     match ground.gpu_program() {
         Ok(program) => eprintln!(
@@ -191,51 +187,3 @@ fn a_world_of_blocks_ground_generator_says_what_runs_on_the_gpu() {
     }
 }
 
-/// The Realm's highest summit seen from over it, in an endless volume whose
-/// Obj is at the world's middle, 50 km away, and whose Obj is beside it:
-/// how many pixels of each picture are the sea's blue.
-fn summit_far_and_near(world: std::sync::Arc<voxear_terrain::generate::WorldGen>) {
-    use voxear_core::math::{Quat, Vec3};
-    use voxear_render::{Camera, Light, Renderer, RendererSettings, Sky, VoxelGenerator, VoxelGround, VoxelVolume};
-    use voxear_scene::Transform;
-    for (corner, at) in
-        [(Vec3::new(44000.0, -60.0, 22000.0), [44000.0, 22000.0]), (Vec3::new(0.0, -60.0, 0.0), [0.0, 0.0])]
-    {
-        let mut scene = voxear_ecs::World::new();
-        let volume = VoxelVolume {
-            size: Vec3::new(16.0, 720.0, 16.0),
-            ground: Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() }),
-            endless: true,
-            reach: 128.0,
-            sea: false,
-            generator: Some(VoxelGenerator { world: world.clone(), floor: -60.0, at, biomes: None }),
-            ..VoxelVolume::default()
-        };
-        scene.spawn((volume, Transform::new(corner, Quat::IDENTITY, Vec3::ONE)));
-        let look = Quat::from_rotation_y(-135f32.to_radians()) * Quat::from_rotation_x(20f32.to_radians());
-        scene.spawn((Camera::default(), Transform::new(Vec3::new(44380.0, 690.0, 22560.0), look, Vec3::ONE)));
-        let sun = Quat::from_rotation_arc(Vec3::Z, -Vec3::new(-0.6, 0.7, 0.3).normalize());
-        scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
-        scene.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
-        let mut renderer = Renderer::new_offscreen(640, 360, &RendererSettings::default()).unwrap();
-        let started = std::time::Instant::now();
-        let made = renderer.make_voxel_volumes(&scene, std::time::Duration::from_secs(600)).unwrap();
-        for frame in 0..5 {
-            renderer.render(&scene, frame as f32 / 60.0).unwrap();
-        }
-        let (_, _, pixels) = renderer.read_pixels().unwrap();
-        let ground = pixels.chunks(4).skip(640 * 180).filter(|p| (p[0] as i32 - p[2] as i32).abs() < 40).count();
-        eprintln!(
-            "corner {corner}: made {made} in {:.1} s; {ground} of {} lower pixels not sky-blue",
-            started.elapsed().as_secs_f32(),
-            640 * 180
-        );
-        if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
-            let file =
-                std::fs::File::create(std::path::Path::new(&dir).join(format!("summit {}.png", corner.x))).unwrap();
-            let mut encoder = png::Encoder::new(file, 640, 360);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
-        }
-    }
-}

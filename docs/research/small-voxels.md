@@ -1677,7 +1677,7 @@ memory with a little loss and delay).
 | A house's corner blown in (blast hint, 6 built pieces with their voxels, rounds' digs, stamps) | 2.4 KB, and 3.5–4.9 KB of snapshots for two players |
 | A late joiner, after a street, a cellar, a tower and cut grass | 987, against 803 in the region files |
 
-The requests themselves: a point is three floats, packed with zstd past 128 bytes.
+The requests themselves: a point is three floats, packed with zstd past 128 bytes; the dig test's seven requests (768 points among them) came to 655 bytes, 9.3 KB before packing.
 
 - **Agreement**, checked after each change on every machine: the edit lists equal, the changes' delta empty both
   ways, collision's solids over a 20 × 6 × 20 m box voxel for voxel, 1,152 rays, and a Nav Agent's way round a

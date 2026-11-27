@@ -55,6 +55,13 @@ pub const NAMES: &[&str] = &[
     "grid",
     "camera",
     "light",
+    "bulb",
+    "save",
+    "star",
+    "spot-light",
+    "rect-light",
+    "disc-light",
+    "tube-light",
     "particles",
     "obj",
     "folder",
@@ -109,6 +116,8 @@ pub const NAMES: &[&str] = &[
     "map-star",
     "map-arrow",
     "minus",
+    "menu",
+    "ring",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -118,6 +127,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "check" => &[("M5.5 12.5l4.5 4.5 8.5-9.5", STROKE)],
         "plus" => &[("M12 5v14M5 12h14", STROKE)],
         "minus" => &[("M5 12h14", STROKE)],
+        "menu" => &[("M5 7h14M5 12h14M5 17h14", STROKE)],
+        "ring" => &[("M6.5 12a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0-11 0Z", STROKE)],
         "close" => &[("M6.5 6.5l11 11M17.5 6.5l-11 11", STROKE)],
         "more" => &[(
             "M3.5 12a1.75 1.75 0 1 0 3.5 0a1.75 1.75 0 1 0-3.5 0ZM10.25 12a1.75 1.75 0 1 0 3.5 0a1.75 1.75 0 1 0-3.5 0Z\
@@ -187,6 +198,23 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
              M14.2 18.5a1.1 1.1 0 1 0 2.2 0a1.1 1.1 0 1 0-2.2 0Z",
             FILL,
         )],
+        // A five-pointed star, for favourites.
+        "star" => &[("M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.9l-5.2 2.8 1-5.9L3.5 9.7l5.9-.8Z", STROKE)],
+        // A disk with its label and shutter, for saving.
+        "save" => &[("M5 4h11.5L20 7.5V20H4V5ZM8 4v5h7V4M7.5 20v-6h9v6", STROKE)],
+        // A bulb on its cap, for a point light.
+        "bulb" => &[(
+            "M9 17.5h6M10 20.5h4M8.7 14.3A6 6 0 1 1 15.3 14.3C14.5 15 14.5 16 14.5 17.5h-5c0-1.5 0-2.5-.8-3.2Z",
+            STROKE,
+        )],
+        // A lamp shining a cone down, for a spot light.
+        "spot-light" => &[("M9 3.5h6l1 4H8ZM8 7.5L4 20.5M16 7.5l4 13M4 20.5h16", STROKE)],
+        // A panel giving light from its face, for a rectangle light.
+        "rect-light" => &[("M5 5h14v9H5ZM8 17l-1 3M12 17v3M16 17l1 3", STROKE)],
+        // A round panel giving light, for a disc light.
+        "disc-light" => &[("M12 4.5a5 5 0 1 0 0 10a5 5 0 1 0 0-10ZM8 17.5l-1 3M12 17.5v3M16 17.5l1 3", STROKE)],
+        // A long tube giving light, for a tube light.
+        "tube-light" => &[("M5.5 9.5h13a2.5 2.5 0 0 1 0 5h-13a2.5 2.5 0 0 1 0-5ZM3 12h.5M20.5 12h.5", STROKE)],
         "light" => &[(
             "M12 8.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7ZM12 2.5v2M12 19.5v2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4\
              M2.5 12h2M19.5 12h2M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4",

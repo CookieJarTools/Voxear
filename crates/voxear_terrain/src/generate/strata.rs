@@ -141,6 +141,27 @@ impl Strata {
         self.bands.iter().map(|(block, _)| *block)
     }
 
+    /// Its layers as the GPU reads them (`strataBlock` in
+    /// `voxear_render/shaders/voxel_world.slang`): how many bands, how tall
+    /// one repeat is, its lean along x and z, its wander and seed, its
+    /// thinnest band, then each band's block, by the place `place` gives
+    /// it, and the height its top lies at within a repeat.
+    pub fn gpu_words(&self, mut place: impl FnMut(BlockId) -> u32) -> Vec<u32> {
+        let mut words = vec![
+            self.bands.len() as u32,
+            self.period.to_bits(),
+            self.lean[0].to_bits(),
+            self.lean[1].to_bits(),
+            self.wander.to_bits(),
+            self.seed,
+            self.thinnest().to_bits(),
+        ];
+        for &(block, top) in &self.bands {
+            words.extend([place(block), top.to_bits()]);
+        }
+        words
+    }
+
     /// The thinnest of its bands, in metres.
     pub fn thinnest(&self) -> f32 {
         let mut below = 0.0;

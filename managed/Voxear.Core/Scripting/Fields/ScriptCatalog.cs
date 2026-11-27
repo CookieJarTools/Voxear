@@ -56,6 +56,7 @@ internal static class ScriptCatalog
 			WriteSystems(json, assemblies);
 			WriteNestedTypes(json, types, nested, drawers);
 			WriteCommands(json, assemblies);
+			WriteTests(json, assemblies);
 			WriteCalls(json, assemblies);
 			WriteChecks(json, assemblies);
 			WriteWindows(json, assemblies);
@@ -506,6 +507,35 @@ internal static class ScriptCatalog
 		json.WriteString("type", type.FullName);
 		json.WriteString("method", method.Name);
 		json.WriteEndObject();
+	}
+
+	/// <summary>The <c>[Test]</c> methods, for the editor's Tests window, each with its title, category and order.</summary>
+	private static void WriteTests(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
+	{
+		json.WriteStartArray("tests");
+		foreach (var type in Loadable(assemblies))
+		{
+			if (type == null)
+			{
+				continue;
+			}
+			foreach (var method in type.GetMethods(Static))
+			{
+				if (!TestRunner.IsTest(method))
+				{
+					continue;
+				}
+				var test = method.GetCustomAttribute<Voxear.Testing.TestAttribute>()!;
+				json.WriteStartObject();
+				json.WriteString("title", test.Title.Length == 0 ? method.Name : test.Title);
+				json.WriteString("category", test.Category.Length == 0 ? "General" : test.Category);
+				json.WriteNumber("order", test.Order);
+				json.WriteString("type", type.FullName);
+				json.WriteString("method", method.Name);
+				json.WriteEndObject();
+			}
+		}
+		json.WriteEndArray();
 	}
 
 	/// <summary>The <c>[Call]</c> methods, which tools call by name, each with its arguments and when it may run.</summary>

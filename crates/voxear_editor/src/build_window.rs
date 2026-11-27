@@ -76,7 +76,7 @@ const COMPRESSIONS: &[(&str, &str)] =
 
 /// The settings the window edits: each one's label, its table and key in a
 /// profile, and how it is edited.
-const SETTINGS: [(&str, Option<&str>, &str, Edit); 14] = [
+const SETTINGS: [(&str, Option<&str>, &str, Edit); 15] = [
     (
         "Platform",
         None,
@@ -94,6 +94,8 @@ const SETTINGS: [(&str, Option<&str>, &str, Edit); 14] = [
     ("Window", Some("player"), "window", Edit::Choice(&[("Windowed", "windowed"), ("Full screen", "fullscreen")])),
     ("Width", Some("player"), "width", Edit::Number),
     ("Height", Some("player"), "height", Edit::Number),
+    // The engine's stats panel in the built game, for players or testers to see how it runs.
+    ("Stats panel", Some("player"), "stats", Edit::Choice(&[("Off", "off"), ("On F1", "key"), ("Shown", "shown")])),
     ("Compression", Some("content"), "compression", Edit::Choice(COMPRESSIONS)),
     ("Output", Some("output"), "folder", Edit::Text("Builds/<profile>")),
 ];

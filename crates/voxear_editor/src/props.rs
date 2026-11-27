@@ -2364,43 +2364,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::Renderer => vec![Prop::Mesh, Prop::Material, Prop::LodBias],
         Part::Terrain => crate::terrain_props::props(world, entity),
         Part::BlockWorld | Part::VoxelTerrain => crate::block_props::props(world, entity),
-        Part::Light => {
-            let kind = world.get::<Light>(entity).map_or(LightKind::Point, |l| l.kind);
-            let temperature = world.get::<Light>(entity).and_then(|l| l.temperature).is_some();
-            let mut props = vec![Prop::LightKind, Prop::LightAppearance, Prop::LightColor];
-            if temperature {
-                props.push(Prop::LightTemperature);
-            }
-            props.push(Prop::Intensity);
-            if kind != LightKind::Directional {
-                props.extend([Prop::Range, Prop::LightShadows]);
-            }
-            match kind {
-                LightKind::Directional => props.extend([
-                    Prop::LightBody,
-                    Prop::LightSoftness,
-                    Prop::LightShadowTint,
-                    Prop::LightCookie,
-                    Prop::LightCookieSize,
-                ]),
-                LightKind::Point => props.extend([Prop::LightProfile, Prop::LightRadius]),
-                LightKind::Spot => props.extend([
-                    Prop::SpotInner,
-                    Prop::SpotOuter,
-                    Prop::LightCookie,
-                    Prop::LightProfile,
-                    Prop::LightRadius,
-                ]),
-                LightKind::Rectangle => props.extend([Prop::LightWidth, Prop::LightHeight]),
-                LightKind::Disc => props.push(Prop::LightRadius),
-                LightKind::Tube => props.extend([Prop::LightLength, Prop::LightRadius]),
-            }
-            if kind != LightKind::Directional {
-                props.push(Prop::LightSoftShadows);
-            }
-            props.push(Prop::LightMode);
-            props
-        }
+        Part::Light => world.get::<Light>(entity).map(crate::light_inspector::props).unwrap_or_default(),
         Part::Lightmap => vec![Prop::LightmapScale, Prop::LightmapCast, Prop::LightmapReceive],
         Part::LightProbeGroup => {
             let filled = world.get::<voxear_render::LightProbeGroup>(entity).is_some_and(|group| group.fill.is_some());

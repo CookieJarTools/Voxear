@@ -16,6 +16,7 @@
     --vx-field-line: #2e3036;
     --vx-hover: #232428;
     --vx-selected: #2d3039;
+    --vx-button-hover: #33363f;
     --vx-seg-on: #393c45;
     --vx-text: #eceded;
     --vx-text-2: #c8ccd1;
@@ -56,8 +57,9 @@ Button {
     transition: background-color var(--vx-fade), border-color var(--vx-fade), color var(--vx-fade);
 }
 
+/* Plainly lighter under the pointer, so it shows which one a click presses. */
 Button:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
     border-color: var(--vx-line-2);
 }
 
@@ -96,7 +98,7 @@ Button:focus-visible {
 }
 
 .icon-button:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
     border-color: transparent;
     color: var(--vx-text);
 }
@@ -308,6 +310,11 @@ Foldout:focus-visible .foldout-title {
 
 .tree-row {
     padding-left: 2px;
+}
+
+/* A faint line down the indent under each item a row is inside. */
+.tree-guide {
+    background-color: var(--vx-line-2);
 }
 
 .tree-arrow {
@@ -804,15 +811,20 @@ DockSpace .split-column > .split-divider {
     font-size: 11px;
 }
 
-/* Key maps: a device's keys, lit where bound, with labels round it naming
-   their actions. A key's category colour, when it has one, is set on the
-   key itself and wins over these. */
+/* Key maps: devices drawn with their keys, lit where bound, and a label for
+   each bound key naming its actions beside a chip of the key's name, with a
+   line of its own out to it. A key's category colour, when it has one, is
+   set on the key itself and wins over these. The plate, wells, parts, lines
+   and shaped keys are drawn as shapes in the colours of the never-seen
+   elements named after them. */
 /* A device is drawn as it is, whichever way the game reads. */
 .keymap {
     direction: ltr;
     position: relative;
     flex-grow: 1;
     min-height: 0px;
+    background-color: #101114;
+    border-radius: 8px;
 }
 
 .keymap-lines {
@@ -823,57 +835,84 @@ DockSpace .split-column > .split-divider {
     bottom: 0px;
 }
 
-.keymap-key {
+.keymap-plate {
+    background-color: #14151a;
+    border: 1px solid #2b2d35;
+}
+
+.keymap-recess {
+    background-color: #0e0f12;
+    border: 1px solid #22242a;
+}
+
+.keymap-part {
+    background-color: #191a1f;
+    border: 1px solid #24262c;
+}
+
+.keymap-line {
+    background-color: #6b7080;
+}
+
+.keymap-line.conflict {
+    background-color: #ff6b5e;
+}
+
+.keymap-key, .keymap-swatch {
     align-items: center;
     justify-content: center;
     overflow: hidden;
     border-radius: 5px;
-    border: 1px solid var(--vx-field-line);
-    background-color: var(--vx-field);
-    color: var(--vx-muted);
+    border: 1px solid #24262c;
+    background-color: #191a1f;
+    color: #878b98;
+    font-weight: medium;
     transition: background-color var(--vx-fade);
 }
 
-.keymap-key.round, .keymap-key.stick {
+.keymap-key.round, .keymap-key.stick, .keymap-key.pill {
     border-radius: 999px;
 }
 
-.keymap-key.pill {
-    border-radius: 999px;
+.keymap-key.assigned, .keymap-swatch.assigned {
+    background-color: #5e6ad2;
+    border-color: #7480e6;
+    color: #ffffff;
 }
 
-.keymap-key.stick {
-    border: 3px solid var(--vx-field-line);
+.keymap-key.hidden, .keymap-swatch.hidden {
+    background-color: #191a1f;
+    border-color: #7480e6;
+    border-style: dashed;
+    color: #9a9ca6;
 }
 
-.keymap-key.assigned {
-    background-color: var(--vx-accent);
-    border-color: var(--vx-accent-hover);
-    color: var(--vx-on-accent);
+/* Lighter than an assigned key, so a conflict differs in more than its hue. */
+.keymap-key.conflict, .keymap-swatch.conflict {
+    background-color: #ff6b5e;
+    border-color: #ff8a80;
+    color: #1c0503;
 }
 
-.keymap-key.hidden {
-    background-color: var(--vx-panel);
-    border-color: var(--vx-accent-soft);
-    color: var(--vx-text-2);
-}
-
-.keymap-key.conflict {
-    background-color: var(--vx-danger);
-    border-color: #ff8f88;
-    color: var(--vx-on-accent);
+/* A shaped key is drawn as its path, in its swatch's colours. */
+.keymap-key.shaped {
+    background-color: transparent;
+    border-width: 0px;
 }
 
 .keymap-key:hover {
-    border-color: var(--vx-text);
+    border-color: #e4e5e9;
 }
 
-.keymap-body-edge {
-    background-color: var(--vx-line-2);
+.keymap-stick-ring {
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
-.keymap-body {
-    background-color: var(--vx-bg);
+.keymap-key.unused .keymap-stick-ring, .keymap-key.hidden .keymap-stick-ring {
+    border-color: #2b2d35;
 }
 
 .keymap-key-label {
@@ -881,39 +920,90 @@ DockSpace .split-column > .split-divider {
     white-space: nowrap;
 }
 
+.keymap-caption {
+    font-size: 9px;
+    color: #878b98;
+    white-space: nowrap;
+}
+
 .keymap-callout {
-    padding: 2px 6px;
-    border-radius: 4px;
-    border: 1px solid var(--vx-muted);
-    background-color: var(--vx-panel);
+    gap: 4px;
 }
 
-.keymap-callout.conflict {
-    border-color: var(--vx-danger);
+.keymap-callout.left {
+    align-items: flex-end;
 }
 
-.keymap-callout:hover {
-    border-color: var(--vx-accent);
+.keymap-callout:hover .keymap-callout-line {
+    color: #ffffff;
 }
 
 .keymap-callout-row {
+    flex-direction: row;
     align-items: center;
-    justify-content: center;
+    height: 22px;
+    gap: 6px;
+}
+
+.keymap-chip {
+    height: 18px;
+    padding: 0px 5px;
+    border-radius: 4px;
+    background-color: #5e6ad2;
+    color: #ffffff;
+    font-size: 10px;
+    line-height: 18px;
+    font-weight: semibold;
+    white-space: nowrap;
+}
+
+.keymap-chip.conflict {
+    background-color: #ff6b5e;
+    color: #1c0503;
+}
+
+/* A conflict's label: both actions in a box with a warning. */
+.keymap-callout.conflict {
+    flex-direction: row;
+    align-items: center;
+    height: 44px;
+    gap: 8px;
+    padding: 0px 10px;
+    border-radius: 8px;
+    border: 1px solid #8f3d36;
+    background-color: #1f1414;
+}
+
+.keymap-callout-texts {
+    flex-direction: column;
+}
+
+.keymap-callout.left .keymap-callout-texts {
+    align-items: flex-end;
+}
+
+.keymap-callout.conflict .keymap-callout-line {
+    color: #ffd9d5;
+}
+
+.keymap-callout-warn {
+    width: 14px;
+    height: 14px;
+    color: #ff8a80;
 }
 
 .keymap-callout-icon {
-    width: 11px;
-    height: 11px;
-    margin-right: 4px;
-    color: var(--vx-muted);
+    width: 12px;
+    height: 12px;
+    color: #9a9ca6;
 }
 
 .keymap-callout-line {
-    font-size: 11px;
-    line-height: 14px;
-    color: var(--vx-text);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: medium;
+    color: #e4e5e9;
     white-space: nowrap;
-    text-align: center;
 }
 
 /* The ready-made controls screen (KeyBindingScreen in C#): over the whole

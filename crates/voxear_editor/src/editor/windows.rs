@@ -1,5 +1,7 @@
 //! The dock's panels as windows. Each window's options button, at its tab
-//! bar's right end, and a context click on a tab or its bar, offer Maximize
+//! bar's right end, is its only one: it, and a context click on a tab or its
+//! bar, offer the window's own options first, above a line (an Inspector's
+//! Normal and Debug), then what every window has: Maximize
 //! (or Restore), Close, Close Other Tabs, Float, which takes it out of the
 //! editor's window onto the desktop (see `desktop_windows`), or Dock, for
 //! one floating already, another of each window there can be more than one of
@@ -68,6 +70,8 @@ pub(super) enum WindowAction {
     /// Opens one of the game's own windows beside it, by the window's type.
     AddScriptWindow(String),
     ResetLayout,
+    /// Switches an Inspector into Debug mode, or back to Normal.
+    InspectorDebug(bool),
 }
 
 /// The built-in layouts, as they start.
@@ -109,7 +113,7 @@ impl Editor {
     }
 
     /// A window's menu, from its options button or a context click on its
-    /// tab or tab bar: Maximize (or Restore), Close, Close Other Tabs, Float
+    /// tab or tab bar: its own options, above a line, then Maximize (or Restore), Close, Close Other Tabs, Float
     /// or Dock, another of each window there can be more than one of, and
     /// Reset Layout. Closed panels open from the top bar's Window button.
     fn open_window_menu(&mut self, panel: String, at: (f32, f32)) {
@@ -118,11 +122,15 @@ impl Editor {
         let floating = self.ui.dock_panel_floating(dock, &panel);
         let out = self.ui.dock_panel_in_window(dock, &panel);
         let maximized = self.maximized.is_some();
-        let mut items = vec![
+        let mut items = self.window_own_items(&panel);
+        if !items.is_empty() {
+            items.push((MenuItem::separator(), None));
+        }
+        items.extend([
             (MenuItem::new(if maximized { "Restore" } else { "Maximize" }), Some(WindowAction::Maximize)),
             (MenuItem::new("Close"), Some(WindowAction::Close)),
             (MenuItem::new("Close Other Tabs").enabled(others), Some(WindowAction::CloseOthers)),
-        ];
+        ]);
         if floating {
             items.push((MenuItem::new("Dock"), Some(WindowAction::Dock)));
         }
@@ -150,6 +158,21 @@ impl Editor {
         let (menu, actions): (Vec<MenuItem>, Vec<Option<WindowAction>>) = items.into_iter().unzip();
         self.ui.open_menu(dock, at, &menu);
         self.window_menu = Some((panel, actions));
+    }
+
+    /// The options only one kind of window has, which its menu shows first:
+    /// an Inspector's Normal and Debug modes.
+    fn window_own_items(&self, panel: &str) -> Vec<(MenuItem, Option<WindowAction>)> {
+        match self.inspector_index(panel) {
+            Some(index) => {
+                let debug = self.inspector_is_debug(index);
+                vec![
+                    (MenuItem::new("Normal").checked(!debug), Some(WindowAction::InspectorDebug(false))),
+                    (MenuItem::new("Debug").checked(debug), Some(WindowAction::InspectorDebug(true))),
+                ]
+            }
+            None => Vec::new(),
+        }
     }
 
     /// Does what a window's menu picked, for the panel it was opened for.
@@ -185,6 +208,11 @@ impl Editor {
                 self.add_script_window(&type_name, panel);
             }
             WindowAction::ResetLayout => self.reset_layout(),
+            WindowAction::InspectorDebug(debug) => {
+                if let Some(index) = self.inspector_index(panel) {
+                    self.set_inspector_debug(index, debug);
+                }
+            }
         }
     }
 
@@ -218,6 +246,8 @@ impl Editor {
             "build" | "input" | "audio" | "localization" | "packages" | "generator" | "voxshade" | "model" => {
                 self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene")
             }
+            // The tests open by the Console, where there is room for what a failure says.
+            "tests" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "console"),
             // The project's blocks open by its files.
             "blocks" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "project"),
             _ => self.ui.open_dock_panel(self.nodes.dock, id),

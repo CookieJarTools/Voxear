@@ -46,10 +46,29 @@ pub(crate) struct Synthesis {
 /// An icon's name, its size in pixels, and its stroke in 1/64 pixels.
 type IconKey = (&'static str, u32, u32);
 
+/// A path's data, its view box and its size in pixels, and its stroke in
+/// 1/64 pixels, none for filled.
+type PathKey = (&'static str, [u32; 2], [u32; 2], u32);
+
+/// A piece of a drawn path: where it is in the path's pixels, and where its
+/// coverage is in the atlas, or `None` where every pixel is covered, which
+/// is drawn as a plain box.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PathTile {
+    pub at: [u32; 2],
+    pub size: [u32; 2],
+    pub glyph: Option<AtlasGlyph>,
+}
+
+/// How big the pieces of a path are, in pixels. Only those along its edge
+/// take room in the atlas.
+const PATH_TILE: u32 = 16;
+
 pub(crate) struct GlyphAtlas {
     pixels: Vec<u8>,
     glyphs: HashMap<Key, Option<AtlasGlyph>>,
     icons: HashMap<IconKey, Option<AtlasGlyph>>,
+    paths: HashMap<PathKey, Arc<[PathTile]>>,
     shelves: Vec<(u32, u32, u32)>,
     scaler: ScaleContext,
     /// The same glyphs as distance fields, for a UI drawn at many sizes.
@@ -67,6 +86,7 @@ impl GlyphAtlas {
             pixels: vec![0; (SIZE * SIZE) as usize],
             glyphs: HashMap::new(),
             icons: HashMap::new(),
+            paths: HashMap::new(),
             shelves: Vec::new(),
             scaler: ScaleContext::new(),
             fields: FieldAtlas::new(),
@@ -143,6 +163,61 @@ impl GlyphAtlas {
         packed
     }
 
+    /// SVG path data drawn `size` pixels big, its view box `view` stretched
+    /// over it, filled, or stroked `stroke` pixels wide when that is above 0:
+    /// the pieces it is drawn in, rasterised and packed on first use. Pieces
+    /// with nothing in them are left out, and whole rows of covered ones
+    /// come as one box.
+    pub fn path(&mut self, path: &'static str, view: [f32; 2], size: [u32; 2], stroke: f32) -> Arc<[PathTile]> {
+        let key = (path, view.map(f32::to_bits), size, (stroke * 64.0) as u32);
+        if let Some(found) = self.paths.get(&key) {
+            return found.clone();
+        }
+        let [w, h] = size;
+        let mut mask = Mask::new(path);
+        if stroke > 0.0 {
+            let mut line = Stroke::new(stroke);
+            line.cap(Cap::Round).join(Join::Round).scale(false);
+            mask.style(line);
+        } else {
+            mask.style(Fill::NonZero);
+        }
+        let scale = [w as f32 / view[0].max(0.01), h as f32 / view[1].max(0.01)];
+        let transform = Transform { xx: scale[0], yy: scale[1], ..Transform::IDENTITY };
+        let (coverage, _) = mask.transform(Some(transform)).size(w, h).render();
+        let mut tiles = Vec::new();
+        for ty in (0..h).step_by(PATH_TILE as usize) {
+            let th = PATH_TILE.min(h - ty);
+            let mut solid: Option<[u32; 2]> = None;
+            for tx in (0..w).step_by(PATH_TILE as usize) {
+                let tw = PATH_TILE.min(w - tx);
+                let rows = || (ty..ty + th).map(|y| &coverage[(y * w + tx) as usize..(y * w + tx + tw) as usize]);
+                let full = rows().all(|row| row.iter().all(|&c| c == 255));
+                if full {
+                    solid = Some(solid.map_or([tx, tw], |[x, sw]| [x, sw + tw]));
+                    continue;
+                }
+                if let Some([x, sw]) = solid.take() {
+                    tiles.push(PathTile { at: [x, ty], size: [sw, th], glyph: None });
+                }
+                if rows().all(|row| row.iter().all(|&c| c == 0)) {
+                    continue;
+                }
+                let piece: Vec<u8> = rows().flatten().copied().collect();
+                if let Some((x, y)) = self.pack(tw, th, &piece) {
+                    let glyph = AtlasGlyph { left: 0, top: 0, width: tw, height: th, x, y };
+                    tiles.push(PathTile { at: [tx, ty], size: [tw, th], glyph: Some(glyph) });
+                }
+            }
+            if let Some([x, sw]) = solid {
+                tiles.push(PathTile { at: [x, ty], size: [sw, th], glyph: None });
+            }
+        }
+        let tiles: Arc<[PathTile]> = tiles.into();
+        self.paths.insert(key, tiles.clone());
+        tiles
+    }
+
     /// Copies coverage into a free place, starting the atlas again when it
     /// is full, keeping only what is drawn from then on.
     fn pack(&mut self, width: u32, height: u32, coverage: &[u8]) -> Option<(u32, u32)> {
@@ -202,6 +277,7 @@ impl GlyphAtlas {
         self.pixels.fill(0);
         self.glyphs.clear();
         self.icons.clear();
+        self.paths.clear();
         self.shelves.clear();
         self.dirty = true;
         self.restarted = true;

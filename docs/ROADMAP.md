@@ -738,6 +738,8 @@ Later:
   - [x] key maps: the keyboard and mouse, and a gamepad, drawn with each bound control lit and its actions labelled
     round the device, coloured as assigned, hidden and unused or by the actions' categories (`[[category]]` in
     `.inputactions`, and `hidden` actions), in the editor's Input Actions window and in games as `KeymapView`
+  - [x] key map labels each with a chip of the key and a line of their own that crosses no key, label or other
+    line, conflicts in a box naming both actions; the mouse seen from above and the pad drawn as their shapes
   - [x] a ready-made, themeable rebinding screen (`KeyBindingScreen`) with a Layout view, the device drawn, and a List
     view (`ControlsList`), a row an action with its keys and buttons, conflicts and Reset, as tabs or alone; built
     from `Input.Actions`, `InputAction.GetBindings`, `Input.ControlUses`, `ControlLabel`, `Conflicts`, `Categories`
@@ -4661,7 +4663,18 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   block's colour where that is green; the GPU picks the CPU's biome at 8192 places of 8192, and collision places
   trees by the same. Since (2026-11-26): ground tens of kilometres from the volume's Obj is drawn as near it, each
   pixel's ray worked out from the camera's own place, not from two places of the world a few centimetres apart.
-  Not yet: rock layers; the Realm's Spires and Arches. Since: volumes up to 1,024 m tall (below).
+  Since: volumes up to 1,024 m tall (below).
+- **The Realm's spires, bridges and rock (2026-11-27).** A generator's Spires and Arches run on the GPU: each node
+  finds its spires and bridges on the CPU a cell at a time (72 m and 166 m in the Realm, 0.04 and 0.5 ms each),
+  the renderer keeps them in a table round each ring's window, and the GPU shapes them from it as the CPU does
+  (12,720 of 12,720 cells on the same side). Collision and rays reach up to their tops. Biomes' rock layers are laid
+  as a world of blocks lays them, spires and cave walls in their biome's bands (400 of 400 voxels in the CPU's
+  band). The Realm's whole Volume now runs on the GPU: its program is ordered depth first with numbers worked out
+  where read (28 slots of 48), a Volume may carry 12 numbers, and a tall volume makes caves only in each column's
+  band (a device lost before). Endless volumes are made round the camera looked through, not the first. The
+  Realm's rivers were already cut in, and ground 64 km from the Obj is drawn as near it. Cost: frame 9.8 → 14.4 ms,
+  a column about 5 ms of GPU time, the window 10 → 110 s. Next: the overhangs' steepness worked out four columns
+  apart and read between, as a world of blocks does.
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.

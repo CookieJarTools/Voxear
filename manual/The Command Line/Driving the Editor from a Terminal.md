@@ -229,6 +229,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `mesh_pool.get` | Read the room every mesh shares on the GPU: what models hold, what worlds of blocks' lighting holds and how far it reaches, and what is free |
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
+| `tests.list`, `tests.run` | Run the game's [[Testing Your Game|tests]], all of them, a category's or one, and read how each came out |
 | `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |
 | `settings.find` | Find any setting the editor has by what it does, in rough words: Project Settings, Preferences, the Lighting panel, the open level's components and import settings, best first, with the line of its tooltip that matched; `settings.show` opens one where it is |
 | `inspector.mode`, `inspector.debug` | Switch an Inspector between Normal and Debug, and read what Debug mode shows of an Obj or an asset, row by row |

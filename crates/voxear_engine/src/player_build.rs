@@ -239,6 +239,7 @@ pub fn build(
         fullscreen: profile.player.window == "fullscreen",
         width: profile.player.width,
         height: profile.player.height,
+        stats: profile.player.stats.clone(),
         engine: engine_version().to_string(),
         profile: name.to_string(),
         commit: commit.clone(),

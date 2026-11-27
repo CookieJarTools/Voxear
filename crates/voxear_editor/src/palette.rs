@@ -39,7 +39,7 @@ const RECENT_BONUS: i32 = 30 * 64;
 /// How a setting found by what it does weighs against a title's score.
 const FOUND_WEIGHT: i32 = 100;
 /// The docked panels, by id, as the palette offers to show them.
-const PANELS: [(&str, &str); 18] = [
+const PANELS: [(&str, &str); 19] = [
     ("Hierarchy", "hierarchy"),
     ("Levels", "levels"),
     ("Scene", "scene"),
@@ -47,6 +47,7 @@ const PANELS: [(&str, &str); 18] = [
     ("VoxDocs", "docs"),
     ("Project", "project"),
     ("Console", "console"),
+    ("Tests", "tests"),
     ("Input Actions", "input"),
     ("Audio", "audio"),
     ("Localization Tables", "localization"),
@@ -97,8 +98,8 @@ pub enum PaletteAction {
     Reveal(String),
     /// Open a VoxDocs page, by its reference.
     OpenDoc(String),
-    /// A setting, by its key: a toggle flips, a choice moves to the next,
-    /// and a number opens the Settings panel to type it.
+    /// A setting, by its key: opens Project Settings or Preferences at it,
+    /// scrolled to and marked, a number's field focused to type in.
     Setting(&'static str),
     /// A setting found by what it does, anywhere the editor has one, by
     /// the key `setting_search` finds it again by: opened where it is.

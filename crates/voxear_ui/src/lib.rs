@@ -76,7 +76,10 @@ pub use drag::DragSource;
 pub use draw::Shape;
 pub use icons::NAMES as ICONS;
 pub use input::{Clipboard, Key, LocalClipboard};
-pub use keymap::{KeyShape, KeyState, KeymapBody, KeymapData, KeymapKey, KeymapLine};
+pub use keymap::{
+    ArtLook, ArtShape, KeyShape, KeyState, KeymapArt, KeymapData, KeymapDevice, KeymapKey, KeymapLine, KeymapSide,
+    sides as keymap_sides,
+};
 pub use prompt::{GlyphShape, PromptGlyph};
 pub use list::{DropPlace, ItemFns, ListItems, TreeItems};
 pub use map_view::{MapViewKind, MapViewParts, MapViewSettings};

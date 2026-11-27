@@ -26,6 +26,10 @@ pub enum Shape {
     /// One of the icons ([`ICONS`](crate::ICONS)), `size` pixels square,
     /// centred on a point, as the Scene view marks Objs.
     Icon { name: &'static str, center: [f32; 2], size: f32, color: Color },
+    /// SVG path data in a `view` box stretched over `rect` (left, top,
+    /// width and height): filled, or stroked `stroke` pixels wide when that
+    /// is above 0, as a device's outline in a key map is drawn.
+    Path { path: &'static str, view: [f32; 2], rect: [f32; 4], color: Color, stroke: f32 },
 }
 
 /// How big an icon is when nothing sizes it.
@@ -561,6 +565,42 @@ fn shape_quads(
                 let (c, size) = (at(center), size * scale);
                 let color = color.linear_premultiplied().map(|c| c * opacity);
                 icon_quad(name, [c[0] - size / 2.0, c[1] - size / 2.0, size, size], scale, color, clip, (atlas, quads));
+            }
+            Shape::Path { path, view, rect: [x, y, w, h], color, stroke } => {
+                // On whole pixels, so the pieces meet without seams.
+                let corner = at([x, y]).map(f32::round);
+                let size = [(w * scale).round().max(1.0) as u32, (h * scale).round().max(1.0) as u32];
+                let color = color.linear_premultiplied().map(|c| c * opacity);
+                if color[3] <= 0.0 {
+                    continue;
+                }
+                let atlas_size = atlas.size() as f32;
+                for tile in atlas.path(path, view, size, stroke * scale).iter() {
+                    let rect = [
+                        corner[0] + tile.at[0] as f32,
+                        corner[1] + tile.at[1] as f32,
+                        tile.size[0] as f32,
+                        tile.size[1] as f32,
+                    ];
+                    let Some(glyph) = tile.glyph else {
+                        quads.push(Quad { rect, color, clip, kind: Quad::SHAPE, ..Quad::default() });
+                        continue;
+                    };
+                    let (gx, gy) = (glyph.x as f32, glyph.y as f32);
+                    quads.push(Quad {
+                        rect,
+                        uv: [
+                            gx / atlas_size,
+                            gy / atlas_size,
+                            (gx + rect[2]) / atlas_size,
+                            (gy + rect[3]) / atlas_size,
+                        ],
+                        color,
+                        clip,
+                        kind: Quad::GLYPH,
+                        ..Quad::default()
+                    });
+                }
             }
         }
     }

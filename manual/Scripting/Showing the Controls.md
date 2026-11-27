@@ -129,16 +129,22 @@ controls.KeyClicked += control => Log.Info($"{control.Label}: {Input.ControlUses
 
 In a UI document, write `<Keymap name="controls" />`, then find it with `KeymapView.Find(document, "controls")`. It follows rebinding by itself, every frame.
 
+Each bound key has a label of its own beside the device: its actions, each with a chip naming the key, and a line from the key to the label that crosses no other key, label or line. A conflict's label is a box with a warning, naming every action on the key. Keys on the device's edge lead their lines straight out; keys further in drop into the gap below their row and run out along it.
+
 Style it in your sheets by its classes:
 
 | Class | What it is |
 | --- | --- |
-| `keymap-key` | Each key, with `assigned`, `hidden`, `unused` or `conflict`, and `round`, `stick` or `pill` for its shape |
-| `keymap-key-label` | The text on a key |
-| `keymap-body` | Each part of the device's outline behind its keys, over a slightly bigger `keymap-body-edge` |
-| `keymap-callout` | Each label round the device, with `conflict` for a conflicting key's. Its border colour is the colour of its line |
-| `keymap-callout-line` | Each action in a label |
-| `keymap-callout-icon` | An action's icon beside its name, in a `keymap-callout-row` |
+| `keymap-key` | Each key, with `assigned`, `hidden`, `unused` or `conflict`, and `round`, `stick`, `pill` or `shaped` for its shape |
+| `keymap-key-label` | The text on a key; `keymap-key-icon` an icon in its place, as on the pad's View and Menu |
+| `keymap-stick-ring` | The dish of a stick's cap |
+| `keymap-caption` | A name written under a key, as the mouse's Move |
+| `keymap-plate`, `keymap-recess`, `keymap-part` | The colours the devices are drawn in: their background is the fill and their border the edge. The plate is the keyboard, the mouse's shell and the pad's body, the recesses the wells behind the sticks and buttons |
+| `keymap-swatch` | The colours of a shaped key, as a trigger, with the same state classes as a key |
+| `keymap-line` | Its background is the colour of the lines; `keymap-line.conflict` a conflict's |
+| `keymap-callout` | Each label, with `left`, `right`, `top` or `bottom` for its side and `conflict` for a conflicting key's |
+| `keymap-callout-row` | An action in a label: its `keymap-callout-line`, `keymap-chip` and `keymap-callout-icon` |
+| `keymap-callout-texts` | A conflict's actions, beside its `keymap-callout-warn` and one `keymap-chip` |
 
 A key's category colour is set on the key itself, so it wins over your sheets.
 

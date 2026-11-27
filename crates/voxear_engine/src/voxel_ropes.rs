@@ -10,8 +10,11 @@
 //! by a Distance joint holding that point of it within the rope's length
 //! of where the rope is tied, let go into it rather than thrown, and heavy
 //! in the air: it sways a little and settles. It stays a body while it hangs.
+//! A piece may hang from several ropes, sharing its weight as they must for
+//! it to hang still: cut one and the rest take its share, the piece leaning
+//! toward them, and may snap in turn.
 //! A rope snaps when what hangs from it pulls harder than its strength, its
-//! weight and its swing together, when a blast reaches it, or when the game
+//! share of its weight and its swing together, when a blast reaches it, or when the game
 //! cuts it ([`cut`]); its piece then falls, and rests as pieces do. Each
 //! rope is drawn as a line of voxels from where it is tied to the point it
 //! holds.
@@ -22,7 +25,7 @@ use voxear_render::VoxelPiece;
 use voxear_scene::{Name, Transform, WorldTransform};
 
 use crate::{
-    physics::{Joint, JointType, PhysicsScene},
+    physics::{Joint, JointType, MoreJoints, PhysicsScene},
     voxel_felling::{PieceFall, PieceRest, VoxelPieceBody},
 };
 
@@ -70,6 +73,8 @@ pub struct RopeHolds {
     pub point: Vec3,
     pub snapped: bool,
     tied: bool,
+    /// How long it has been pulled harder than its strength, in seconds.
+    over_for: f32,
     look: Option<Entity>,
     drawn: u32,
 }
@@ -110,10 +115,22 @@ pub fn cut(world: &mut World, obj: Entity) -> bool {
         return false;
     }
     if let Some(piece) = holds.piece.filter(|piece| world.is_alive(*piece)) {
-        world.remove::<Joint>(piece);
-        // It falls afresh, woken if it had come to rest hanging, and rests as pieces do.
+        // Its joint alone goes: the piece hangs on from the ropes left, leaning, or falls once none is.
+        let left = match world.get_mut::<MoreJoints>(piece) {
+            Some(joints) => {
+                joints.0.retain(|(number, _)| *number != rope_number(obj));
+                joints.0.len()
+            }
+            None => 0,
+        };
+        if left == 0 {
+            world.remove::<MoreJoints>(piece);
+        }
+        // It moves afresh, woken if it had come to rest hanging; with no rope left, it rests as pieces do.
         if let Some(body) = world.get_mut::<VoxelPieceBody>(piece) {
-            body.rest = Some(PieceRest::Stamp);
+            if left == 0 {
+                body.rest = Some(PieceRest::Stamp);
+            }
             if body.fall == PieceFall::Resting {
                 (body.fall, body.falling, body.still) = (PieceFall::Falling, 0.0, 0.0);
             }
@@ -159,6 +176,7 @@ fn held_point(world: &World, obj: Entity, rope: VoxelRope, tied: Vec3) -> Vec3 {
 pub(crate) fn catch(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: Vec3) {
     let Some(place) = world.get::<Transform>(obj).map(|t| t.position) else { return };
     let cells: std::collections::HashSet<[u16; 3]> = piece.voxels.iter().map(|(c, _)| *c).collect();
+    let mut caught = false;
     for (rope_obj, rope, tied) in ropes(world) {
         let holds = world.get::<RopeHolds>(rope_obj).copied().unwrap_or_default();
         if holds.snapped || holds.piece.is_some_and(|p| world.is_alive(p)) {
@@ -170,7 +188,7 @@ pub(crate) fn catch(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: 
             let c = (local + Vec3::new((i % 3 - 1) as f32, (i / 3 % 3 - 1) as f32, (i / 9 - 1) as f32)).floor();
             c.cmpge(Vec3::ZERO).all() && cells.contains(&c.to_array().map(|a| a as u16))
         });
-        if !inside || world.get::<Joint>(obj).is_some() {
+        if !inside {
             continue;
         }
         let joint = Joint {
@@ -180,20 +198,98 @@ pub(crate) fn catch(world: &mut World, obj: Entity, piece: &VoxelPiece, corner: 
             limits: Some([0.0, rope.long()]),
             ..Joint::default()
         };
-        world.insert(obj, joint);
-        // Let go into the rope, not thrown, and heavy in the air: it sways a little and settles, as a building
-        // hanging would, not as a light thing on a string.
-        if let Some(body) = world.get_mut::<VoxelPieceBody>(obj) {
-            (body.rest, body.push) = (Some(PieceRest::Stay), crate::voxel_felling::PiecePush::Drop);
-        }
-        if let Some(rigidbody) = world.get_mut::<crate::physics::Rigidbody>(obj) {
-            (rigidbody.drag, rigidbody.angular_drag) = (HANGING_DRAG, HANGING_TURN_DRAG);
-        }
+        // A joint of its own for each rope, beside any other.
+        let mut joints = world.get::<MoreJoints>(obj).cloned().unwrap_or_default();
+        joints.0.push((rope_number(rope_obj), joint));
+        world.insert(obj, joints);
         let kept = RopeHolds { piece: Some(obj), point: point - place, tied: true, ..holds };
         world.insert(rope_obj, kept);
+        caught = true;
+    }
+    if !caught {
         return;
     }
+    // Let go into its ropes, not thrown, and heavy in the air: it sways a little and settles, as a building
+    // hanging would, not as a light thing on a string.
+    if let Some(body) = world.get_mut::<VoxelPieceBody>(obj) {
+        (body.rest, body.push) = (Some(PieceRest::Stay), crate::voxel_felling::PiecePush::Drop);
+    }
+    if let Some(rigidbody) = world.get_mut::<crate::physics::Rigidbody>(obj) {
+        (rigidbody.drag, rigidbody.angular_drag) = (HANGING_DRAG, HANGING_TURN_DRAG);
+    }
 }
+
+/// The number rope `obj`'s joint goes by among a piece's joints.
+fn rope_number(obj: Entity) -> u32 {
+    let bits = obj.to_bits();
+    (bits ^ (bits >> 32)) as u32
+}
+
+/// How much of what hangs from a piece each rope holding it bears, its
+/// point each of `holding` in the world and its weight's middle at
+/// `middle`: the pulls that together bear its weight and turn it neither
+/// way, the least of those, a rope that would have to push slack. Two
+/// ropes across a square's diagonal from where a third was cut bear half
+/// each; the third, little.
+fn shares(middle: Vec3, holding: &[Vec3]) -> Vec<f32> {
+    let n = holding.len();
+    let mut taut = vec![true; n];
+    for _ in 0..n {
+        let at: Vec<usize> = (0..n).filter(|&i| taut[i]).collect();
+        let rows: Vec<[f64; 3]> =
+            at.iter().map(|&i| [1.0, f64::from(holding[i].x - middle.x), f64::from(holding[i].z - middle.z)]).collect();
+        // The least pulls F with Σ F = 1 and Σ F·across = 0: F = Aᵀ (A Aᵀ)⁻¹ b.
+        let mut m = [[0.0f64; 3]; 3];
+        for r in &rows {
+            for i in 0..3 {
+                for k in 0..3 {
+                    m[i][k] += r[i] * r[k];
+                }
+            }
+        }
+        let pulls: Vec<f64> = match solve3(m, [1.0, 0.0, 0.0]) {
+            Some(y) => rows.iter().map(|r| r[0] * y[0] + r[1] * y[1] + r[2] * y[2]).collect(),
+            // In a line, or one alone: shared alike.
+            None => vec![1.0 / rows.len().max(1) as f64; rows.len()],
+        };
+        if let Some(k) = (0..at.len()).filter(|&k| pulls[k] < 0.0).min_by(|&a, &b| pulls[a].total_cmp(&pulls[b])) {
+            taut[at[k]] = false;
+            continue;
+        }
+        let mut out = vec![0.0; n];
+        for (k, &i) in at.iter().enumerate() {
+            out[i] = pulls[k].max(0.0) as f32;
+        }
+        return out;
+    }
+    vec![1.0 / n.max(1) as f32; n]
+}
+
+/// `x` with `m x = b`, none where `m` has none.
+fn solve3(m: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
+    let det = |m: &[[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det(&m);
+    if d.abs() < 1e-6 {
+        return None;
+    }
+    let mut x = [0.0; 3];
+    for c in 0..3 {
+        let mut mc = m;
+        for r in 0..3 {
+            mc[r][c] = b[r];
+        }
+        x[c] = det(&mc) / d;
+    }
+    Some(x)
+}
+
+/// How long a rope takes being pulled harder than its strength before it
+/// snaps, in seconds, and how much harder snaps it at once.
+const JOLT: f32 = 0.2;
+const SNAPS_AT_ONCE: f32 = 1.5;
 
 /// How hard the air holds back a piece hanging from a rope, moving and
 /// turning: enough that it sways a little and settles.
@@ -208,7 +304,7 @@ const ROPE_COLOUR: [u8; 4] = [150, 118, 72, 255];
 /// Moves the ropes on, after each physics step: what a rope newly tied
 /// holds is let hang; one pulled harder than its strength snaps; and each
 /// is drawn from where it is tied to the point it holds.
-pub(crate) fn tend(world: &mut World) {
+pub(crate) fn tend(world: &mut World, dt: f32) {
     let found = ropes(world);
     if found.is_empty() {
         return;
@@ -229,19 +325,40 @@ pub(crate) fn tend(world: &mut World) {
             world.insert(obj, holds);
             crate::voxel_collapse::settle_around(world, tied + Vec3::from(rope.hangs));
         }
-        // Pulled by what hangs, its weight and its swing, harder than it holds: it snaps.
+        // Pulled by what hangs, its share of its weight and its swing, harder than it holds: it snaps.
         if let Some(piece) = holds.piece.filter(|_| !holds.snapped) {
-            let alive = world.is_alive(piece) && world.get::<Joint>(piece).is_some();
-            let falling = world.get::<VoxelPieceBody>(piece).is_some_and(|body| body.fall == PieceFall::Falling);
+            let alive = world.is_alive(piece)
+                && world
+                    .get::<MoreJoints>(piece)
+                    .is_some_and(|joints| joints.0.iter().any(|(n, _)| *n == rope_number(obj)));
+            let moving = world.get::<VoxelPieceBody>(piece).is_some_and(|body| body.fall != PieceFall::Waiting);
             let mass = world.get::<VoxelPieceBody>(piece).map_or(0.0, |body| body.piece.mass);
             let speed = speeds.iter().find(|(p, _)| *p == piece).map_or(0.0, |(_, v)| v.length());
-            let pull = mass * (9.81 + speed * speed / rope.long().max(0.1));
             if !alive {
                 if let Some(kept) = world.get_mut::<RopeHolds>(obj) {
                     kept.piece = None;
                 }
-            } else if falling && rope.strength > 0.0 && pull > rope.strength {
-                cut(world, obj);
+            } else if moving && rope.strength > 0.0 {
+                let placed = world.get::<Transform>(piece).map(|t| (t.position, t.rotation));
+                let (middle, turn) = placed.unwrap_or((tied, Quat::IDENTITY));
+                // The points of every rope holding it, this one's among them.
+                let holding: Vec<(Entity, Vec3)> = ropes(world)
+                    .into_iter()
+                    .filter_map(|(other, ..)| {
+                        let h = world.get::<RopeHolds>(other)?;
+                        (h.piece == Some(piece) && !h.snapped).then(|| (other, middle + turn * h.point))
+                    })
+                    .collect();
+                let points: Vec<Vec3> = holding.iter().map(|(_, p)| *p).collect();
+                let share = holding.iter().position(|(o, _)| *o == obj).map_or(1.0, |i| shares(middle, &points)[i]);
+                let pull = share * mass * (9.81 + speed * speed / rope.long().max(0.1));
+                // A jolt it takes a moment of; pulled harder for longer, or much harder at once, it snaps.
+                let over_for = if pull > rope.strength { holds.over_for + dt } else { 0.0 };
+                if over_for > JOLT || pull > rope.strength * SNAPS_AT_ONCE {
+                    cut(world, obj);
+                } else if let Some(kept) = world.get_mut::<RopeHolds>(obj) {
+                    kept.over_for = over_for;
+                }
             }
         }
         draw(world, obj, rope, tied);

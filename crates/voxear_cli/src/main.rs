@@ -1093,6 +1093,15 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     let mut saved: Vec<serde_json::Value> = Vec::new();
     let loading = std::time::Instant::now();
     game.start(Some(&mut renderer))?;
+    // The camera looked through, before the ground round it is made.
+    let mut looking_through = None;
+    if let Some(name) = &camera {
+        let world = &game.engine.world;
+        let named = world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == *name);
+        let (found, _) = named.with_context(|| format!("no Obj named {name} to look through"))?;
+        renderer.set_view_options(ViewOptions { camera: Some(found), ..options });
+        looking_through = Some(found);
+    }
     // The ground round the camera made first, as a game's loading waits for it: the frames alone can be over before
     // the terrain's threads have made any of it.
     if !wait.is_zero() {
@@ -1128,14 +1137,6 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
             set_pack_option(world, setting)?;
         }
         println!("drawn under the shader pack {pack}");
-    }
-    let mut looking_through = None;
-    if let Some(name) = &camera {
-        let world = &game.engine.world;
-        let named = world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == *name);
-        let (found, _) = named.with_context(|| format!("no Obj named {name} to look through"))?;
-        renderer.set_view_options(ViewOptions { camera: Some(found), ..options });
-        looking_through = Some(found);
     }
     let mut overlay = StatsOverlay::new(stats);
     let frames = frames.max(1);

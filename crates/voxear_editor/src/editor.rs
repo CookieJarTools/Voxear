@@ -60,6 +60,7 @@ mod reverb_bakes;
 mod lighting_bakes;
 mod placing;
 mod play;
+mod test_runs;
 mod prefab_mode;
 mod prefab_overrides;
 mod voxel_prints;
@@ -137,7 +138,6 @@ use crate::{
     props::{self, Part, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
     script_handles::ScriptHandles,
-    setting_info::Kind as SettingKind,
     settings::{self, CodeEditor, Memory, SNAPS, Settings},
     settings_window::{Action as SettingsAction, SettingsWindow},
 };
@@ -171,6 +171,14 @@ struct Nodes {
     dock: NodeId,
     game_viewport: NodeId,
     game_empty: NodeId,
+    /// The Game view's full screen button, which gives it the dock alone.
+    game_maximize: NodeId,
+    /// The Game view's Gizmos button, and what its gizmos are drawn on.
+    game_gizmos: NodeId,
+    game_handles: NodeId,
+    /// The Game view's Stats button, and the frame's numbers it shows (see `view_stats`).
+    game_stats_button: NodeId,
+    game_stats: NodeId,
     /// The first Inspector's padlock.
     inspector_lock: NodeId,
     command: NodeId,
@@ -239,6 +247,10 @@ struct Nodes {
     debug_texts: NodeId,
     /// The status bar's dot, which pulses while the scripts build.
     status_dot: NodeId,
+    /// Beside the play buttons while Play waits for the scripts to build.
+    play_building: NodeId,
+    /// The top bar's Save button.
+    save: NodeId,
 }
 
 /// What a shortcut asks of the editor, done in the next frame.
@@ -432,6 +444,9 @@ pub struct Editor {
     /// A World Generator changed in its Inspector by a drag still held, to save once it is let go.
     world_gen_to_save: Option<(String, voxear_terrain::generate::WorldGen)>,
     memory_profiler: MemoryPanel,
+    /// The Tests window, and the tests waiting to run, the next first.
+    tests: crate::tests_panel::TestsPanel,
+    test_queue: std::collections::VecDeque<crate::tests_panel::TestKey>,
     audio: AudioPanel,
     block_database: BlockDatabase,
     /// The Block World that was selected when a block picked in the Blocks
@@ -590,6 +605,11 @@ impl Editor {
             dock: find(&ui, "dock"),
             game_viewport: find(&ui, "game-viewport"),
             game_empty: find(&ui, "game-empty"),
+            game_maximize: find(&ui, "game-maximize"),
+            game_gizmos: find(&ui, "game-gizmos"),
+            game_handles: find(&ui, "game-handles"),
+            game_stats_button: find(&ui, "game-stats-button"),
+            game_stats: find(&ui, "game-stats"),
             inspector_lock: find(&ui, "inspector-lock"),
             command: find(&ui, "command"),
             status_left: find(&ui, "status-left"),
@@ -636,6 +656,8 @@ impl Editor {
             tooltip: find(&ui, "tooltip"),
             debug_texts: find(&ui, "debug-texts"),
             status_dot: find(&ui, "status-dot"),
+            play_building: find(&ui, "play-building"),
+            save: find(&ui, "save"),
         };
         let branch = git_branch(&root);
         let branch_name = find(&ui, "status-branch-name");
@@ -656,14 +678,13 @@ impl Editor {
         if let Some(size) = memory.tile_size {
             project.set_tile_size(&mut ui, size);
         }
+        project.set_marks(&mut ui, &memory.project_marks);
+        ui.set_tooltip(nodes.save, "Save", Some("Ctrl+S"));
         let console_panel = find(&ui, "console-panel");
         let console = Console::new(&mut ui, console_panel, log, &root, &memory.settings);
         let mut inspector = Inspector::new(find(&ui, "inspector"));
         inspector.set_types(script_types::cached(&game.project).unwrap_or_default());
         inspector.set_lock_button(&mut ui, nodes.inspector_lock);
-        let mode = find(&ui, "inspector-mode");
-        ui.set_tooltip(mode, "Normal or Debug", None);
-        inspector.set_mode_button(mode);
         inspector.show(&mut ui, &game, None, false);
         let levels = LevelsPanel::new(&mut ui, document, &mut game.content);
         let docs_panel = find(&ui, "docs");
@@ -708,6 +729,8 @@ impl Editor {
         let voxshade = crate::voxshade_panel::VoxShadePanel::new(&mut ui, nodes.voxshade_panel);
         let model = ModelPanel::new(&mut ui, nodes.model_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
+        let tests_panel = find(&ui, "tests-panel");
+        let tests = crate::tests_panel::TestsPanel::new(&mut ui, tests_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
         let block_database = BlockDatabase::new(&mut ui, nodes.blocks_panel);
         let localization = LocalizationPanel::new(&mut ui, nodes.localization_panel);
@@ -812,6 +835,8 @@ impl Editor {
             model_guid: None,
             world_gen_to_save: None,
             memory_profiler,
+            tests,
+            test_queue: std::collections::VecDeque::new(),
             audio,
             block_database,
             built_in: None,
@@ -1119,6 +1144,7 @@ impl Editor {
             self.frame_debugger.update(&mut self.ui, frames_shown, renderer);
             let memory_shown = self.shown(self.nodes.memory_panel);
             self.memory_profiler.update(&mut self.ui, memory_shown, &self.game, renderer);
+            self.update_tests();
             let audio_shown = self.shown(self.nodes.audio_panel);
             if let Some(picked) = self.audio.update(&mut self.ui, audio_shown, &self.game) {
                 self.select(Some(picked));
@@ -1661,34 +1687,6 @@ impl Editor {
         &self.memory.settings
     }
 
-    /// Runs a setting as the palette does: a toggle of Preferences flips, a
-    /// choice moves on, and anything else opens its window at it.
-    fn run_setting(&mut self, key: &'static str) {
-        let Some(info) = settings::info(key) else {
-            self.show_setting(key);
-            return;
-        };
-        let now = self.memory.settings.value(key);
-        let next = match (now, info.kind) {
-            (Some(Json::Bool(on)), _) => Some(Json::Bool(!on)),
-            (Some(Json::String(label)), SettingKind::Choice(options)) => {
-                let at = options.iter().position(|(shown, _)| *shown == label).unwrap_or(0);
-                Some(Json::from(options[(at + 1) % options.len()].0))
-            }
-            _ => None,
-        };
-        match next {
-            Some(value) => {
-                self.set_preference(key, &value);
-                let now = self.memory.settings.describe(info);
-                self.notify(&format!("{}: {now}", info.label));
-            }
-            None => {
-                self.show_setting(key);
-            }
-        }
-    }
-
     /// Sets one of Preferences' settings to a value `setting_info::check`
     /// has passed, null for its default, kept and put into effect. Gives
     /// whether it changed.
@@ -1813,7 +1811,10 @@ impl Editor {
     /// Does what a result of the command palette says.
     fn run_palette(&mut self, action: PaletteAction, renderer: &mut Renderer) {
         match action {
-            PaletteAction::Setting(key) => self.run_setting(key),
+            // A setting opens where it is, scrolled to and marked, to see it and change it there.
+            PaletteAction::Setting(key) => {
+                self.show_setting(key);
+            }
             PaletteAction::FindSetting(key) => {
                 self.show_found(&key);
             }
@@ -1934,6 +1935,7 @@ impl Editor {
         self.tools.tool = Tool::from_index(self.ui.segment(self.scene.tool));
         let selected = self.selected();
         self.draw_other_scene_views(renderer);
+        self.draw_game_gizmos();
         let Some(camera) = self.scene_camera() else {
             self.hovered_handle = None;
             self.ui.set_shapes(self.scene.handles, Vec::new());
@@ -2828,12 +2830,12 @@ impl Editor {
     /// How a view draws: through its camera, and a Scene view shaded as its
     /// menu says, with behaviours' gizmos while its Gizmos button is on, and
     /// culled as the game's camera culls with Game Camera's Culling on; the
-    /// Game view always lit, and without gizmos.
+    /// Game view always lit, with gizmos while its own Gizmos button is on.
     fn view_options(&self, viewport: NodeId, camera: Entity) -> ViewOptions {
         let scene_view = self.scene_view_at(viewport);
         let debug_view = scene_view.map_or(0, |view| view.debug_view());
-        // Behaviours' gizmos show in a Scene view with its Gizmos button on, and never in the Game view.
-        let gizmos = scene_view.is_some_and(|view| view.show_gizmos);
+        // Behaviours' gizmos show in a view with its Gizmos button on.
+        let gizmos = scene_view.map_or(self.memory.settings.game_gizmos, |view| view.show_gizmos);
         let cull_camera = scene_view.and_then(|_| self.culling_camera());
         ViewOptions { camera: Some(camera), debug_view, gizmos, cull_camera, ..ViewOptions::default() }
     }
@@ -3543,6 +3545,11 @@ impl Editor {
             || self.reverb_bake.is_some()
             || self.lighting_bake.is_some();
         self.ui.set_class(self.nodes.status_dot, "busy", busy);
+        self.ui.set_visible(self.nodes.play_building, self.play.is_building());
+        self.ui.set_class(self.nodes.save, "unsaved", self.unsaved && !self.is_playing());
+        if self.ui.clicked(self.nodes.save) {
+            self.commands.push(Command::Save);
+        }
         self.status.0 += 1;
         self.status.1 += delta;
         if self.status.1 < STATUS_INTERVAL && self.status.0 > 1 {
@@ -3561,11 +3568,12 @@ impl Editor {
         self.ui.set_text(self.nodes.status_memory, &memory);
         let stats = renderer.stats();
         let gpu_ms: f32 = renderer.timings().iter().map(|(_, ms)| ms).sum();
-        let drawn = stats.drawn_early + stats.drawn_late;
-        let chip = format!("{} objs   {drawn} draws   {gpu_ms:.2} ms GPU", stats.instances);
-        let first = self.all_scene_views().find(|view| view.panel == scene_views::FIRST).map(|view| view.stats);
-        if let Some(stats) = first {
-            self.ui.set_text(stats, &chip);
+        let numbers = crate::view_stats::numbers(fps, gpu_ms, profiler::resident_megabytes(), &stats);
+        let panels: Vec<NodeId> = self.all_scene_views().map(|view| view.stats).collect();
+        for panel in panels.into_iter().chain([self.nodes.game_stats]) {
+            if self.ui.is_visible(panel) {
+                crate::view_stats::show(&mut self.ui, panel, &numbers);
+            }
         }
     }
 }

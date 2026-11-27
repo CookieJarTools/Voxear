@@ -55,15 +55,11 @@ impl Editor {
         self.ui.add_class(actions, "panel-actions");
         let lock = self.ui.icon_button(actions, "lock");
         self.ui.add_class(lock, "inspector-lock");
-        let mode = self.ui.icon_button(actions, "more");
-        self.ui.add_class(mode, "inspector-mode");
-        self.ui.set_tooltip(mode, "Normal or Debug", None);
         let root = self.ui.panel(content, Style::column().scroll());
         self.ui.add_class(root, "fill");
         self.ui.add_class(root, "inspector");
         let mut inspector = Inspector::with_owner(root, number);
         inspector.set_lock_button(&mut self.ui, lock);
-        inspector.set_mode_button(mode);
         inspector.set_types(self.inspector.types().clone());
         inspector.set_prefab_mode(self.prefab.is_some());
         inspector.set_dark(self.theme.is_dark());
@@ -119,9 +115,12 @@ impl Editor {
         (self.inspector.found_row(), self.lighting_panel.found_row())
     }
 
-    /// The first Inspector's `⋯` button, which switches it between Normal and Debug.
-    pub fn inspector_mode_button(&self) -> Option<NodeId> {
-        self.ui.find(self.ui.root(), "inspector-mode")
+    /// An Inspector's place, the first 0, by its panel's id.
+    pub(super) fn inspector_index(&self, panel: &str) -> Option<usize> {
+        match panel {
+            "inspector" => Some(0),
+            _ => self.extra_inspectors.iter().position(|e| e.panel == panel).map(|index| index + 1),
+        }
     }
 
     /// Whether an Inspector, by its place, the first 0, is in Debug mode.
@@ -176,18 +175,6 @@ impl Editor {
     /// what was typed or picked, runs the behaviour's code it asks for, and
     /// answers its menus.
     fn inspector_frame(&mut self, renderer: &mut Renderer, playing: bool) {
-        // Normal or Debug, from its menu: what it shows, shown again the other way.
-        let asset = self.inspector.shown_asset().cloned();
-        let debug_asset = self.inspector.debug_asset().and_then(|path| self.project.item(path));
-        if self.inspector.update_mode(&mut self.ui) {
-            match asset.or(debug_asset) {
-                Some(item) => self.inspector.show_asset(&mut self.ui, &self.game, &item),
-                None => {
-                    let shown = self.inspector.shown().or(self.selected());
-                    self.inspector.show(&mut self.ui, &self.game, shown, playing);
-                }
-            }
-        }
         let unlocked = self.inspector.update_lock(&mut self.ui) && !self.inspector.is_locked();
         let following = unlocked || !self.inspector.is_locked();
         // A model's part picked in the Hierarchy shows in place of its Obj.

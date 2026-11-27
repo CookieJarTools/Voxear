@@ -3100,13 +3100,26 @@ fn a_column_takes_over_a_thousand_edits_as_the_cpu_does() {
 
 #[test]
 fn an_endless_volumes_ground_far_from_its_obj_is_drawn_as_near_it() {
-    // The same ground seen 24 km from the volume's Obj, and with the volume's Obj under the camera and its offset there.
+    // 34 km out, and 64 km: past the far corner of a world 51 km a side from its middle.
+    far_from_its_obj(24000.0, 48.0);
+    far_from_its_obj(45000.0, 720.0);
+}
+
+/// The same ground seen `far` metres along X and Z from the volume's Obj,
+/// and with the volume's Obj under the camera and its offset there, in a
+/// volume `tall` metres tall.
+fn far_from_its_obj(far: f32, tall: f32) {
     let Some(mut far_renderer) = renderer() else { return };
     let world = Arc::new(without_rivers(&starter("Rolling Hills")));
-    let far = 24000.0;
     let mut scene = generated_view(world.clone(), far + 8.0, far + 8.0, 6.0, 25.0);
+    let taller = |scene: &mut World| {
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.size.y = tall;
+        }
+    };
+    taller(&mut scene);
     let made = render(&mut far_renderer, &scene, 3);
-    keep_image("far from its obj.png", &made);
+    keep_image(&format!("far from its obj {far}.png"), &made);
     drop(far_renderer);
     let Some(mut near_renderer) = renderer() else { return };
     let ground = world.height_at(far + 8.0, far + 8.0);
@@ -3116,8 +3129,9 @@ fn an_endless_volumes_ground_far_from_its_obj_is_drawn_as_near_it() {
         generator.at = [far, far];
         generator.floor = ground - 24.0;
     }
+    taller(&mut scene);
     let near = render(&mut near_renderer, &scene, 3);
-    keep_image("near its obj.png", &near);
+    keep_image(&format!("near its obj {far}.png"), &near);
     // Grass and flowers are placed by the voxel's place in the generator's world, which the offset moves, so the two
     // are not the same pixel for pixel: the ground's shading is the same over squares of 20 pixels, within what the
     // light through the blades and flowers varies with where they stand (two placements near the Obj differ as much),
@@ -3377,4 +3391,334 @@ fn a_house_blown_in_is_drawn_as_the_cpu_finds_it_after_what_came_loose_was_dug_o
     eprintln!("{differ} differ, {kept} kept");
     assert!(kept > 1000);
     assert_eq!(differ, 0, "the GPU's voxels are the CPU's");
+}
+/// Tablelands with canyons cut through them, natural bridges over the
+/// canyons and windows through thin walls, and spires standing out of it
+/// all: the Volume parts a world of blocks' biomes and the Realm's own
+/// graph lay in, which the GPU reads from what the CPU finds.
+fn spired_tablelands() -> WorldGen {
+    use voxear_terrain::generate::nodes::{Arches, Plateaus, Spires};
+    let mut graph = Graph::default();
+    let land = Plateaus { size: 300.0, low: 0.0, high: 60.0, ramps: 0.0, canyon: 50.0, ..Plateaus::default() };
+    let land = graph.add(NodeKind::Plateaus(land), [0.0, 0.0]);
+    let arches =
+        Arches { span_from: 30.0, span_to: 90.0, often: 1.0, windows: 0.6, thickness: 5.0, ..Arches::default() };
+    let arches = graph.add(NodeKind::Arches(arches), [200.0, 0.0]);
+    let spires = Spires {
+        size_from: 8.0,
+        size_to: 20.0,
+        height_from: 20.0,
+        height_to: 50.0,
+        spacing: 60.0,
+        often: 0.6,
+        ..Spires::default()
+    };
+    let spires = graph.add(NodeKind::Spires(spires), [400.0, 0.0]);
+    let output = graph.add(NodeKind::Output(Output::default()), [600.0, 0.0]);
+    assert!(graph.connect(land, 0, output, Output::HEIGHT));
+    assert!(graph.connect(arches, 0, spires, Spires::GROUND) && graph.connect(spires, 0, output, Output::VOLUME));
+    let world = WorldGen::new(7, 1.0, -50.0, graph);
+    assert!(world.faults().is_empty(), "{:?}", world.faults());
+    world
+}
+
+/// Columns over `world`'s ground where its Volume stands over it, and how
+/// high: a spire's or a bridge's foot and top. Looked for every `step`
+/// metres over a square `side` points a side from `from`.
+fn standing_columns(world: &WorldGen, from: [f32; 2], side: usize, step: f32) -> Vec<([f32; 2], f32, [f32; 2])> {
+    let volume = world.volume().expect("a Volume");
+    let (xs, zs): (Vec<f32>, Vec<f32>) =
+        (0..side * side).map(|i| (from[0] + (i % side) as f32 * step, from[1] + (i / side) as f32 * step)).unzip();
+    let mut heights = vec![0.0; xs.len()];
+    world.heights(&xs, &zs, &mut heights);
+    let standing = volume.standing(&xs, &zs, &heights);
+    (0..xs.len())
+        .filter_map(|i| standing[i].first().map(|&span| ([xs[i], zs[i]], heights[i], span)))
+        .filter(|(_, ground, [_, top])| top - ground > 4.0)
+        .collect()
+}
+
+/// The voxels of the box from `low`, `size` a side, of `scene`'s endless
+/// volume that the CPU has open to the air, and of those how many the GPU
+/// misses, and how many it keeps where the CPU has air; with how many it
+/// keeps. The GPU also keeps a row under its ground's sides, hidden, which
+/// is not counted.
+fn open_voxels_against_cpu(
+    renderer: &Renderer,
+    scene: &World,
+    low: [i32; 3],
+    size: [i32; 3],
+) -> (usize, usize, usize, usize) {
+    let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let (_, kept, found) = gpu_against_cpu(renderer, scene, (low, size), &|_, _| false);
+    let mut solid = vec![false; found.len()];
+    voxear_render::VoxelSolids::of(&volume).unwrap().fill(low, size, &mut solid);
+    let at = |x: i32, y: i32, z: i32| (x + size[0] * (y + size[1] * z)) as usize;
+    let (mut missing, mut extra, mut open) = (0, 0, 0);
+    for z in 1..size[2] - 1 {
+        for y in 1..size[1] - 1 {
+            for x in 1..size[0] - 1 {
+                let cpu = solid[at(x, y, z)];
+                let shown = cpu
+                    && [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+                        .iter()
+                        .any(|&(dx, dy, dz)| !solid[at(x + dx, y + dy, z + dz)]);
+                let gpu = found[at(x, y, z)] != 0;
+                open += usize::from(shown);
+                missing += usize::from(shown && !gpu);
+                extra += usize::from(gpu && !cpu);
+            }
+        }
+    }
+    (open, missing, extra, kept)
+}
+
+#[test]
+fn spires_and_natural_bridges_on_the_gpu_are_the_cpus() {
+    let Some(renderer) = renderer() else { return };
+    let world = spired_tablelands();
+    let program = world.gpu_program().expect("it runs on the GPU");
+    let volume = program.volume.as_ref().expect("its Volume runs on the GPU");
+    assert_eq!(program.finds.len(), 2, "the spires and the bridges are found on the CPU: {:?}", program.finds);
+    eprintln!("{} steps in {} slots; its Volume carries up {}", program.steps, program.slots, volume.carried.len());
+    // Cells a sixteenth of a metre across up columns where something stands over the ground, from its foot to its
+    // top, and a few more columns round them.
+    let size = 1.0 / 16.0;
+    let standing = standing_columns(&world, [-600.0, -600.0], 160, 7.5);
+    assert!(standing.len() > 40, "spires and bridges stand over {} columns", standing.len());
+    let mut places = Vec::new();
+    for &([x, z], _, [foot, top]) in standing.iter().take(600) {
+        for step in 0..40 {
+            let y = foot + (top - foot) * step as f32 / 39.0 + 0.03125;
+            places.push([x, y, z]);
+            places.push([x + 2.3, y, z - 1.7]);
+        }
+    }
+    let made = renderer.generated_on_gpu(&world, &places, size).expect("the generator runs on the GPU");
+    let cpu = world.volume().unwrap();
+    let xs: Vec<f32> = places.iter().map(|p| p[0]).collect();
+    let ys: Vec<f32> = places.iter().map(|p| p[1]).collect();
+    let zs: Vec<f32> = places.iter().map(|p| p[2]).collect();
+    let mut heights = vec![0.0; places.len()];
+    world.heights(&xs, &zs, &mut heights);
+    let carried = cpu.carried(&xs, &zs, &heights);
+    let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+    let (mut density, mut ground) = (vec![0.0; places.len()], vec![0.0; places.len()]);
+    cpu.densities(Cells { x: &xs, y: &ys, z: &zs, carried: &rows, size }, false, &mut density, &mut ground);
+    let (mut sides, mut near, mut close, mut raised) = (0, 0, 0, 0);
+    for (at, gpu) in made.iter().enumerate() {
+        let cpu = density[at];
+        sides += usize::from((gpu[4] > 0.0) == (cpu > 0.0));
+        if cpu.abs() < 2.0 {
+            near += 1;
+            close += usize::from((gpu[4] - cpu).abs() < 0.01);
+        }
+        // Solid well over the ground: a spire, or a bridge's span.
+        raised += usize::from(cpu > 0.0 && ys[at] > heights[at] + 3.0);
+        if (gpu[4] > 0.0) != (cpu > 0.0) && at % 97 == 0 {
+            eprintln!("at {:?} over {:.2}: the GPU {:.3}, the CPU {cpu:.3}", places[at], heights[at], gpu[4]);
+        }
+    }
+    eprintln!(
+        "{} cells: {sides} on the same side, {close} of {near} near a surface within 1 cm, {raised} solid over the ground",
+        places.len()
+    );
+    assert!(raised > places.len() / 10, "spires and bridges to compare: {raised} cells solid over the ground");
+    assert!(sides * 1000 >= places.len() * 998, "{sides} of {} cells on the same side", places.len());
+    assert!(close * 1000 >= near * 990, "{close} of {near} near a surface within a centimetre");
+}
+
+#[test]
+fn an_endless_volume_draws_its_generators_spires_and_bridges_as_the_cpu_finds_them() {
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(spired_tablelands());
+    // The spire standing tallest over its ground near the middle, and a bridge: solid over open air.
+    let standing = standing_columns(&world, [-300.0, -300.0], 120, 5.0);
+    let (spire, spire_ground, [_, spire_top]) =
+        standing.iter().copied().max_by(|a, b| (a.2[1] - a.1).total_cmp(&(b.2[1] - b.1))).expect("a spire");
+    eprintln!("a spire at {spire:?} from {spire_ground:.1} to {spire_top:.1}");
+    let low = world.height_at(spire[0] - 40.0, spire[1] - 40.0).min(spire_ground) - 30.0;
+    let mut scene = generated_view(world.clone(), spire[0] - 40.0, spire[1] - 40.0, 0.0, 5.0);
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.size.y = 160.0;
+        volume.reach = 96.0;
+        volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
+        volume.generator.as_mut().unwrap().floor = low;
+    }
+    {
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        camera.position.y = spire_ground - low + 12.0;
+        camera.rotation = Quat::from_rotation_y(-135f32.to_radians()) * Quat::from_rotation_x(-15f32.to_radians());
+    }
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("spires and bridges.png", &pixels);
+    // Up the spire, every voxel the CPU has open to the air the GPU keeps, and the GPU keeps none in its air.
+    let per = 16;
+    let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    for up in [0.3f32, 0.6, 0.85] {
+        let y = ((spire_ground + (spire_top - spire_ground) * up - low) * per as f32) as i32;
+        let low_corner = [(spire[0] * per as f32) as i32 - 200, y - 20, (spire[1] * per as f32) as i32 - 200];
+        let (open, missing, extra, kept) = open_voxels_against_cpu(&renderer, &scene, low_corner, [400, 40, 400]);
+        eprintln!(
+            "{:.0}% up the spire: {kept} kept, {open} open on the CPU, {missing} missing, {extra} over",
+            up * 100.0
+        );
+        assert!(open > 300, "the CPU's spire {:.0}% up: {open} voxels open to the air", up * 100.0);
+        assert!(
+            missing * 200 < open && extra * 200 < open,
+            "the GPU's spire {:.0}% up is the CPU's: {missing} missing, {extra} over",
+            up * 100.0
+        );
+    }
+    // The CPU's ray from over the spire meets its top where the GPU draws it.
+    let over = Vec3::new(spire[0], 159.0, spire[1]);
+    let hit = voxear_render::voxel_raycast(&volume, Vec3::ZERO, over, -Vec3::Y, 160.0).expect("the spire");
+    assert!(hit.point.y > spire_ground - low + 4.0, "the ray meets the spire at {:.1}, over its ground", hit.point.y);
+}
+
+#[test]
+fn a_biomes_rock_layers_are_laid_in_voxels_as_a_world_of_blocks_lays_them() {
+    use voxear_terrain::generate::{BiomeBlocks, BiomeDef, Biomes, RockLayer, RockLayers, Strata, WorldBiomes};
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(without_rivers(&starter("Rolling Hills")));
+    // One biome everywhere, all of its ground steep, so its rock layers show from the top down: red, green and blue
+    // bands, leaning and wandering.
+    let layer = |name: &str, thickness: f32| RockLayer { block: Some(name.to_owned()), thickness };
+    let layers = RockLayers {
+        tilt: 3.0,
+        wander: 4.0,
+        layers: vec![layer("red", 1.5), layer("green", 0.75), layer("blue", 2.0)],
+    };
+    let number = |name: &str| match name {
+        "red" => 5,
+        "green" => 6,
+        "blue" => 7,
+        _ => 0,
+    };
+    let strata = Arc::new(Strata::of(&layers, number).expect("layers"));
+    let blocks = BiomeBlocks {
+        top: 1,
+        under: 2,
+        deep: 3,
+        steep: 4,
+        steep_slope: 0.0,
+        strata: Some(strata.clone()),
+        ..BiomeBlocks::default()
+    };
+    let any = BiomeDef { temperature: [-50.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let biomes =
+        WorldBiomes { biomes: Biomes::new(vec![any], 0.0, 0.4, 7), blocks: vec![blocks], regions: None, painted: None };
+    let gpu = biomes.gpu([1, 2, 3], 3, 1.0);
+    let colour_of = |block: u16| match block {
+        5 => [200u8, 40, 40],
+        6 => [40, 200, 40],
+        7 => [40, 40, 200],
+        _ => [128, 128, 128],
+    };
+    let voxel_biomes =
+        VoxelBiomes { colours: gpu.blocks.iter().map(|&block| colour_of(block)).collect(), words: gpu.words };
+    let mut scene = generated_view(world.clone(), 8.0, 8.0, 10.0, 40.0);
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
+        volume.generator.as_mut().unwrap().biomes = Some(Arc::new(voxel_biomes.clone()));
+    }
+    let pixels = render(&mut renderer, &scene, 3);
+    keep_image("rock layers.png", &pixels);
+    let (entity, volume) = scene
+        .query_ref::<(voxear_ecs::Entity, &VoxelVolume)>()
+        .into_iter()
+        .map(|(entity, volume)| (entity, volume.clone()))
+        .next()
+        .unwrap();
+    let generator = volume.generator.clone().unwrap();
+    // Each column's top voxel, and the band the CPU's layers put at its height.
+    let per = 16.0;
+    let solids = voxear_render::VoxelSolids::of(&volume).unwrap();
+    let columns: Vec<[i32; 2]> = (0..400).map(|i| [(i % 20) * 37 - 300, (i / 20) * 41 - 300]).collect();
+    let mut cells = Vec::new();
+    for &[x, z] in &columns {
+        let h = solids.heights([x, z], [1, 1])[0];
+        cells.push([x, h, z]);
+    }
+    let (found, palette) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+    let (mut same, mut kept) = (0, 0);
+    let bands = [(5u16, [200, 40, 40]), (6, [40, 200, 40]), (7, [40, 40, 200])];
+    for (at, cell) in cells.iter().enumerate() {
+        if found[at] == 0 {
+            continue;
+        }
+        kept += 1;
+        let c = palette[(found[at] - 1) as usize];
+        // The band whose colour, or its darker shade, is nearest.
+        let near = |colour: [i32; 3]| (0..3).map(|i| (i32::from(c[i]) - colour[i]).abs()).sum::<i32>();
+        let shade =
+            |colour: [i32; 3], dark: bool| if dark { colour.map(|v| (v as f32 * 0.86).round() as i32) } else { colour };
+        let gpu = bands
+            .iter()
+            .min_by_key(|(_, colour)| near(shade(*colour, false)).min(near(shade(*colour, true))))
+            .unwrap()
+            .0;
+        let gx = (cell[0] as f32 + 0.5) / per + generator.at[0];
+        let gz = (cell[2] as f32 + 0.5) / per + generator.at[1];
+        let height = (cell[1] as f32 + 0.5) / per + generator.floor;
+        let cpu = strata.block(height - strata.lift(gx, gz));
+        same += usize::from(gpu == cpu);
+    }
+    eprintln!("{same} of {kept} top voxels in the CPU's band, of {} columns", cells.len());
+    assert!(kept > 300, "the columns' top voxels are kept: {kept}");
+    assert!(same * 100 >= kept * 97, "{same} of {kept} in the CPU's band");
+}
+
+#[test]
+fn caves_in_a_volume_hundreds_of_metres_tall_are_made_as_in_a_short_one() {
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(caved_alpine());
+    let ground = world.height_at(300.0, 300.0);
+    let mut scene = generated_view(world.clone(), 300.0, 300.0, 20.0, 30.0);
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.size.y = 720.0;
+        volume.reach = 96.0;
+        volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
+        volume.generator.as_mut().unwrap().floor = ground - 400.0;
+    }
+    {
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        camera.position.y = 420.0;
+    }
+    let pixels = render(&mut renderer, &scene, 10);
+    keep_image("tall caves.png", &pixels);
+    // The voxels open to the air round the ground under the camera, overhangs and caves' mouths, are the CPU's.
+    let top = ((ground - (ground - 400.0)) * 16.0) as i32;
+    let low = [300 * 16 - 64, top - 96, 300 * 16 - 64];
+    let (open, missing, extra, kept) = open_voxels_against_cpu(&renderer, &scene, low, [128, 160, 128]);
+    eprintln!("{kept} kept, {open} open on the CPU, {missing} missing, {extra} over");
+    assert!(open > 10_000, "the CPU's ground: {open} voxels open to the air");
+    assert!(
+        missing * 100 < open && extra * 100 < open,
+        "the GPU's ground is the CPU's: {missing} missing, {extra} over"
+    );
+}
+
+#[test]
+fn an_endless_volume_is_made_round_the_camera_looked_through() {
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = bare_hills_view();
+    // A second camera 600 m off, which the view looks through: the volume's ground is made under it, not under the
+    // first camera.
+    let ground = world.height_at(608.0, 8.0);
+    let floor = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
+    let look = Quat::from_rotation_x(60f32.to_radians());
+    let far =
+        scene.spawn((Camera::default(), Transform::new(Vec3::new(608.0, ground - floor + 10.0, 8.0), look, Vec3::ONE)));
+    renderer
+        .set_view_options(voxear_render::ViewOptions { camera: Some(far), ..voxear_render::ViewOptions::default() });
+    render(&mut renderer, &scene, 3);
+    let (entity, _) = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap();
+    let top = ((ground - floor) * 16.0) as i32;
+    let cells: Vec<[i32; 3]> =
+        (0..64).flat_map(|i| (-8..8).map(move |y| [608 * 16 + i * 3 - 96, top + y, 8 * 16])).collect();
+    let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+    let kept = found.iter().filter(|&&place| place != 0).count();
+    assert!(kept > 50, "the ground under the camera looked through is made: {kept} voxels kept");
 }

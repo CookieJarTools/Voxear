@@ -42,6 +42,7 @@ use crate::{
     generate::{
         compile::{Cells, Compiler, Kernel, Key, Places, V},
         eval::{Givens, Program},
+        gpu::{GpuFinds, GpuOp, GpuStep},
         graph::NodeId,
     },
     noise::{gradient, gradient3},
@@ -418,6 +419,54 @@ impl std::fmt::Debug for Finder {
     }
 }
 
+/// The words of a cell's record for the GPU: whether it has a spire, then
+/// its foot's middle along x and z, its radius, its foot's and its top's
+/// heights, its lean along x and z, and its seed.
+const RECORD_WORDS: usize = 9;
+
+impl GpuFinds for Finder {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn cell(&self) -> f32 {
+        self.set.spacing
+    }
+
+    fn reach(&self) -> i32 {
+        Finder::reach(self)
+    }
+
+    fn words(&self) -> usize {
+        RECORD_WORDS
+    }
+
+    fn record(&self, cell: [i32; 2]) -> Vec<u32> {
+        match self.found_kept(cell) {
+            Some(s) => {
+                let numbers = [s.at[0], s.at[1], s.radius, s.foot, s.top, s.lean[0], s.lean[1]];
+                [1].into_iter().chain(numbers.map(f32::to_bits)).chain([s.seed]).collect()
+            }
+            None => vec![0; RECORD_WORDS],
+        }
+    }
+}
+
+/// A spires step's numbers on the GPU (`spireOver` and `spireInside` in
+/// `voxear_render/shaders/generator.slang`): how far apart its cells are,
+/// how many either side of a column's own it reads, and its taper, lean and
+/// bands.
+fn spire_step(op: GpuOp, finder: &Arc<Finder>) -> GpuStep {
+    let set = &finder.set;
+    GpuStep::new(op)
+        .finding(finder.clone())
+        .number(set.spacing)
+        .whole(finder.reach() as u32)
+        .number(set.taper)
+        .number(set.lean)
+        .number(set.bands)
+}
+
 /// For each column, from rows of its x and z: with `what` 0 the lowest
 /// foot of a spire reaching it, with 1 the highest it may reach there, and
 /// with 2 how high it is surely solid all the way up from that foot, in
@@ -486,6 +535,10 @@ impl Kernel for Over {
             };
         }
     }
+
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(spire_step(GpuOp::SpireOver, &self.finder).whole(self.what))
+    }
 }
 
 /// The ground with its spires, from rows of how far into the ground each
@@ -522,6 +575,10 @@ impl Kernel for Towered {
                 }
             }
         }
+    }
+
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(spire_step(GpuOp::Towered, &self.finder))
     }
 }
 

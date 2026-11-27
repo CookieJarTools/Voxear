@@ -1583,6 +1583,15 @@ stages, each measured before the next.
   still within ten seconds (first tried at drag 1.2, it swung 0.5 m and still moved 3 m/s seconds later). It snaps
   when its piece's weight and swing (m(g + v²/L)) pull harder than its strength, when a blast reaches
   the line, or by `Voxels.CutRope`. Drawn as a 2-voxel line of voxels, remade as its length changes.
+- **Several ropes.** An Obj may now have more joints than its Joint (`MoreJoints`, each by a number of its own, so
+  taking one away leaves the rest as they are; taking one away wakes what it held). A piece takes every rope whose
+  point is in it. Each rope's share of its weight is the least set of pulls that bears it and turns it neither way,
+  a rope that would have to push slack (first tried by how near each point is to the middle, which gave three
+  ropes a third each where the two across the diagonal from a cut one bear half). A rope snaps when pulled past its
+  strength for 0.2 s, or at once past 1.5 times it, so the jolt of a cut doesn't snap the rest. Engine test (eight
+  runs alike): a slab on four ropes hangs within 0.3 degrees of level, leans 32 to 63 degrees on three, hangs on
+  two, and the last snaps; physics test: a slab held at both ends by two ropes hangs level, and swings down on the
+  one left.
 - Tests: render `a_timber_floor_whose_post_is_blown_out_stays_hinged_to_its_wall_and_stone_snaps`; engine
   `a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_snaps`,
   `a_slab_blown_off_its_posts_hangs_from_a_rope_sways_a_little_and_falls_once_cut`,
@@ -1728,3 +1737,75 @@ The requests themselves: a point is three floats, packed with zstd past 128 byte
 - **Not yet.** A client showing its own dig before the server's answer. Volumes in other dimensions. Pieces chipping
   and digging out what they hit are the server's alone and reach clients as its digs. A C# check of requests (the
   check is Rust only).
+
+## The Realm's spires, bridges and rock on the GPU (2026-11-27)
+
+The Realm's generator ran on the GPU without its Volume, which holds its Spires, Arches, Overhangs, Tunnels and
+Chambers, and without its biomes' rock layers. Its rivers were already laid in.
+
+- **Found on the CPU, shaped on the GPU.** A Spires node picks a spire for each cell of its spacing (72 m in the
+  Realm) and an Arches node a bridge and the ways through thin ridges for each region (166 m). Both decide from the
+  ground's height read round the cell, and a bridge only where a threshold on those heights is met. A program run a
+  column at a time cannot read the ground elsewhere. Worked out on the GPU from its own heights, a millimetre's
+  difference at a threshold would add or take away a whole bridge. So each node finds its cells on the CPU
+  (`voxear_terrain::generate::GpuFinds`): a spire is nine words, a region with its bridge and up to nine windows
+  74. The renderer works them out on threads of its own as each ring's window comes near
+  (`voxel_volume/finds.rs`), and keeps them in a wrapping table round the window. A column is made once every cell
+  reaching it is in the table. The GPU's steps (`spireOver`, `spireTowered`, `archOver`, `archBridged` in
+  `generator.slang`) shape them from the records as the CPU's kernels do. Finding them on one CPU core: 0.04 ms a
+  spire's cell, 0.5 ms a bridge's region; 0.5 s for a square 4.2 km a side round the player's start.
+- **Agreement.** Over 12,720 cells up columns where spires and bridges stand, the GPU and the CPU put every one on
+  the same side of the ground, and all 4,669 near a surface within a centimetre. Up a spire made in an endless
+  volume, 0 to 3 of 25,000–31,000 voxels open to the air differ. The CPU's ground (`solid.rs`) now asks the Volume up
+  to the tops of a column's spans, not just its reach over the ground, as the GPU's bricks pass does. A ray's steps
+  are held to a metre where a Volume has spans, so it does not step past a spire beside it.
+  ![The Realm's spire near (21444, 24754): before, now, and the world of blocks](../images/small-voxels/realm-spires.webp)
+
+  ![The whole view before and now](../images/small-voxels/realm-spires-view.webp)
+- **Fitting the program.** With the Volume's columns in it, the Realm's program is 1,158 steps (282 without). The
+  overhangs' steepness reads the ground's height at four places round each column, and laid out node by node that
+  kept 55 rows at once, past the 48 slots. Now each number or place read is worked out again where it is read, and
+  the steps run depth first from each kept row: 28 slots. A Volume may carry up 12 numbers, not 8 (the Realm's
+  carries 9).
+- **A Volume in a volume hundreds of metres tall.** Caves were never made in a tall volume before. Every brick from
+  the floor up was asked about, though a column keeps only a band of 24 sectors under its highest. Making then ran
+  long enough for the GPU to stop waiting on it, and the device was lost. Now a column makes nothing under its
+  band. A ring, seen only from afar, makes its Volume no more than two bricks under its surface. A tall volume
+  makes one Volume column at a time, not four, and its room is sized for its deeper band (three times a short
+  one's). A test makes caves in a volume 720 m tall: 47 of 17,096 voxels open to the air missing and 35 over.
+- **Rock layers.** Each biome's record names its layers (bands, the lean, the wander), and the ground lays them as
+  a world of blocks does: under the top layers in place of the deep block, and from the top down where the ground is
+  steep or bare. A spire's sides and a cave's walls are the column's biome's bare rock, so the Realm's spires show
+  their bands. Of 400 columns' top voxels on all-steep ground, all 400 are the band the CPU's layers put there.
+
+  ![Rock layers of red, green and blue on steep hills](../images/small-voxels/rock-layers.webp)
+- **Rivers.** The Realm's rivers were already cut into the ground and drawn (a Rivers node added by its world of
+  blocks), and `voxel_water_at` finds the generator's water: 17.12 m where the generator says 17.12 m. Seen from
+  above, the world of blocks itself shows no stream where the generator has one, by the lake near (21500, 24600):
+  its chunks are the ones saved in `Realm.blocks` on 24 November, before the rivers were changed.
+- **Far from the Obj.** With the rays worked out from the camera's own place (2026-11-26), the walk already counts
+  voxels from its window's corner, not from the Obj. The Realm's summit at (44380, 22560), 50 km from an Obj at the
+  world's middle, is drawn as it is with the Obj beside it, crop for crop; the test of ground far from its Obj now
+  also looks 64 km out in a volume 720 m tall. What looked like ground lost far away was another fault: an endless
+  volume was made round the level's first camera, not the one looked through, so `vox render --camera` and the
+  editor's Scene view could look at ground that was never made. The volumes now follow the first view's camera, or
+  else the first camera drawn on the display, and `vox render` picks its camera before it waits for the ground.
+
+  ![The Realm's summit 50 km from the volume's Obj (right) and beside it (left)](../images/small-voxels/realm-far-from-obj.webp)
+- **Cost on the Realm** (1920×1080, reach 128 m in rings to 2 km; the least of the last 28 frames; the GPU shared
+  with other sessions):
+
+  | | Before | After |
+  |---|---|---|
+  | Frame | 9.8 ms | 14.4 ms |
+  | Depth (voxels) | 2.8 ms | 3.4 ms |
+  | Opaque (voxels) | 1.3 ms | 2.5 ms |
+  | Voxel sun map | 0.5 ms | 0.8 ms |
+  | Window made | 10 s | 108–118 s |
+  | On the GPU | 2.35 GB | 2.90 GB |
+
+  Making a column is about 5 ms of the GPU's time where it was 0.5 ms. Most of that is the overhangs' steepness: the
+  Realm's height program run four more times for every voxel column.
+- **Not yet.** The steepness is worked out for each voxel column. A world of blocks works it out on a grid four
+  columns apart and reads between; done the same way on the GPU and the CPU, making a column would cost about a
+  sixteenth as much. Raised Land, Fins and Roof still leave the Volume out.

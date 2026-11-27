@@ -45,6 +45,13 @@ const RIFLE_HANDLING: &str = "type = \"Voxear.Guns.GunHandling\"\n\n[[fields.act
 
 const SIZE: (u32, u32) = (1280, 800);
 
+/// The name on a Project tile, in the box that cuts it at the right.
+fn tile_name(ui: &Ui, tile: NodeId) -> String {
+    let mut names = Vec::new();
+    with_class(ui, tile, "tile-name", &mut names);
+    names.first().map(|&name| ui.text(name)).unwrap_or_default()
+}
+
 #[test]
 fn the_guns_package_makes_inspects_and_picks_its_guns_in_the_editor() {
     let Some(package) = std::env::var_os("VOXEAR_GUNS_PACKAGE").map(PathBuf::from) else {
@@ -386,7 +393,7 @@ fn open_folder(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name
     with_class(&editor.ui, editor.ui.root(), "tile", &mut tiles);
     let folder = tiles
         .into_iter()
-        .find(|&t| editor.ui.is_visible(t) && editor.ui.children(t).get(1).is_some_and(|&n| editor.ui.text(n) == name))
+        .find(|&t| editor.ui.is_visible(t) && tile_name(&editor.ui, t) == name)
         .unwrap_or_else(|| panic!("a tile for {name}"));
     let [x, y, w, h] = editor.ui.rect(folder);
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);

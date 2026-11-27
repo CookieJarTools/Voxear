@@ -180,6 +180,16 @@ impl Volume<'_> {
         spans.filter_map(move |([foot, top], _)| Some([read(*foot)?, read(*top)?])).filter(|[foot, top]| top > foot)
     }
 
+    /// The spans of the column whose carried numbers are `carried`, one
+    /// each in the order [`Volume::carried`] gives its rows: as
+    /// [`Volume::spans`] gives them.
+    pub fn spans_of<'c>(&self, carried: &'c [f32]) -> impl Iterator<Item = [f32; 2]> + use<'c, '_> {
+        let spans = self.voxels.spans.iter();
+        spans
+            .filter_map(move |([foot, top], _)| Some([*carried.get(*foot)?, *carried.get(*top)?]))
+            .filter(|[foot, top]| top > foot)
+    }
+
     /// The top of the highest ground standing apart from column `at` of
     /// `carried`'s own, in metres up: an arch's or raised land's, whose
     /// layers are those of ground that high. None where none stands.

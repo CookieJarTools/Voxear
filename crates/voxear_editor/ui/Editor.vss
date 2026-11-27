@@ -100,7 +100,7 @@
 }
 
 .layouts-button:hover {
-    background-color: var(--vx-selected);
+    background-color: var(--vx-button-hover);
 }
 
 .layouts-arrow {
@@ -588,6 +588,32 @@
     color: var(--vx-accent-hover);
 }
 
+/* While Play waits for the scripts to build: a breathing accent dot and what it waits for, in the accent. */
+.play-building {
+    flex-direction: row;
+    align-items: center;
+    height: 22px;
+    padding: 0px 8px;
+    gap: 6px;
+    border-radius: 5px;
+    background-color: var(--vx-accent-soft);
+    color: var(--vx-accent);
+    font-weight: 500;
+}
+
+.play-building-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background-color: var(--vx-accent);
+    animation: busy-pulse 700ms ease-in-out infinite alternate;
+}
+
+/* The top bar's Save button, beside the search: the accent while there is something to save. */
+.save-button.unsaved {
+    color: var(--vx-accent);
+}
+
 /* As wide as what it says, and quiet as the icons beside it. */
 .multiplayer-button {
     height: 22px;
@@ -595,7 +621,7 @@
 }
 
 .multiplayer-button:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
     border-color: transparent;
 }
 
@@ -839,7 +865,7 @@
 }
 
 .header-button:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
 }
 
 .shading {
@@ -851,7 +877,7 @@
 }
 
 .shading:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
 }
 
 /* A Scene view's Dimension menu, beside its shading. */
@@ -864,7 +890,7 @@
 }
 
 .dimension-menu:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
 }
 
 /* A Portal's Go Through and a dungeon gate's Open Dungeon. */
@@ -970,6 +996,48 @@
 /* A model's part, listed under its Obj: the model's, not an Obj of its own. */
 .model-part > .row-name, .model-part > .row-icon {
     color: var(--vx-muted);
+}
+
+/* A Project folder's colour, picked from its menu, on its icon in the tree, its tile and its row; and the
+   Favourites star at the top of the tree. */
+.folder-red { color: #e5534b; }
+.folder-orange { color: #e8955a; }
+.folder-yellow { color: #e2b340; }
+.folder-green { color: #4cb782; }
+.folder-teal { color: #3fb5b0; }
+.folder-blue { color: #5e8bf0; }
+.folder-purple { color: #9a7cf0; }
+.folder-pink { color: #e06bb0; }
+.favourites-icon { color: var(--vx-warning); }
+
+/* Each kind of row's icon in a colour of its own, so the tree reads at a glance: scenes amber, Objs blue, meshes
+   and models green, cameras light blue, lights yellow, sounds the accent. */
+.row-icon.kind-scene {
+    color: #e8955a;
+}
+
+.row-icon.kind-obj {
+    color: var(--vx-z);
+}
+
+.row-icon.kind-mesh {
+    color: var(--vx-success);
+}
+
+.row-icon.kind-camera {
+    color: var(--vx-prefab);
+}
+
+.row-icon.kind-light {
+    color: var(--vx-warning);
+}
+
+.row-icon.kind-audio {
+    color: var(--vx-accent);
+}
+
+.row-icon.kind-lod {
+    color: var(--vx-text-2);
 }
 
 /* Prefab instances are tinted, as Unity tints them: the root, and lighter what is inside. */
@@ -1186,7 +1254,30 @@
 }
 
 .tool-toggle:hover {
-    background-color: var(--vx-hover);
+    background-color: var(--vx-button-hover);
+}
+
+/* The frame's numbers over a Scene view or the Game view: names and numbers, two pairs to a row. */
+.view-stats {
+    left: 8px;
+    bottom: 8px;
+    display: grid;
+    grid-template-columns: auto auto auto auto;
+    column-gap: 8px;
+    row-gap: 1px;
+    padding: 6px 10px;
+    font-size: 11px;
+}
+
+.view-stats-name {
+    color: var(--vx-muted);
+}
+
+.view-stats-value {
+    font-family: mono;
+    color: var(--vx-text);
+    text-align: right;
+    margin-right: 6px;
 }
 
 .chip {
@@ -2059,6 +2150,18 @@ DockSpace .project-split > .split-divider {
     color: var(--vx-text-2);
 }
 
+/* A Project tile's name: from its left edge, cut at the right, and scrolled along while the tile is hovered. */
+.tile-name-clip {
+    align-self: stretch;
+    overflow: hidden;
+}
+
+.tile-name-clip > .tile-name {
+    flex-shrink: 0;
+    text-align: left;
+    white-space: nowrap;
+}
+
 /* The Levels panel. */
 
 .level-heading {
@@ -2149,7 +2252,7 @@ DockSpace .project-split > .split-divider {
 
 .console-button:hover {
     color: var(--vx-text);
-    background-color: var(--vx-field);
+    background-color: var(--vx-button-hover);
 }
 
 .console-button:checked {
@@ -3010,6 +3113,123 @@ TextField.build-title:focus {
 
 .attr-buttons {
     min-width: 0px;
+}
+
+/* Buttons with no label beside them, as a Light's type, fill the row, each as wide as the others. */
+.no-label > .attr-buttons {
+    flex-grow: 1;
+}
+
+.no-label > .attr-buttons > .segment {
+    flex-grow: 1;
+    flex-basis: 0px;
+    gap: 5px;
+}
+
+/* A Mesh Renderer's mesh and material, as large pictures side by side, each named under it. */
+.mesh-card {
+    flex-shrink: 0;
+    gap: 8px;
+    margin: 6px 0px 6px 0px;
+}
+
+.mesh-card-tile {
+    flex-grow: 1;
+    flex-basis: 0px;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 0px 6px 0px;
+    border-radius: 8px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-line);
+}
+
+.mesh-card-frame {
+    width: 72px;
+    height: 72px;
+}
+
+.mesh-card-image {
+    width: 72px;
+    height: 72px;
+    border-radius: 6px;
+}
+
+.mesh-card-caption {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+/* A terrain brush's picture: the brush from above and its cross-section, with what it is under them. */
+.brush-card {
+    flex-shrink: 0;
+    height: 72px;
+    margin: 6px 0px 2px 0px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.brush-card-picture {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.brush-card-words {
+    position: absolute;
+    right: 10px;
+    top: 7px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.82);
+}
+
+.terrain-tools > .segment {
+    gap: 5px;
+}
+
+/* Only the picked tool names itself beside its icon; the others say who they are in their tooltips. */
+.terrain-tools > .segment > Label {
+    display: none;
+}
+
+.terrain-tools > .segment:checked > Label {
+    display: flex;
+}
+
+/* A Light's picture: the sky it lights or its glow, drawn edge to edge, with what it is over it. */
+.light-card {
+    flex-shrink: 0;
+    margin: 6px 0px 4px 0px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line);
+    overflow: hidden;
+}
+
+.light-card-picture {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.light-card-title {
+    position: absolute;
+    left: 10px;
+    top: 8px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.light-card-detail {
+    position: absolute;
+    left: 10px;
+    bottom: 7px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.78);
 }
 
 /* A [TableList]: a column for each field, a row for each item. */
@@ -3941,6 +4161,31 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     background-color: var(--vx-selected);
 }
 
+/* An action's arrow, which folds its bindings away, and the lines down beside what is inside it. */
+.input-row-fold {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.input-row-fold > Icon {
+    width: 11px;
+    height: 11px;
+}
+
+.input-row-fold:disabled {
+    opacity: 1;
+}
+
+.input-row-guide {
+    position: absolute;
+    top: 0px;
+    bottom: 0px;
+    width: 1px;
+    pointer-events: none;
+    background-color: var(--vx-line-2);
+}
+
 .input-row-icon {
     width: 13px;
     height: 13px;
@@ -4822,4 +5067,139 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .prop.found > .prop-label {
     color: var(--vx-accent);
     font-weight: 600;
+}
+
+/* The Tests window: Run All, a filter and how they came out over the list; each category a heading with its run
+   button, each test a mark, its title, its time and its run button, and what a failure said under it. */
+.tests-panel {
+    flex-direction: column;
+}
+
+.tests-bar {
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px 0px 10px;
+}
+
+.tests-run-all {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.tests-filter {
+    flex-grow: 1;
+    min-width: 60px;
+    max-width: 240px;
+}
+
+.tests-summary {
+    flex-shrink: 0;
+    padding: 6px 12px 0px 12px;
+    font-size: 11px;
+    color: var(--vx-muted);
+    white-space: nowrap;
+}
+
+.tests-list {
+    padding: 4px 6px;
+    margin-top: 6px;
+    border-top: 1px solid var(--vx-line);
+}
+
+.tests-empty {
+    margin: 16px;
+    color: var(--vx-muted);
+    white-space: normal;
+}
+
+.tests-category {
+    flex-shrink: 0;
+    height: 28px;
+    align-items: center;
+    gap: 8px;
+    padding: 0px 6px;
+    margin-top: 6px;
+    border-bottom: 1px solid var(--vx-line);
+}
+
+.tests-category-name {
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.tests-category-counts {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.tests-test {
+    flex-shrink: 0;
+    border-radius: 5px;
+}
+
+.tests-test:hover {
+    background-color: var(--vx-hover);
+}
+
+.tests-test-line {
+    height: 26px;
+    align-items: center;
+    gap: 8px;
+    padding: 0px 6px 0px 14px;
+}
+
+.tests-mark {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    background-color: var(--vx-line-2);
+}
+
+.tests-mark.test-passed {
+    background-color: var(--vx-success);
+}
+
+.tests-mark.test-failed {
+    background-color: var(--vx-danger);
+}
+
+.tests-mark.test-waiting {
+    background-color: var(--vx-accent);
+    animation: busy-pulse 700ms ease-in-out infinite alternate;
+}
+
+.tests-title {
+    flex-grow: 1;
+    min-width: 0px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.tests-time {
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.tests-run > Icon {
+    width: 11px;
+    height: 11px;
+}
+
+.tests-failure {
+    margin: 0px 8px 6px 30px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-family: mono;
+    font-size: 11px;
+    white-space: normal;
+    color: var(--vx-danger);
+    background-color: rgba(229, 83, 75, 0.1);
 }

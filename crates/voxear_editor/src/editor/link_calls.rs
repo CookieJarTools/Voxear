@@ -254,6 +254,8 @@ impl Editor {
             "objs.list" => self.objs_list(args),
             "obj.get" => self.obj_get(args),
             "inspector.mode" => self.inspector_mode(args),
+            "tests.list" => self.tests_list(),
+            "tests.run" => self.tests_run(args),
             "inspector.debug" => self.inspector_debug(args, renderer),
             "components" => done(self.components_json()),
             "kinds" => done(kinds_json(&self.game.project.modules())),
@@ -965,6 +967,49 @@ impl Editor {
             })
         });
         json!({ "found": listed.collect::<Vec<_>>() })
+    }
+
+    /// The tests and how each last came out (see `tests.list`).
+    fn tests_list(&mut self) -> Called {
+        use crate::tests_panel::Outcome;
+        let (outcomes, running) = self.test_outcomes();
+        let tests: Vec<Json> = outcomes
+            .into_iter()
+            .map(|(test, outcome)| {
+                let (said, ms, message) = match outcome {
+                    Outcome::NotRun => ("not run", None, None),
+                    Outcome::Waiting => ("waiting", None, None),
+                    Outcome::Passed { ms } => ("passed", Some(ms), None),
+                    Outcome::Failed { message, ms } => ("failed", Some(ms), Some(message)),
+                };
+                json!({
+                    "title": test.title, "category": test.category, "order": test.order,
+                    "type": test.type_name, "method": test.method,
+                    "outcome": said, "ms": ms, "message": message,
+                })
+            })
+            .collect();
+        done(json!({ "tests": tests, "running": running }))
+    }
+
+    /// Asks for tests to run (see `tests.run`).
+    fn tests_run(&mut self, args: &Json) -> Called {
+        let (category, named) = (opt_text(args, "category"), opt_text(args, "test"));
+        let tests: Vec<(String, String)> = self
+            .inspector
+            .types()
+            .tests
+            .iter()
+            .filter(|t| category.as_deref().is_none_or(|c| t.category.eq_ignore_ascii_case(c)))
+            .filter(|t| named.as_deref().is_none_or(|n| t.title == n || t.method == n))
+            .map(|t| (t.type_name.clone(), t.method.clone()))
+            .collect();
+        if tests.is_empty() {
+            return Err(bad("no test is called that, or in that category; tests.list lists them".to_string()));
+        }
+        let queued = tests.len();
+        self.run_tests(Some(tests));
+        done(json!({ "queued": queued }))
     }
 
     /// An Inspector's mode, set where `mode` is given (see `inspector.mode`).

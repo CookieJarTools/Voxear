@@ -577,7 +577,9 @@ impl WorldBiomes {
 /// its top, under, deep, steep and shore blocks' places (`u32::MAX` for
 /// none), how deep its under block goes in metres, how steep its steep
 /// ground is, as rise over run, and how far over and under the sea its
-/// shore is; then the painted biome map's words.
+/// shore is, and where its rock layers' words start (`u32::MAX` for none,
+/// see [`super::Strata::gpu_words`]); then the painted biome map's words,
+/// then the rock layers'.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuBiomes {
     pub words: Vec<u32>,
@@ -609,6 +611,8 @@ impl WorldBiomes {
         let biomes = &self.biomes;
         let list = biomes.list();
         let mut records = Vec::with_capacity(list.len() * GPU_BIOME_WORDS);
+        // Each biome's rock layers, where it has any, placed after the painted map.
+        let mut strata: Vec<(usize, Vec<u32>)> = Vec::new();
         for (at, biome) in list.iter().enumerate() {
             let ground = self.blocks.get(at).cloned().unwrap_or_default();
             let or = |block: BlockId, own: BlockId| if block == AIR { own } else { block };
@@ -630,8 +634,11 @@ impl WorldBiomes {
                 place(ground.shore),
                 ground.shore_height.to_bits(),
                 depth.to_bits(),
-                0,
+                u32::MAX,
             ]);
+            if let Some(layers) = &ground.strata {
+                strata.push((records.len() - 1, layers.gpu_words(&mut place)));
+            }
         }
         let painted = self.painted.as_ref().map(|painted| painted.maps()).filter(|maps| !maps.biome.is_empty());
         let header = 12;
@@ -654,6 +661,10 @@ impl WorldBiomes {
         words.extend(records);
         if let Some(maps) = painted {
             words.extend(maps.biome.gpu_words());
+        }
+        for (record, layers) in strata {
+            words[header + record] = words.len() as u32;
+            words.extend(layers);
         }
         GpuBiomes { words, blocks }
     }

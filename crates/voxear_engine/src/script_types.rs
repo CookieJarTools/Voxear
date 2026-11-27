@@ -56,6 +56,9 @@ pub struct ScriptTypes {
     pub structs: BTreeMap<String, NestedType>,
     #[serde(default)]
     pub commands: Vec<ScriptCommand>,
+    /// The `[Test]` methods, for the editor's Tests window.
+    #[serde(default)]
+    pub tests: Vec<ScriptTest>,
     /// The `[Call]` methods, which tools call by name.
     #[serde(default)]
     pub calls: Vec<ScriptCall>,
@@ -176,6 +179,19 @@ pub struct ScriptCommand {
     pub title: String,
     #[serde(default)]
     pub keys: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub method: String,
+}
+
+/// A `[Test]` method: what the Tests window calls it, the category it is
+/// listed and run in, where it runs among them, and where it is.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptTest {
+    pub title: String,
+    pub category: String,
+    #[serde(default)]
+    pub order: i32,
     #[serde(rename = "type")]
     pub type_name: String,
     pub method: String,
@@ -422,6 +438,9 @@ pub struct FieldInspector {
     /// A handle that edits it in the Scene view, as `[PositionHandle]` and
     /// the others ask.
     pub handle: Option<FieldHandle>,
+    /// With `enum_buttons`, the icon on each button, in the options' order,
+    /// as the editor's own pickers give them (a Light's type).
+    pub option_icons: Vec<String>,
 }
 
 /// A Scene view handle on a field (`[PositionHandle]`, `[RadiusHandle]`,

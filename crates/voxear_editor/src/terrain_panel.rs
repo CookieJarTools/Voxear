@@ -6,7 +6,10 @@
 //! takes it out; Add Layer offers a new one of each kind. Under Paint, the
 //! list of its surfaces the same way, the top one first and the ground's
 //! own at the bottom: a click picks the one the brush paints, and Add
-//! Surface opens the picker of materials for a new one. Each change to
+//! Surface opens the picker of materials for a new one. Under Sculpt, Paint
+//! and Grass, a picture of the brush: as wide as it is against the largest,
+//! as strong as it is, fading out to its edge, with what it is beside it.
+//! Each change to
 //! either list is a step to undo; picking a tool, a layer or a surface is
 //! not.
 
@@ -15,7 +18,7 @@ use std::hash::{Hash, Hasher};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{Game, terrain::TerrainAsset};
 use voxear_terrain::{layers::LayerKind, surfaces::Surface};
-use voxear_ui::{NodeId, Style, Ui};
+use voxear_ui::{Color, NodeId, Shape, Style, Ui};
 
 use crate::{
     collection::{self, Collection},
@@ -51,7 +54,12 @@ pub struct TerrainPanel {
     water: Option<NodeId>,
     /// What the panel was built from, to build it again when that changes.
     signature: u64,
+    /// The brush's picture, its words, and the brush and size it last drew.
+    brush: Option<(NodeId, NodeId, Option<(voxear_terrain::brush::Brush, [f32; 4])>)>,
 }
+
+/// The largest brush, which fills the picture's height.
+const LARGEST_BRUSH: f32 = 100.0;
 
 /// The icon a layer of its kind shows.
 fn icon(kind: &LayerKind) -> &'static str {
@@ -113,7 +121,8 @@ impl TerrainPanel {
         let tools = ui.segmented(rows);
         ui.add_class(tools, "terrain-tools");
         for tool in TerrainTool::ALL {
-            ui.add_segment(tools, tool.name(), None);
+            let segment = ui.add_segment(tools, tool.name(), Some(tool.icon()));
+            ui.set_tooltip(segment, tool.name(), None);
         }
         let at = TerrainTool::ALL.iter().position(|&tool| tool == state.tool).unwrap_or_default();
         ui.set_segment(tools, at);
@@ -212,7 +221,17 @@ impl TerrainPanel {
                 water = Some(button);
             }
         }
-        Self { tools, list, rows: shown, erode, water, signature: signature(world, entity) }
+        // The brush, over its settings, for the tools that paint with it.
+        let brush = state.tool.brushes().then(|| {
+            let card = ui.panel(rows, Style::default());
+            ui.add_class(card, "brush-card");
+            let picture = ui.panel(card, Style::default());
+            ui.add_class(picture, "brush-card-picture");
+            let words = ui.add_label(card, "");
+            ui.add_class(words, "brush-card-words");
+            (picture, words, None)
+        });
+        Self { tools, list, rows: shown, erode, water, signature: signature(world, entity), brush }
     }
 
     /// Whether what it shows changed since it was built.
@@ -268,6 +287,26 @@ impl TerrainPanel {
         false
     }
 
+    /// Draws the brush as it is now, when it changed.
+    pub fn show_brush(&mut self, ui: &mut Ui, world: &World) {
+        let Some((picture, words, drawn)) = &mut self.brush else { return };
+        let brush = terrain_props::ui(world).brush;
+        let rect = ui.rect(*picture);
+        if *drawn == Some((brush, rect)) || rect[2] <= 0.0 {
+            return;
+        }
+        *drawn = Some((brush, rect));
+        ui.set_shapes(*picture, brush_shapes(&brush, rect[2], rect[3]));
+        let tool = terrain_props::ui(world).tool;
+        let name = if tool == TerrainTool::Sculpt { brush.kind.name() } else { tool.name() };
+        let strength = if brush.kind == voxear_terrain::brush::BrushKind::Holes && tool == TerrainTool::Sculpt {
+            String::new()
+        } else {
+            format!(" · {:.0}%", brush.strength * 100.0)
+        };
+        ui.set_text(*words, &format!("{name} · {} m{strength}", trim(brush.radius)));
+    }
+
     /// Whether the Erode or Carve button was clicked.
     pub fn erode_clicked(&self, ui: &Ui) -> bool {
         self.erode.is_some_and(|button| ui.clicked(button))
@@ -299,4 +338,47 @@ impl TerrainPanel {
         let (listing, list) = self.list.as_ref()?;
         list.add.filter(|&add| *listing == wanted && ui.clicked(add))
     }
+}
+
+/// A size without trailing zeros: 8, 2.5.
+fn trim(value: f32) -> String {
+    let text = format!("{value:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// A brush seen from above, on the left, its circle as wide against the
+/// picture's height as it is against the largest brush, filled as strongly
+/// as it paints and fading to its edge; and across it on the right, how
+/// much it does from its middle out to its edge.
+fn brush_shapes(brush: &voxear_terrain::brush::Brush, width: f32, height: f32) -> Vec<Shape> {
+    let accent = |alpha: f32| Color::rgba(121, 136, 255, (alpha.clamp(0.0, 1.0) * 255.0) as u8);
+    let line = Color::rgba(255, 255, 255, 46);
+    let mut shapes = vec![Shape::Rect { rect: [0.0, 0.0, width, height], radius: 0.0, fill: Color::rgba(17, 18, 21, 255) }];
+    let centre = [height / 2.0 + 6.0, height / 2.0];
+    let most = height / 2.0 - 6.0;
+    let radius = (most * (brush.radius / LARGEST_BRUSH).sqrt()).clamp(3.0, most);
+    let strength = brush.strength.clamp(0.05, 1.0);
+    const RINGS: usize = 16;
+    for ring in 0..RINGS {
+        let t = 1.0 - ring as f32 / RINGS as f32;
+        let falloff = 1.0 - (1.0 - t * t).powi(2);
+        shapes.push(Shape::Circle { center: centre, radius: radius * t, fill: accent(strength * (1.0 - falloff) * 0.18), border: None });
+    }
+    shapes.push(Shape::Circle { center: centre, radius, fill: Color::rgba(0, 0, 0, 0), border: Some((1.0, accent(0.9))) });
+    // The cross-section: full in the middle, nothing at the edge, as high as it is strong.
+    let (left, right) = (height + 12.0, width - 10.0);
+    let (base, top) = (height - 10.0, 10.0);
+    shapes.push(Shape::Line { from: [left, base], to: [right, base], width: 1.0, color: line });
+    let mut last = None;
+    for step in 0..=40 {
+        let t = step as f32 / 40.0;
+        let from_middle = (t * 2.0 - 1.0).abs();
+        let amount = (1.0 - from_middle * from_middle).powi(2) * strength;
+        let point = [left + (right - left) * t, base - (base - top) * amount];
+        if let Some(from) = last {
+            shapes.push(Shape::Line { from, to: point, width: 1.5, color: accent(1.0) });
+        }
+        last = Some(point);
+    }
+    shapes
 }

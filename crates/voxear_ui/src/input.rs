@@ -119,6 +119,11 @@ impl Ui {
         self.step_reorders(seconds);
     }
 
+    /// Seconds since the UI was made, as [`advance`](Self::advance) has moved its clock.
+    pub fn time(&self) -> f32 {
+        self.input.time
+    }
+
     /// Where copied text goes and pasted text comes from.
     pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>) {
         self.input.clipboard = clipboard;

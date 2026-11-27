@@ -13,9 +13,10 @@ namespace Voxear;
 /// </code>
 /// <para>
 /// Sheets style it by its classes: <c>keymap-key</c> for each key, with <c>assigned</c>, <c>hidden</c>,
-/// <c>unused</c> or <c>conflict</c>, and <c>round</c>, <c>stick</c> or <c>pill</c> for its shape;
-/// <c>keymap-callout</c> for each label round the device, whose border colour its line takes; and
-/// <c>keymap-body</c> for the device's outline behind its keys. A key two actions that can be on at once both read
+/// <c>unused</c> or <c>conflict</c>, and <c>round</c>, <c>stick</c>, <c>pill</c> or <c>shaped</c> for its shape;
+/// <c>keymap-callout</c> for each label round the device, with a <c>keymap-chip</c> naming the key;
+/// <c>keymap-line</c>, whose background colour the lines take; and <c>keymap-plate</c> and <c>keymap-recess</c> for
+/// the colours the device is drawn in. A key two actions that can be on at once both read
 /// is a conflict. Categories' colours come from the input actions. For a
 /// screen of your own drawn another way, Input.ControlUses and Input.Categories give the same facts.
 /// </para>

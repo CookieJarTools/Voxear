@@ -283,7 +283,7 @@ impl ScriptRuntime {
         };
         ensure!(
             status != 2,
-            "{type_name} has no check {method}: a static method taking nothing and returning bool or string"
+            "{type_name} has no check or test {method}: a static method taking nothing, returning bool or string, or marked [Test]"
         );
         ensure!(status != 3, "{type_name}.{method} threw; the Console has what it said");
         if status == 0 {

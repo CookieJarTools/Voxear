@@ -178,6 +178,9 @@ struct WorldMake
     // What grows where (src/voxel_volume/growth.rs): the World Areas the trees and cover keep within or out of, by
     // their tags, and the kinds of cover.
     uint* growth;
+    // What the generator's nodes found on the CPU, its spires and bridges, round the window (src/voxel_volume/finds.rs,
+    // findAt): none where it has none.
+    uint* finds;
     float height;
     float hills;
     float hillSpacing;
@@ -213,7 +216,7 @@ struct WorldMake
     uint densitySlot;
     uint carriedCount;
     uint spanCount;
-    uint4 carriedSlots[2];
+    uint4 carriedSlots[3];
     uint4 spans;
     float reach;
     float depth;
@@ -525,7 +528,7 @@ Generated generatedAt(WorldMake* make, int x, int z)
     float v = make->voxel;
     float gx = (float(x) + 0.5) * v + make->atX;
     float gz = (float(z) + 0.5) * v + make->atZ;
-    return runGenerator(make->program, make->programWords, make->outs, gx, gz);
+    return runGenerator(make->program, make->programWords, make->outs, make->finds, gx, gz);
 }
 
 bool hasVolume(WorldMake* make)
@@ -551,7 +554,7 @@ float densityWith(WorldMake* make, int3 p, uint* carried)
     {
         slots[s] = 0.0;
     }
-    runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carried, slots);
+    runSteps(make->volume, make->volumeWords, gx, gy, gz, v, carried, make->finds, slots);
     // The rivers' cut moves the ground's surface down by as much, as how far into it a voxel is goes by metres.
     return slots[min(make->densitySlot, GENERATOR_SLOTS - 1)] + riverAt(make, p.x, p.z).x;
 }
@@ -574,7 +577,7 @@ Generated runColumn(WorldMake* make, int x, int z, uint* carried)
     {
         slots[s] = 0.0;
     }
-    runSteps(make->program, make->programWords, (float(x) + 0.5) * v + make->atX, 0.0, (float(z) + 0.5) * v + make->atZ, 0.0, make->program, slots);
+    runSteps(make->program, make->programWords, (float(x) + 0.5) * v + make->atX, 0.0, (float(z) + 0.5) * v + make->atZ, 0.0, make->program, make->finds, slots);
     uint4 outs = make->outs;
     Generated made;
     made.height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
@@ -906,6 +909,41 @@ uint groundOf(WorldMake* make, uint job, int x, int z)
     return groundAt(make, voxel, h, across, warmth, wetness, ((climate >> 16) & 1u) != 0, riverAt(make, voxel.x, voxel.y).y);
 }
 
+// A biome's rock layers at voxel `p` of the world (generate/strata.rs, Strata::block): the place among its blocks of
+// the band at the voxel's height less the layers' lift at its column, by their lean and wander; 0xFFFFFFFF where the
+// biome of record `r` has none, or its thinnest band is thinner than most of a voxel. Its words: how many bands, how
+// tall a repeat is, the lean along x and z, the wander and its seed, the thinnest band, then each band's block and
+// the height of its top within a repeat.
+uint strataBlock(WorldMake* make, uint* r, int3 p)
+{
+    if (r[15] == 0xFFFFFFFFu)
+    {
+        return 0xFFFFFFFFu;
+    }
+    uint* s = make->biomes + r[15];
+    uint count = s[0];
+    float v = make->voxel;
+    if (count == 0u || asfloat(s[6]) < v * 0.75)
+    {
+        return 0xFFFFFFFFu;
+    }
+    float x = (float(p.x) + 0.5) * v + make->atX;
+    float z = (float(p.z) + 0.5) * v + make->atZ;
+    float wander = asfloat(s[4]);
+    float lift = x * asfloat(s[2]) + z * asfloat(s[3]) + (wander > 0.0 ? wander * gradientNoise(x / 450.0, z / 450.0, s[5]) : 0.0);
+    float height = (float(p.y) + 0.5) * v + make->floor - lift;
+    float period = asfloat(s[1]);
+    float within = height - floor(height / period) * period;
+    for (uint i = 0; i < count; i++)
+    {
+        if (within < asfloat(s[8 + i * 2]))
+        {
+            return s[7 + i * 2];
+        }
+    }
+    return s[7];
+}
+
 uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
 {
     float grain = unit(hashOf(p.x >> 1, p.y >> 1, p.z >> 1, make->seed + 31));
@@ -913,7 +951,7 @@ uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
     {
         // A biome's blocks down from the top: its top block a block deep, its under block as deep as it says, then
         // its deep block (generate/blocks columns_at); steep ground its steep block, a shore its shore block, bare
-        // rock its deep block all the way.
+        // rock its deep block all the way; its rock layers in place of its deep and steep blocks.
         uint* r = make->biomes + make->biomes[8] + ((top - GROUND_BIOMES) >> 2) * BIOME_WORDS;
         uint kind = (top - GROUND_BIOMES) & 3u;
         float block = max(asfloat(make->biomes[11]), make->voxel);
@@ -936,6 +974,13 @@ uint groundVoxel(WorldMake* make, uint top, int under, int3 p)
             lower = r[9];
         }
         uint chosen = down < block ? upper : (down < block + asfloat(r[14]) ? lower : r[9]);
+        // Its rock in layers, where it has them: under its top layers, or all the way up where the ground is steep or
+        // bare, in place of its deep or steep block (Column::block).
+        if (kind == BIOME_STEEP || kind == BIOME_BARE || down >= block + asfloat(r[14]))
+        {
+            uint band = strataBlock(make, r, p);
+            chosen = band == 0xFFFFFFFFu ? chosen : band;
+        }
         uint made = biomeBlock(make, chosen, grain);
         if (made != 0u)
         {
@@ -1425,7 +1470,7 @@ static const float TREE_CELL = 5.0;
 static const uint TREE_KINDS_AT = 4;
 static const uint TREE_PLANTS_AT = TREE_KINDS_AT + 8 * 4;
 static const uint TREE_PLANT_WORDS = 8;
-static const uint MOST_CARRIED_HERE = 8;
+static const uint MOST_CARRIED_HERE = 12;
 static const uint MODELS_AT = 4;
 static const uint MODEL_WORDS = 8;
 static const uint MODEL_SECTOR_WORDS = 25;
@@ -2231,6 +2276,15 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
             }
         }
     }
+    // A column keeps the band of sectors under its highest (voxelWorldSectors): what is further down is never kept, so
+    // never made. A Volume reaching down without end in a volume hundreds of metres tall asks about no more than that.
+    lowest = max(lowest, highest - int(make->layers) * 64);
+    // A ring is seen from afar, where nothing under its ground is: its Volume is made two bricks under its surface at
+    // most, its caves' mouths and the feet of what stands on it, not the caves deep in its rock.
+    if (volume && coarseRing(make))
+    {
+        lowest = max(lowest, lowSurface - 16);
+    }
     for (int row = max(lowest >> 3, 0); row <= min(highest >> 3, rows - 1); row++)
     {
         uint at;
@@ -2424,10 +2478,12 @@ uint volumeVoxel(WorldMake* make, uint job, uint column, int h, int3 l, int3 p)
     int2 local = int2(p.x, p.z) - make->jobs[job].column * 64;
     uint top = groundTop(make, job, local.x, local.y, column);
     int under = surfaceOf(make, job, local.x, local.y) - p.y;
-    // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not.
+    // A ledge in a cave's wall or under ground standing apart is rock, open to the sky or not: the column's biome's
+    // bare rock where it has a biome, its rock layers where it has those, as a spire's sides are in a world of blocks.
     if (under > 8 || under < -2)
     {
-        return groundVoxel(make, GROUND_ROCK, under, p);
+        uint rock = top >= GROUND_BIOMES ? top - ((top - GROUND_BIOMES) & 3u) + BIOME_BARE : GROUND_ROCK;
+        return groundVoxel(make, rock, under, p);
     }
     return groundVoxel(make, top, open ? 0 : max(under, 1), p);
 }
@@ -3186,8 +3242,8 @@ void voxelWorldSectors(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 
 // The generator run at places alone, for checking it against the CPU's: each of `candidateRoom` places, as the bits
 // of its x, y and z in metres in the generator's world, read from `candidates`, and what is made there written to
-// `loose`, sixteen words a place: the bits of its height, warmth, wetness and rock, how far into its Volume's ground
-// a cell `voxel` metres across is there (with a Volume), then what its column carries up.
+// `loose`, twenty words a place: the bits of its height, warmth, wetness and rock, how far into its Volume's ground
+// a cell `voxel` metres across is there (with a Volume), then what its column carries up, and last its biome.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
@@ -3205,8 +3261,8 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     {
         slots[s] = 0.0;
     }
-    runSteps(make->program, make->programWords, x, 0.0, z, 0.0, make->program, slots);
-    uint* out = make->loose + id.x * 16;
+    runSteps(make->program, make->programWords, x, 0.0, z, 0.0, make->program, make->finds, slots);
+    uint* out = make->loose + id.x * 20;
     uint4 outs = make->outs;
     out[0] = asuint(slots[min(outs.x, GENERATOR_SLOTS - 1)]);
     out[1] = asuint(slots[min(outs.y, GENERATOR_SLOTS - 1)]);
@@ -3215,7 +3271,7 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     out[4] = 0;
     // The biome the place is, where there are biomes (biomeOf).
     float height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
-    out[15] = asuint(make->biomes == nullptr ? -1.0 : float(biomeOf(make, x, z, asfloat(out[1]), asfloat(out[2]), height - make->seaLevel)));
+    out[19] = asuint(make->biomes == nullptr ? -1.0 : float(biomeOf(make, x, z, asfloat(out[1]), asfloat(out[2]), height - make->seaLevel)));
     if (make->volumeWords == 0)
     {
         return;
@@ -3229,6 +3285,6 @@ void voxelWorldPlaces(uint3 id: SV_DispatchThreadID)
     {
         cells[s] = 0.0;
     }
-    runSteps(make->volume, make->volumeWords, x, y, z, make->voxel, out + 5, cells);
+    runSteps(make->volume, make->volumeWords, x, y, z, make->voxel, out + 5, make->finds, cells);
     out[4] = asuint(cells[min(make->densitySlot, GENERATOR_SLOTS - 1)]);
 }

@@ -48,6 +48,10 @@ static const uint OP_PLATEAUS = 34;
 static const uint OP_EDGE = 35;
 static const uint OP_EDGE_INSIDE = 36;
 static const uint OP_PAINTED = 37;
+static const uint OP_SPIRE_OVER = 38;
+static const uint OP_TOWERED = 39;
+static const uint OP_ARCH_OVER = 40;
+static const uint OP_BRIDGED = 41;
 
 // noise.rs: a lattice point's hash, the gradient noise and its fractal kinds.
 
@@ -1205,6 +1209,398 @@ float paintedAt(uint* map, bool nearest, float none, float x, float z)
     return painted ? blended : none;
 }
 
+// What a node of the program found on the CPU over cell `cell` of its world (generate/gpu.rs, GpuFinds), read from
+// the table of what the program's nodes find (src/voxel_volume/finds.rs): how many nodes, then for each how many
+// cells its table is a side, how many words a cell's record takes with the two of its place, and where its records
+// start; then the records. The record, past its place, or nullptr where the table does not hold that cell.
+uint* findAt(uint* finds, uint finder, int2 cell)
+{
+    if (finds == nullptr || finder >= finds[0])
+    {
+        return nullptr;
+    }
+    uint* head = finds + 1 + finder * 4;
+    int side = int(head[0]);
+    if (side <= 0)
+    {
+        return nullptr;
+    }
+    // Wrapped as rem_euclid does: `%` on a negative whole number does not give what it gives on the CPU.
+    int sx = cell.x - int(floor(float(cell.x) / float(side))) * side;
+    int sz = cell.y - int(floor(float(cell.y) / float(side))) * side;
+    sx += sx < 0 ? side : (sx >= side ? -side : 0);
+    sz += sz < 0 ? side : (sz >= side ? -side : 0);
+    uint* record = finds + head[2] + uint(sz * side + sx) * head[1];
+    if (int(record[0]) != cell.x || int(record[1]) != cell.y)
+    {
+        return nullptr;
+    }
+    return record + 2;
+}
+
+// nodes/spires.rs: a spire's record (whether there is one, its foot's middle, radius, foot, top, lean and seed), how
+// far a spire's lobes reach past its radius, and the least number there is.
+static const float SPIRE_WIDEST = 1.9;
+static const float LEAST_NUMBER = -3.40282347e+38;
+
+// How wide spire `s` is at height `y`, from its axis, before its lobes and bands (Spire::plain).
+float spirePlain(uint* s, float y, float taper)
+{
+    float radius = asfloat(s[3]);
+    float foot = asfloat(s[4]);
+    float top = asfloat(s[5]);
+    float tall = top - foot;
+    if (y >= top || tall <= 0.0)
+    {
+        return 0.0;
+    }
+    float up = max((y - foot) / tall, 0.0);
+    float width = radius * (1.0 - taper * up);
+    float cap = min(width * 0.55, tall * 0.5);
+    float underTop = top - y;
+    if (underTop < cap)
+    {
+        float t = 1.0 - underTop / cap;
+        width *= sqrt(max(1.0 - t * t, 0.0));
+    }
+    float flare = 1.0 - (y - foot) / (radius * 1.5);
+    if (flare > 0.0)
+    {
+        width *= 1.0 + 0.45 * flare * flare;
+    }
+    return width;
+}
+
+// How far from spire `s`'s axis at height `y` the column at (x, z) is (Spire::axis).
+float spireAway(uint* s, float x, float y, float z)
+{
+    float up = y - asfloat(s[4]);
+    float dx = x - (asfloat(s[1]) + asfloat(s[6]) * up);
+    float dz = z - (asfloat(s[2]) + asfloat(s[7]) * up);
+    return sqrt(dx * dx + dz * dz);
+}
+
+// How far inside spire `s` the place (x, y, z) is, in metres, less than nothing outside it (Spire::inside).
+float spireInside(uint* s, float x, float y, float z, float taper, float bands)
+{
+    float radius = asfloat(s[3]);
+    float foot = asfloat(s[4]);
+    float top = asfloat(s[5]);
+    uint seed = s[8];
+    float width = spirePlain(s, y, taper);
+    float away = spireAway(s, x, y, z);
+    if (width <= 0.0)
+    {
+        return min(top - y, -away);
+    }
+    float crownSize = radius * 0.7;
+    float crown = radius * 0.9 * clamp(0.5 + 0.5 * gradientNoise(x / crownSize, z / crownSize, seed ^ 0xC0A1u), 0.0, 1.0);
+    float underCrown = top - crown - y;
+    float lobe = radius * 0.9;
+    float rough = gradientNoise3(x / lobe, y / (lobe * 2.0), z / lobe, seed);
+    float flute = radius * 0.4;
+    float fluted = gradientNoise3(x / flute, y / (flute * 4.0), z / flute, seed ^ 0xF107u);
+    width = width * (1.0 + 0.15 * rough + 0.17 * fluted);
+    if (bands > 0.0)
+    {
+        float tilt = 0.25 * bands * gradientNoise(x / 40.0, z / 40.0, seed ^ 0xBA2Du);
+        float q = (y - foot + tilt) / bands;
+        float phase = q - floor(q);
+        float groove = 1.0 - abs(phase - 0.5) * 2.0;
+        groove = groove * groove * groove * groove;
+        width *= 1.0 - 0.14 * groove * groove;
+    }
+    return min(width - away, underCrown);
+}
+
+// A Spires node's spires over the column at (x, z) (nodes/spires.rs, Over), its numbers from `p`: the finder, how far
+// apart its cells are, how many either side it reads, its taper, lean and bands, and what it gives: the lowest foot
+// of a spire reaching the column (0), the highest it may reach (1), how high it is surely solid (2), or whether any
+// reaches it (4).
+float spireOver(uint* program, uint p, uint* finds, float x, float z)
+{
+    uint finder = program[p];
+    float spacing = asfloat(program[p + 1]);
+    int reach = int(program[p + 2]);
+    float taper = asfloat(program[p + 3]);
+    float lean = asfloat(program[p + 4]);
+    uint what = program[p + 6];
+    int2 cell = int2(int(floor(x / spacing)), int(floor(z / spacing)));
+    float foot = 0.0;
+    float top = -1.0;
+    float core = -1.0;
+    for (int dz = -reach; dz <= reach; dz++)
+    {
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            uint* s = findAt(finds, finder, cell + int2(dx, dz));
+            if (s == nullptr || s[0] == 0u)
+            {
+                continue;
+            }
+            float radius = asfloat(s[3]);
+            float sFoot = asfloat(s[4]);
+            float sTop = asfloat(s[5]);
+            float far = radius * SPIRE_WIDEST + 2.0 + lean * 0.5 * (sTop - sFoot);
+            if (abs(x - asfloat(s[1])) > far || abs(z - asfloat(s[2])) > far)
+            {
+                continue;
+            }
+            float reached = LEAST_NUMBER;
+            float solid = LEAST_NUMBER;
+            bool whole = true;
+            float y = sFoot;
+            while (y <= sTop)
+            {
+                float away = spireAway(s, x, y, z);
+                float width = spirePlain(s, y, taper);
+                if (away <= width * SPIRE_WIDEST + 1.0)
+                {
+                    reached = y;
+                }
+                if (whole && away <= width * 0.5 - 1.0 && y <= sTop - radius * 0.9)
+                {
+                    solid = y;
+                }
+                else
+                {
+                    whole = false;
+                }
+                y += 1.0;
+            }
+            if (reached == LEAST_NUMBER)
+            {
+                continue;
+            }
+            bool none = top < foot;
+            foot = (none || sFoot < foot) ? sFoot : foot;
+            top = (none || reached + 2.0 > top) ? reached + 2.0 : top;
+            if (solid > core)
+            {
+                core = solid;
+            }
+        }
+    }
+    if (what == 0u)
+    {
+        return foot;
+    }
+    if (what == 1u)
+    {
+        return top;
+    }
+    if (what == 4u)
+    {
+        return top > foot ? 1.0 : 0.0;
+    }
+    return core > foot ? core : foot - 1.0;
+}
+
+// The ground with a Spires node's spires (nodes/spires.rs, Towered): `ground` how far into the ground the place
+// (x, y, z) is, and the heights its column's spires reach between.
+float spireTowered(uint* program, uint p, uint* finds, float ground, float x, float y, float z, float foot, float top)
+{
+    if (top <= foot || y < foot - 2.0 || y > top + 2.0)
+    {
+        return ground;
+    }
+    uint finder = program[p];
+    float spacing = asfloat(program[p + 1]);
+    int reach = int(program[p + 2]);
+    float taper = asfloat(program[p + 3]);
+    float bands = asfloat(program[p + 5]);
+    int2 cell = int2(int(floor(x / spacing)), int(floor(z / spacing)));
+    float value = ground;
+    for (int dz = -reach; dz <= reach; dz++)
+    {
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            uint* s = findAt(finds, finder, cell + int2(dx, dz));
+            if (s == nullptr || s[0] == 0u || y < asfloat(s[4]) - 2.0 || y > asfloat(s[5]) + 2.0)
+            {
+                continue;
+            }
+            float inside = spireInside(s, x, y, z, taper, bands);
+            if (inside > value)
+            {
+                value = inside;
+            }
+        }
+    }
+    return value;
+}
+
+// nodes/arches.rs: a region's record, its bridge (whether it has one, where it starts, the way it runs, its span,
+// its tops at each end, how thick and half how wide it is), then how many windows and each window's middle, way,
+// half length and half width; and how far past each end a bridge runs into the ground.
+static const uint BRIDGE_WORDS = 10;
+static const uint ARCH_WINDOW_WORDS = 7;
+static const float BRIDGE_PAST = 0.2;
+
+// Where bridge `b` is over the column at (x, z) (Bridge::over): its underside, its top and how far inside its sides
+// and ends the column is; false where it does not reach.
+bool bridgeOver(uint* b, float x, float z, out float3 over)
+{
+    over = float3(0.0, 0.0, 0.0);
+    float span = asfloat(b[5]);
+    float rx = x - asfloat(b[1]);
+    float rz = z - asfloat(b[2]);
+    float wx = asfloat(b[3]);
+    float wz = asfloat(b[4]);
+    float along = (rx * wx + rz * wz) / span;
+    if (!(along >= -BRIDGE_PAST && along <= 1.0 + BRIDGE_PAST))
+    {
+        return false;
+    }
+    float beside = rx * wz - rz * wx;
+    beside = beside < 0.0 ? -beside : beside;
+    float outward = clamp(along * 2.0 - 1.0, -1.0, 1.0);
+    float wide = asfloat(b[9]) * (1.0 + 0.8 * outward * outward);
+    if (beside > wide)
+    {
+        return false;
+    }
+    float top = asfloat(b[6]) + (asfloat(b[7]) - asfloat(b[6])) * clamp(along, 0.0, 1.0);
+    top = top + span * 0.03 * (1.0 - outward * outward);
+    float thick = asfloat(b[8]) + span * 0.17 * outward * outward;
+    float across = beside / wide;
+    thick = thick * (1.0 - 0.5 * across * across);
+    float ends = (along < 0.5 ? along + BRIDGE_PAST : 1.0 + BRIDGE_PAST - along) * span;
+    over = float3(top - thick, top, wide - beside < ends ? wide - beside : ends);
+    return true;
+}
+
+// How far window `w` is off its middle line at the column (x, z), where it reaches over it (Window::over).
+bool windowOver(uint* w, float x, float z, out float beside)
+{
+    float rx = x - asfloat(w[0]);
+    float rz = z - asfloat(w[2]);
+    float wx = asfloat(w[3]);
+    float wz = asfloat(w[4]);
+    float along = rx * wx + rz * wz;
+    beside = rx * wz - rz * wx;
+    float most = asfloat(w[5]) + asfloat(w[6]);
+    float radius = asfloat(w[6]);
+    return along <= most && along >= -most && beside <= radius && beside >= -radius;
+}
+
+// How far inside window `w`'s opening the place `y` up its column, `beside` its middle line, is (Window::inside).
+float windowInside(uint* w, float beside, float y)
+{
+    float radius = asfloat(w[6]);
+    float up = y - asfloat(w[1]);
+    float rounded = radius - sqrt(beside * beside + up * up);
+    float level = up + radius * 0.8;
+    return rounded < level ? rounded : level;
+}
+
+// An Arches node's bridges and windows over the column at (x, z) (nodes/arches.rs, Over), its numbers from `p`: the
+// finder, how wide a region is, and what it gives: a bridge's underside (0) or top (1), a window's foot (2) or top
+// (3), the lowest and highest of those reaching the column; a top under its foot where none does.
+float archOver(uint* program, uint p, uint* finds, float x, float z)
+{
+    uint finder = program[p];
+    float size = asfloat(program[p + 1]);
+    uint what = program[p + 2];
+    int2 region = int2(int(floor(x / size)), int(floor(z / size)));
+    float foot = 0.0;
+    float top = -1.0;
+    for (int at = 0; at < 9; at++)
+    {
+        uint* r = findAt(finds, finder, region + int2(at % 3 - 1, at / 3 - 1));
+        if (r == nullptr)
+        {
+            continue;
+        }
+        if (what < 2u)
+        {
+            float3 over;
+            if (r[0] != 0u && bridgeOver(r, x, z, over))
+            {
+                bool none = top < foot;
+                foot = (none || over.x < foot) ? over.x : foot;
+                top = (none || over.y > top) ? over.y : top;
+            }
+            continue;
+        }
+        uint count = min(r[BRIDGE_WORDS], 9u);
+        for (uint i = 0; i < count; i++)
+        {
+            uint* w = r + BRIDGE_WORDS + 1 + i * ARCH_WINDOW_WORDS;
+            float beside;
+            if (windowOver(w, x, z, beside))
+            {
+                float under = asfloat(w[1]) - asfloat(w[6]) - 2.0;
+                float over = asfloat(w[1]) + asfloat(w[6]) + 2.0;
+                bool none = top < foot;
+                foot = (none || under < foot) ? under : foot;
+                top = (none || over > top) ? over : top;
+            }
+        }
+    }
+    return what % 2u == 1u ? top : foot;
+}
+
+// The ground with an Arches node's bridges and windows (nodes/arches.rs, Bridged): `ground` how far into the ground
+// the place (x, y, z) is, its column's bridge's underside and top, and its column's window's foot and top.
+float archBridged(uint* program, uint p, uint* finds, float ground, float x, float y, float z, float4 spans)
+{
+    bool bridged = spans.y > spans.x && y >= spans.x - 2.0 && y <= spans.y + 2.0;
+    bool cut = spans.w > spans.z && y >= spans.z && y <= spans.w;
+    if (!bridged && !cut)
+    {
+        return ground;
+    }
+    uint finder = program[p];
+    float size = asfloat(program[p + 1]);
+    int2 region = int2(int(floor(x / size)), int(floor(z / size)));
+    float value = ground;
+    for (int at = 0; at < 9; at++)
+    {
+        uint* r = findAt(finds, finder, region + int2(at % 3 - 1, at / 3 - 1));
+        float3 over;
+        if (r == nullptr || r[0] == 0u || !bridgeOver(r, x, z, over))
+        {
+            continue;
+        }
+        float down = over.y - y;
+        float up = y - over.x;
+        float inside = down < up ? down : up;
+        inside = inside < over.z ? inside : over.z;
+        if (bridged && inside > value)
+        {
+            value = inside;
+        }
+    }
+    if (!cut)
+    {
+        return value;
+    }
+    for (int at = 0; at < 9; at++)
+    {
+        uint* r = findAt(finds, finder, region + int2(at % 3 - 1, at / 3 - 1));
+        if (r == nullptr)
+        {
+            continue;
+        }
+        uint count = min(r[BRIDGE_WORDS], 9u);
+        for (uint i = 0; i < count; i++)
+        {
+            uint* w = r + BRIDGE_WORDS + 1 + i * ARCH_WINDOW_WORDS;
+            float beside;
+            if (windowOver(w, x, z, beside))
+            {
+                float hollow = -windowInside(w, beside, y);
+                if (hollow < value)
+                {
+                    value = hollow;
+                }
+            }
+        }
+    }
+    return value;
+}
+
 struct Generated
 {
     float height;
@@ -1215,7 +1611,8 @@ struct Generated
 
 // Runs the `words` words of `program` at (x, y, z), in metres in the generator's world, into `slots`: for a cell, `y`
 // is its middle's height, `size` how large it is and `carried` what its column carries up, as the bits of each.
-void runSteps(uint* program, uint words, float x, float y, float z, float size, uint* carried, inout float slots[GENERATOR_SLOTS])
+// `finds` is the table of what the program's nodes found on the CPU (findAt), or nullptr.
+void runSteps(uint* program, uint words, float x, float y, float z, float size, uint* carried, uint* finds, inout float slots[GENERATOR_SLOTS])
 {
     uint at = 0;
     while (at < words)
@@ -1499,6 +1896,18 @@ void runSteps(uint* program, uint words, float x, float y, float z, float size, 
         case OP_PAINTED:
             value = paintedAt(program + words + program[p], program[p + 1] != 0u, asfloat(program[p + 2]), a[0], a[1]);
             break;
+        case OP_SPIRE_OVER:
+            value = spireOver(program, p, finds, a[0], a[1]);
+            break;
+        case OP_TOWERED:
+            value = spireTowered(program, p, finds, a[0], a[1], a[2], a[3], a[4], a[5]);
+            break;
+        case OP_ARCH_OVER:
+            value = archOver(program, p, finds, a[0], a[1]);
+            break;
+        case OP_BRIDGED:
+            value = archBridged(program, p, finds, a[0], a[1], a[2], a[3], float4(a[4], a[5], a[6], a[7]));
+            break;
         default:
             break;
         }
@@ -1508,15 +1917,15 @@ void runSteps(uint* program, uint words, float x, float y, float z, float size, 
 }
 
 // Runs the `words` words of `program` at (x, z), in metres in the generator's world; `outs` are the slots of its
-// height, warmth, wetness and rock (rock past the slots for none).
-Generated runGenerator(uint* program, uint words, uint4 outs, float x, float z)
+// height, warmth, wetness and rock (rock past the slots for none), `finds` what its nodes found on the CPU.
+Generated runGenerator(uint* program, uint words, uint4 outs, uint* finds, float x, float z)
 {
     float slots[GENERATOR_SLOTS];
     for (uint s = 0; s < GENERATOR_SLOTS; s++)
     {
         slots[s] = 0.0;
     }
-    runSteps(program, words, x, 0.0, z, 0.0, program, slots);
+    runSteps(program, words, x, 0.0, z, 0.0, program, finds, slots);
     Generated made;
     made.height = slots[min(outs.x, GENERATOR_SLOTS - 1)];
     made.warmth = slots[min(outs.y, GENERATOR_SLOTS - 1)];

@@ -35,6 +35,7 @@ use super::{
     VoxelGenerator, VoxelGround, VoxelMaterial, VoxelPrint, VoxelShape, VoxelTrees, VoxelVolume, edit,
     growth::{self, Growth},
     VoxelWaterLook, print,
+    finds::{self, LaidFinds},
     rivers::{self, ColumnWater, GpuVoxelWater, LaidRivers},
     trees,
 };
@@ -73,7 +74,7 @@ const AVERAGE_VOLUME_MATERIALS: f64 = 8_000.0;
 const AVERAGE_MATERIALS_A_TREE: f64 = 50.0;
 const ROOM_SPARE: f64 = 1.25;
 /// The most numbers a Volume carries up a column, and the most spans.
-const MOST_CARRIED: usize = 8;
+const MOST_CARRIED: usize = 12;
 const MOST_SPANS: usize = 4;
 const ENTRY_WORDS: u64 = 53;
 const BRICK_BYTES: u64 = 80;
@@ -210,6 +211,7 @@ struct GpuWorldMake {
     column_grounds: u64,
     rivers: u64,
     growth: u64,
+    finds: u64,
     height: f32,
     hills: f32,
     hill_spacing: f32,
@@ -354,6 +356,9 @@ pub(crate) struct Endless {
     /// waiting on their points; and the water over each slot's column, with
     /// a count of its changes.
     rivers: Option<LaidRivers>,
+    /// What its generator's nodes find on the CPU, its spires and bridges,
+    /// where its Volume reads any.
+    finds: Option<LaidFinds>,
     waiting: bool,
     water: Vec<ColumnWater>,
     water_changes: u64,
@@ -540,6 +545,7 @@ fn gpu_program_of(volume: &VoxelVolume) -> Option<GpuProgram> {
     }) {
         tracing::warn!("a Voxel Volume's generator carries up too much for the GPU: its Volume is left out");
         made.volume = None;
+        made.finds.clear();
     }
     program
 }
@@ -590,12 +596,20 @@ const RING_AVERAGES: [(f64, f64, f64, f64); 4] = [
 /// For a ring of voxels `coarser` times the finest's (1 for the finest),
 /// what it keeps on average as a ring, and only for the columns outside the
 /// ring inside it, which it never makes.
-fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64, coarser: u32) -> Room {
+fn room_of(program: Option<&GpuProgram>, trees: &[VoxelTrees], slots: u32, grow: f64, coarser: u32, layers: u32) -> Room {
     let volume = program.is_some_and(|program| program.volume.is_some());
     let per_hectare: f64 = trees.iter().map(|kind| f64::from(kind.per_hectare.max(0.0))).sum();
     let ring = RING_AVERAGES.get((coarser.max(1).ilog2() as usize).wrapping_sub(1)).copied();
+    // A Volume's averages were measured in volumes 48 m tall: a column keeping a deeper band keeps its caves that much
+    // deeper, three times as much at the full band, as the Realm's columns grew their room to.
+    let deep = (f64::from(layers) / 8.0).max(1.0);
     let (bricks, materials, tree_bricks, tree_materials) = match (volume, ring) {
-        (true, _) => (AVERAGE_VOLUME_BRICKS, AVERAGE_VOLUME_MATERIALS, AVERAGE_BRICKS_A_TREE, AVERAGE_MATERIALS_A_TREE),
+        (true, _) => (
+            AVERAGE_VOLUME_BRICKS * deep,
+            AVERAGE_VOLUME_MATERIALS * deep,
+            AVERAGE_BRICKS_A_TREE,
+            AVERAGE_MATERIALS_A_TREE,
+        ),
         (false, Some(ring)) => ring,
         (false, None) if coarser > 1 => RING_AVERAGES[RING_AVERAGES.len() - 1],
         (false, None) => (AVERAGE_BRICKS, AVERAGE_MATERIALS, AVERAGE_BRICKS_A_TREE, AVERAGE_MATERIALS_A_TREE),
@@ -867,6 +881,26 @@ fn laid_rivers(
     Ok(Some(LaidRivers::new(gpu, layer, window, 1 + tree_ring(volume, forest))?))
 }
 
+/// The table of what `volume`'s generator's nodes find on the CPU, where
+/// its program runs any on the GPU, for a window `window` columns a side:
+/// reaching a column further round, for the heights' border, and as far
+/// again as its trees may stand.
+fn laid_finds(
+    gpu: &Gpu,
+    volume: &VoxelVolume,
+    program: Option<&(Buffer, GpuProgram)>,
+    window: u32,
+    forest: Option<&(Buffer, u32, f32)>,
+) -> Result<Option<LaidFinds>> {
+    let (Some((_, program)), Some(generator)) = (program, volume.generator.as_ref()) else { return Ok(None) };
+    if program.finds.is_empty() {
+        return Ok(None);
+    }
+    let metres = sector_metres(volume);
+    let ring = 1 + tree_ring(volume, forest);
+    Ok(Some(LaidFinds::new(gpu, &program.finds, window, metres, generator.at, ring)?))
+}
+
 /// A program's buffer, and its Volume's cells' program and what each column
 /// carries up to them, where it has a Volume.
 #[allow(clippy::type_complexity)]
@@ -934,7 +968,14 @@ impl Endless {
         let program = gpu_program_of(volume);
         let (program, caves) = program_buffers(gpu, program)?;
         let coarser = fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
-        let room = room_of(program.as_ref().map(|(_, program)| program), &volume.trees, window * window, grow, coarser);
+        let room = room_of(
+            program.as_ref().map(|(_, program)| program),
+            &volume.trees,
+            window * window,
+            grow,
+            coarser,
+            layers_of(tall),
+        );
         // The trees' plants' bricks and materials first, in pages no column is given.
         let (model_bricks, model_materials) =
             made.as_ref().map_or((&[][..], &[][..]), |made| (&made.bricks[..], &made.materials[..]));
@@ -1052,6 +1093,7 @@ impl Endless {
             window_sector: [0; 3],
             corner: Vec3::ZERO,
             rivers: None,
+            finds: None,
             waiting: false,
             water: vec![ColumnWater::default(); (window * window) as usize],
             water_changes: 0,
@@ -1061,6 +1103,7 @@ impl Endless {
             hole: None,
         };
         endless.rivers = laid_rivers(gpu, volume, endless.program.is_some(), window, endless.forest.as_ref())?;
+        endless.finds = laid_finds(gpu, volume, endless.program.as_ref(), window, endless.forest.as_ref())?;
         // No column is made yet, and no frame reads what the edits' buffers took the place of.
         for buffer in endless.set_edits(gpu, &volume.edits, &volume.changes)? {
             gpu.destroy_buffer(buffer);
@@ -1395,7 +1438,8 @@ impl Endless {
         }
         let program = gpu_program_of(volume);
         let coarser = self.fine.max(1) / volume.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
-        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow, coarser) != self.room {
+        let layers = layers_of(self.tall);
+        if room_of(program.as_ref(), &volume.trees, self.window * self.window, self.grow, coarser, layers) != self.room {
             return Ok(None);
         }
         // Other plants make other voxels at the start of the room.
@@ -1423,6 +1467,8 @@ impl Endless {
         gone.extend(std::mem::replace(&mut self.biomes, biomes));
         let laid = laid_rivers(gpu, volume, self.program.is_some(), self.window, self.forest.as_ref())?;
         gone.extend(std::mem::replace(&mut self.rivers, laid).map(|rivers| rivers.table));
+        let laid = laid_finds(gpu, volume, self.program.as_ref(), self.window, self.forest.as_ref())?;
+        gone.extend(std::mem::replace(&mut self.finds, laid).map(|finds| finds.table));
         self.from = volume.clone();
         self.made.iter_mut().for_each(|made| *made = None);
         self.water.iter_mut().for_each(|water| *water = ColumnWater::default());
@@ -1472,6 +1518,10 @@ impl Endless {
             let least = [self.window_sector[0], self.window_sector[2]];
             rivers.follow(least, self.window, [at.x as i32, at.z as i32]);
         }
+        if let Some(finds) = &mut self.finds {
+            let least = [self.window_sector[0], self.window_sector[2]];
+            finds.follow(least, self.window, [at.x as i32, at.z as i32]);
+        }
         if moved {
             self.lay_water_again();
         }
@@ -1499,8 +1549,12 @@ impl Endless {
         }
         wanted.sort_unstable_by_key(|(distance, _)| *distance);
         self.jobs.clear();
+        // A Volume's column is made through the band of sectors it keeps, which a volume hundreds of metres tall keeps
+        // three times as deep: as many fewer columns a frame, so no pass making them runs long enough for the GPU to
+        // give up waiting on it.
+        let volume_jobs = (MAX_VOLUME_JOBS * 8 / layers_of(self.tall) as usize).clamp(1, MAX_VOLUME_JOBS);
         let most = match (self.volume.is_some(), self.forest.is_some()) {
-            (true, _) => MAX_VOLUME_JOBS,
+            (true, _) => volume_jobs,
             (false, true) => MAX_TREE_JOBS,
             (false, false) => MAX_JOBS,
         };
@@ -1508,13 +1562,15 @@ impl Endless {
         // frame keeps the frames that every ring makes columns on light.
         let coarser = self.fine.max(1) / self.from.voxels_per_metre.clamp(1, MOST_VOXELS_A_METRE);
         let most = if loading { most } else { (most / coarser.max(1) as usize).max(2) };
-        // A column is made once the rivers' points round it are laid in.
+        // A column is made once the rivers' points round it are laid in, and what the generator's nodes find there.
         let rivers = self.rivers.as_ref();
+        let finds = self.finds.as_ref();
         let wanted_any = !wanted.is_empty();
         let total = wanted.len();
         let ready: Vec<[i32; 2]> = wanted
             .into_iter()
             .filter(|(_, column)| rivers.is_none_or(|rivers| rivers.ready_for(*column)))
+            .filter(|(_, column)| finds.is_none_or(|finds| finds.ready_for(*column)))
             .take(most)
             .map(|(_, column)| column)
             .collect();
@@ -1822,6 +1878,7 @@ impl Endless {
             job_edits: self.job_edits.address,
             prints: self.print_buffer.as_ref().map_or(0, |buffer| buffer.address),
             rivers: self.rivers.as_ref().map_or(0, |rivers| rivers.table.address),
+            finds: self.finds.as_ref().map_or(0, |finds| finds.table.address),
             growth: self.growth.address,
             river_window: self.rivers.as_ref().map_or(0, |rivers| rivers.window),
             water_voxels: u32::from(self.from.water == VoxelWaterLook::Voxels),
@@ -1974,6 +2031,7 @@ impl Endless {
         all.extend(self.volume.into_iter().flat_map(|(words, carried)| [words, carried]));
         all.extend(self.makes);
         all.extend(self.rivers.map(|rivers| rivers.table));
+        all.extend(self.finds.map(|finds| finds.table));
         all
     }
 }
@@ -2069,6 +2127,9 @@ pub(super) fn tinted_colours(colours: &[[u8; 4]], tint: [u8; 3]) -> Vec<[u8; 4]>
         .collect()
 }
 
+/// The words `voxelWorldPlaces` writes for each place.
+const PLACE_WORDS: usize = 20;
+
 /// What `world` makes at each of `places`, `[x, y, z]` in metres in its
 /// world, run on the GPU as an endless volume's columns and voxels run it:
 /// the ground's height in metres, how warm it is, how wet, its rock mask,
@@ -2092,7 +2153,7 @@ pub(crate) fn generated_at(
     let count = places.len().max(1) as u64;
     let asked = gpu.create_buffer("generator places", count * 12, usage, MemoryLocation::CpuToGpu)?;
     asked.write(0, places);
-    let made = gpu.create_buffer("generator made", count * 64, usage, MemoryLocation::GpuToCpu)?;
+    let made = gpu.create_buffer("generator made", count * PLACE_WORDS as u64 * 4, usage, MemoryLocation::GpuToCpu)?;
     let record =
         gpu.create_buffer("generator record", size_of::<GpuWorldMake>() as u64, usage, MemoryLocation::CpuToGpu)?;
     let mut make: GpuWorldMake = bytemuck::Zeroable::zeroed();
@@ -2119,6 +2180,21 @@ pub(crate) fn generated_at(
         make.volume = words.address;
         volume_fields(&mut make, volume, size);
     }
+    // What the generator's nodes find over every place asked about.
+    let found = match program.finds.is_empty() || places.is_empty() {
+        true => None,
+        false => {
+            let (low, high) = places.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), p| {
+                ([low[0].min(p[0]), low[1].min(p[2])], [high[0].max(p[0]), high[1].max(p[2])])
+            });
+            let words = finds::table_over(&program.finds, low, high);
+            let buffer =
+                gpu.create_buffer("generator finds", words.len() as u64 * 4, usage, MemoryLocation::CpuToGpu)?;
+            buffer.write(0, &words);
+            make.finds = buffer.address;
+            Some(buffer)
+        }
+    };
     record.write(0, std::slice::from_ref(&make));
     let push = WorldPush { make: record.address };
     gpu.immediate(|cmd| unsafe {
@@ -2126,9 +2202,12 @@ pub(crate) fn generated_at(
         bindless.push(gpu, cmd, &push);
         gpu.device.cmd_dispatch(cmd, (places.len() as u32).div_ceil(64), 1, 1);
     })?;
-    let words: &[f32] = bytemuck::cast_slice(&made.read()[..places.len() * 64]);
-    let out = words.chunks(16).map(|place| [place[0], place[1], place[2], place[3], place[4], place[15]]).collect();
-    for buffer in [code, asked, made, record].into_iter().chain(cells).chain(biome_buffer) {
+    let words: &[f32] = bytemuck::cast_slice(&made.read()[..places.len() * PLACE_WORDS * 4]);
+    let out = words
+        .chunks(PLACE_WORDS)
+        .map(|place| [place[0], place[1], place[2], place[3], place[4], place[PLACE_WORDS - 1]])
+        .collect();
+    for buffer in [code, asked, made, record].into_iter().chain(cells).chain(biome_buffer).chain(found) {
         gpu.destroy_buffer(buffer);
     }
     Ok(out)

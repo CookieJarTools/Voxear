@@ -161,8 +161,25 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ obj, name, parent, active, persistent, position, rotation, scale, components: [{ component, title, enabled, fields: [{ field, label, type, value, … }] }] }",
     },
     CallInfo {
+        name: "tests.list",
+        about: "The game's [Test] methods, in the order they run, by category, each with how it last came out in the Tests window: not run, waiting, passed or failed, with how long it took and what a failure said; and whether any still wait to run.",
+        args: &[],
+        changes: false,
+        returns: "{ tests: [{ title, category, order, type, method, outcome, ms, message }], running }",
+    },
+    CallInfo {
+        name: "tests.run",
+        about: "Runs tests as the Tests window's buttons do, one a frame: every test, a category's, or one by its title or method. While editing, what a test changes is one step to undo. Ask tests.list until running is false for how they came out.",
+        args: &[
+            maybe("category", ArgKind::Text, "Only this category's tests."),
+            maybe("test", ArgKind::Text, "Only this test, by its title or its method's name."),
+        ],
+        changes: true,
+        returns: "{ queued }",
+    },
+    CallInfo {
         name: "inspector.mode",
-        about: "An Inspector's mode, as its ⋯ menu switches it: Normal, or Debug, which shows what is really there: every component as the scene file writes it, the engine's own state, every field of each C# behaviour, private ones too, and while playing, the live state behind the components.",
+        about: "An Inspector's mode, as its window menu switches it: Normal, or Debug, which shows what is really there: every component as the scene file writes it, the engine's own state, every field of each C# behaviour, private ones too, and while playing, the live state behind the components.",
         args: &[
             maybe("inspector", ArgKind::Whole, "Which Inspector: 1 for the first, the default, 2 for the next…"),
             maybe("mode", ArgKind::Text, "Normal or Debug; left out, only says which it is in."),

@@ -59,6 +59,17 @@ pub enum TerrainTool {
 }
 
 impl TerrainTool {
+    /// The icon on its tab.
+    pub fn icon(self) -> &'static str {
+        match self {
+            TerrainTool::Layers => "layers",
+            TerrainTool::Sculpt => "mountain",
+            TerrainTool::Paint => "texture",
+            TerrainTool::Grass => "leaf",
+            TerrainTool::Settings => "settings",
+        }
+    }
+
     pub const ALL: [TerrainTool; 5] =
         [TerrainTool::Layers, TerrainTool::Sculpt, TerrainTool::Paint, TerrainTool::Grass, TerrainTool::Settings];
 
@@ -518,6 +529,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(world: &World, entity: Entity, field: TerrainField) -> Option<[f32; 2]> {
     match field {
+        F::BrushSize => Some([0.5, 100.0]),
         F::Opacity | F::Strength | F::Sharpness | F::HeightBlend | F::Tracks | F::Wear => Some([0.0, 1.0]),
         F::GrassSteepest => Some([0.0, 90.0]),
         F::Falloff => match picked(world, entity) {
@@ -526,6 +538,22 @@ pub fn range(world: &World, entity: Entity, field: TerrainField) -> Option<[f32;
         },
         _ => None,
     }
+}
+
+/// The heading over a row that starts a group: the brush's, then what
+/// the tool paints with, a layer's kind, or the terrain's ground and look.
+pub fn heading(world: &World, entity: Entity, field: TerrainField) -> Option<String> {
+    let tool = ui(world).tool;
+    let title = match (tool, field) {
+        (TerrainTool::Sculpt, F::Brush) | (TerrainTool::Paint | TerrainTool::Grass, F::BrushSize) => "Brush",
+        (TerrainTool::Paint, F::SurfaceMaterial) => "Surface",
+        (TerrainTool::Grass, F::GrassMesh) => "Grass",
+        (TerrainTool::Layers, F::LayerName) => return picked(world, entity).map(|(_, layer)| layer.kind.title().to_string()),
+        (TerrainTool::Settings, F::Data) => "Ground",
+        (TerrainTool::Settings, F::Material) => "Look",
+        _ => return None,
+    };
+    Some(title.to_string())
 }
 
 /// An asset's path, by the reference a file holds, or "None".

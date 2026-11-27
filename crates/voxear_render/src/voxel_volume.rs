@@ -25,6 +25,7 @@ mod strain;
 mod edit;
 mod endless;
 mod fell;
+mod finds;
 mod growth;
 pub(crate) use endless::generated_at;
 pub(crate) use light::LightView;
@@ -843,7 +844,10 @@ pub struct VoxelCounts {
 impl VoxelVolumes {
     /// Starts making the voxels of volumes that changed, brings up those
     /// made, and lets go of those gone.
-    pub fn prepare(&mut self, gpu: &Gpu, frames: &mut Frames, world: &World) -> Result<()> {
+    /// `looking` is the Obj the first view looks through where it is told
+    /// one, as `vox render --camera` and the editor's Scene view tell it:
+    /// endless volumes are made round it.
+    pub fn prepare(&mut self, gpu: &Gpu, frames: &mut Frames, world: &World, looking: Option<Entity>) -> Result<()> {
         voxear_core::profile_scope!("Voxel Volumes");
         self.drawn.clear();
         let mut seen = Vec::new();
@@ -863,7 +867,7 @@ impl VoxelVolumes {
                 (entity, volume.clone(), corner, turn)
             })
             .collect();
-        let camera = camera_of(world);
+        let camera = camera_of(world, looking);
         self.camera = camera;
         for (entity, volume, corner, turn) in found {
             seen.push(entity);
@@ -1267,15 +1271,29 @@ fn fit(gpu: &Gpu, frames: &mut Frames, made: &mut endless::Endless, volume: &Vox
     Ok(made_over)
 }
 
-/// Where the first camera of `world` is, which endless volumes are made
-/// round.
-fn camera_of(world: &World) -> Option<Vec3> {
-    world
-        .query_ref::<(&crate::Camera, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
-        .without::<voxear_scene::Destroying>()
+/// Where the camera endless volumes are made round is in `world`: the Obj
+/// `looking` names where it is one, else the first camera drawn on the
+/// display, else the first camera there is.
+fn camera_of(world: &World, looking: Option<Entity>) -> Option<Vec3> {
+    let place = |entity: Entity| {
+        let placed = world.get::<voxear_scene::WorldTransform>(entity).map(|placed| placed.0.w_axis.truncate());
+        placed.or_else(|| world.get::<voxear_scene::Transform>(entity).map(|local| local.position))
+    };
+    if let Some(at) = looking.and_then(place) {
+        return Some(at);
+    }
+    let drawn = crate::camera::camera_views(world, (1, 1))
         .into_iter()
-        .next()
-        .map(|(_, local, placed)| placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+        .find(|view| matches!(view.target, crate::camera::CameraTarget::Display { .. }))
+        .and_then(|view| place(view.camera));
+    drawn.or_else(|| {
+        world
+            .query_ref::<(&crate::Camera, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+            .without::<voxear_scene::Destroying>()
+            .into_iter()
+            .next()
+            .map(|(_, local, placed)| placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+    })
 }
 
 /// What a view's voxel passes draw: its coarse rays, if the picture is not

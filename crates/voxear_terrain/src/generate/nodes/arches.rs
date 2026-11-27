@@ -40,6 +40,7 @@ use super::{
 use crate::generate::{
     compile::{Cells, Compiler, Kernel, Key, Places, V},
     eval::{Givens, Program},
+    gpu::{GpuFinds, GpuOp, GpuStep},
     graph::NodeId,
 };
 
@@ -471,6 +472,52 @@ impl std::fmt::Debug for Finder {
     }
 }
 
+/// The words of a region's record for the GPU: whether it has a bridge,
+/// then where it starts along x and z, the way it runs, its span, its tops
+/// at each end, how thick it is and half how wide; how many windows, then
+/// each window's middle along x, y and z, the way it runs, half how long
+/// and half how wide, room for as many as a region may have.
+const BRIDGE_WORDS: usize = 10;
+const WINDOW_WORDS: usize = 7;
+const RECORD_WORDS: usize = BRIDGE_WORDS + 1 + (PANES * PANES) as usize * WINDOW_WORDS;
+
+impl GpuFinds for Finder {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn cell(&self) -> f32 {
+        self.region
+    }
+
+    fn reach(&self) -> i32 {
+        1
+    }
+
+    fn words(&self) -> usize {
+        RECORD_WORDS
+    }
+
+    fn record(&self, region: [i32; 2]) -> Vec<u32> {
+        let (bridge, windows) = self.region_kept(region);
+        let mut words = Vec::with_capacity(RECORD_WORDS);
+        match bridge {
+            Some(b) => {
+                let numbers = [b.from[0], b.from[1], b.way[0], b.way[1], b.span, b.tops[0], b.tops[1], b.thick, b.half];
+                words.push(1);
+                words.extend(numbers.map(f32::to_bits));
+            }
+            None => words.extend([0; BRIDGE_WORDS]),
+        }
+        words.push(windows.len() as u32);
+        for w in windows.iter() {
+            words.extend([w.at[0], w.at[1], w.at[2], w.way[0], w.way[1], w.reach, w.radius].map(f32::to_bits));
+        }
+        words.resize(RECORD_WORDS, 0);
+        words
+    }
+}
+
 /// What stands or is cut over each column, in metres up, from rows of
 /// the columns' x and z: by `what`, a bridge's underside, its top, the
 /// foot of a window's opening, or its top. A top under its foot where
@@ -516,6 +563,12 @@ impl Kernel for Over {
             *out = if self.what % 2 == 1 { top } else { foot };
             held = Some((region, near));
         }
+    }
+
+    /// Its numbers on the GPU (`archOver` in `voxear_render/shaders/generator.slang`): how wide a region is, and
+    /// what it gives.
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::ArchOver).finding(self.finder.clone()).number(self.finder.region).whole(self.what))
     }
 }
 
@@ -567,6 +620,10 @@ impl Kernel for Bridged {
             }
             held = Some((region, near));
         }
+    }
+
+    fn gpu(&self) -> Option<GpuStep> {
+        Some(GpuStep::new(GpuOp::Bridged).finding(self.finder.clone()).number(self.finder.region))
     }
 }
 

@@ -316,11 +316,9 @@ pub struct Inspector {
     /// rather than following the selection.
     lock: Option<NodeId>,
     locked: bool,
-    /// Its `⋯` button, whose menu switches it between Normal and Debug, and
-    /// whether it is in Debug mode, showing what is really there (see
-    /// `debug_inspector`), with the rows it shows and the asset's path it
-    /// shows them of, when it shows an asset's.
-    mode_button: Option<NodeId>,
+    /// Whether it is in Debug mode, picked from its window's menu, showing
+    /// what is really there (see `debug_inspector`), with the rows it shows
+    /// and the asset's path it shows them of, when it shows an asset's.
     debug: bool,
     debug_view: Option<crate::debug_inspector::DebugView>,
     debug_asset: Option<String>,
@@ -436,6 +434,8 @@ pub struct Inspector {
     /// What the Mesh Renderer and the LOD Group show of levels of detail,
     /// and the camera they say it of.
     mesh_lods: Option<MeshLods>,
+    /// A Light's picture at the top of its section.
+    light_card: Option<crate::light_inspector::LightCard>,
     group_lods: Option<GroupLods>,
     /// A Terrain's tools and its layers (see `terrain_panel`).
     terrain_panel: Option<crate::terrain_panel::TerrainPanel>,
@@ -468,7 +468,6 @@ impl Inspector {
             root,
             lock: None,
             locked: false,
-            mode_button: None,
             debug: false,
             debug_view: None,
             debug_asset: None,
@@ -522,6 +521,7 @@ impl Inspector {
             copied: None,
             also: Vec::new(),
             mesh_lods: None,
+            light_card: None,
             group_lods: None,
             terrain_panel: None,
             block_panel: None,
@@ -586,29 +586,6 @@ impl Inspector {
     /// The row a search showed last, while it is marked.
     pub fn found_row(&self) -> Option<NodeId> {
         self.flash.marked()
-    }
-
-    /// The `⋯` button whose menu switches it between Normal and Debug.
-    pub fn set_mode_button(&mut self, button: NodeId) {
-        self.mode_button = Some(button);
-    }
-
-    /// Opens its mode menu when its `⋯` button was clicked, and takes what
-    /// was picked from it. Returns whether it switched.
-    pub fn update_mode(&mut self, ui: &mut Ui) -> bool {
-        let Some(button) = self.mode_button else { return false };
-        if ui.clicked(button) {
-            let [x, y, _, h] = ui.rect(button);
-            let items = [MenuItem::new("Normal").checked(!self.debug), MenuItem::new("Debug").checked(self.debug)];
-            ui.open_menu(button, (x, y + h), &items);
-        }
-        match ui.menu_choice(button) {
-            Some(picked) if (picked == 1) != self.debug => {
-                self.set_debug(picked == 1);
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Switches it into Debug mode, or back to Normal, to be shown again.
@@ -1232,6 +1209,7 @@ impl Inspector {
         self.group_tabs.clear();
         self.group_foldouts.clear();
         (self.mesh_lods, self.group_lods, self.terrain_panel, self.plants_panel) = (None, None, None, None);
+        self.light_card = None;
         if let Some(panel) = self.volume_panel.take() {
             self.volume_group = Some(panel.group());
         }
@@ -1476,9 +1454,15 @@ impl Inspector {
                 }
                 if let Prop::Terrain(field) = value {
                     meta.range = crate::terrain_props::range(&game.engine.world, entity, *field).map(|r| r.map(f64::from));
+                    meta.title = crate::terrain_props::heading(&game.engine.world, entity, *field).or(meta.title);
                 }
                 if let Prop::BlockWorld(field) = value {
                     meta.range = crate::block_props::range(*field).map(|r| r.map(f64::from));
+                }
+                if *part == Part::Light
+                    && let Some(light) = game.engine.world.get::<voxear_render::Light>(entity)
+                {
+                    crate::light_inspector::adjust(&mut meta, light, value);
                 }
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
                 let enabled = attributes::enabled(game, &self.types, entity, value);
@@ -1517,6 +1501,26 @@ impl Inspector {
                 if let Some((Some(settings), index)) = attributes::item_of(&self.types, value) {
                     label = index.to_string();
                     meta.hide_label |= !settings.index_labels;
+                }
+                // A Light's picture, under its type's buttons.
+                if *value == Prop::LightAppearance {
+                    self.light_card = Some(crate::light_inspector::LightCard::new(ui, container));
+                }
+                // A Mesh Renderer's mesh and material, large, side by side over their rows.
+                if *value == Prop::Mesh && *part == Part::Renderer {
+                    let card = ui.panel(container, Style::row());
+                    ui.add_class(card, "mesh-card");
+                    for (shown, title) in [(Prop::Mesh, "Mesh"), (Prop::Material, "Material")] {
+                        let tile = ui.panel(card, Style::column());
+                        ui.add_class(tile, "mesh-card-tile");
+                        let frame = ui.panel(tile, Style::default());
+                        ui.add_class(frame, "mesh-card-frame");
+                        let image = ui.image(frame);
+                        ui.add_class(image, "mesh-card-image");
+                        let caption = ui.add_label(tile, title);
+                        ui.add_class(caption, "mesh-card-caption");
+                        self.previews.push((shown, image, MESH_CARD_PREVIEW));
+                    }
                 }
                 self.decorate(ui, container, game, (entity, value), (&meta, &label));
                 let row = prop(ui, container, &label);
@@ -2023,6 +2027,12 @@ impl Inspector {
     /// LOD the camera sees, of the mesh and of the group. Returns whether
     /// another level was selected, so its settings show.
     fn update_lods(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, renderer: Option<&Renderer>) -> bool {
+        if let Some(card) = &mut self.light_card {
+            card.update(ui, &game.engine.world, entity);
+        }
+        if let Some(panel) = &mut self.terrain_panel {
+            panel.show_brush(ui, &game.engine.world);
+        }
         let Some(lods) = &mut self.group_lods else { return self.update_mesh_lods(ui, game, entity, renderer) };
         if let Some(level) = lods.clicked_level(ui).filter(|&level| level != self.lod_level) {
             self.lod_level = level;
@@ -2810,8 +2820,17 @@ fn attribute_control(ui: &mut Ui, row: NodeId, value: &Value, meta: &FieldInspec
     if let (Value::Choice(index, options), true) = (value, meta.enum_buttons) {
         let buttons = ui.segmented(row);
         ui.add_class(buttons, "attr-buttons");
-        for option in options {
-            ui.add_segment(buttons, option, None);
+        for (at, option) in options.iter().enumerate() {
+            // With icons, a button shows its icon alone and names it in its tooltip.
+            match meta.option_icons.get(at) {
+                Some(icon) => {
+                    let segment = ui.add_segment(buttons, "", Some(icon));
+                    ui.set_tooltip(segment, option, None);
+                }
+                None => {
+                    ui.add_segment(buttons, option, None);
+                }
+            }
         }
         ui.set_segment(buttons, *index);
         return Some(Control::Buttons(buttons, options.clone()));
@@ -3369,6 +3388,9 @@ pub(crate) fn field_tooltip(types: &ScriptTypes, prop: &Prop) -> Option<String> 
     };
     Some(written.to_string())
 }
+
+/// How big a Mesh Renderer's previews of its mesh and material are, in logical pixels.
+const MESH_CARD_PREVIEW: u32 = 72;
 
 /// What a section's header has at its right: the Transform's menu button,
 /// a tick, on or off, or nothing, for a component Unity gives no tick and

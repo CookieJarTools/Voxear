@@ -2276,6 +2276,9 @@ void voxelWorldCandidates(uint3 id: SV_DispatchThreadID)
             }
         }
     }
+    // A column keeps the band of sectors under its highest (voxelWorldSectors): what is further down is never kept, so
+    // never made. A Volume reaching down without end in a volume hundreds of metres tall asks about no more than that.
+    lowest = max(lowest, highest - int(make->layers) * 64);
     for (int row = max(lowest >> 3, 0); row <= min(highest >> 3, rows - 1); row++)
     {
         uint at;

@@ -3240,6 +3240,41 @@ fn standing_columns(world: &WorldGen, from: [f32; 2], side: usize, step: f32) ->
         .collect()
 }
 
+/// The voxels of the box from `low`, `size` a side, of `scene`'s endless
+/// volume that the CPU has open to the air, and of those how many the GPU
+/// misses, and how many it keeps where the CPU has air; with how many it
+/// keeps. The GPU also keeps a row under its ground's sides, hidden, which
+/// is not counted.
+fn open_voxels_against_cpu(
+    renderer: &Renderer,
+    scene: &World,
+    low: [i32; 3],
+    size: [i32; 3],
+) -> (usize, usize, usize, usize) {
+    let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
+    let (_, kept, found) = gpu_against_cpu(renderer, scene, (low, size), &|_, _| false);
+    let mut solid = vec![false; found.len()];
+    voxear_render::VoxelSolids::of(&volume).unwrap().fill(low, size, &mut solid);
+    let at = |x: i32, y: i32, z: i32| (x + size[0] * (y + size[1] * z)) as usize;
+    let (mut missing, mut extra, mut open) = (0, 0, 0);
+    for z in 1..size[2] - 1 {
+        for y in 1..size[1] - 1 {
+            for x in 1..size[0] - 1 {
+                let cpu = solid[at(x, y, z)];
+                let shown = cpu
+                    && [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+                        .iter()
+                        .any(|&(dx, dy, dz)| !solid[at(x + dx, y + dy, z + dz)]);
+                let gpu = found[at(x, y, z)] != 0;
+                open += usize::from(shown);
+                missing += usize::from(shown && !gpu);
+                extra += usize::from(gpu && !cpu);
+            }
+        }
+    }
+    (open, missing, extra, kept)
+}
+
 #[test]
 fn spires_and_natural_bridges_on_the_gpu_are_the_cpus() {
     let Some(renderer) = renderer() else { return };
@@ -3322,31 +3357,10 @@ fn an_endless_volume_draws_its_generators_spires_and_bridges_as_the_cpu_finds_th
     // Up the spire, every voxel the CPU has open to the air the GPU keeps, and the GPU keeps none in its air.
     let per = 16;
     let volume = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().clone();
-    let solids = voxear_render::VoxelSolids::of(&volume).unwrap();
     for up in [0.3f32, 0.6, 0.85] {
         let y = ((spire_ground + (spire_top - spire_ground) * up - low) * per as f32) as i32;
         let low_corner = [(spire[0] * per as f32) as i32 - 200, y - 20, (spire[1] * per as f32) as i32 - 200];
-        let size = [400, 40, 400];
-        let (_, kept, found) = gpu_against_cpu(&renderer, &scene, (low_corner, size), &|_, _| false);
-        let mut solid = vec![false; found.len()];
-        solids.fill(low_corner, size, &mut solid);
-        let at = |x: i32, y: i32, z: i32| (x + size[0] * (y + size[1] * z)) as usize;
-        let (mut missing, mut extra, mut open) = (0, 0, 0);
-        for z in 1..size[2] - 1 {
-            for y in 1..size[1] - 1 {
-                for x in 1..size[0] - 1 {
-                    let cpu = solid[at(x, y, z)];
-                    let shown = cpu
-                        && [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
-                            .iter()
-                            .any(|&(dx, dy, dz)| !solid[at(x + dx, y + dy, z + dz)]);
-                    let gpu = found[at(x, y, z)] != 0;
-                    open += usize::from(shown);
-                    missing += usize::from(shown && !gpu);
-                    extra += usize::from(gpu && !cpu);
-                }
-            }
-        }
+        let (open, missing, extra, kept) = open_voxels_against_cpu(&renderer, &scene, low_corner, [400, 40, 400]);
         eprintln!(
             "{:.0}% up the spire: {kept} kept, {open} open on the CPU, {missing} missing, {extra} over",
             up * 100.0
@@ -3455,4 +3469,34 @@ fn a_biomes_rock_layers_are_laid_in_voxels_as_a_world_of_blocks_lays_them() {
     eprintln!("{same} of {kept} top voxels in the CPU's band, of {} columns", cells.len());
     assert!(kept > 300, "the columns' top voxels are kept: {kept}");
     assert!(same * 100 >= kept * 97, "{same} of {kept} in the CPU's band");
+}
+
+#[test]
+fn caves_in_a_volume_hundreds_of_metres_tall_are_made_as_in_a_short_one() {
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(caved_alpine());
+    let ground = world.height_at(300.0, 300.0);
+    let mut scene = generated_view(world.clone(), 300.0, 300.0, 20.0, 30.0);
+    for volume in scene.query::<&mut VoxelVolume>() {
+        volume.size.y = 720.0;
+        volume.reach = 96.0;
+        volume.ground = Some(VoxelGround { grass: 0.0, flowers: 0.0, ..VoxelGround::default() });
+        volume.generator.as_mut().unwrap().floor = ground - 400.0;
+    }
+    {
+        let camera = scene.query::<(&Camera, &mut Transform)>().into_iter().next().unwrap().1;
+        camera.position.y = 420.0;
+    }
+    let pixels = render(&mut renderer, &scene, 10);
+    keep_image("tall caves.png", &pixels);
+    // The voxels open to the air round the ground under the camera, overhangs and caves' mouths, are the CPU's.
+    let top = ((ground - (ground - 400.0)) * 16.0) as i32;
+    let low = [300 * 16 - 64, top - 96, 300 * 16 - 64];
+    let (open, missing, extra, kept) = open_voxels_against_cpu(&renderer, &scene, low, [128, 160, 128]);
+    eprintln!("{kept} kept, {open} open on the CPU, {missing} missing, {extra} over");
+    assert!(open > 10_000, "the CPU's ground: {open} voxels open to the air");
+    assert!(
+        missing * 100 < open && extra * 100 < open,
+        "the GPU's ground is the CPU's: {missing} missing, {extra} over"
+    );
 }

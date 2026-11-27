@@ -128,6 +128,30 @@ fn a_world_of_blocks_ground_generator_says_what_runs_on_the_gpu() {
             eprintln!("{dz:4}: {} | {}", show(&chunks), show(&ground));
         }
     }
+    // How long what the GPU's spires and bridges read takes to find on the CPU, over a square round a place.
+    if let (Ok(around), Ok(program)) = (std::env::var("VOXEAR_FINDS"), ground.gpu_program()) {
+        let at: Vec<f32> = around.split(',').map(|part| part.trim().parse().unwrap()).collect();
+        for finder in &program.finds {
+            let finds = &finder.0;
+            let side = (at[2] / finds.cell()).ceil() as i32;
+            let first = [(at[0] / finds.cell()) as i32 - side / 2, (at[1] / finds.cell()) as i32 - side / 2];
+            let started = std::time::Instant::now();
+            let mut found = 0;
+            for z in 0..side {
+                for x in 0..side {
+                    found += usize::from(finds.record([first[0] + x, first[1] + z])[0] != 0);
+                }
+            }
+            let took = started.elapsed();
+            eprintln!(
+                "{:?}: {} cells in {:.2} s, {:.3} ms each, {found} with something",
+                finder,
+                side * side,
+                took.as_secs_f32(),
+                took.as_secs_f32() * 1000.0 / (side * side) as f32
+            );
+        }
+    }
     eprintln!("has rivers: {}", ground.has_rivers());
     match ground.gpu_program() {
         Ok(program) => eprintln!(

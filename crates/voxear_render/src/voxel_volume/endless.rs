@@ -1533,8 +1533,12 @@ impl Endless {
         }
         wanted.sort_unstable_by_key(|(distance, _)| *distance);
         self.jobs.clear();
+        // A Volume's column is made through the band of sectors it keeps, which a volume hundreds of metres tall keeps
+        // three times as deep: as many fewer columns a frame, so no pass making them runs long enough for the GPU to
+        // give up waiting on it.
+        let volume_jobs = (MAX_VOLUME_JOBS * 8 / layers_of(self.tall) as usize).clamp(1, MAX_VOLUME_JOBS);
         let most = match (self.volume.is_some(), self.forest.is_some()) {
-            (true, _) => MAX_VOLUME_JOBS,
+            (true, _) => volume_jobs,
             (false, true) => MAX_TREE_JOBS,
             (false, false) => MAX_JOBS,
         };

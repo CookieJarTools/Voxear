@@ -26,6 +26,7 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	private const int ViewDistanceValue = 8;
 	private const int ReadyValue = 9;
 	private const int ShownValue = 10;
+	private const int LightValue = 11;
 	private const int PassedCountValue = 20;
 	private const int BetweenFromValue = 30;
 	private const int BetweenToValue = 31;
@@ -33,6 +34,7 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	private const int CreateValue = 33;
 	private const int CreatedValue = 34;
 	private const int DefaultViewDistanceValue = 35;
+	private const int LightingValue = 36;
 	private const int PassedValue = 100;
 	private const int PassedKept = 64;
 
@@ -118,6 +120,21 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	}
 
 	/// <summary>
+	/// How brightly its far side lights what stands in front of it: 1 as bright as the far side shows through it, 0
+	/// for no light, up to 8. A gate onto a sunlit field lights the dark hall in front of it; one into a fire glows red.
+	/// Lighting says how, for the whole game.
+	/// <code>
+	/// // The rift into the abyss throws its glow twice as far into the cave.
+	/// rift.Portal.Light = 2f;
+	/// </code>
+	/// </summary>
+	public float Light
+	{
+		get { return Number(LightValue); }
+		set { Write(LightValue, new Vector4(value, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>
 	/// How much of its far side shows through its mist, from 0 to 1. The mist clears over a moment once a camera
 	/// comes within its view distance, and thickens again once none is.
 	/// </summary>
@@ -134,6 +151,19 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	{
 		get { return NativeComponent.Get(NativeComponent.Portal, Obj.None, DefaultViewDistanceValue, out var value) ? value.X : 0f; }
 		set { NativeComponent.Set(NativeComponent.Portal, Obj.None, DefaultViewDistanceValue, new Vector4(value, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>
+	/// How Portals' far sides light what stands in front of them, for the whole game: the project's, from
+	/// voxear.toml, until set. Picture costs more than Average; a game's options can turn it down on a slow machine.
+	/// <code>
+	/// Portal.Lighting = highQuality ? PortalLighting.Picture : PortalLighting.Average;
+	/// </code>
+	/// </summary>
+	public static PortalLighting Lighting
+	{
+		get { return NativeComponent.Get(NativeComponent.Portal, Obj.None, LightingValue, out var value) ? (PortalLighting)(int)value.X : PortalLighting.Average; }
+		set { NativeComponent.Set(NativeComponent.Portal, Obj.None, LightingValue, new Vector4((int)value, 0f, 0f, 0f)); }
 	}
 
 	/// <summary>

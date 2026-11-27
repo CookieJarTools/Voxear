@@ -297,6 +297,7 @@ impl Default for QualitySettings {
 /// draw_distance = 0.0     # how far ahead a far side is drawn; 0 for as far as the world is
 /// view_distance = 96.0    # how far off a Portal without its own still shows its far side
 /// dimension_distance = 24.0  # how near a Portal into a dimension loaded for it the dimension is loaded
+/// light = "average"       # how far sides light what is in front of them: "off", "average" or "picture"
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -309,6 +310,7 @@ pub struct PortalSettings {
     pub draw_distance: f32,
     pub view_distance: f32,
     pub dimension_distance: f32,
+    pub light: crate::portals::PortalLighting,
 }
 
 impl Default for PortalSettings {
@@ -323,6 +325,7 @@ impl Default for PortalSettings {
             draw_distance: quality.draw_distance,
             view_distance: quality.view_distance,
             dimension_distance: quality.dimension_distance,
+            light: quality.light.into(),
         }
     }
 }
@@ -339,6 +342,7 @@ impl PortalSettings {
             draw_distance: self.draw_distance.max(0.0),
             view_distance: self.view_distance.max(0.0),
             dimension_distance: self.dimension_distance.clamp(2.0, 1000.0),
+            light: self.light.into(),
         });
     }
 }
@@ -777,6 +781,22 @@ impl Project {
         set_key(&mut document, "portals", "view_distance", written);
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.portals.view_distance = distance;
+        Ok(())
+    }
+
+    /// Writes how Portals' far sides light into `voxear.toml`'s `[portals]`,
+    /// left out where it is the default. The rest of the file is kept as
+    /// it is.
+    pub fn set_portal_light(&mut self, light: crate::portals::PortalLighting) -> Result<()> {
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let name = toml::Value::try_from(light)?.as_str().unwrap_or_default().to_string();
+        let written = (light != PortalSettings::default().light).then(|| toml_edit::value(name));
+        set_key(&mut document, "portals", "light", written);
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.portals.light = light;
         Ok(())
     }
 

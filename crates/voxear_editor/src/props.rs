@@ -1119,6 +1119,8 @@ pub enum Prop {
     /// Whether its view distance is the project's or its own, and its own.
     PortalViewFrom,
     PortalViewDistance,
+    /// How brightly its far side lights what stands in front of it.
+    PortalLight,
     /// The Obj a camera films, which its view is carried through Portals
     /// to go on seeing.
     CameraFollows,
@@ -1584,7 +1586,8 @@ impl Prop {
             | Prop::PortalMist
             | Prop::PortalPass(..)
             | Prop::PortalViewFrom
-            | Prop::PortalViewDistance => Part::Portal,
+            | Prop::PortalViewDistance
+            | Prop::PortalLight => Part::Portal,
             Prop::Shape2D
             | Prop::Offset2D
             | Prop::Size2D
@@ -2059,6 +2062,7 @@ impl Prop {
             Prop::CameraSees(_, name) => return format!("sees.{name}"),
             Prop::Camera(field) => crate::camera_props::key(*field),
             Prop::PortalViewFrom | Prop::PortalViewDistance => "view_distance",
+            Prop::PortalLight => "light",
             Prop::CameraFollows => "camera_follows",
             Prop::Shape2D => "shape",
             Prop::Offset2D => "offset",
@@ -2868,6 +2872,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if world.get::<Portal>(entity).is_some_and(|portal| portal.view_distance.is_some()) {
                 props.push(Prop::PortalViewDistance);
             }
+            props.push(Prop::PortalLight);
             props
         }
         Part::Collider2D => {
@@ -3394,6 +3399,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::Camera(field) => return crate::camera_props::label(*field),
         Prop::PortalViewFrom => "View Distance",
         Prop::PortalViewDistance => "Distance",
+        Prop::PortalLight => "Light",
         Prop::CameraFollows => "Follows",
         Prop::Shape2D => "Shape",
         Prop::Offset2D => "Offset",
@@ -4071,6 +4077,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Choice(usize::from(own), vec!["Project".into(), "Own".into()])
         }
         Prop::PortalViewDistance => Value::Number(world.get::<Portal>(entity)?.view_distance?),
+        Prop::PortalLight => Value::Number(world.get::<Portal>(entity)?.light),
         Prop::CameraFollows => {
             world.get::<Camera>(entity)?;
             let follows = world.get::<voxear_render::CameraFollows>(entity).map(|follows| follows.0);
@@ -5908,6 +5915,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::PortalViewDistance, Value::Number(n)) => {
             with(world, entity, |portal: &mut Portal| portal.view_distance = Some(n.max(0.0)))
         }
+        (Prop::PortalLight, Value::Number(n)) => with(world, entity, |portal: &mut Portal| {
+            portal.light = n.clamp(0.0, voxear_engine::portals::MOST_LIGHT);
+        }),
         (Prop::JointAnchor, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.anchor = three(&v)),
         (Prop::JointAxis, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.axis = three(&v)),
         // Limits start as a door's quarter turn, or a rope from no length to two metres.

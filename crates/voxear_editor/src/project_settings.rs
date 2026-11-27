@@ -178,6 +178,7 @@ const COMPRESSION: &[(&str, &str)] = &[("LZ4", "lz4"), ("Zstandard", "zstd"), ("
 const AUTHORITY: &[(&str, &str)] = &[("Server", "server"), ("Shared", "shared")];
 const ORIGIN: &[(&str, &str)] = &[("Off", "off"), ("Endless Worlds", "endless"), ("Every Level", "always")];
 const TRAIL_QUALITY: &[(&str, &str)] = &[("Off", "off"), ("Low", "low"), ("Medium", "medium"), ("High", "high")];
+const PORTAL_LIGHT: &[(&str, &str)] = &[("Off", "off"), ("Average", "average"), ("Picture", "picture")];
 const TRAIL_LOOK: &[(&str, &str)] = &[("Match the Water", "match_water"), ("Smooth", "smooth"), ("Blocky", "blocky")];
 const WORLD_QUALITY: &[(&str, &str)] =
     &[("Low", "low"), ("Medium", "medium"), ("High", "high"), ("Ultra", "ultra"), ("Custom", "custom")];
@@ -417,6 +418,13 @@ const FIXED: &[Setting] = &[
         "View distance",
         number(0.0, 100_000.0, "m"),
         "How far from its opening a camera sees a Portal's far side, for each Portal without a view distance of its own. Further shows more far sides at once, each costing a view.",
+    ),
+    Setting::new(
+        ("Graphics", "Portals"),
+        "portals.light",
+        "Light",
+        Kind::Choice(PORTAL_LIGHT),
+        "How an open Portal's far side lights what stands in front of it. Average shines the colour the far side shows on the whole; Picture shines what it shows, each part of the opening its own colour, for a little more GPU time. Each Portal's Light sets how brightly.",
     ),
     Setting::new(
         ("Graphics", "Portals"),

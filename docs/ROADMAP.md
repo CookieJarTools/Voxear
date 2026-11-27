@@ -2345,9 +2345,15 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
   draw_distance` cuts. A Portal in GrownPlants seen from 26 m and 60 m at 720p costs 3.6 ms and 1.8 ms; with
   its view distance short of the camera it shows its mist and the frame costs what it would without it. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
-  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
-  bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
-  part-way through, Portals to other levels.
+  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Light through
+  Portals (`portal_light`, `[portals] light`, each Portal's **Light**, `Portal.Light`, `Portal.Lighting`): an open
+  Portal is a shadowed rectangle light over its opening, shining what its far side was last seen to show, read
+  each frame its far side is drawn into a 16 by 16 picture where nothing stands before the opening; **Average**
+  shines the picture's average, **Picture** the picture itself, each point weighing 4 by 4 parts of it by how
+  much light each sends it, in the fog too; it fades as the Portal closes. Tests: shaded ground before a Portal
+  onto glowing walls lit and dark again once it closes, red and blue walls leaning each side of the ground to its
+  own colour. Still to come: bringing a far side in an endless world under +1.5 ms, the far side's own lamps and
+  sun shining through, shadows and sound through Portals, bodies resting part-way through, Portals to other levels.
 - **Dimensions (in progress).** Built, in the engine: worlds of their own in the one game, each with its own Block
   Worlds, sky, sun, post-processing and weather, at coordinates that may be another's. An Obj is in its root's
   dimension (`InDimension`), the level's with none; a `.dimension` asset is a scene's Objs and lighting under a

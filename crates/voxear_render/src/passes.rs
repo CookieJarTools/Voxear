@@ -990,9 +990,6 @@ pub fn record(
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::voxel_volume::record_opaque(fg, (pipelines, shading_push), voxels, images, targets, &shading_buffers);
-                // Their glass over everything opaque.
-                let images = shading(ImageAccess::ColorAttachment);
-                crate::voxel_volume::record_glass(fg, (pipelines, shading_push), voxels, images, (hdr, depth), &shading_buffers);
             }
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
@@ -1049,6 +1046,13 @@ pub fn record(
         begin_rendering(ctx, extent, &color, Some(&depth));
         fullscreen(ctx, pipelines.sky, &push);
     });
+    // The voxels' glass over everything opaque and the sky, which writes no depth: before it, the sky would be drawn
+    // over glass with nothing behind it.
+    if let Some(voxels) = &frame.voxels {
+        let images = shading(ImageAccess::ColorAttachment);
+        let targets = (hdr, depth);
+        crate::voxel_volume::record_glass(fg, (pipelines, shading_push), voxels, images, targets, &shading_buffers);
+    }
     // What a shader pack draws once the opaque surfaces and the sky are lit, before water and glass.
     lit(fg);
 

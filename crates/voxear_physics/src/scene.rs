@@ -611,6 +611,18 @@ impl Default for Joint {
 
 impl Component for Joint {}
 
+/// More joints on an Obj beside its Joint, each by a number of its own: as
+/// a piece hung from several ropes. A joint is made again only when it
+/// changes, so taking one away leaves the rest as they are.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MoreJoints(pub Vec<(u32, Joint)>);
+
+impl Component for MoreJoints {}
+
+/// The number its Joint goes by among an Obj's joints; those of its More
+/// Joints go by their own.
+const OWN_JOINT: u32 = u32::MAX;
+
 /// What a joint was made from, to make it again when any of it changes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct JointKey {
@@ -724,7 +736,7 @@ pub struct PhysicsScene {
     bodies: voxear_ecs::EntityMap<Kept>,
     owners: HashMap<BodyId, Entity>,
     characters: HashMap<Entity, Walker>,
-    joints: HashMap<Entity, (JointId, JointKey)>,
+    joints: HashMap<(Entity, u32), (JointId, JointKey)>,
     vehicles: HashMap<Entity, vehicles::Ride>,
     /// Where each Wheel's Obj was when first seen, before physics moved it.
     wheels_at_rest: HashMap<Entity, Vec3>,
@@ -1596,20 +1608,27 @@ impl PhysicsScene {
     /// the world, where they are now, and again when either body or the
     /// joint changed. A joint whose Objs have no bodies waits for them.
     fn sync_joints(&mut self, world: &World) {
-        let wanted: Vec<(Entity, Joint)> = world
+        let mut wanted: Vec<((Entity, u32), Joint)> = world
             .query_ref::<(Entity, &Joint)>()
             .without::<Destroying>()
             .into_iter()
-            .map(|(entity, joint)| (entity, *joint))
+            .map(|(entity, joint)| ((entity, OWN_JOINT), *joint))
             .collect();
-        let gone: Vec<Entity> =
-            self.joints.keys().copied().filter(|entity| !wanted.iter().any(|(e, _)| e == entity)).collect();
-        for entity in gone {
-            if let Some((joint, _)) = self.joints.remove(&entity) {
+        for (entity, more) in world.query_ref::<(Entity, &MoreJoints)>().without::<Destroying>().into_iter() {
+            wanted.extend(more.0.iter().map(|(number, joint)| ((entity, *number), *joint)));
+        }
+        let gone: Vec<(Entity, u32)> =
+            self.joints.keys().copied().filter(|held| !wanted.iter().any(|(w, _)| w == held)).collect();
+        for held in gone {
+            if let Some((joint, key)) = self.joints.remove(&held) {
                 self.world.remove_joint(joint);
+                // What it held, asleep or not, moves again without it.
+                for body in std::iter::once(key.body).chain(key.other) {
+                    self.world.set_active(body, true);
+                }
             }
         }
-        for (entity, joint) in wanted {
+        for ((entity, number), joint) in wanted {
             let Some(body) = self.body(entity) else { continue };
             let other = match joint.connected {
                 Some(connected) => match self.body(connected) {
@@ -1619,10 +1638,10 @@ impl PhysicsScene {
                 None => None,
             };
             let key = JointKey { joint, body, other };
-            if self.joints.get(&entity).is_some_and(|(_, had)| *had == key) {
+            if self.joints.get(&(entity, number)).is_some_and(|(_, had)| *had == key) {
                 continue;
             }
-            if let Some((old, _)) = self.joints.remove(&entity) {
+            if let Some((old, _)) = self.joints.remove(&(entity, number)) {
                 self.world.remove_joint(old);
             }
             let placed = voxear_scene::world_matrix(world, entity);
@@ -1645,7 +1664,7 @@ impl PhysicsScene {
                 },
             };
             if let Some(made) = self.world.add_joint(kind, body, other) {
-                self.joints.insert(entity, (made, key));
+                self.joints.insert((entity, number), (made, key));
             }
         }
     }
@@ -1813,7 +1832,7 @@ impl PhysicsScene {
         if let Some(kept) = self.bodies.get(&entity) {
             // A joint holds its bodies, so it goes first; it is made again once its bodies are back.
             let body = kept.body;
-            let holding: Vec<Entity> = (self.joints.iter())
+            let holding: Vec<(Entity, u32)> = (self.joints.iter())
                 .filter(|(_, (_, key))| key.body == body || key.other == Some(body))
                 .map(|(entity, _)| *entity)
                 .collect();
@@ -2590,10 +2609,44 @@ mod tests {
         // Taken off, the door is free; a body made again takes its joint again.
         world.remove::<Joint>(door);
         physics.step(&mut world, 1.0 / 60.0);
-        assert!(!physics.joints.contains_key(&door));
+        assert!(!physics.joints.contains_key(&(door, OWN_JOINT)));
         world.get_mut::<Collider>(weight).unwrap().radius = 0.3;
         physics.step(&mut world, 1.0 / 60.0);
-        assert_eq!(physics.joints.get(&weight).map(|(_, key)| key.body), physics.body(weight));
+        assert_eq!(physics.joints.get(&(weight, OWN_JOINT)).map(|(_, key)| key.body), physics.body(weight));
+    }
+
+    #[test]
+    fn a_slab_hangs_level_from_two_ropes_held_at_its_ends_and_one_taken_away_leaves_the_other() {
+        let mut world = World::new();
+        // A slab two metres long, a rope from each end to a point a metre over it.
+        let slab = world.spawn((Transform::from_position(Vec3::new(0.0, 2.0, 0.0)),));
+        world.insert(slab, Collider { size: [2.0, 0.2, 0.5], ..Collider::default() });
+        world.insert(slab, Rigidbody::default());
+        let rope = |x: f32| Joint {
+            kind: JointType::Distance,
+            anchor: [x, 1.0, 0.0],
+            hold: Some([x, 0.0, 0.0]),
+            limits: Some([0.0, 1.0]),
+            ..Joint::default()
+        };
+        world.insert(slab, MoreJoints(vec![(7, rope(-1.0)), (9, rope(1.0))]));
+        let mut physics = PhysicsScene::new();
+        for _ in 0..120 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        let t = *world.get::<Transform>(slab).unwrap();
+        assert!((t.position.y - 2.0).abs() < 0.05, "held where it was, by its ends: {}", t.position);
+        assert!(t.rotation.angle_between(voxear_core::math::Quat::IDENTITY) < 0.05, "level: {:?}", t.rotation);
+        let kept = physics.joints[&(slab, 9)].0;
+        // One rope taken away: the other is the same joint, and the slab swings down on it.
+        world.get_mut::<MoreJoints>(slab).unwrap().0.retain(|(number, _)| *number == 9);
+        for _ in 0..120 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        assert!(!physics.joints.contains_key(&(slab, 7)));
+        assert_eq!(physics.joints[&(slab, 9)].0, kept, "the rope left was not made again");
+        let hung = world.get::<Transform>(slab).unwrap().position;
+        assert!(hung.y < 1.8, "it swung down on the rope left: {hung}");
     }
 
     #[test]

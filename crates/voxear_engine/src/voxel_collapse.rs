@@ -633,7 +633,7 @@ pub fn step(world: &mut World, dt: f32, events: &[PhysicsEvent]) {
         }
     }
     bend(world, dt);
-    crate::voxel_ropes::tend(world);
+    crate::voxel_ropes::tend(world, dt);
     hits(world, dt, events);
     keep_to_most(world);
     settle_dust(world, dt);
@@ -648,7 +648,7 @@ fn hits(world: &mut World, dt: f32, events: &[PhysicsEvent]) {
         .into_iter()
         .filter(|(_, body, _)| body.built && body.fall == PieceFall::Falling)
         .map(|(e, body, t)| (e, body.clone(), t.position))
-        .filter(|(e, ..)| world.get::<crate::physics::Joint>(*e).is_none())
+        .filter(|(e, ..)| world.get::<crate::physics::Joint>(*e).is_none() && world.get::<crate::physics::MoreJoints>(*e).is_none())
         .collect();
     let mut blasts: Vec<(Entity, Vec3, f32)> = Vec::new();
     let mut speeds: Vec<(Entity, Vec3)> = Vec::new();

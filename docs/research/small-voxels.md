@@ -1541,6 +1541,15 @@ stages, each measured before the next.
   still within ten seconds (first tried at drag 1.2, it swung 0.5 m and still moved 3 m/s seconds later). It snaps
   when its piece's weight and swing (m(g + v²/L)) pull harder than its strength, when a blast reaches
   the line, or by `Voxels.CutRope`. Drawn as a 2-voxel line of voxels, remade as its length changes.
+- **Several ropes.** An Obj may now have more joints than its Joint (`MoreJoints`, each by a number of its own, so
+  taking one away leaves the rest as they are; taking one away wakes what it held). A piece takes every rope whose
+  point is in it. Each rope's share of its weight is the least set of pulls that bears it and turns it neither way,
+  a rope that would have to push slack (first tried by how near each point is to the middle, which gave three
+  ropes a third each where the two across the diagonal from a cut one bear half). A rope snaps when pulled past its
+  strength for 0.2 s, or at once past 1.5 times it, so the jolt of a cut doesn't snap the rest. Engine test (eight
+  runs alike): a slab on four ropes hangs within 0.3 degrees of level, leans 32 to 63 degrees on three, hangs on
+  two, and the last snaps; physics test: a slab held at both ends by two ropes hangs level, and swings down on the
+  one left.
 - Tests: render `a_timber_floor_whose_post_is_blown_out_stays_hinged_to_its_wall_and_stone_snaps`; engine
   `a_timber_floor_blown_off_its_post_hangs_from_its_wall_bent_and_a_long_one_snaps`,
   `a_slab_blown_off_its_posts_hangs_from_a_rope_sways_a_little_and_falls_once_cut`,

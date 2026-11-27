@@ -4651,7 +4651,7 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   `voxel_prints.make` with `"background": true`); no grass, flowers or trees grow where a print stands, by a
   footprint a bit a column of the print, nor trees whose foot a ball carved out; a print turned off the quarter
   turns, or finer than the volume, is looked at a quarter voxel toward each corner as well, so a wall a voxel thick
-  stays whole. Next: changed bricks in region files, edits over the network.
+  stays whole. Changed voxels are saved in region files and shared over the network, both below.
 - **A world of blocks' ground on the GPU (2026-11-26).** An endless volume's **Generator** can be a generated world
   of blocks: its ground generator as its chunks are made by it, its biomes' land and painted Land, Height and Biome
   maps included, the maps beside the program (9 MB for the Realm's 51 km). Peaks, Plateaus (its canyons and ramps),

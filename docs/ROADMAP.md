@@ -738,6 +738,8 @@ Later:
   - [x] key maps: the keyboard and mouse, and a gamepad, drawn with each bound control lit and its actions labelled
     round the device, coloured as assigned, hidden and unused or by the actions' categories (`[[category]]` in
     `.inputactions`, and `hidden` actions), in the editor's Input Actions window and in games as `KeymapView`
+  - [x] key map labels each with a chip of the key and a line of their own that crosses no key, label or other
+    line, conflicts in a box naming both actions; the mouse seen from above and the pad drawn as their shapes
   - [x] a ready-made, themeable rebinding screen (`KeyBindingScreen`) with a Layout view, the device drawn, and a List
     view (`ControlsList`), a row an action with its keys and buttons, conflicts and Reset, as tabs or alone; built
     from `Input.Actions`, `InputAction.GetBindings`, `Input.ControlUses`, `ControlLabel`, `Conflicts`, `Categories`

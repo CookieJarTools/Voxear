@@ -4593,9 +4593,12 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     let mut icons = Vec::new();
     with_class(&editor.ui, keymap, "keymap-callout-icon", &mut icons);
     assert_eq!(icons.len(), 1, "Jump's icon beside it by Space");
-    let mut body = Vec::new();
-    with_class(&editor.ui, keymap, "keymap-body", &mut body);
-    assert_eq!(body.len(), 2, "the keyboard and the mouse drawn behind their keys");
+    let board = first_with(&editor.ui, keymap, "keymap-board").unwrap();
+    let drawn = editor.ui.shapes(board);
+    assert!(drawn.iter().any(|s| matches!(s, voxear_ui::Shape::Rect { .. })), "the keyboard's plate behind its keys");
+    assert!(drawn.iter().any(|s| matches!(s, voxear_ui::Shape::Path { .. })), "and the mouse's shell");
+    let problems = editor.ui.keymap_crossings(keymap);
+    assert!(problems.is_empty(), "{problems:#?}");
     shot(&mut renderer, "input-actions-keyboard.png");
 
     // Coloured by category, then the gamepad.
@@ -4613,7 +4616,154 @@ fn the_input_actions_window_draws_the_keyboard_and_the_pad_with_their_actions() 
     let mut keys = Vec::new();
     with_class(&editor.ui, keymap, "keymap-key", &mut keys);
     assert_eq!(lit(&editor, &keys), 9, "Sprint shares the left stick, which it presses");
+    let problems = editor.ui.keymap_crossings(keymap);
+    assert!(problems.is_empty(), "{problems:#?}");
     shot(&mut renderer, "input-actions-gamepad.png");
+}
+
+/// A sailing game's actions, every control labelled and some in conflict.
+const SAILING: &str = r#"format = 1
+
+[[map]]
+name = "Player"
+
+[[map.action]]
+name = "Move"
+type = "vector2"
+bindings = [{ up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right = "Keyboard/D" }, "Gamepad/LeftStick"]
+
+[[map.action]]
+name = "Look"
+type = "vector2"
+bindings = ["Mouse/Delta", "Gamepad/RightStick"]
+
+[[map.action]]
+name = "Zoom"
+type = "vector2"
+bindings = ["Mouse/Scroll", { up = "Gamepad/DpadUp", down = "Gamepad/DpadDown" }]
+
+[[map.action]]
+name = "Special 1"
+bindings = ["Keyboard/1", "Gamepad/DpadRight"]
+
+[[map.action]]
+name = "Special 2"
+bindings = ["Keyboard/2", "Gamepad/RightShoulder"]
+
+[[map.action]]
+name = "Special 3"
+bindings = ["Keyboard/3", "Gamepad/LeftShoulder"]
+
+[[map.action]]
+name = "Interact"
+bindings = ["Keyboard/E", "Gamepad/West"]
+
+[[map.action]]
+name = "Run"
+bindings = ["Keyboard/ShiftLeft", "Gamepad/LeftStickPress"]
+
+[[map.action]]
+name = "Sail Colour"
+bindings = ["Keyboard/Z", "Gamepad/DpadUp"]
+
+[[map.action]]
+name = "Sail Emblem"
+bindings = ["Keyboard/X", "Gamepad/DpadDown"]
+
+[[map.action]]
+name = "Emblem Colour"
+bindings = ["Keyboard/C", "Gamepad/DpadLeft"]
+
+[[map.action]]
+name = "Fish"
+bindings = ["Keyboard/F", "Gamepad/North"]
+
+[[map.action]]
+name = "Hoist"
+bindings = ["Keyboard/H", "Gamepad/Select"]
+
+[[map.action]]
+name = "Cannons"
+bindings = ["Keyboard/V", "Gamepad/RightStickPress"]
+
+[[map.action]]
+name = "Bait"
+bindings = ["Keyboard/B", "Gamepad/DpadLeft"]
+
+[[map.action]]
+name = "Open Map"
+bindings = ["Keyboard/M"]
+
+[[map.action]]
+name = "Free Pointer"
+bindings = ["Keyboard/Escape"]
+
+[[map.action]]
+name = "Dive"
+bindings = ["Keyboard/ControlLeft", "Gamepad/East"]
+
+[[map.action]]
+name = "Jump"
+bindings = ["Keyboard/Space", "Gamepad/South"]
+
+[[map.action]]
+name = "Attack"
+bindings = ["Mouse/Left", "Gamepad/RightTrigger"]
+
+[[map.action]]
+name = "Heavy Attack"
+bindings = ["Mouse/Right", "Gamepad/LeftTrigger"]
+
+[[map.action]]
+name = "Hold Pointer"
+bindings = ["Mouse/Left"]
+"#;
+
+#[test]
+fn the_input_actions_window_lays_out_a_full_set_of_bindings_with_clean_lines() {
+    use voxear_editor::PaletteKey;
+    let size = (1920, 1080);
+    let Some(mut renderer) = Renderer::new_offscreen(size.0, size.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    without_own_actions(dir.path());
+    std::fs::write(dir.path().join("Controls.inputactions"), SAILING).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    editor.update(&mut renderer, size, 1.0, 1.0 / 60.0).unwrap();
+    editor.ui.text_input("input actions");
+    editor.update(&mut renderer, size, 1.0, 1.0 / 60.0).unwrap();
+    editor.palette_key(PaletteKey::Enter);
+    editor.update(&mut renderer, size, 1.0, 1.0 / 60.0).unwrap();
+    let view = editor.ui.find(editor.ui.root(), "input-view").expect("the Input Actions window");
+    editor.ui.set_segment(view, 1);
+    for _ in 0..4 {
+        editor.update(&mut renderer, size, 1.0, 1.0 / 60.0).unwrap();
+    }
+    let keymap = editor.ui.find(editor.ui.root(), "input-keymap").unwrap();
+    let callouts = |editor: &voxear_editor::Editor| {
+        let mut callouts = Vec::new();
+        with_class(&editor.ui, keymap, "keymap-callout", &mut callouts);
+        callouts
+    };
+    assert_eq!(callouts(&editor).len(), 24, "every key and mouse control bound");
+    let problems = editor.ui.keymap_crossings(keymap);
+    assert!(problems.is_empty(), "the keyboard and mouse: {problems:#?}");
+    shot(&mut renderer, "input-actions-sailing-keyboard.png");
+
+    let scheme = editor.ui.find(editor.ui.root(), "input-scheme").unwrap();
+    let pad = editor.ui.children(scheme)[1];
+    click(&mut editor.ui, pad);
+    for _ in 0..4 {
+        editor.update(&mut renderer, size, 1.0, 1.0 / 60.0).unwrap();
+    }
+    assert_eq!(callouts(&editor).len(), 15, "every pad control bound");
+    let conflicts = callouts(&editor).into_iter().filter(|&c| editor.ui.has_class(c, "conflict")).count();
+    assert_eq!(conflicts, 3, "the d-pad's up, left and down");
+    let problems = editor.ui.keymap_crossings(keymap);
+    assert!(problems.is_empty(), "the pad: {problems:#?}");
+    shot(&mut renderer, "input-actions-sailing-gamepad.png");
 }
 
 #[test]

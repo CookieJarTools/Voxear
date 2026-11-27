@@ -3379,7 +3379,11 @@ await Input.Rebind(actions["Jump"], scheme: ControlScheme.Gamepad);
   - A ready-made, themeable rebinding screen (`KeyBindingScreen`, built): the keyboard and mouse or a gamepad drawn
     as a key map (`voxear_input::layouts`, `voxear_ui`'s key map, `voxear_engine::keymaps`), each bound control lit
     with its actions labelled round the device, coloured by category, and Rebind beside each action of the key
-    clicked. The editor's Input Actions window draws the same map.
+    clicked. Each label names its actions with a chip of the key and has a line of its own that crosses nothing:
+    edge keys lead straight out, inner keys drop into the gap under their row, and lines bend once outside the
+    device, in columns that keep them apart (`keymap::arrange`, checked by `Ui::keymap_crossings`). The pad and the
+    mouse are drawn from SVG paths (`Shape::Path`, rasterised into the glyph atlas in pieces, only the edge's
+    taking room). The editor's Input Actions window draws the same map.
   - Conflict detection.
   - Per-player persistence.
   - Composites such as WASD into a Vector2.

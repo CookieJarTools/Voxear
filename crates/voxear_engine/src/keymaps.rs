@@ -17,7 +17,10 @@
 use voxear_input::{ControlUse, Input, Scheme, layouts};
 
 use crate::prompt_icons::PromptSprites;
-use voxear_ui::{Color, GlyphShape, KeyShape, KeyState, KeymapBody, KeymapData, KeymapKey, KeymapLine, PromptGlyph};
+use voxear_ui::{
+    ArtLook, ArtShape, Color, GlyphShape, KeyShape, KeyState, KeymapArt, KeymapData, KeymapDevice, KeymapKey,
+    KeymapLine, KeymapSide, PromptGlyph,
+};
 
 /// An action's controls, by its name (`Jump` or `Player/Jump`), as a
 /// prompt draws them on the device the player used last: none for an
@@ -112,7 +115,8 @@ pub fn layout_of(scheme: Scheme) -> layouts::Layout {
 }
 
 /// A scheme's device as a key map: each control's label as this keyboard
-/// or pad names it, and its actions.
+/// or pad names it, and its actions, each with a chip naming the control as
+/// the action reads it, as `L3` for a stick pressed.
 pub fn keymap_data(input: &Input, scheme: Scheme, options: &KeymapOptions) -> KeymapData {
     let layout = layout_of(scheme);
     let every = input.control_uses();
@@ -131,11 +135,12 @@ pub fn keymap_data(input: &Input, scheme: Scheme, options: &KeymapOptions) -> Ke
                 (false, false) => KeyState::Hidden,
                 (false, true) => KeyState::Unused,
             };
+            let face = face(input, &control.paths[0], &control.label);
             let mut callout: Vec<KeymapLine> = Vec::new();
             for found in &shown {
-                let label = found.label();
-                if !callout.iter().any(|line| line.text == label) {
-                    callout.push(KeymapLine { text: label, icon: found.icon.clone() });
+                let (text, chip) = (found.label(), chip(&found.path, &face));
+                if !callout.iter().any(|line| line.text == text && line.chip == chip) {
+                    callout.push(KeymapLine { text, icon: found.icon.clone(), chip });
                 }
             }
             let color = match (options.colors, state) {
@@ -152,16 +157,58 @@ pub fn keymap_data(input: &Input, scheme: Scheme, options: &KeymapOptions) -> Ke
                     layouts::ControlShape::Round => KeyShape::Round,
                     layouts::ControlShape::Stick => KeyShape::Stick,
                     layouts::ControlShape::Pill => KeyShape::Pill,
+                    layouts::ControlShape::Path { path, view } => KeyShape::Path { path, view },
                 },
-                label: face(input, &control.paths[0], &control.label),
+                label: face,
+                icon: control.icon.map(str::to_string),
+                caption: control.caption.map(str::to_string),
                 state,
                 color,
                 callout,
+                device: control.device,
+                side: control.side.map(|side| match side {
+                    layouts::LabelSide::Left => KeymapSide::Left,
+                    layouts::LabelSide::Right => KeymapSide::Right,
+                    layouts::LabelSide::Top => KeymapSide::Top,
+                    layouts::LabelSide::Bottom => KeymapSide::Bottom,
+                }),
             }
         })
         .collect();
-    let body = layout.body.iter().map(|part| KeymapBody { rect: part.rect, radius: part.radius }).collect();
-    KeymapData { size: layout.size, keys, body }
+    let art = layout
+        .body
+        .iter()
+        .map(|part| KeymapArt {
+            rect: part.rect,
+            shape: match part.shape {
+                layouts::PartShape::Rect { radius } => ArtShape::Rect { radius },
+                layouts::PartShape::Circle => ArtShape::Circle,
+                layouts::PartShape::Path { path, view } => ArtShape::Path { path, view },
+            },
+            look: match part.look {
+                layouts::PartLook::Plate => ArtLook::Plate,
+                layouts::PartLook::Recess => ArtLook::Recess,
+                layouts::PartLook::Part => ArtLook::Part,
+            },
+            device: part.device,
+        })
+        .collect();
+    let devices = layout.devices.iter().map(|d| KeymapDevice { rect: d.rect, rows: d.rows }).collect();
+    KeymapData { size: layout.size, keys, art, devices }
+}
+
+/// The chip naming a control in a label: what its face says, but for a
+/// stick pressed, as `L3`, and the mouse's parts by what they are.
+fn chip(path: &str, face: &str) -> String {
+    let named = match path {
+        "Gamepad/LeftStickPress" => "L3",
+        "Gamepad/RightStickPress" => "R3",
+        "Mouse/Scroll" => "Wheel",
+        "Mouse/Middle" => "Middle",
+        "Mouse/Delta" | "Mouse/Position" => "Move",
+        _ => face,
+    };
+    named.to_string()
 }
 
 /// The legend for a key map coloured `colors`: each entry's name and its
@@ -238,7 +285,7 @@ mod tests {
         let key = |face: &str| data.keys.iter().find(|k| k.label == face).unwrap().clone();
         assert_eq!(
             (key("W").state, key("W").callout.clone()),
-            (KeyState::Assigned, vec![KeymapLine::new("Move (Up)")])
+            (KeyState::Assigned, vec![KeymapLine::with_chip("Move (Up)", "W")])
         );
         assert_eq!((key("N").state, key("N").callout.len()), (KeyState::Hidden, 0), "hidden, unlabelled");
         assert_eq!(key("Q").state, KeyState::Unused);
@@ -249,15 +296,174 @@ mod tests {
         let key = |face: &str| data.keys.iter().find(|k| k.label == face).unwrap().clone();
         assert_eq!(key("W").color, Some(Color::hex(0x3fb950)));
         assert_eq!(key("Space").color, None, "no category");
-        assert_eq!(key("N").callout, [KeymapLine::new("Noclip")], "hidden actions shown when asked");
+        assert_eq!(key("N").callout, [KeymapLine::with_chip("Noclip", "N")], "hidden actions shown when asked");
         let legend: Vec<String> = legend(&input, KeymapColors::Categories).into_iter().map(|e| e.0).collect();
         assert_eq!(legend, ["No category", "Movement", "Conflict", "Hidden", "Unused"]);
 
         let pad = keymap_data(&input, Scheme::Gamepad, &KeymapOptions::default());
-        let a = pad.keys.iter().find(|k| k.callout == [KeymapLine::new("Jump")]).unwrap();
+        let a = pad.keys.iter().find(|k| k.callout == [KeymapLine::with_chip("Jump", "A")]).unwrap();
         assert_eq!(a.label, "A");
         let other = KeymapOptions { map: Some("UI".into()), ..KeymapOptions::default() };
         assert!(keymap_data(&input, Scheme::KeyboardMouse, &other).keys.iter().all(|k| k.state == KeyState::Unused));
+    }
+
+    /// A sailing game's actions, every control labelled and some in conflict.
+    const SAILING: &str = r#"format = 1
+
+[[map]]
+name = "Player"
+
+[[map.action]]
+name = "Move"
+type = "vector2"
+bindings = [{ up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right = "Keyboard/D" }, "Gamepad/LeftStick"]
+
+[[map.action]]
+name = "Look"
+type = "vector2"
+bindings = ["Mouse/Delta", "Gamepad/RightStick"]
+
+[[map.action]]
+name = "Zoom"
+type = "vector2"
+bindings = ["Mouse/Scroll", { up = "Gamepad/DpadUp", down = "Gamepad/DpadDown" }]
+
+[[map.action]]
+name = "Special 1"
+bindings = ["Keyboard/1", "Gamepad/DpadRight"]
+
+[[map.action]]
+name = "Special 2"
+bindings = ["Keyboard/2", "Gamepad/RightShoulder"]
+
+[[map.action]]
+name = "Special 3"
+bindings = ["Keyboard/3", "Gamepad/LeftShoulder"]
+
+[[map.action]]
+name = "Interact"
+bindings = ["Keyboard/E", "Gamepad/West"]
+
+[[map.action]]
+name = "Run"
+bindings = ["Keyboard/ShiftLeft", "Gamepad/LeftStickPress"]
+
+[[map.action]]
+name = "Sail Colour"
+bindings = ["Keyboard/Z", "Gamepad/DpadUp"]
+
+[[map.action]]
+name = "Sail Emblem"
+bindings = ["Keyboard/X", "Gamepad/DpadDown"]
+
+[[map.action]]
+name = "Emblem Colour"
+bindings = ["Keyboard/C", "Gamepad/DpadLeft"]
+
+[[map.action]]
+name = "Fish"
+bindings = ["Keyboard/F", "Gamepad/North"]
+
+[[map.action]]
+name = "Hoist"
+bindings = ["Keyboard/H", "Gamepad/Select"]
+
+[[map.action]]
+name = "Cannons"
+bindings = ["Keyboard/V", "Gamepad/RightStickPress"]
+
+[[map.action]]
+name = "Bait"
+bindings = ["Keyboard/B", "Gamepad/DpadLeft"]
+
+[[map.action]]
+name = "Open Map"
+bindings = ["Keyboard/M"]
+
+[[map.action]]
+name = "Free Pointer"
+bindings = ["Keyboard/Escape"]
+
+[[map.action]]
+name = "Dive"
+bindings = ["Keyboard/ControlLeft", "Gamepad/East"]
+
+[[map.action]]
+name = "Jump"
+bindings = ["Keyboard/Space", "Gamepad/South"]
+
+[[map.action]]
+name = "Attack"
+bindings = ["Mouse/Left", "Gamepad/RightTrigger"]
+
+[[map.action]]
+name = "Heavy Attack"
+bindings = ["Mouse/Right", "Gamepad/LeftTrigger"]
+
+[[map.action]]
+name = "Hold Pointer"
+bindings = ["Mouse/Left"]
+"#;
+
+    #[test]
+    fn every_binding_is_labelled_with_a_line_that_crosses_nothing() {
+        let mut input = Input::without_gamepads();
+        input.load_actions(SAILING).unwrap();
+        for scheme in [Scheme::KeyboardMouse, Scheme::Gamepad] {
+            let data = keymap_data(&input, scheme, &KeymapOptions::default());
+            for size in [[1500, 620], [1200, 540]] {
+                let mut ui = voxear_ui::Ui::new();
+                let root = ui.root();
+                let holder = ui.panel(root, voxear_ui::Style::cover());
+                let map = ui.keymap(holder);
+                ui.set_keymap(map, data.clone());
+                for _ in 0..3 {
+                    ui.frame(size[0], size[1], 1.0);
+                }
+                let labelled = data.keys.iter().filter(|k| !k.callout.is_empty()).count();
+                assert_eq!(ui.keymap_lines(map).len(), labelled, "{scheme:?}: a line for each labelled control");
+                let problems = ui.keymap_crossings(map);
+                assert!(problems.is_empty(), "{scheme:?} at {size:?}: {problems:#?}");
+                if scheme == Scheme::KeyboardMouse {
+                    // Labels stand in their keys' order.
+                    let top = |text: &str| label_top(&ui, map, text).unwrap_or_else(|| panic!("{text} labelled"));
+                    for order in
+                        [["Special 1", "Special 2", "Special 3"], ["Move (Left)", "Move (Down)", "Move (Right)"]]
+                    {
+                        assert!(top(order[0]) < top(order[1]) && top(order[1]) < top(order[2]), "{order:?}");
+                    }
+                    assert!(top("Sail Colour") < top("Sail Emblem") && top("Sail Emblem") < top("Emblem Colour"));
+                }
+            }
+        }
+        let keyboard = keymap_data(&input, Scheme::KeyboardMouse, &KeymapOptions::default());
+        let sides = |data: &KeymapData, face: &str| {
+            let at = data.keys.iter().position(|k| k.label == face).unwrap();
+            (voxear_ui::keymap_sides(data)[at], data.keys[at].state)
+        };
+        assert_eq!(sides(&keyboard, "Esc").0, KeymapSide::Top);
+        assert_eq!(sides(&keyboard, "Space").0, KeymapSide::Bottom);
+        assert_eq!(sides(&keyboard, "A").0, KeymapSide::Left);
+        assert_eq!(sides(&keyboard, "F").0, KeymapSide::Right, "no more than three of a row to one side");
+        assert_eq!(sides(&keyboard, "Left"), (KeymapSide::Top, KeyState::Conflict), "Attack and Hold Pointer");
+        let pad = keymap_data(&input, Scheme::Gamepad, &KeymapOptions::default());
+        let stick = pad.keys.iter().find(|k| k.label == "LS").unwrap();
+        assert_eq!(stick.callout, [KeymapLine::with_chip("Move", "LS"), KeymapLine::with_chip("Run", "L3")]);
+        assert_eq!(sides(&pad, "←").1, KeyState::Conflict, "Bait and Emblem Colour");
+    }
+
+    /// Where the label naming an action is, from the top, by the text in it.
+    fn label_top(ui: &voxear_ui::Ui, node: voxear_ui::NodeId, text: &str) -> Option<f32> {
+        if ui.has_class(node, "keymap-callout") {
+            let mut found = false;
+            let mut stack = vec![node];
+            while let Some(at) = stack.pop() {
+                found |= ui.text(at) == text;
+                stack.extend(ui.children(at));
+            }
+            return found.then(|| ui.rect(node)[1]);
+        }
+        ui.children(node).into_iter().find_map(|child| label_top(ui, child, text))
     }
 
     #[test]
@@ -278,6 +484,7 @@ mod tests {
         let data = keymap_data(&input, Scheme::KeyboardMouse, &only_player);
         let e = data.keys.iter().find(|k| k.label == "E").unwrap();
         assert_eq!((e.state, e.callout.len()), (KeyState::Conflict, 1), "marked whichever map is shown");
-        assert!(!data.body.is_empty(), "the keyboard drawn behind its keys");
+        assert!(!data.art.is_empty(), "the keyboard drawn behind its keys");
+        assert_eq!(data.devices.len(), 2, "the keyboard and the mouse");
     }
 }

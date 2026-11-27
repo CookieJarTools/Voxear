@@ -250,6 +250,7 @@ pub struct Pipelines {
     pub voxel_light_sky: vk::Pipeline,
     pub voxel_light_spread: vk::Pipeline,
     /// Endless Voxel Volumes' columns made on the GPU (`shaders/voxel_world.slang`).
+    pub voxel_world_spread: vk::Pipeline,
     pub voxel_world_columns: vk::Pipeline,
     pub voxel_world_tops: vk::Pipeline,
     pub voxel_world_trees: vk::Pipeline,
@@ -1093,6 +1094,7 @@ impl Pipelines {
             voxel_light_sky: maker.compute("Voxel light sky", voxels, c"voxelLightSky")?,
             voxel_light_spread: maker.compute("Voxel light spread", voxels, c"voxelLightSpread")?,
             voxel_probe: maker.compute("Voxel probe", voxels, c"voxelProbe")?,
+            voxel_world_spread: maker.compute("Voxel world spread", voxel_world, c"voxelWorldSpread")?,
             voxel_world_columns: maker.compute("Voxel world columns", voxel_world, c"voxelWorldColumns")?,
             voxel_world_tops: maker.compute("Voxel world tops", voxel_world, c"voxelWorldTops")?,
             voxel_world_trees: maker.compute("Voxel world trees", voxel_world, c"voxelWorldTrees")?,
@@ -1559,6 +1561,7 @@ impl Pipelines {
             self.voxel_sun_map,
             self.voxel_light_sky,
             self.voxel_light_spread,
+            self.voxel_world_spread,
             self.voxel_world_columns,
             self.voxel_world_tops,
             self.voxel_world_trees,

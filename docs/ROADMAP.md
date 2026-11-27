@@ -4673,8 +4673,12 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
   where read (28 slots of 48), a Volume may carry 12 numbers, and a tall volume makes caves only in each column's
   band (a device lost before). Endless volumes are made round the camera looked through, not the first. The
   Realm's rivers were already cut in, and ground 64 km from the Obj is drawn as near it. Cost: frame 9.8 → 14.4 ms,
-  a column about 5 ms of GPU time, the window 10 → 110 s. Next: the overhangs' steepness worked out four columns
-  apart and read between, as a world of blocks does.
+  a column about 5 ms of GPU time, the window 10 → 110 s. Since (2026-11-27): the overhangs' steepness is worked
+  out four columns apart and read between, on the GPU and for collision alike, as a world of blocks does; a Volume
+  is made sixteen columns a pass while loading (0.28 ms a column), so the Realm's window comes in 29–33 s, not
+  100–110; the generator's program runs from one place in each pass, 260 MB less of the GPU for the compiled
+  passes. The same picture, crop for crop. The frame's rise is the spires and their shadows in view: 1.2 ms of
+  voxel passes, 11.7 → 12.5–13.6 ms measured side by side.
 - **Rivers, lakes and the sea (2026-11-26).** A generator's rivers, found on the CPU, are laid into an endless
   volume's GPU-made ground: the CPU works out the rivers' cut, water and falls at points half a metre apart for each
   column on threads of its own (0.7 ms a column), and the GPU adds the cut, read between the points, to its height.

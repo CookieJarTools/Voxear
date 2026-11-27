@@ -1806,6 +1806,50 @@ Chambers, and without its biomes' rock layers. Its rivers were already laid in.
 
   Making a column is about 5 ms of the GPU's time where it was 0.5 ms. Most of that is the overhangs' steepness: the
   Realm's height program run four more times for every voxel column.
-- **Not yet.** The steepness is worked out for each voxel column. A world of blocks works it out on a grid four
-  columns apart and reads between; done the same way on the GPU and the CPU, making a column would cost about a
-  sixteenth as much. Raised Land, Fins and Roof still leave the Volume out.
+- **Not yet.** Raised Land, Fins and Roof still leave the Volume out. The steepness is now worked out four columns
+  apart (below).
+
+## The Realm's ground at its old speed (2026-11-27)
+
+The Realm's window took 100–110 s round a still camera where it took 10 s before its Volume ran on the GPU.
+
+- **The steepness four columns apart.** The Overhangs node pushes only steep ground, and its mask of where the
+  ground is steep reads the generator's height at four places round each column: four more runs of the Realm's
+  height program a column. As a world of blocks does, the GPU now works the mask out at every fourth voxel column
+  each way and reads between (`GpuSpread`, a program of its own run by a pass before the columns'), and so does the
+  CPU's ground for collision, rays and navigation (`solid.rs`, four by four through `Volume::carried_grid`). Both
+  read between the same four columns, to the bit. The program reads its painted maps where the generator's program
+  keeps them, not from a copy of its own. Pictures of the spires, the Realm's summit and its cliffs are the same
+  crop for crop: of the summit's 2 million pixels, 8 differ by more than 30 levels of 255.
+
+  ![The Realm's summit, its steepness worked out at every column (left) and four columns apart (right)](../images/small-voxels/realm-steep-grid.webp)
+- **Where the time went.** One column a pass costs much the same however little work it is: the pass waits on
+  the longest program a thread runs, not on how many threads run it. With the mask apart, making a column went from
+  3.7 to 2.9 ms. The window was slow because a Volume in a volume hundreds of metres tall was made one column a
+  pass, to keep each pass short. While loading, nothing is drawn, so a Volume is now made sixteen columns a pass:
+  about 4.4 ms a pass, 0.28 ms a column. In play it is still made one column a pass in the finest ring.
+- **Each place a program runs from is a copy of it.** A pass that runs the generator's program from four places
+  holds four copies of its steps once compiled. Running the mask's program at a tree's foot from four places side
+  by side grew the compiled passes by 580 MB of the GPU's memory and made the columns 80 times slower. Now both the
+  four corners and the five places round a tree's foot run in a loop of one: the passes are 260 MB smaller than
+  before this change.
+- **Cost on the Realm** (1920×1080, reach 128 m in rings to 2 km; least of 60 frames, the GPU shared with the
+  editor):
+
+  | | Before | After |
+  |---|---|---|
+  | Window made, spires | 99–103 s | 29 s |
+  | Window made, summit | 109 s | 33 s |
+  | Making a column, one a pass | 3.7 ms | 2.9 ms |
+  | Making a column, sixteen a pass | | 0.28 ms |
+  | Frame | 12.5 ms | 12.5 ms |
+  | GPU memory after the passes compile | 2.0 GB | 1.7 GB |
+
+- **The frame's rise is what it shows.** Against the Realm before its Volume ran on the GPU, at the same place
+  and in the same run's conditions, the voxel passes take 1.2 ms more (9.9 → 11.1 ms of passes): the voxel sun map
+  0.34 ms, Opaque 0.39 ms and Depth 0.36 ms. Before, the view held none of its spires and the ground was its height
+  made solid; now four spires stand in it, casting long shadows the sun map draws, and the rays walk the ground the
+  overhangs moved. Nothing is being made in those frames, and working the steepness out apart changes none of it.
+  Measured again side by side, the frame is 11.7 ms before and 12.5–13.6 ms now, not 9.8 and 14.4: the GPU is
+  shared with other work, and the frame, the least of 60, moves by a millisecond or more from run to run.
+

@@ -25,6 +25,7 @@ mod strain;
 mod edit;
 mod endless;
 mod fell;
+mod finds;
 mod growth;
 pub(crate) use endless::generated_at;
 pub(crate) use light::LightView;

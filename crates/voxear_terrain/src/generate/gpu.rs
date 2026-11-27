@@ -76,10 +76,55 @@ pub enum GpuOp {
     /// A painted map read: its words follow the program's (see
     /// [`GpuStep::data`]).
     Painted = 37,
+    /// A Spires node's spires over a column, and the ground with them, read
+    /// from what was found of them on the CPU (see [`GpuFinds`]).
+    SpireOver = 38,
+    Towered = 39,
+    /// An Arches node's bridges and windows over a column, and the ground
+    /// with them.
+    ArchOver = 40,
+    Bridged = 41,
+}
+
+/// What a node finds over the ground on the CPU, a cell of its world at a
+/// time, for its steps on the GPU to read: spires and bridges, found from
+/// the ground's height at places round each cell, which a program run a
+/// column at a time cannot ask. Whoever runs the program works out the
+/// record of each cell near the ground it makes and keeps them in a table
+/// the steps read (`findAt` in `voxear_render/shaders/generator.slang`),
+/// so the GPU's spires and bridges stand where the CPU's do, to the bit.
+pub trait GpuFinds: Send + Sync {
+    /// What tells it from every other node's, the same in every run.
+    fn id(&self) -> u64;
+    /// How many metres a side each cell is.
+    fn cell(&self) -> f32;
+    /// How many cells either side of a place's own its steps read.
+    fn reach(&self) -> i32;
+    /// How many words a cell's record takes.
+    fn words(&self) -> usize;
+    /// The record of `cell`, [`GpuFinds::words`] long.
+    fn record(&self, cell: [i32; 2]) -> Vec<u32>;
+}
+
+/// What one node of a program finds on the CPU for its steps on the GPU,
+/// by its place among [`GpuProgram::finds`].
+#[derive(Clone)]
+pub struct GpuFinder(pub std::sync::Arc<dyn GpuFinds>);
+
+impl PartialEq for GpuFinder {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id() == other.0.id()
+    }
+}
+
+impl std::fmt::Debug for GpuFinder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GpuFinder({:#x}, {} m)", self.0.id(), self.0.cell())
+    }
 }
 
 /// One step as a kernel writes it for the GPU: its operation and numbers.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct GpuStep {
     pub op: GpuOp,
     pub words: Vec<u32>,
@@ -90,11 +135,25 @@ pub(crate) struct GpuStep {
     /// follow the program's words, and where they start among them is the
     /// step's first number.
     pub data: Option<(u64, std::sync::Arc<Vec<u32>>)>,
+    /// What it reads of what its node found on the CPU: the finder's place
+    /// among the program's is its first number.
+    pub finds: Option<std::sync::Arc<dyn GpuFinds>>,
+}
+
+impl std::fmt::Debug for dyn GpuFinds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GpuFinds({:#x})", self.id())
+    }
 }
 
 impl GpuStep {
     pub fn new(op: GpuOp) -> Self {
-        Self { op, words: Vec::new(), left_out: None, data: None }
+        Self { op, words: Vec::new(), left_out: None, data: None, finds: None }
+    }
+
+    pub fn finding(mut self, finds: std::sync::Arc<dyn GpuFinds>) -> Self {
+        self.finds = Some(finds);
+        self
     }
 
     pub fn reading(mut self, key: u64, data: std::sync::Arc<Vec<u32>>) -> Self {
@@ -149,6 +208,9 @@ pub struct GpuProgram {
     /// Its Volume, where it has one that is more than its height made solid
     /// and that runs on the GPU.
     pub volume: Option<GpuVolume>,
+    /// What its steps and its Volume's read of what their nodes find on the
+    /// CPU, by the place their first number names.
+    pub finds: Vec<GpuFinder>,
     /// What it leaves out of the ground the CPU makes, by name: what its
     /// kernels leave out, and its Volume where that cannot run on the GPU,
     /// with the kernels that cannot.
@@ -215,6 +277,8 @@ fn lower(
 struct Data {
     words: Vec<u32>,
     starts: Vec<(u64, u32)>,
+    /// What steps read of what their nodes find on the CPU.
+    finds: Vec<GpuFinder>,
 }
 
 impl Data {
@@ -228,6 +292,16 @@ impl Data {
         self.starts.push((key, start));
         start
     }
+
+    /// The place of `finds` among those read: added where it is not yet.
+    fn finder(&mut self, finds: &std::sync::Arc<dyn GpuFinds>) -> u32 {
+        let id = finds.id();
+        if let Some(at) = self.finds.iter().position(|known| known.0.id() == id) {
+            return at as u32;
+        }
+        self.finds.push(GpuFinder(finds.clone()));
+        (self.finds.len() - 1) as u32
+    }
 }
 
 /// Steps as the words the shader reads, `kept` rows held to the end: the
@@ -238,23 +312,55 @@ fn encode(
     kept: &[u32],
     data: &mut Data,
 ) -> Result<(Vec<u32>, Vec<u32>, u32, Vec<String>), String> {
-    let (slot_of, slots) = slots(steps, kept);
+    // A number or a place read by many steps is worked out again for each, as it costs next to nothing, so it
+    // never waits in a slot between them.
+    let mut steps: Vec<(GpuStep, Vec<u32>)> = steps.to_vec();
+    for at in 0..steps.len() {
+        for input in 0..steps[at].1.len() {
+            let read = steps[at].1[input] as usize;
+            if is_leaf(&steps[read]) {
+                let copy = steps[read].clone();
+                steps[at].1[input] = steps.len() as u32;
+                steps.push(copy);
+            }
+        }
+    }
+    let steps = steps.as_slice();
+    // Run in the order that finishes each row's steps before starting the next's, so rows worked out side by side
+    // (the ground round a place, read four times over) do not all wait in slots at once.
+    let order = depth_first(steps, kept);
+    let mut place = vec![u32::MAX; steps.len()];
+    for (at, &step) in order.iter().enumerate() {
+        place[step] = at as u32;
+    }
+    let ordered: Vec<(&GpuStep, Vec<u32>)> = order
+        .iter()
+        .map(|&step| (&steps[step].0, steps[step].1.iter().map(|&input| place[input as usize]).collect()))
+        .collect();
+    let ordered_kept: Vec<u32> = kept.iter().map(|&row| place[row as usize]).collect();
+    let (ordered_slots, slots) = slot_rows(ordered.iter().map(|(_, inputs)| inputs.as_slice()), &ordered_kept);
     if slots > GPU_SLOTS as u32 {
         return Err(format!("{slots} rows at once, of {GPU_SLOTS}"));
     }
+    // Each row's slot by its place among `steps`; a row nothing kept reads is never run.
+    let slot_of: Vec<u32> = place.iter().map(|&at| ordered_slots.get(at as usize).copied().unwrap_or(0)).collect();
     let mut words = Vec::new();
     let mut left_out = Vec::new();
-    for (at, (step, inputs)) in steps.iter().enumerate() {
+    for (at, (step, inputs)) in ordered.iter().enumerate() {
         words.push(step.op as u32);
         words.push(inputs.len() as u32);
-        words.extend(inputs.iter().map(|&input| slot_of[input as usize]));
-        words.push(slot_of[at]);
-        match &step.data {
-            Some((key, read)) => {
+        words.extend(inputs.iter().map(|&input| ordered_slots[input as usize]));
+        words.push(ordered_slots[at]);
+        match (&step.data, &step.finds) {
+            (Some((key, read)), _) => {
                 words.push(step.words.len() as u32 + 1);
                 words.push(data.place(*key, read));
             }
-            None => words.push(step.words.len() as u32),
+            (None, Some(finds)) => {
+                words.push(step.words.len() as u32 + 1);
+                words.push(data.finder(finds));
+            }
+            (None, None) => words.push(step.words.len() as u32),
         }
         words.extend(&step.words);
         if let Some(what) = step.left_out
@@ -264,6 +370,45 @@ fn encode(
         }
     }
     Ok((words, slot_of, slots, left_out))
+}
+
+/// Whether a step reads nothing and costs next to nothing: a number, or
+/// where a place or a cell is.
+fn is_leaf((step, inputs): &(GpuStep, Vec<u32>)) -> bool {
+    inputs.is_empty()
+        && step.data.is_none()
+        && step.finds.is_none()
+        && matches!(step.op, GpuOp::Constant | GpuOp::X | GpuOp::Z | GpuOp::Y | GpuOp::Size | GpuOp::Carried)
+}
+
+/// The steps `kept` rows need, in an order each comes after what it reads:
+/// each kept row's in turn, depth first, so what one row needs is all
+/// worked out before the next's starts.
+fn depth_first(steps: &[(GpuStep, Vec<u32>)], kept: &[u32]) -> Vec<usize> {
+    let mut done = vec![false; steps.len()];
+    let mut order = Vec::with_capacity(steps.len());
+    // A step, and how many of its inputs are seen to.
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for &row in kept {
+        if done[row as usize] {
+            continue;
+        }
+        done[row as usize] = true;
+        stack.push((row as usize, 0));
+        while let Some((step, next)) = stack.pop() {
+            match steps[step].1.get(next) {
+                Some(&input) => {
+                    stack.push((step, next + 1));
+                    if !done[input as usize] {
+                        done[input as usize] = true;
+                        stack.push((input as usize, 0));
+                    }
+                }
+                None => order.push(step),
+            }
+        }
+    }
+    order
 }
 
 impl WorldGen {
@@ -305,6 +450,8 @@ impl WorldGen {
         let mut kept: Vec<u32> =
             [Some(outputs[0]), Some(outputs[1]), Some(outputs[2]), rock].into_iter().flatten().collect();
         let mut left_out = Vec::new();
+        // What the cells' steps read of what their nodes find, shared with the columns' steps.
+        let mut cells_data = Data::default();
         // Its Volume, unless it is the height made solid with nothing taken out: its columns' steps after the rest,
         // given the height made first, and its cells' in a program of their own.
         let mut volume = None;
@@ -328,7 +475,7 @@ impl WorldGen {
             };
             let cells = lower(&voxels.cells, 0, given, &mut missing);
             let density = voxels.cells.outputs[0];
-            let made = encode(&cells, &[density], &mut Data::default());
+            let made = encode(&cells, &[density], &mut cells_data);
             if let Err(error) = &made {
                 missing.push(error.clone());
             }
@@ -359,7 +506,9 @@ impl WorldGen {
                 left_out.push(format!("overhangs and caves ({})", missing.join(", ")));
             }
         }
-        let mut data = Data::default();
+        // Only a Volume that runs reads what its nodes find.
+        let finds = if volume.is_some() { cells_data.finds } else { Vec::new() };
+        let mut data = Data { finds, ..Data::default() };
         let (words, slot_of, slots, made_left_out) = encode(&steps, &kept, &mut data).map_err(|error| vec![error])?;
         for what in made_left_out {
             if !left_out.contains(&what) {
@@ -379,6 +528,7 @@ impl WorldGen {
             wetness: slot(outputs[2]),
             rock: rock.map_or(u32::MAX, slot),
             volume,
+            finds: data.finds,
             left_out,
         })
     }
@@ -386,9 +536,10 @@ impl WorldGen {
 
 /// A slot for each step's row, used again once every step reading it has
 /// run, `kept` rows held to the end; and how many slots that takes.
-fn slots(steps: &[(GpuStep, Vec<u32>)], kept: &[u32]) -> (Vec<u32>, u32) {
-    let mut last = vec![0usize; steps.len()];
-    for (at, (_, inputs)) in steps.iter().enumerate() {
+fn slot_rows<'a>(inputs_of: impl ExactSizeIterator<Item = &'a [u32]>, kept: &[u32]) -> (Vec<u32>, u32) {
+    let rows = inputs_of.len();
+    let mut last = vec![0usize; rows];
+    for (at, inputs) in inputs_of.enumerate() {
         last[at] = at;
         for &input in inputs {
             last[input as usize] = at;
@@ -397,16 +548,16 @@ fn slots(steps: &[(GpuStep, Vec<u32>)], kept: &[u32]) -> (Vec<u32>, u32) {
     for &row in kept {
         last[row as usize] = usize::MAX;
     }
-    let mut slot_of = vec![0u32; steps.len()];
+    let mut slot_of = vec![0u32; rows];
     let mut free: Vec<u32> = Vec::new();
     let mut count = 0u32;
-    let mut ending: Vec<Vec<usize>> = vec![Vec::new(); steps.len()];
+    let mut ending: Vec<Vec<usize>> = vec![Vec::new(); rows];
     for (at, &until) in last.iter().enumerate() {
-        if until != usize::MAX && until < steps.len() {
+        if until != usize::MAX && until < rows {
             ending[until].push(at);
         }
     }
-    for at in 0..steps.len() {
+    for at in 0..rows {
         // The rows read for the last time here are let go after this step is given its own slot, so it never
         // writes over what it reads.
         slot_of[at] = free.pop().unwrap_or_else(|| {

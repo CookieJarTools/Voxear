@@ -62,7 +62,7 @@ pub use caves::{
     RoomSample, RoomShape,
 };
 pub use compile::Fault;
-pub use gpu::{GPU_SLOTS, GpuOp, GpuProgram, GpuVolume};
+pub use gpu::{GPU_SLOTS, GpuFinder, GpuFinds, GpuOp, GpuProgram, GpuVolume};
 pub use graph::{Comment, Exposed, Graph, Link, Node, NodeId};
 pub use landmass::{Climate, Erosion, Field, Landmass, Preset, Sample, Warp, smooth};
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};

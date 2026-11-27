@@ -172,6 +172,25 @@ impl<'a> Ground<'a> {
         }))
     }
 
+    /// Whether its generator's Volume may have ground standing apart from
+    /// a column's own, as spires and bridges do.
+    fn spanned(&self) -> bool {
+        self.volume.generator.as_ref().and_then(gpu_volume).is_some_and(|volume| volume.spanned())
+    }
+
+    /// The highest voxel of column (`x`, `z`), its ground `h` voxels up,
+    /// that its generator's Volume may make solid: `over` metres over its
+    /// ground, or the top of what stands over it (a spire, a bridge), as
+    /// the GPU's bricks pass reaches up to the spans' tops.
+    fn volume_top(&mut self, x: i32, z: i32, h: i32, over: f32) -> i32 {
+        let reached = h + (over / self.voxel).ceil() as i32 + 1;
+        let Some(carried) = self.carried(x, z).cloned() else { return reached };
+        let Some(generator) = self.volume.generator.as_ref() else { return reached };
+        let Some(volume) = gpu_volume(generator) else { return reached };
+        let (floor, voxel) = (generator.floor, self.voxel);
+        volume.spans_of(&carried).map(|[_, top]| ((top - floor) / voxel).ceil() as i32 + 1).fold(reached, i32::max)
+    }
+
     /// How far into a generator's Volume each voxel of column (`x`, `z`)
     /// from `y` up is, `count` of them, in metres (out of it where
     /// negative): none without one.
@@ -534,7 +553,7 @@ impl<'a> Ground<'a> {
                 let (wx, wz) = (low.x + x, low.z + z);
                 let h = self.height(wx, wz);
                 let top = match has_volume {
-                    true => (h + (over / voxel).ceil() as i32 + 1).min(high.y).min(tall - 1),
+                    true => self.volume_top(wx, wz, h, over).min(high.y).min(tall - 1),
                     false => h.min(high.y).min(tall - 1),
                 };
                 let from = low.y.max(1);
@@ -607,6 +626,9 @@ impl<'a> Ground<'a> {
     pub fn clear(&mut self, p: Vec3) -> f32 {
         let c = p.floor().as_ivec3();
         let ground = match self.density(c) {
+            // A spire or a bridge beside the column is not in its density: steps of a metre at most, narrower than
+            // any of them, where its Volume has ground standing apart from the columns'.
+            Some(density) if self.spanned() => (-density / self.voxel * super::ray::DENSITY_STEP).min(1.0 / self.voxel),
             Some(density) => -density / self.voxel * super::ray::DENSITY_STEP,
             None => (p.y - (self.height(c.x, c.z) + 1) as f32) * super::ray::HEIGHT_STEP,
         };
@@ -739,7 +761,7 @@ impl VoxelSolids {
                 let h = ground.height(wx, wz);
                 // The column's ground as made: by its height, or by the Volume within its reach over that.
                 let top = match volume {
-                    Some(_) => (h + (over / voxel).ceil() as i32 + 1).min(high.y).min(tall - 1),
+                    Some(_) => ground.volume_top(wx, wz, h, over).min(high.y).min(tall - 1),
                     None => h.min(high.y).min(tall - 1),
                 };
                 let from = low.y.max(1);

@@ -1136,7 +1136,7 @@ impl Renderer {
         let started = std::time::Instant::now();
         self.voxels.loading = true;
         let made = loop {
-            self.voxels.prepare(&self.gpu, &mut self.frames, world)?;
+            self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera)?;
             // Endless volumes' columns round the camera made now, outside the frames.
             self.voxels.make_endless_now(&self.gpu, (&self.pipelines, &self.bindless))?;
             if !self.voxels.making() {
@@ -2181,7 +2181,7 @@ impl Renderer {
         let camera = self.views.first().and_then(|view| view.prev_camera).map(|(at, _)| at);
         self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, (frame_index, camera))?;
         // Voxel Volumes made again where they changed, on threads of their own, and brought up once made.
-        self.voxels.prepare(&self.gpu, &mut self.frames, world)?;
+        self.voxels.prepare(&self.gpu, &mut self.frames, world, self.views[0].options.camera)?;
         // Every simulated particle's step, for all the views.
         let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;

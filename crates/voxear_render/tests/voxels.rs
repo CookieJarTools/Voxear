@@ -2917,13 +2917,26 @@ fn a_column_takes_over_a_thousand_edits_as_the_cpu_does() {
 
 #[test]
 fn an_endless_volumes_ground_far_from_its_obj_is_drawn_as_near_it() {
-    // The same ground seen 24 km from the volume's Obj, and with the volume's Obj under the camera and its offset there.
+    // 34 km out, and 64 km: past the far corner of a world 51 km a side from its middle.
+    far_from_its_obj(24000.0, 48.0);
+    far_from_its_obj(45000.0, 720.0);
+}
+
+/// The same ground seen `far` metres along X and Z from the volume's Obj,
+/// and with the volume's Obj under the camera and its offset there, in a
+/// volume `tall` metres tall.
+fn far_from_its_obj(far: f32, tall: f32) {
     let Some(mut far_renderer) = renderer() else { return };
     let world = Arc::new(without_rivers(&starter("Rolling Hills")));
-    let far = 24000.0;
     let mut scene = generated_view(world.clone(), far + 8.0, far + 8.0, 6.0, 25.0);
+    let taller = |scene: &mut World| {
+        for volume in scene.query::<&mut VoxelVolume>() {
+            volume.size.y = tall;
+        }
+    };
+    taller(&mut scene);
     let made = render(&mut far_renderer, &scene, 3);
-    keep_image("far from its obj.png", &made);
+    keep_image(&format!("far from its obj {far}.png"), &made);
     drop(far_renderer);
     let Some(mut near_renderer) = renderer() else { return };
     let ground = world.height_at(far + 8.0, far + 8.0);
@@ -2933,8 +2946,9 @@ fn an_endless_volumes_ground_far_from_its_obj_is_drawn_as_near_it() {
         generator.at = [far, far];
         generator.floor = ground - 24.0;
     }
+    taller(&mut scene);
     let near = render(&mut near_renderer, &scene, 3);
-    keep_image("near its obj.png", &near);
+    keep_image(&format!("near its obj {far}.png"), &near);
     // Grass and flowers are placed by the voxel's place in the generator's world, which the offset moves, so the two
     // are not the same pixel for pixel: the ground's shading is the same over squares of 20 pixels, and a streaked
     // picture has many more pixels the same as the one beside them than as the one under them.
@@ -3499,4 +3513,28 @@ fn caves_in_a_volume_hundreds_of_metres_tall_are_made_as_in_a_short_one() {
         missing * 100 < open && extra * 100 < open,
         "the GPU's ground is the CPU's: {missing} missing, {extra} over"
     );
+}
+
+#[test]
+fn an_endless_volume_is_made_round_the_camera_looked_through() {
+    let Some(mut renderer) = renderer() else { return };
+    let world = Arc::new(without_rivers(&starter("Rolling Hills")));
+    let mut scene = bare_hills_view();
+    // A second camera 600 m off, which the view looks through: the volume's ground is made under it, not under the
+    // first camera.
+    let ground = world.height_at(608.0, 8.0);
+    let floor = scene.query_ref::<&VoxelVolume>().into_iter().next().unwrap().generator.as_ref().unwrap().floor;
+    let look = Quat::from_rotation_x(60f32.to_radians());
+    let far =
+        scene.spawn((Camera::default(), Transform::new(Vec3::new(608.0, ground - floor + 10.0, 8.0), look, Vec3::ONE)));
+    renderer
+        .set_view_options(voxear_render::ViewOptions { camera: Some(far), ..voxear_render::ViewOptions::default() });
+    render(&mut renderer, &scene, 3);
+    let (entity, _) = scene.query_ref::<(voxear_ecs::Entity, &VoxelVolume)>().into_iter().next().unwrap();
+    let top = ((ground - floor) * 16.0) as i32;
+    let cells: Vec<[i32; 3]> =
+        (0..64).flat_map(|i| (-8..8).map(move |y| [608 * 16 + i * 3 - 96, top + y, 8 * 16])).collect();
+    let (found, _) = renderer.voxels_on_gpu(entity, &cells).unwrap().expect("an endless volume");
+    let kept = found.iter().filter(|&&place| place != 0).count();
+    assert!(kept > 50, "the ground under the camera looked through is made: {kept} voxels kept");
 }

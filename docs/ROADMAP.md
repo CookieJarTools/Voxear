@@ -199,7 +199,9 @@ Done so far:
 - **Docking:** areas of tabbed panels in split panes, rearranged by dragging tabs into an area or onto its edge,
   with a drop preview; layouts read and write as text for workspace presets.
 - **Stats overlay**, the first thing built with it: F1 in a game window, `--stats` on `vox run` and `vox render`,
-  written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it.
+  written as `StatsOverlay.vui` and `.vss`. Clicking its header folds it. A compact stats panel sits over the
+  Scene and Game views (their **Stats**), and a build profile's **Stats panel** gives it to a Release build's
+  players, on F1 or shown from the start.
 
 - **The editor, first slice** (`vox editor`): edit mode without scripts, the concept's layout with the top bar,
   docked Hierarchy, Project, Scene, Console and Inspector, and the status bar. The Scene view renders into its
@@ -213,7 +215,8 @@ Done so far:
   checkbox, segmented controls, slider values, double clicks, and splits that keep the second pane's size or the
   first's share.
 - **A Unity-style Project panel:** folders as a tree on the left, and the open folder's contents on the right as
-  tiles or, when narrow, as rows with sizes, with a breadcrumb; double-clicking a folder opens it.
+  tiles or, when narrow, as rows with sizes, with a breadcrumb; double-clicking a folder opens it. Folders take a
+  colour, and Favourites sit at the top of the tree, both kept for the project.
 - **Play mode with state restore:** Play copies the edited level into a fresh engine with the scripts (built and
   started on the first Play, then kept, since .NET starts once per process) and shows the Game view; Stop
   destroys the played world and brings the edited level back as it was. Pause and Step, and the selection
@@ -229,7 +232,7 @@ Done so far:
   editor that opens, plays and switches levels.
 - **Saving and undo:** Ctrl+S writes the open level's changed scenes back to their files, round-tripping Hello's
   unchanged; undo and redo for Inspector edits; an unsaved marker, and a second click before a level change
-  discards edits.
+  discards edits. A Save button beside the top bar's search is lit while there are unsaved changes.
 - **Scene view tools:** click an Obj to select it; move, rotate and scale handles driven by the tool strip (and Q,
   W, E, R), Pivot or Center, Global or Local, snapping with Ctrl, and each drag one step to undo.
 - **Editing Objs:** context menus and dragging rows in Voxear UI; the Hierarchy makes, duplicates, deletes and
@@ -256,6 +259,17 @@ Done so far:
   matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
   `Editor::add_command`.
+- **Tests** (`Voxear.Testing`): `[Test]` on a static method, with a title, `Category` and `Order`, and `Assert`
+  (`True`, `Equal`, `Near`, `Null`, `Throws<T>`, `Fail`). The Tests window lists them by category with Run All, a
+  run button per category and per test, each one's outcome, time and what a failure said, and a filter. While
+  editing a test runs against the edited level and one Undo takes back what it changed; while playing, against
+  the running game. `vox editor call tests.run` and `tests.list`; the manual's Testing Your Game page.
+- **Windows and rows, tidied:** one options menu per window with its own options first; stronger button hovers;
+  Building beside Play, and the Game view's full screen and Gizmos; guide lines in trees and coloured Hierarchy
+  icons; Input Actions folds; a palette result for a setting opens it; Ctrl shortcuts no longer type into
+  fields; a tile's long name scrolls on hover. The Light's Inspector picks its type with icon buttons, shows a
+  live picture of the light and sets its rows under headings with sliders and units; the Mesh Renderer shows
+  previews; the terrain tools have icons, headings and a picture of the brush.
 - **Preferences:** the editor's own settings (Scene view, Play mode, Console, appearance, external tools, keys,
   tools) in the rail's drawer, laid out as Project Settings is, and in the palette, kept per project with the palette's
   recent items.
@@ -2350,7 +2364,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   Portal is a shadowed rectangle light over its opening, shining what its far side was last seen to show, read
   each frame its far side is drawn into a 16 by 16 picture where nothing stands before the opening; **Average**
   shines the picture's average, **Picture** the picture itself, each point weighing 4 by 4 parts of it by how
-  much light each sends it, in the fog too; it fades as the Portal closes. Tests: shaded ground before a Portal
+  much light each sends it, in the fog too; it fades as the Portal closes. Set under Project Settings ▸ Quality and
+  from C# (`ProjectSettings.ChangePortals`, `PortalLighting`), so a game can offer it as a graphics option. Tests: shaded ground before a Portal
   onto glowing walls lit and dark again once it closes, red and blue walls leaning each side of the ground to its
   own colour. Still to come: bringing a far side in an endless world under +1.5 ms, the far side's own lamps and
   sun shining through, shadows and sound through Portals, bodies resting part-way through, Portals to other levels.
@@ -4831,7 +4846,9 @@ horizon, editable a voxel at a time. Research, measurements and the plan:
     where it rests. GPU and CPU agree to the voxel after a collapse. `vox editor call voxels.blast`, `voxels.settled`.
   - Cracks wander through the voxels round the bricks' faces, so broken edges are ragged.
   - Timber bends before it snaps: floors hang hinged from their walls until too much hangs. Voxel Ropes hold what
-    was built, which hangs and swings once nothing else holds it, and snap when pulled too hard or cut.
+    was built, which hangs and swings once nothing else holds it, and snap when pulled too hard or cut. A piece
+    hangs from every rope whose point is in it, each bearing its share of the weight, and an Obj may have more
+    joints than one (`MoreJoints`).
 - **Ways over voxel ground (2026-11-26).** Nav Agents and Block Mobs on an endless Voxel Volume find their way round
   walls, trunks and pits, up banks and through shallow water, with nothing baked. The voxels are gathered into
   cells a quarter of a metre a side, solid where collision finds anything within a quarter of a metre, and walked
